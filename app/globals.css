@@ -1,0 +1,238 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Amiri:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 28 30% 96%;
+    --foreground: 20 25% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 20 25% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 25% 15%;
+    --primary: 356 45% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 24 25% 91%;
+    --secondary-foreground: 20 25% 15%;
+    --muted: 24 20% 93%;
+    --muted-foreground: 20 12% 50%;
+    --accent: 356 45% 58%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 24 18% 88%;
+    --input: 24 18% 88%;
+    --ring: 356 45% 58%;
+    --chart-1: 356 45% 58%;
+    --chart-2: 24 35% 65%;
+    --chart-3: 15 30% 75%;
+    --chart-4: 30 25% 82%;
+    --chart-5: 20 20% 40%;
+    --radius: 1rem;
+    --sidebar: 0 0% 100%;
+    --sidebar-foreground: 20 25% 15%;
+  }
+
+  .dark {
+    --background: 20 20% 10%;
+    --foreground: 28 25% 92%;
+    --card: 20 18% 14%;
+    --card-foreground: 28 25% 92%;
+    --popover: 20 18% 14%;
+    --popover-foreground: 28 25% 92%;
+    --primary: 356 50% 65%;
+    --primary-foreground: 20 20% 10%;
+    --secondary: 20 15% 20%;
+    --secondary-foreground: 28 25% 92%;
+    --muted: 20 15% 20%;
+    --muted-foreground: 24 12% 65%;
+    --accent: 356 50% 65%;
+    --accent-foreground: 20 20% 10%;
+    --destructive: 0 65% 55%;
+    --destructive-foreground: 28 25% 92%;
+    --border: 20 15% 22%;
+    --input: 20 15% 22%;
+    --ring: 356 50% 65%;
+    --chart-1: 356 50% 65%;
+    --chart-2: 24 35% 65%;
+    --chart-3: 15 30% 75%;
+    --chart-4: 30 25% 82%;
+    --chart-5: 20 20% 40%;
+    --sidebar: 20 18% 12%;
+    --sidebar-foreground: 28 25% 92%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  [dir='rtl'] body {
+    font-family: 'Amiri', 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+}
+
+/* ---------- Scrollbar ---------- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground) / 0.5); }
+
+/* ---------- Glass ---------- */
+.glass {
+  background: hsl(var(--card) / 0.7);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid hsl(var(--border) / 0.6);
+}
+
+.glass-dark {
+  background: hsl(var(--card) / 0.55);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+}
+
+/* ---------- Gradient text ---------- */
+.text-gradient {
+  background: linear-gradient(135deg, hsl(168 58% 30%), hsl(168 55% 45%), hsl(35 80% 55%));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ---------- Aurora background ---------- */
+.aurora {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  z-index: 0;
+  pointer-events: none;
+}
+.aurora::before,
+.aurora::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.5;
+  animation: aurora-float 18s ease-in-out infinite;
+}
+.aurora::before {
+  width: 480px; height: 480px;
+  background: radial-gradient(circle, hsl(168 70% 45% / 0.4), transparent 70%);
+  top: -120px; left: -80px;
+}
+.aurora::after {
+  width: 520px; height: 520px;
+  background: radial-gradient(circle, hsl(35 80% 55% / 0.35), transparent 70%);
+  bottom: -160px; right: -100px;
+  animation-delay: -9s;
+}
+.dark .aurora::before { opacity: 0.35; }
+.dark .aurora::after { opacity: 0.3; }
+
+@keyframes aurora-float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(40px, 30px) scale(1.08); }
+  66% { transform: translate(-30px, 50px) scale(0.95); }
+}
+
+/* ---------- Shimmer ---------- */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 0%,
+    hsl(var(--muted) / 0.5) 50%,
+    hsl(var(--muted)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ---------- Fade / slide in ---------- */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-in { animation: fade-in 0.5s ease-out both; }
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in { animation: scale-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 0.8; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+.pulse-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.animate-float { animation: float 4s ease-in-out infinite; }
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-count-up { animation: count-up 0.8s ease-out both; }
+
+/* staggered children */
+.stagger > * { animation: fade-in-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: 0.04s; }
+.stagger > *:nth-child(2) { animation-delay: 0.08s; }
+.stagger > *:nth-child(3) { animation-delay: 0.12s; }
+.stagger > *:nth-child(4) { animation-delay: 0.16s; }
+.stagger > *:nth-child(5) { animation-delay: 0.20s; }
+.stagger > *:nth-child(6) { animation-delay: 0.24s; }
+.stagger > *:nth-child(7) { animation-delay: 0.28s; }
+.stagger > *:nth-child(8) { animation-delay: 0.32s; }
+
+/* ---------- Calendar ---------- */
+.cal-cell {
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+.cal-cell:hover { transform: translateY(-1px); }
+
+/* ---------- Recharts tooltip ---------- */
+.recharts-default-tooltip {
+  border-radius: 0.75rem !important;
+  border: 1px solid hsl(var(--border)) !important;
+  background: hsl(var(--card)) !important;
+  box-shadow: 0 8px 30px hsl(var(--foreground) / 0.08) !important;
+}
+
+/* ---------- RTL helpers ---------- */
+[dir='rtl'] .flip-x { transform: scaleX(-1); }
