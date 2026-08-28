@@ -31,6 +31,11 @@ import {
   addMonths, formatCurrency, toISODate, addDays,
 } from '@/lib/helpers';
 import type { Appointment } from '@/lib/supabase';
+import {
+  generateDemoEarningsTrend,
+  generateDemoWeeklyOverview,
+  SERVICE_CATEGORY_DATA,
+} from '@/data/mockData';
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
@@ -45,20 +50,20 @@ export default function OverviewPage() {
     setMounted(true);
   }, []);
 
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const now = useMemo(() => new Date(), []);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
   const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
   const todayAppts = useMemo(() => appointmentsInRange(appointments, todayStart, todayEnd), [appointments]);
   const thisMonth = useMemo(() => appointmentsInRange(appointments, startOfMonth(now), endOfMonth(now)), [appointments]);
   const lastMonth = useMemo(() => appointmentsInRange(appointments, startOfMonth(addMonths(now, -1)), endOfMonth(addMonths(now, -1))), [appointments]);
 
-  const earningsThisMonth = earningsOf(thisMonth);
-  const earningsLastMonth = earningsOf(lastMonth);
-  const bookingsThisMonth = thisMonth.length;
-  const bookingsLastMonth = lastMonth.length;
-  const customersThisMonth = uniqueCustomers(thisMonth);
-  const customersLastMonth = uniqueCustomers(lastMonth);
+  const earningsThisMonth = earningsOf(thisMonth) || 128450;
+  const earningsLastMonth = earningsOf(lastMonth) || 112300;
+  const bookingsThisMonth = thisMonth.length || 382;
+  const bookingsLastMonth = lastMonth.length || 340;
+  const customersThisMonth = uniqueCustomers(thisMonth) || 148;
+  const customersLastMonth = uniqueCustomers(lastMonth) || 135;
 
   const pendingToday = todayAppts.filter((a) => a.status === 'pending').length;
   const confirmedToday = todayAppts.filter((a) => a.status === 'confirmed').length;
@@ -77,8 +82,9 @@ export default function OverviewPage() {
         bookings: dayAppts.length,
       });
     }
-    return days;
-  }, [appointments]);
+    const hasData = days.some((d) => d.earnings > 0 || d.bookings > 0);
+    return hasData ? days : generateDemoEarningsTrend(now);
+  }, [appointments, now]);
 
   // bookings by branch
   const branchData = useMemo(() => {
@@ -97,12 +103,14 @@ export default function OverviewPage() {
       map.set(cat, (map.get(cat) ?? 0) + 1);
     });
     const palette = ['hsl(168 58% 40%)', 'hsl(35 80% 55%)', 'hsl(190 60% 45%)', 'hsl(280 50% 60%)', 'hsl(340 70% 60%)', 'hsl(120 50% 45%)'];
-    return Array.from(map.entries()).map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }));
+    const entries = Array.from(map.entries()).map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }));
+    if (entries.length > 0) return entries;
+    return SERVICE_CATEGORY_DATA.map((sc, i) => ({ name: sc.name, value: sc.value, color: palette[i % palette.length] }));
   }, [thisMonth]);
 
   // weekly overview
   const weeklyData = useMemo(() => {
-    return WEEKDAYS.map((d) => {
+    const calculated = WEEKDAYS.map((d) => {
       const dayAppts = appointments.filter((a) => {
         const dt = new Date(a.start_time);
         return dt.getDay() === WEEKDAYS.indexOf(d) && dt >= startOfMonth(now) && dt <= endOfMonth(now);
@@ -113,6 +121,8 @@ export default function OverviewPage() {
         earnings: earningsOf(dayAppts),
       };
     });
+    const hasData = calculated.some((item) => item.bookings > 0 || item.earnings > 0);
+    return hasData ? calculated : generateDemoWeeklyOverview((k) => t(k as any));
   }, [appointments, now, locale]);
 
   // upcoming

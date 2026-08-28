@@ -1,16 +1,35 @@
 'use client';
 
-import { Menu, Moon, Sun, Languages, Bell, Search } from 'lucide-react';
+import { Menu, Moon, Sun, Languages, Bell, Search, LogOut } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { toggleSidebar, toggleTheme, toggleLocale } from '@/store/slices/uiSlice';
 import { setSearch } from '@/store/slices/filtersSlice';
+import { logout } from '@/store/slices/authSlice';
 
 export function Topbar() {
   const { t, locale } = useI18n();
   const dispatch = useAppDispatch();
-  const theme = useAppSelector((s) => s.ui.theme);
-  const search = useAppSelector((s) => s.filters.search);
+  const router   = useRouter();
+  const theme    = useAppSelector((s) => s.ui.theme);
+  const search   = useAppSelector((s) => s.filters.search);
+  const user     = useAppSelector((s) => s.auth.user);
+
+  const handleLogout = () => {
+    dispatch(logout());
+    router.replace('/login');
+  };
+
+  /** Initials from full name */
+  const initials = user?.name
+    ? user.name
+        .split(' ')
+        .slice(0, 2)
+        .map((w) => w[0])
+        .join('')
+        .toUpperCase()
+    : 'U';
 
   return (
     <header className="sticky top-0 z-30 glass border-b border-border/50">
@@ -66,16 +85,26 @@ export function Topbar() {
             <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-accent ring-2 ring-background" />
           </button>
 
-          {/* avatar */}
+          {/* user avatar + name */}
           <div className="flex items-center gap-2.5 rounded-xl bg-muted/60 p-1.5 pr-3">
             <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-primary to-accent text-sm font-bold text-white">
-              A
+              {initials}
             </div>
             <div className="hidden text-left sm:block">
-              <p className="text-xs font-semibold leading-tight">Admin</p>
-              <p className="text-[11px] text-muted-foreground">USH Spa HQ</p>
+              <p className="text-xs font-semibold leading-tight">{user?.name ?? 'Employee'}</p>
+              <p className="text-[11px] text-muted-foreground capitalize">{user?.user_type ?? 'Staff'}</p>
             </div>
           </div>
+
+          {/* logout */}
+          <button
+            onClick={handleLogout}
+            className="grid h-10 w-10 place-items-center rounded-xl bg-muted/60 transition hover:bg-destructive/10 hover:text-destructive"
+            aria-label="Logout"
+            title="Sign out"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </header>

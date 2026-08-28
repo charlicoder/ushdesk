@@ -23,9 +23,14 @@ const uiSlice = createSlice({
   reducers: {
     setLocale(state, action: PayloadAction<Locale>) {
       state.locale = action.payload;
+      state.language = action.payload;
+      state.direction = action.payload === 'ar' ? 'rtl' : 'ltr';
     },
     toggleLocale(state) {
-      state.locale = state.locale === 'en' ? 'ar' : 'en';
+      const next = state.locale === 'en' ? 'ar' : 'en';
+      state.locale = next;
+      state.language = next;
+      state.direction = next === 'ar' ? 'rtl' : 'ltr';
     },
     setTheme(state, action: PayloadAction<'light' | 'dark'>) {
       state.theme = action.payload;

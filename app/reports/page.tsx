@@ -13,63 +13,12 @@ import { useAppSelector } from '@/store/hooks';
 import { useI18n } from '@/hooks/use-i18n';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { cn } from '@/lib/utils';
-
-// --- Mock Datasets matching requested code ---
-const REVENUE_TREND = [
-  { date: '06/27', revenue: 4200, bookings: 14 },
-  { date: '06/29', revenue: 3800, bookings: 12 },
-  { date: '07/01', revenue: 6100, bookings: 19 },
-  { date: '07/03', revenue: 4100, bookings: 13 },
-  { date: '07/05', revenue: 5800, bookings: 18 },
-  { date: '07/07', revenue: 7200, bookings: 22 },
-  { date: '07/09', revenue: 4500, bookings: 15 },
-  { date: '07/11', revenue: 6900, bookings: 21 },
-  { date: '07/13', revenue: 7800, bookings: 24 },
-  { date: '07/15', revenue: 5400, bookings: 17 },
-  { date: '07/17', revenue: 6300, bookings: 20 },
-  { date: '07/19', revenue: 7400, bookings: 23 },
-  { date: '07/21', revenue: 8100, bookings: 25 },
-  { date: '07/23', revenue: 6500, bookings: 20 },
-  { date: '07/25', revenue: 5200, bookings: 16 },
-];
-
-
-
-const HOURLY_BOOKINGS = [
-  { hour: '08:00', bookings: 3 },
-  { hour: '09:00', bookings: 7 },
-  { hour: '10:00', bookings: 13 },
-  { hour: '11:00', bookings: 17 },
-  { hour: '12:00', bookings: 15 },
-  { hour: '13:00', bookings: 11 },
-  { hour: '14:00', bookings: 18 },
-  { hour: '15:00', bookings: 22 },
-  { hour: '16:00', bookings: 16 },
-  { hour: '17:00', bookings: 12 },
-  { hour: '18:00', bookings: 8 },
-  { hour: '19:00', bookings: 5 },
-  { hour: '20:00', bookings: 3 },
-];
-
-const TOP_SERVICES = [
-  { id: '1', name: 'Swedish Massage', category: 'Massage', bookings: 142, revenue: 39760, growth: 12.4 },
-  { id: '2', name: 'Hot Stone Therapy', category: 'Massage', bookings: 98, revenue: 41160, growth: 8.7 },
-  { id: '3', name: 'Hydrating Facial', category: 'Facial', bookings: 124, revenue: 27280, growth: -3.2 },
-  { id: '4', name: 'Anti-Aging Facial', category: 'Facial', bookings: 87, revenue: 30450, growth: 15.1 },
-  { id: '5', name: 'Body Scrub & Wrap', category: 'Body', bookings: 76, revenue: 24320, growth: 5.9 },
-  { id: '6', name: 'Moroccan Bath', category: 'Body', bookings: 93, revenue: 23250, growth: 2.1 },
-  { id: '7', name: 'Manicure & Pedicure', category: 'Nails', bookings: 118, revenue: 21240, growth: -1.8 },
-];
-
-const TOP_CUSTOMERS = [
-  { id: '1', name: 'Dalal Al-Rasheed', branch: 'Al Nakheel — Jeddah', visits: 24, totalSpend: 9840, lastVisit: '2026-07-27' },
-  { id: '2', name: 'Layla Al-Saud', branch: 'Al Olaya — Riyadh', visits: 19, totalSpend: 7420, lastVisit: '2026-07-27' },
-  { id: '3', name: 'Mariam Al-Dosari', branch: 'Al Olaya — Riyadh', visits: 17, totalSpend: 6380, lastVisit: '2026-07-27' },
-  { id: '4', name: 'Noura Al-Qahtani', branch: 'Al Olaya — Riyadh', visits: 15, totalSpend: 5700, lastVisit: '2026-07-25' },
-  { id: '5', name: 'Shahad Al-Otaibi', branch: 'Corniche — Jeddah', visits: 14, totalSpend: 5180, lastVisit: '2026-07-20' },
-  { id: '6', name: 'Hessa Al-Shehri', branch: 'King Fahd Road — Riyadh', visits: 12, totalSpend: 4320, lastVisit: '2026-07-27' },
-  { id: '7', name: 'Wafa Al-Harbi', branch: 'King Fahd Road — Riyadh', visits: 11, totalSpend: 3960, lastVisit: '2026-07-24' },
-];
+import {
+  REVENUE_TREND,
+  HOURLY_BOOKINGS,
+  TOP_SERVICES,
+  TOP_CUSTOMERS,
+} from '@/data/mockData';
 
 type Period = 'daily' | 'weekly' | 'monthly';
 

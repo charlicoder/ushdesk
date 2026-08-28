@@ -12,7 +12,18 @@ const en = {
   navCustomers: 'Customers',
   navBranches: 'Branches',
   navServices: 'Services',
+  navEmployees: 'Employees',
+  navProducts: 'Products',
   navSettings: 'Settings',
+
+  // employee filters
+  filterByRole: 'All Roles',
+  filterByDepartment: 'All Departments',
+  homeService: 'Home Service',
+  branchService: 'Branch Service',
+  allServiceTypes: 'All Types',
+  gridView: 'Grid',
+  listView: 'List',
 
   // common
   search: 'Search…',
@@ -183,7 +194,17 @@ const ar = {
   navCustomers: 'العملاء',
   navBranches: 'الفروع',
   navServices: 'الخدمات',
+  navEmployees: 'الموظفون',
+  navProducts: 'المنتجات',
   navSettings: 'الإعدادات',
+
+  filterByRole: 'كل الأدوار',
+  filterByDepartment: 'كل الأقسام',
+  homeService: 'خدمة منزلية',
+  branchService: 'خدمة الفرع',
+  allServiceTypes: 'كل الأنواع',
+  gridView: 'شبكة',
+  listView: 'قائمة',
 
   search: 'بحث…',
   today: 'اليوم',
