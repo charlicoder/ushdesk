@@ -206,6 +206,17 @@ function buildSchedule(): Record<string, Record<string, Slot>> {
 
 const SCHEDULE = buildSchedule();
 
+// ── Alternating column background tints for the schedule grid ──────────────────
+const COL_TINTS = [
+  'bg-rose-50/60      dark:bg-rose-950/20',
+  'bg-violet-50/60    dark:bg-violet-950/20',
+  'bg-sky-50/60       dark:bg-sky-950/20',
+  'bg-emerald-50/60   dark:bg-emerald-950/20',
+  'bg-amber-50/60     dark:bg-amber-950/20',
+  'bg-pink-50/60      dark:bg-pink-950/20',
+];
+
+
 // ── Slot cell component with dark borders and subtle shadow ────────────────────
 function SlotCell({ slot }: { slot: Slot }) {
   if (slot.status === 'unavailable') {
@@ -366,6 +377,8 @@ export default function TherapistSchedulePage() {
             sub: 'booked slots',
             icon: <CheckCircle2 className="h-5 w-5" />,
             grad: 'from-primary to-accent',
+            bg: 'bg-rose-50 dark:bg-rose-950/30',
+            border: 'border-rose-200/80 dark:border-rose-800/40',
           },
           {
             label: 'Active Therapists',
@@ -373,6 +386,8 @@ export default function TherapistSchedulePage() {
             sub: 'on duty today',
             icon: <AlertCircle className="h-5 w-5" />,
             grad: 'from-violet-500 to-purple-600',
+            bg: 'bg-violet-50 dark:bg-violet-950/30',
+            border: 'border-violet-200/80 dark:border-violet-800/40',
           },
           {
             label: 'Total Bookings',
@@ -380,6 +395,8 @@ export default function TherapistSchedulePage() {
             sub: 'slots scheduled',
             icon: <CalendarDays className="h-5 w-5" />,
             grad: 'from-rose-500 to-pink-600',
+            bg: 'bg-pink-50 dark:bg-pink-950/30',
+            border: 'border-pink-200/80 dark:border-pink-800/40',
           },
           {
             label: 'Projected Revenue',
@@ -387,10 +404,16 @@ export default function TherapistSchedulePage() {
             sub: 'estimated earnings',
             icon: <Store className="h-5 w-5" />,
             grad: 'from-amber-500 to-orange-600',
+            bg: 'bg-amber-50 dark:bg-amber-950/30',
+            border: 'border-amber-200/80 dark:border-amber-800/40',
           },
         ].map((k) => (
           <div key={k.label}
-            className="relative overflow-hidden rounded-2xl border border-border/80 bg-card p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5">
+            className={cn(
+              'relative overflow-hidden rounded-2xl border p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5',
+              k.bg,
+              k.border,
+            )}>
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{k.label}</p>
@@ -436,8 +459,11 @@ export default function TherapistSchedulePage() {
               <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
                 Time
               </div>
-              {filteredTherapists.map((t) => (
-                <div key={t.id} className="flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2">
+              {filteredTherapists.map((t, tIdx) => (
+                <div key={t.id} className={cn(
+                  'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
+                  COL_TINTS[tIdx % COL_TINTS.length],
+                )}>
                   {/* Circular Avatar with outer shadow halo */}
                   <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
                     <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
@@ -467,7 +493,7 @@ export default function TherapistSchedulePage() {
 
             {/* Time rows */}
             {TIME_SLOTS.map((time) => (
-              <div key={time} className="flex border-t border-border/30 hover:bg-muted/10 transition">
+              <div key={time} className="flex border-t border-border/30">
                 {/* Time label */}
                 <div className="w-28 shrink-0 flex flex-col justify-center pl-4 py-2.5 border-r border-border/30 bg-muted/10">
                   <p className="text-xs font-bold text-foreground">{time}</p>
@@ -475,10 +501,10 @@ export default function TherapistSchedulePage() {
                 </div>
 
                 {/* Cells per therapist */}
-                {filteredTherapists.map((t) => {
+                {filteredTherapists.map((t, tIdx) => {
                   const slot = SCHEDULE[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
                   return (
-                    <div key={t.id} className="flex-1 p-2 border-l border-border/30">
+                    <div key={t.id} className={cn('flex-1 p-2 border-l border-border/30 transition-colors', COL_TINTS[tIdx % COL_TINTS.length])}>
                       <SlotCell slot={slot} />
                     </div>
                   );
