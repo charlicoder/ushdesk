@@ -1,45 +1,64 @@
 'use client';
-
+// v2 – live API, calendar picker, dynamic branch/date
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, User, Scissors,
-  Timer, Hash, MapPin,
+  Timer, Hash, MapPin, ChevronLeft, ChevronRight, Loader2,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
+import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
 
-// ── Demo data ──────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 
-interface Therapist {
+interface ApiTherapist {
   id: string;
   name: string;
-  date: string;
-  initials: string;
-  image: string;
-  color: string;
+  photo_url: string | null;
+  branch_id: string;
+  branch_name: string;
+  available_for_home_service: boolean;
+  status: string;
 }
 
-const THERAPISTS: Therapist[] = [
-  { id: '1',  name: 'Zeina',  date: '28/08', initials: 'ZE', image: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80', color: 'from-rose-400 to-pink-500' },
-  { id: '2',  name: 'Mona',   date: '28/08', initials: 'MO', image: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=150&auto=format&fit=crop&q=80', color: 'from-violet-400 to-purple-500' },
-  { id: '3',  name: 'Lara',   date: '28/08', initials: 'LA', image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80', color: 'from-sky-400 to-blue-500' },
-  { id: '4',  name: 'Fatima', date: '28/08', initials: 'FA', image: 'https://images.unsplash.com/photo-1567532939604-b6b5b0db2604?w=150&auto=format&fit=crop&q=80', color: 'from-emerald-400 to-teal-500' },
-  { id: '5',  name: 'Noura',  date: '28/08', initials: 'NO', image: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80', color: 'from-amber-400 to-orange-500' },
-  { id: '6',  name: 'Layla',  date: '28/08', initials: 'LA', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80', color: 'from-pink-400 to-rose-500' },
-  { id: '7',  name: 'Reem',   date: '28/08', initials: 'RE', image: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=150&auto=format&fit=crop&q=80', color: 'from-cyan-400 to-blue-500' },
-  { id: '8',  name: 'Sara',   date: '28/08', initials: 'SA', image: 'https://images.unsplash.com/photo-1508214751196-bcfd4ca60f91?w=150&auto=format&fit=crop&q=80', color: 'from-indigo-400 to-purple-500' },
-  { id: '9',  name: 'Dania',  date: '28/08', initials: 'DA', image: 'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=150&auto=format&fit=crop&q=80', color: 'from-teal-400 to-emerald-500' },
-  { id: '10', name: 'Huda',   date: '28/08', initials: 'HU', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80', color: 'from-fuchsia-400 to-pink-500' },
-];
+interface ApiInterval {
+  start: string;
+  end: string;
+}
 
-const TIME_SLOTS = [
-  '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
-  '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM',
-  '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM',
-  '06:00 PM', '06:30 PM', '07:00 PM', '07:30 PM', '08:00 PM', '08:30 PM',
-  '09:00 PM', '09:30 PM', '10:00 PM', '10:30 PM', '11:00 PM', '11:30 PM',
-];
+interface ApiAvailability {
+  therapist_id: string;
+  intervals: ApiInterval[];
+}
+
+interface ApiBooking {
+  therapist_id: string;
+  client_name?: string;
+  service_name?: string;
+  start: string;
+  end: string;
+  status?: string;
+  reference?: string;
+}
+
+interface ApiGrid {
+  start: string;
+  end: string;
+  slot_duration_minutes: 30 | 60;
+}
+
+interface ApiScheduleRecord {
+  date: string;
+  timezone: string;
+  branch: { id: string; name: string };
+  grid: ApiGrid;
+  therapists: ApiTherapist[];
+  availability: ApiAvailability[];
+  bookings: ApiBooking[];
+}
+
+// ── Slot model ─────────────────────────────────────────────────────────────────
 
 type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress';
 
@@ -50,71 +69,18 @@ interface Slot {
   start?: string;
   end?: string;
   duration?: string;
+  reference?: string;
 }
 
-const CLIENTS = [
-  'Maha Alajmi', 'Sara Al-Rashid', 'Dana Hassan', 'Nadia Al-Mutairi',
-  'Hessa Al-Sabah', 'Rima Al-Salem', 'Haya Al-Ajmi', 'Mariam Al-Kandari',
-  'Lulu Fahad', 'Fatma Al-Ali', 'Noor Al-Otaibi', 'Aisha Al-Harbi',
-  'Dalal Al-Ghanim', 'Zainab Al-Bader', 'Shaikha Al-Duaij', 'Reem Al-Fadhli',
-];
+// ── Therapist model used in UI ─────────────────────────────────────────────────
 
-const SERVICES = [
-  'Stress Release Massage', '24K Gold Facial', 'Hot Stone Massage',
-  'Vichy Rain Shower', 'Aromatherapy Bliss', 'Deep Tissue Recovery',
-  'Rejuvenating Facial', 'Swedish Relax Massage', 'Hydrotherapy Lounge',
-  'Foot Reflexology', 'Body Polish & Wrap', 'Organic Herbal Detox',
-];
-
-function buildSchedule(): Record<string, Record<string, Slot>> {
-  const sched: Record<string, Record<string, Slot>> = {};
-  THERAPISTS.forEach((therapist, tIdx) => {
-    sched[therapist.id] = {};
-    TIME_SLOTS.forEach((time, slotIdx) => {
-      const seed = (tIdx * 7 + slotIdx * 13) % 100;
-      if (slotIdx < 2 && tIdx % 3 !== 0) {
-        sched[therapist.id][time] = { status: 'unavailable' };
-      } else if (slotIdx >= 28 && (tIdx + slotIdx) % 2 === 0) {
-        sched[therapist.id][time] = { status: 'unavailable' };
-      } else if (seed < 18) {
-        sched[therapist.id][time] = { status: 'unavailable' };
-      } else if (seed < 48) {
-        sched[therapist.id][time] = { status: 'available' };
-      } else if (seed < 68) {
-        const client  = CLIENTS[(tIdx + slotIdx) % CLIENTS.length];
-        const service = SERVICES[(tIdx * 2 + slotIdx) % SERVICES.length];
-        const [timePart] = time.split(' ');
-        const [hr, min]  = timePart.split(':');
-        const endMin = min === '00' ? '30' : '00';
-        const endHr  = min === '30' ? (parseInt(hr) % 12 + 1).toString().padStart(2, '0') : hr;
-        sched[therapist.id][time] = { status: 'booking', client, service, start: `${hr}:${min}`, end: `${endHr}:${endMin}`, duration: '30m' };
-      } else if (seed < 88) {
-        const client  = CLIENTS[(tIdx * 3 + slotIdx) % CLIENTS.length];
-        const service = SERVICES[(tIdx + slotIdx * 3) % SERVICES.length];
-        const [timePart] = time.split(' ');
-        const [hr, min]  = timePart.split(':');
-        sched[therapist.id][time] = {
-          status: 'scheduled', client, service, start: `${hr}:${min}`,
-          end: min === '00' ? `${hr}:50` : `${(parseInt(hr) % 12 + 1).toString().padStart(2, '0')}:20`,
-          duration: '50m',
-        };
-      } else {
-        const client  = CLIENTS[(tIdx * 5 + slotIdx) % CLIENTS.length];
-        const service = SERVICES[(tIdx * 4 + slotIdx) % SERVICES.length];
-        const [timePart] = time.split(' ');
-        const [hr, min]  = timePart.split(':');
-        sched[therapist.id][time] = {
-          status: 'in_progress', client, service, start: `${hr}:${min}`,
-          end: `${(parseInt(hr) % 12 + 1).toString().padStart(2, '0')}:${min}`,
-          duration: '60m',
-        };
-      }
-    });
-  });
-  return sched;
+interface Therapist {
+  id: string;
+  name: string;
+  initials: string;
+  photoUrl: string | null;
+  color: string;
 }
-
-const SCHEDULE = buildSchedule();
 
 // ── Column tints ───────────────────────────────────────────────────────────────
 const COL_TINTS = [
@@ -125,6 +91,25 @@ const COL_TINTS = [
   'bg-amber-50/60   dark:bg-amber-950/20',
   'bg-pink-50/60    dark:bg-pink-950/20',
 ];
+
+const THERAPIST_COLORS = [
+  'from-rose-400 to-pink-500',
+  'from-violet-400 to-purple-500',
+  'from-sky-400 to-blue-500',
+  'from-emerald-400 to-teal-500',
+  'from-amber-400 to-orange-500',
+  'from-pink-400 to-rose-500',
+  'from-cyan-400 to-blue-500',
+  'from-indigo-400 to-purple-500',
+  'from-teal-400 to-emerald-500',
+  'from-fuchsia-400 to-pink-500',
+];
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 // ── Shared status config ───────────────────────────────────────────────────────
 const STATUS_CFG = {
@@ -187,32 +172,27 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const refNo = `USH-${therapist.id.padStart(3, '0')}-${String((slot.client ?? '').length).padStart(4, '0')}`;
+  const refNo = slot.reference ?? `USH-${therapist.id.slice(0, 6).toUpperCase()}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Panel */}
       <div className="relative z-10 w-full max-w-md rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
-
-        {/* Coloured accent stripe */}
         <div className={cn('h-1.5 w-full', {
           'bg-emerald-400': slot.status === 'in_progress',
           'bg-blue-400':    slot.status === 'booking',
           'bg-violet-400':  slot.status === 'scheduled',
         })} />
-
-        {/* Header */}
         <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
           <div className="flex items-center gap-3">
             <div className="relative shrink-0">
               <div className={cn('absolute inset-0 rounded-full blur-md opacity-40 bg-gradient-to-br', therapist.color)} />
               <div className="relative h-12 w-12 rounded-full overflow-hidden ring-2 ring-background shadow-md">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={therapist.image} alt={therapist.name} className="h-full w-full object-cover"
-                  onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                {therapist.photoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={therapist.photoUrl} alt={therapist.name} className="h-full w-full object-cover"
+                    onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                )}
                 <div className={cn('absolute inset-0 grid place-items-center text-white text-sm font-bold bg-gradient-to-br -z-10', therapist.color)}>
                   {therapist.initials}
                 </div>
@@ -233,11 +213,7 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
             </button>
           </div>
         </div>
-
-        {/* Body */}
         <div className="px-6 py-5 space-y-3">
-
-          {/* Client */}
           <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3">
             <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cfg.pillCls)}>
               <User className="h-4 w-4" />
@@ -247,8 +223,6 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
               <p className="text-sm font-bold">{slot.client ?? '—'}</p>
             </div>
           </div>
-
-          {/* Service */}
           <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3">
             <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cfg.pillCls)}>
               <Scissors className="h-4 w-4" />
@@ -258,8 +232,6 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
               <p className="text-sm font-bold">{slot.service ?? '—'}</p>
             </div>
           </div>
-
-          {/* Time + Duration */}
           <div className="grid grid-cols-2 gap-3">
             <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3">
               <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cfg.pillCls)}>
@@ -282,8 +254,6 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
               </div>
             </div>
           </div>
-
-          {/* Branch + Date */}
           <div className="grid grid-cols-2 gap-3">
             <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3 min-w-0">
               <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cfg.pillCls)}>
@@ -304,8 +274,6 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
               </div>
             </div>
           </div>
-
-          {/* Reference */}
           <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3">
             <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cfg.pillCls)}>
               <Hash className="h-4 w-4" />
@@ -316,8 +284,6 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
             </div>
           </div>
         </div>
-
-        {/* Footer */}
         <div className="flex gap-2 border-t border-border/40 px-6 py-4">
           <button onClick={onClose}
             className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
@@ -389,16 +355,212 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   );
 }
 
+// ── Mini Calendar Picker ───────────────────────────────────────────────────────
+function CalendarPicker({ value, onChange, onClose }: {
+  value: string;
+  onChange: (d: string) => void;
+  onClose: () => void;
+}) {
+  const todayObj = new Date();
+  const initial  = value ? new Date(value + 'T00:00:00') : todayObj;
+  const [viewYear,  setViewYear]  = useState(initial.getFullYear());
+  const [viewMonth, setViewMonth] = useState(initial.getMonth());
+
+  const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const monthName   = new Date(viewYear, viewMonth, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+  };
+
+  const selectedDate = value ? new Date(value + 'T00:00:00') : null;
+
+  const handleDay = (d: number) => {
+    const mm = String(viewMonth + 1).padStart(2, '0');
+    const dd = String(d).padStart(2, '0');
+    onChange(`${viewYear}-${mm}-${dd}`);
+    onClose();
+  };
+
+  const blanks = Array.from({ length: firstDay });
+  const days   = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+  return (
+    <div className="absolute top-full left-0 mt-2 z-50 w-72 rounded-2xl border border-border bg-card shadow-2xl p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <button onClick={prevMonth} className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted transition">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <p className="text-sm font-bold">{monthName}</p>
+        <button onClick={nextMonth} className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted transition">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="mb-1 grid grid-cols-7 text-center">
+        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+          <span key={d} className="text-[10px] font-bold text-muted-foreground py-1">{d}</span>
+        ))}
+      </div>
+      <div className="grid grid-cols-7">
+        {blanks.map((_, i) => <span key={`b${i}`} />)}
+        {days.map(d => {
+          const isSel = selectedDate &&
+            selectedDate.getFullYear() === viewYear &&
+            selectedDate.getMonth()    === viewMonth &&
+            selectedDate.getDate()     === d;
+          const isToday = todayObj.getFullYear() === viewYear &&
+            todayObj.getMonth()    === viewMonth &&
+            todayObj.getDate()     === d;
+          return (
+            <button
+              key={d}
+              onClick={() => handleDay(d)}
+              className={cn(
+                'h-8 w-8 mx-auto rounded-full text-xs font-semibold transition',
+                isSel    ? 'bg-primary text-white' :
+                isToday  ? 'border border-primary text-primary' :
+                           'hover:bg-muted text-foreground',
+              )}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Time slot generation from grid ────────────────────────────────────────────
+function generateTimeSlots(grid: ApiGrid): string[] {
+  const slots: string[] = [];
+  const [startH, startM] = grid.start.split(':').map(Number);
+  const [endH,   endM]   = grid.end.split(':').map(Number);
+  const startMin = startH * 60 + startM;
+  const endMin   = endH   * 60 + endM;
+
+  for (let m = startMin; m < endMin; m += grid.slot_duration_minutes) {
+    const h    = Math.floor(m / 60);
+    const min  = m % 60;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const hd   = h % 12 === 0 ? 12 : h % 12;
+    slots.push(`${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`);
+  }
+  return slots;
+}
+
+// ── Build schedule map from API data ──────────────────────────────────────────
+function buildScheduleFromApi(
+  therapists: ApiTherapist[],
+  availability: ApiAvailability[],
+  bookings: ApiBooking[],
+  timeSlots: string[],
+  slotDurationMinutes: number,
+): Record<string, Record<string, Slot>> {
+  const sched: Record<string, Record<string, Slot>> = {};
+
+  const slotToMinutes = (label: string): number => {
+    const [timePart, period] = label.split(' ');
+    const [hStr, mStr] = timePart.split(':');
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (period === 'AM' && h === 12) h = 0;
+    if (period === 'PM' && h !== 12) h += 12;
+    return h * 60 + m;
+  };
+
+  const availMap: Record<string, { startMin: number; endMin: number }[]> = {};
+  for (const av of availability) {
+    availMap[av.therapist_id] = av.intervals.map(iv => {
+      const s = new Date(iv.start);
+      const e = new Date(iv.end);
+      return { startMin: s.getHours() * 60 + s.getMinutes(), endMin: e.getHours() * 60 + e.getMinutes() };
+    });
+  }
+
+  type BkEntry = { startMin: number; endMin: number; client?: string; service?: string; startLabel: string; endLabel: string; duration: string; reference?: string; status: string };
+  const bookingMap: Record<string, BkEntry[]> = {};
+  for (const bk of bookings) {
+    if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
+    const s = new Date(bk.start);
+    const e = new Date(bk.end);
+    const sm = s.getHours() * 60 + s.getMinutes();
+    const em = e.getHours() * 60 + e.getMinutes();
+    const fmt = (h: number, m: number) => {
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hd   = h % 12 === 0 ? 12 : h % 12;
+      return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+    bookingMap[bk.therapist_id].push({
+      startMin:   sm,
+      endMin:     em,
+      client:     bk.client_name,
+      service:    bk.service_name,
+      startLabel: fmt(s.getHours(), s.getMinutes()),
+      endLabel:   fmt(e.getHours(), e.getMinutes()),
+      duration:   `${em - sm}m`,
+      reference:  bk.reference,
+      status:     bk.status ?? 'scheduled',
+    });
+  }
+
+  for (const therapist of therapists) {
+    sched[therapist.id] = {};
+    const avIntervals = availMap[therapist.id]  ?? [];
+    const bkSlots     = bookingMap[therapist.id] ?? [];
+
+    for (const slotLabel of timeSlots) {
+      const slotStart = slotToMinutes(slotLabel);
+      const slotEnd   = slotStart + slotDurationMinutes;
+
+      const bk = bkSlots.find(b => b.startMin < slotEnd && b.endMin > slotStart);
+      if (bk) {
+        let st: SlotStatus = 'scheduled';
+        if (bk.status === 'in_progress') st = 'in_progress';
+        else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
+        sched[therapist.id][slotLabel] = {
+          status: st, client: bk.client, service: bk.service,
+          start: bk.startLabel, end: bk.endLabel, duration: bk.duration, reference: bk.reference,
+        };
+        continue;
+      }
+
+      const isAvail = avIntervals.some(av => av.startMin <= slotStart && av.endMin >= slotEnd);
+      sched[therapist.id][slotLabel] = { status: isAvail ? 'available' : 'unavailable' };
+    }
+  }
+  return sched;
+}
+
+function formatDateDisplay(isoDate: string): string {
+  const d = new Date(isoDate + 'T00:00:00');
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
-const BRANCHES = ['Al Khiran Coastal Retreat', 'Salmiya Branch', 'Kuwait City Spa'];
-
 export default function TherapistSchedulePage() {
-  const [branch]            = useState(BRANCHES[0]);
-  const [date]              = useState('28 Aug 2026');
-  const [search, setSearch] = useState('');
-  const [modal, setModal]   = useState<ModalPayload | null>(null);
+  const branches = useAppSelector((s) => s.data.branches);
 
-  // Scroll sync refs
+  const today    = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+  const [selectedDate,     setSelectedDate]      = useState<string>(todayStr);
+  const [search,           setSearch]            = useState('');
+  const [modal,            setModal]             = useState<ModalPayload | null>(null);
+  const [showBranchDrop,   setShowBranchDrop]    = useState(false);
+  const [showCalendar,     setShowCalendar]      = useState(false);
+
+  const [scheduleData, setScheduleData] = useState<ApiScheduleRecord | null>(null);
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+
   const headerScrollRef = useRef<HTMLDivElement>(null);
   const bodyScrollRef   = useRef<HTMLDivElement>(null);
   const onBodyScroll = useCallback(() => {
@@ -407,19 +569,83 @@ export default function TherapistSchedulePage() {
     }
   }, []);
 
-  // KPI derived values
-  const allSlots    = THERAPISTS.flatMap((t) => Object.values(SCHEDULE[t.id] ?? {}));
-  const bookedCount = allSlots.filter((s) => s.status !== 'unavailable' && s.status !== 'available').length;
-  const availCount  = allSlots.filter((s) => s.status === 'available').length;
-  const occupancy   = Math.round((bookedCount / (bookedCount + availCount)) * 100) || 0;
+  // Initialise branch once branches load
+  useEffect(() => {
+    if (!selectedBranchId && branches.length > 0) {
+      setSelectedBranchId(branches[0].id);
+    }
+  }, [branches, selectedBranchId]);
+
+  // Read auth token from Redux store (set on login)
+  const token = useAppSelector((s) => s.auth.token);
+
+  // Fetch schedule when branch or date changes
+  useEffect(() => {
+    if (!selectedBranchId) return;
+    const controller = new AbortController();
+
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const url = `/api/v1/therapists/schedule/?branch_id=${selectedBranchId}&date=${selectedDate}`;
+        const res = await fetch(url, {
+          signal:  controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept':       'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error((body as Record<string, string>).detail ?? `Error ${res.status}`);
+        }
+        const data: ApiScheduleRecord[] = await res.json();
+        setScheduleData(data?.[0] ?? null);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') return;
+        setError(err instanceof Error ? err.message : 'Failed to load schedule');
+        setScheduleData(null);
+      } finally {
+        setLoading(false);
+      }
+    })();
+
+    return () => controller.abort();
+  }, [selectedBranchId, selectedDate, token]);
+
+  // Derived data
+  const grid      = scheduleData?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 as const };
+  const timeSlots = generateTimeSlots(grid);
+  const therapists: Therapist[] = (scheduleData?.therapists ?? []).map((t, i) => ({
+    id:       t.id,
+    name:     t.name,
+    initials: getInitials(t.name),
+    photoUrl: t.photo_url,
+    color:    THERAPIST_COLORS[i % THERAPIST_COLORS.length],
+  }));
+
+  const schedule = scheduleData
+    ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes)
+    : {};
 
   const filteredTherapists = search
-    ? THERAPISTS.filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
-    : THERAPISTS;
+    ? therapists.filter(t => t.name.toLowerCase().includes(search.toLowerCase()))
+    : therapists;
+
+  const allSlots    = therapists.flatMap(t => Object.values(schedule[t.id] ?? {}));
+  const bookedCount = allSlots.filter(s => s.status !== 'unavailable' && s.status !== 'available').length;
+  const availCount  = allSlots.filter(s => s.status === 'available').length;
+  const occupancy   = Math.round((bookedCount / (bookedCount + availCount)) * 100) || 0;
+
+  const selectedBranch = branches.find(b => b.id === selectedBranchId);
+  const branchName     = scheduleData?.branch.name ?? selectedBranch?.name ?? 'Select Branch';
+  const dateDisplay    = formatDateDisplay(selectedDate);
 
   const openModal = useCallback((slot: Slot, therapist: Therapist, timeSlot: string) => {
-    setModal({ slot, therapist, timeSlot, branch, date });
-  }, [branch, date]);
+    setModal({ slot, therapist, timeSlot, branch: branchName, date: dateDisplay });
+  }, [branchName, dateDisplay]);
 
   return (
     <DashboardShell>
@@ -428,25 +654,72 @@ export default function TherapistSchedulePage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Therapist Schedule</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Live session board ·{' '}
-          <span className="font-semibold text-foreground">{date}</span>
+          <span className="font-semibold text-foreground">{dateDisplay}</span>
         </p>
       </div>
 
       {/* ── Top controls ── */}
       <div className="mb-6 flex flex-wrap items-center gap-3">
+
+        {/* Branch dropdown */}
         <div className="relative">
-          <button className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition">
+          <button
+            onClick={() => { setShowBranchDrop(d => !d); setShowCalendar(false); }}
+            className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
+          >
             <Store className="h-4 w-4 text-muted-foreground" />
-            {branch}
+            <span className="max-w-[180px] truncate">{branchName}</span>
             <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-1" />
           </button>
+          {showBranchDrop && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowBranchDrop(false)} />
+              <div className="absolute top-full left-0 mt-2 z-50 w-60 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
+                {branches.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-muted-foreground">No branches available</p>
+                ) : (
+                  branches.map(b => (
+                    <button
+                      key={b.id}
+                      onClick={() => { setSelectedBranchId(b.id); setShowBranchDrop(false); }}
+                      className={cn(
+                        'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
+                        b.id === selectedBranchId ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
+                      )}
+                    >
+                      {b.name}
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
         </div>
-        <button className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition">
-          <CalendarDays className="h-4 w-4 text-muted-foreground" />
-          {date}
-          <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-1" />
-        </button>
+
+        {/* Date picker */}
+        <div className="relative">
+          <button
+            onClick={() => { setShowCalendar(d => !d); setShowBranchDrop(false); }}
+            className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
+          >
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            {dateDisplay}
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-1" />
+          </button>
+          {showCalendar && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowCalendar(false)} />
+              <CalendarPicker
+                value={selectedDate}
+                onChange={d => setSelectedDate(d)}
+                onClose={() => setShowCalendar(false)}
+              />
+            </>
+          )}
+        </div>
+
         <div className="flex-1" />
+
         <div className="relative min-w-52">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
@@ -464,10 +737,10 @@ export default function TherapistSchedulePage() {
       {/* ── KPI Strip ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: 'Daily Occupancy',   value: `${occupancy}%`,          sub: 'booked slots',       icon: <CheckCircle2 className="h-5 w-5" />, grad: 'from-primary to-accent',       bg: 'bg-rose-50 dark:bg-rose-950/30',     border: 'border-rose-200/80 dark:border-rose-800/40' },
-          { label: 'Active Therapists', value: String(THERAPISTS.length), sub: 'on duty today',      icon: <AlertCircle className="h-5 w-5" />,  grad: 'from-violet-500 to-purple-600', bg: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-200/80 dark:border-violet-800/40' },
-          { label: 'Total Bookings',    value: String(bookedCount),       sub: 'slots scheduled',    icon: <CalendarDays className="h-5 w-5" />, grad: 'from-rose-500 to-pink-600',     bg: 'bg-pink-50 dark:bg-pink-950/30',     border: 'border-pink-200/80 dark:border-pink-800/40' },
-          { label: 'Projected Revenue', value: '1,420 KWD',               sub: 'estimated earnings', icon: <Store className="h-5 w-5" />,        grad: 'from-amber-500 to-orange-600',  bg: 'bg-amber-50 dark:bg-amber-950/30',   border: 'border-amber-200/80 dark:border-amber-800/40' },
+          { label: 'Daily Occupancy',   value: `${occupancy}%`,           sub: 'booked slots',      icon: <CheckCircle2 className="h-5 w-5" />, grad: 'from-primary to-accent',       bg: 'bg-rose-50 dark:bg-rose-950/30',     border: 'border-rose-200/80 dark:border-rose-800/40' },
+          { label: 'Active Therapists', value: String(therapists.length), sub: 'on duty today',     icon: <AlertCircle className="h-5 w-5" />,  grad: 'from-violet-500 to-purple-600', bg: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-200/80 dark:border-violet-800/40' },
+          { label: 'Total Bookings',    value: String(bookedCount),       sub: 'slots scheduled',   icon: <CalendarDays className="h-5 w-5" />, grad: 'from-rose-500 to-pink-600',     bg: 'bg-pink-50 dark:bg-pink-950/30',     border: 'border-pink-200/80 dark:border-pink-800/40' },
+          { label: 'Available Slots',   value: String(availCount),        sub: 'open for booking',  icon: <Store className="h-5 w-5" />,        grad: 'from-amber-500 to-orange-600',  bg: 'bg-amber-50 dark:bg-amber-950/30',   border: 'border-amber-200/80 dark:border-amber-800/40' },
         ].map((k) => (
           <div key={k.label}
             className={cn('relative overflow-hidden rounded-2xl border p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5', k.bg, k.border)}>
@@ -486,83 +759,113 @@ export default function TherapistSchedulePage() {
         ))}
       </div>
 
+      {/* ── Loading ── */}
+      {loading && (
+        <div className="flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card py-20">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+          <span className="text-sm font-semibold text-muted-foreground">Loading schedule…</span>
+        </div>
+      )}
+
+      {/* ── Error ── */}
+      {!loading && error && (
+        <div className="rounded-2xl border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
+          <AlertCircle className="mx-auto h-8 w-8 text-destructive mb-3" />
+          <p className="text-sm font-semibold text-destructive">{error}</p>
+        </div>
+      )}
+
       {/* ── Main schedule grid ── */}
-      {/* NO overflow-hidden — would trap position:sticky */}
-      <div className="rounded-2xl border border-border/80 bg-card shadow-sm">
+      {!loading && !error && (
+        <div className="rounded-2xl border border-border/80 bg-card shadow-sm">
 
-        {/* Legend */}
-        <div className="flex items-center justify-end gap-4 border-b border-border/40 px-4 py-3 bg-muted/20 rounded-t-2xl overflow-hidden">
-          {[
-            { label: 'In Progress', color: 'bg-emerald-500' },
-            { label: 'Booking',     color: 'bg-blue-500' },
-            { label: 'Scheduled',   color: 'bg-violet-500' },
-            { label: 'Available',   color: 'bg-card border border-dashed border-border' },
-            { label: 'Unavailable', color: 'bg-muted/80' },
-          ].map((l) => (
-            <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
-              <span className={cn('h-2.5 w-2.5 rounded-full', l.color)} />
-              {l.label}
-            </span>
-          ))}
-        </div>
+          {/* Legend */}
+          <div className="flex items-center justify-end gap-4 border-b border-border/40 px-4 py-3 bg-muted/20 rounded-t-2xl overflow-hidden">
+            {[
+              { label: 'In Progress', color: 'bg-emerald-500' },
+              { label: 'Booking',     color: 'bg-blue-500' },
+              { label: 'Scheduled',   color: 'bg-violet-500' },
+              { label: 'Available',   color: 'bg-card border border-dashed border-border' },
+              { label: 'Unavailable', color: 'bg-muted/80' },
+            ].map((l) => (
+              <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+                <span className={cn('h-2.5 w-2.5 rounded-full', l.color)} />
+                {l.label}
+              </span>
+            ))}
+          </div>
 
-        {/* ── Sticky header panel ── */}
-        <div
-          ref={headerScrollRef}
-          className="sticky top-16 z-20 overflow-x-hidden border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm"
-        >
-          <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }} className="flex">
-            <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
-              Time
+          {filteredTherapists.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <User className="h-10 w-10 text-muted-foreground/40 mb-3" />
+              <p className="text-sm font-semibold text-muted-foreground">
+                {search ? 'No therapists match your search' : 'No therapists scheduled for this date'}
+              </p>
             </div>
-            {filteredTherapists.map((t, tIdx) => (
-              <div key={t.id} className={cn(
-                'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
-                COL_TINTS[tIdx % COL_TINTS.length],
-              )}>
-                <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
-                  <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={t.image} alt={t.name} className="h-full w-full object-cover"
-                      onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                    <div className={cn('absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10', t.color)}>
-                      {t.initials}
-                    </div>
+          ) : (
+            <>
+              {/* ── Sticky header panel ── */}
+              <div
+                ref={headerScrollRef}
+                className="sticky top-16 z-20 overflow-x-hidden border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm"
+              >
+                <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }} className="flex">
+                  <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
+                    Time
                   </div>
-                </div>
-                <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
-                <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">{t.date}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* ── Scrollable body panel ── */}
-        <div ref={bodyScrollRef} onScroll={onBodyScroll} className="overflow-x-auto rounded-b-2xl">
-          <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }}>
-            {TIME_SLOTS.map((time) => (
-              <div key={time} className="flex border-t border-border/30">
-                <div className="w-28 shrink-0 flex flex-col justify-center pl-4 py-2.5 border-r border-border/30 bg-muted/10">
-                  <p className="text-xs font-bold text-foreground">{time}</p>
-                  <p className="text-[10px] font-medium text-muted-foreground mt-0.5">30 min slots</p>
-                </div>
-                {filteredTherapists.map((t, tIdx) => {
-                  const slot        = SCHEDULE[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
-                  const isClickable = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
-                  return (
-                    <div key={t.id} className={cn('flex-1 p-2 border-l border-border/30 transition-colors', COL_TINTS[tIdx % COL_TINTS.length])}>
-                      <SlotCell
-                        slot={slot}
-                        onClick={isClickable ? () => openModal(slot, t, time) : undefined}
-                      />
+                  {filteredTherapists.map((t, tIdx) => (
+                    <div key={t.id} className={cn(
+                      'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
+                      COL_TINTS[tIdx % COL_TINTS.length],
+                    )}>
+                      <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
+                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
+                          {t.photoUrl && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={t.photoUrl} alt={t.name} className="h-full w-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                          )}
+                          <div className={cn('absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10', t.color)}>
+                            {t.initials}
+                          </div>
+                        </div>
+                      </div>
+                      <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
+                      <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">{dateDisplay}</p>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
+
+              {/* ── Scrollable body panel ── */}
+              <div ref={bodyScrollRef} onScroll={onBodyScroll} className="overflow-x-auto rounded-b-2xl">
+                <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }}>
+                  {timeSlots.map((time) => (
+                    <div key={time} className="flex border-t border-border/30">
+                      <div className="w-28 shrink-0 flex flex-col justify-center pl-4 py-2.5 border-r border-border/30 bg-muted/10">
+                        <p className="text-xs font-bold text-foreground">{time}</p>
+                        <p className="text-[10px] font-medium text-muted-foreground mt-0.5">{grid.slot_duration_minutes} min slots</p>
+                      </div>
+                      {filteredTherapists.map((t, tIdx) => {
+                        const slot        = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
+                        const isClickable = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
+                        return (
+                          <div key={t.id} className={cn('flex-1 p-2 border-l border-border/30 transition-colors', COL_TINTS[tIdx % COL_TINTS.length])}>
+                            <SlotCell
+                              slot={slot}
+                              onClick={isClickable ? () => openModal(slot, t, time) : undefined}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </div>
-      </div>
+      )}
 
       {/* ── Detail Modal ── */}
       {modal && <SlotDetailModal payload={modal} onClose={() => setModal(null)} />}
