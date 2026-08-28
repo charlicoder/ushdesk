@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
   CheckCircle2, Clock, AlertCircle,
@@ -310,6 +310,16 @@ export default function TherapistSchedulePage() {
   const [date]     = useState('28 Aug 2026');
   const [search, setSearch]   = useState('');
 
+  // Refs for syncing horizontal scroll between the sticky header and the body
+  const headerScrollRef = useRef<HTMLDivElement>(null);
+  const bodyScrollRef   = useRef<HTMLDivElement>(null);
+
+  const onBodyScroll = useCallback(() => {
+    if (headerScrollRef.current && bodyScrollRef.current) {
+      headerScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft;
+    }
+  }, []);
+
   // Summary KPIs derived from demo data
   const allSlots    = THERAPISTS.flatMap((t) => Object.values(SCHEDULE[t.id] ?? {}));
   const bookedCount = allSlots.filter((s) => s.status !== 'unavailable' && s.status !== 'available').length;
@@ -431,10 +441,11 @@ export default function TherapistSchedulePage() {
       </div>
 
       {/* ── Main schedule grid ── */}
-      <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
+      {/* NOTE: NO overflow-hidden here — it would trap position:sticky inside */}
+      <div className="rounded-2xl border border-border/80 bg-card shadow-sm">
 
-        {/* Legend */}
-        <div className="flex items-center justify-end gap-4 border-b border-border/40 px-4 py-3 bg-muted/20">
+        {/* Legend — rounded-t-2xl clips the top corners (overflow-hidden removed from outer card) */}
+        <div className="flex items-center justify-end gap-4 border-b border-border/40 px-4 py-3 bg-muted/20 rounded-t-2xl overflow-hidden">
           {[
             { label: 'In Progress', color: 'bg-emerald-500' },
             { label: 'Booking',     color: 'bg-blue-500' },
@@ -449,48 +460,65 @@ export default function TherapistSchedulePage() {
           ))}
         </div>
 
-        {/* Scrollable grid */}
-        <div className="overflow-x-auto">
-          <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }}>
+        {/* ─────────────────────────────────────────────────────────────────────
+          SCHEDULE GRID
+          The header and body are TWO separate overflow-x-auto containers whose
+          scroll positions are kept in sync via JS refs.  This is the only
+          reliable way to have:
+            • a sticky header that pins below the topbar (position:sticky
+              is broken when the parent has overflow-x:auto)
+            • AND horizontal scroll that stays in sync with the rows
+        ──────────────────────────────────────────────────────────────────────── */}
 
-            {/* Therapist header row */}
-            <div className="flex border-b border-border/40 bg-muted/30">
-              {/* Time column spacer */}
-              <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
-                Time
-              </div>
-              {filteredTherapists.map((t, tIdx) => (
-                <div key={t.id} className={cn(
-                  'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
-                  COL_TINTS[tIdx % COL_TINTS.length],
-                )}>
-                  {/* Circular Avatar with outer shadow halo */}
-                  <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
-                    <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={t.image}
-                        alt={t.name}
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          // Hide broken image and let background show
-                          e.currentTarget.style.display = 'none';
-                        }}
-                      />
-                      <div className={cn(
-                        'absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10',
-                        t.color,
-                      )}>
-                        {t.initials}
-                      </div>
+        {/* ── Sticky therapist header panel ── */}
+        {/* overflow-x-hidden hides the scrollbar; scrollLeft is driven by JS */}
+        <div
+          ref={headerScrollRef}
+          className="sticky top-16 z-20 overflow-x-hidden border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm"
+        >
+          <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }}
+               className="flex">
+            {/* Time column spacer */}
+            <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
+              Time
+            </div>
+            {filteredTherapists.map((t, tIdx) => (
+              <div key={t.id} className={cn(
+                'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
+                COL_TINTS[tIdx % COL_TINTS.length],
+              )}>
+                {/* Avatar */}
+                <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
+                  <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={t.image}
+                      alt={t.name}
+                      className="h-full w-full object-cover"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                    />
+                    <div className={cn(
+                      'absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10',
+                      t.color,
+                    )}>
+                      {t.initials}
                     </div>
                   </div>
-                  <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
-                  <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">{t.date}</p>
                 </div>
-              ))}
-            </div>
+                <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
+                <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">{t.date}</p>
+              </div>
+            ))}
+          </div>
+        </div>
 
+        {/* ── Scrollable body panel ── */}
+        <div
+          ref={bodyScrollRef}
+          onScroll={onBodyScroll}
+          className="overflow-x-auto rounded-b-2xl"
+        >
+          <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }}>
             {/* Time rows */}
             {TIME_SLOTS.map((time) => (
               <div key={time} className="flex border-t border-border/30">
@@ -499,7 +527,6 @@ export default function TherapistSchedulePage() {
                   <p className="text-xs font-bold text-foreground">{time}</p>
                   <p className="text-[10px] font-medium text-muted-foreground mt-0.5">30 min slots</p>
                 </div>
-
                 {/* Cells per therapist */}
                 {filteredTherapists.map((t, tIdx) => {
                   const slot = SCHEDULE[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
