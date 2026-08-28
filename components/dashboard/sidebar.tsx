@@ -24,6 +24,8 @@ import {
   HomeIcon,
   Clock,
   CalendarOff,
+  Landmark,
+  CreditCard,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -48,6 +50,7 @@ export function Sidebar() {
     bookings:     pathname.startsWith('/bookings'),
     appointments: pathname.startsWith('/appointments'),
     employees:    pathname.startsWith('/employees'),
+    finance:      pathname.startsWith('/finance'),
   });
 
   const items: NavItem[] = [
@@ -85,6 +88,15 @@ export function Sidebar() {
       children: [
         { href: '/bookings',         label: 'Booking List',    icon: List },
         { href: '/bookings/reports', label: 'Booking Reports', icon: PieChart },
+      ],
+    },
+    {
+      href: '/finance',
+      label: 'Finance',
+      icon: Landmark,
+      children: [
+        { href: '/finance/payments', label: 'Payments',         icon: CreditCard },
+        { href: '/finance/reports',  label: 'Reports',          icon: BarChart3 },
       ],
     },
     { href: '/settings', label: t('navSettings'), icon: Settings },
