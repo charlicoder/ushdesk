@@ -33,13 +33,16 @@ interface ApiAvailability {
 }
 
 interface ApiBooking {
+  id: string;
   therapist_id: string;
-  client_name?: string;
-  service_name?: string;
   start: string;
   end: string;
+  duration_minutes?: number;
   status?: string;
-  reference?: string;
+  booking_type?: string;
+  booking_id?: string;
+  customer?: { name?: string; phone?: string } | null;
+  service?: { name?: string } | null;
 }
 
 interface ApiGrid {
@@ -48,10 +51,19 @@ interface ApiGrid {
   slot_duration_minutes: 30 | 60;
 }
 
+interface ApiBranch {
+  branch_id: string;
+  branch_name: string;
+}
+
 interface ApiScheduleRecord {
   date: string;
   timezone: string;
-  branch: { id: string; name: string };
+  branch: {
+    id: string;
+    name: string | null;
+    branches?: ApiBranch[];
+  };
   grid: ApiGrid;
   therapists: ApiTherapist[];
   availability: ApiAvailability[];
@@ -490,22 +502,23 @@ function buildScheduleFromApi(
     if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
     const s = new Date(bk.start);
     const e = new Date(bk.end);
-    const sm = s.getHours() * 60 + s.getMinutes();
-    const em = e.getHours() * 60 + e.getMinutes();
+    const sm = s.getUTCHours() * 60 + s.getUTCMinutes();
+    const em = e.getUTCHours() * 60 + e.getUTCMinutes();
     const fmt = (h: number, m: number) => {
       const ampm = h >= 12 ? 'PM' : 'AM';
       const hd   = h % 12 === 0 ? 12 : h % 12;
       return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
     };
+    const durationMin = bk.duration_minutes ?? (em - sm);
     bookingMap[bk.therapist_id].push({
       startMin:   sm,
       endMin:     em,
-      client:     bk.client_name,
-      service:    bk.service_name,
-      startLabel: fmt(s.getHours(), s.getMinutes()),
-      endLabel:   fmt(e.getHours(), e.getMinutes()),
-      duration:   `${em - sm}m`,
-      reference:  bk.reference,
+      client:     bk.customer?.name ?? undefined,
+      service:    bk.service?.name  ?? undefined,
+      startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
+      endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
+      duration:   `${durationMin}m`,
+      reference:  bk.booking_id ?? bk.id,
       status:     bk.status ?? 'scheduled',
     });
   }
@@ -545,12 +558,15 @@ function formatDateDisplay(isoDate: string): string {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function TherapistSchedulePage() {
-  const branches = useAppSelector((s) => s.data.branches);
+  // Auth token from Redux store
+  const token = useAppSelector((s) => s.auth.token);
 
+  // Today's date as YYYY-MM-DD
   const today    = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+  // 'all' on first load — switches to a specific branch_id when user selects one
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
   const [selectedDate,     setSelectedDate]      = useState<string>(todayStr);
   const [search,           setSearch]            = useState('');
   const [modal,            setModal]             = useState<ModalPayload | null>(null);
@@ -569,19 +585,8 @@ export default function TherapistSchedulePage() {
     }
   }, []);
 
-  // Initialise branch once branches load
-  useEffect(() => {
-    if (!selectedBranchId && branches.length > 0) {
-      setSelectedBranchId(branches[0].id);
-    }
-  }, [branches, selectedBranchId]);
-
-  // Read auth token from Redux store (set on login)
-  const token = useAppSelector((s) => s.auth.token);
-
   // Fetch schedule when branch or date changes
   useEffect(() => {
-    if (!selectedBranchId) return;
     const controller = new AbortController();
 
     (async () => {
@@ -639,13 +644,24 @@ export default function TherapistSchedulePage() {
   const availCount  = allSlots.filter(s => s.status === 'available').length;
   const occupancy   = Math.round((bookedCount / (bookedCount + availCount)) * 100) || 0;
 
-  const selectedBranch = branches.find(b => b.id === selectedBranchId);
-  const branchName     = scheduleData?.branch.name ?? selectedBranch?.name ?? 'Select Branch';
-  const dateDisplay    = formatDateDisplay(selectedDate);
+  // Branch list comes from the API response (branch.branches[])
+  // Falls back to a single entry when viewing a specific branch
+  const apiBranches: ApiBranch[] = scheduleData?.branch?.branches ?? (
+    scheduleData?.branch?.id && scheduleData.branch.id !== 'all'
+      ? [{ branch_id: scheduleData.branch.id, branch_name: scheduleData.branch.name ?? scheduleData.branch.id }]
+      : []
+  );
+
+  const branchLabel = (() => {
+    if (selectedBranchId === 'all') return 'All Branches';
+    return apiBranches.find(b => b.branch_id === selectedBranchId)?.branch_name ?? 'Select Branch';
+  })();
+
+  const dateDisplay = formatDateDisplay(selectedDate);
 
   const openModal = useCallback((slot: Slot, therapist: Therapist, timeSlot: string) => {
-    setModal({ slot, therapist, timeSlot, branch: branchName, date: dateDisplay });
-  }, [branchName, dateDisplay]);
+    setModal({ slot, therapist, timeSlot, branch: branchLabel, date: dateDisplay });
+  }, [branchLabel, dateDisplay]);
 
   return (
     <DashboardShell>
@@ -653,8 +669,11 @@ export default function TherapistSchedulePage() {
       <div className="mb-6">
         <h1 className="text-2xl font-extrabold tracking-tight">Therapist Schedule</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Live session board ·{' '}
-          <span className="font-semibold text-foreground">{dateDisplay}</span>
+          Live session board · <span className="font-semibold text-foreground">{dateDisplay}</span>
+          {selectedBranchId === 'all'
+            ? <> · <span className="font-semibold text-foreground">All Branches</span></>
+            : branchLabel !== 'Select Branch' && <> · <span className="font-semibold text-foreground">{branchLabel}</span></>
+          }
         </p>
       </div>
 
@@ -668,29 +687,38 @@ export default function TherapistSchedulePage() {
             className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
           >
             <Store className="h-4 w-4 text-muted-foreground" />
-            <span className="max-w-[180px] truncate">{branchName}</span>
+            <span className="max-w-[180px] truncate">{branchLabel}</span>
             <ChevronDown className="h-3.5 w-3.5 text-muted-foreground ml-1" />
           </button>
           {showBranchDrop && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowBranchDrop(false)} />
-              <div className="absolute top-full left-0 mt-2 z-50 w-60 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
-                {branches.length === 0 ? (
-                  <p className="px-4 py-3 text-sm text-muted-foreground">No branches available</p>
-                ) : (
-                  branches.map(b => (
-                    <button
-                      key={b.id}
-                      onClick={() => { setSelectedBranchId(b.id); setShowBranchDrop(false); }}
-                      className={cn(
-                        'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
-                        b.id === selectedBranchId ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
-                      )}
-                    >
-                      {b.name}
-                    </button>
-                  ))
+              <div className="absolute top-full left-0 mt-2 z-50 w-64 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
+                {/* All Branches option */}
+                <button
+                  onClick={() => { setSelectedBranchId('all'); setShowBranchDrop(false); }}
+                  className={cn(
+                    'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
+                    selectedBranchId === 'all' ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
+                  )}
+                >
+                  All Branches
+                </button>
+                {apiBranches.length > 0 && (
+                  <div className="my-1 border-t border-border/40" />
                 )}
+                {apiBranches.map(b => (
+                  <button
+                    key={b.branch_id}
+                    onClick={() => { setSelectedBranchId(b.branch_id); setShowBranchDrop(false); }}
+                    className={cn(
+                      'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
+                      b.branch_id === selectedBranchId ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
+                    )}
+                  >
+                    {b.branch_name}
+                  </button>
+                ))}
               </div>
             </>
           )}
@@ -741,6 +769,7 @@ export default function TherapistSchedulePage() {
           { label: 'Active Therapists', value: String(therapists.length), sub: 'on duty today',     icon: <AlertCircle className="h-5 w-5" />,  grad: 'from-violet-500 to-purple-600', bg: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-200/80 dark:border-violet-800/40' },
           { label: 'Total Bookings',    value: String(bookedCount),       sub: 'slots scheduled',   icon: <CalendarDays className="h-5 w-5" />, grad: 'from-rose-500 to-pink-600',     bg: 'bg-pink-50 dark:bg-pink-950/30',     border: 'border-pink-200/80 dark:border-pink-800/40' },
           { label: 'Available Slots',   value: String(availCount),        sub: 'open for booking',  icon: <Store className="h-5 w-5" />,        grad: 'from-amber-500 to-orange-600',  bg: 'bg-amber-50 dark:bg-amber-950/30',   border: 'border-amber-200/80 dark:border-amber-800/40' },
+
         ].map((k) => (
           <div key={k.label}
             className={cn('relative overflow-hidden rounded-2xl border p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5', k.bg, k.border)}>
