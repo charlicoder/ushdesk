@@ -834,63 +834,134 @@ export default function BranchAppointmentsPage() {
             </div>
           ) : (
             <>
-              {/* ── Sticky header panel ── */}
-              <div
-                ref={headerScrollRef}
-                className="sticky top-16 z-20 overflow-x-hidden border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm"
-              >
-                <div style={{ minWidth: `${120 + filteredArrangements.length * 175}px` }} className="flex">
-                  <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
-                    Time
-                  </div>
-                  {filteredArrangements.map((a, aIdx) => {
-                    const typeCfg = getArrangementType(a.arrangementType);
-                    const TypeIcon = typeCfg.Icon;
-                    return (
-                      <div key={a.id} className={cn(
-                        'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
-                        COL_TINTS[aIdx % COL_TINTS.length],
-                      )}>
-                        <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
-                          <div className={cn('relative h-10 w-10 rounded-full grid place-items-center ring-2 ring-background shrink-0 bg-gradient-to-br text-white text-xs font-bold', a.color)}>
-                            {a.initials}
+              {/* ── Sticky header panel ─────────────────────────────────────────────
+                  The "TIME" corner cell is a flex sibling OUTSIDE the horizontally
+                  scrollable div so it never moves when the user scrolls right.
+              ── */}
+              <div className="sticky top-16 z-20 flex border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
+                {/* Corner: always-visible TIME label */}
+                <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">
+                  Time
+                </div>
+                {/* Arrangement name headers — scroll horizontally in sync with body */}
+                <div ref={headerScrollRef} className="flex-1 overflow-x-hidden">
+                  <div style={{ width: `${filteredArrangements.length * 175}px`, minWidth: '100%' }} className="flex">
+                    {filteredArrangements.map((a, aIdx) => {
+                      const typeCfg = getArrangementType(a.arrangementType);
+                      const TypeIcon = typeCfg.Icon;
+                      return (
+                        <div key={a.id} style={{ width: 175, minWidth: 175 }} className={cn(
+                          'flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
+                          COL_TINTS[aIdx % COL_TINTS.length],
+                        )}>
+                          <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
+                            <div className={cn('relative h-10 w-10 rounded-full grid place-items-center ring-2 ring-background shrink-0 bg-gradient-to-br text-white text-xs font-bold', a.color)}>
+                              {a.initials}
+                            </div>
                           </div>
+                          <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{a.name}</p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <TypeIcon className={cn('h-3 w-3', typeCfg.color)} />
+                            <p className="text-[10px] font-semibold text-muted-foreground">{typeCfg.label}</p>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate max-w-[130px]">{a.branchName}</p>
                         </div>
-                        <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{a.name}</p>
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <TypeIcon className={cn('h-3 w-3', typeCfg.color)} />
-                          <p className="text-[10px] font-semibold text-muted-foreground">{typeCfg.label}</p>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate max-w-[130px]">{a.branchName}</p>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
-              {/* ── Scrollable body panel ── */}
-              <div ref={bodyScrollRef} onScroll={onBodyScroll} className="overflow-x-auto rounded-b-2xl">
-                <div style={{ minWidth: `${120 + filteredArrangements.length * 175}px` }}>
+              {/* ── Scrollable body panel ─────────────────────────────────────────────
+                  The time-label column is a flex sibling OUTSIDE the overflow-x-auto
+                  container, so it is always visible regardless of scroll position.
+                  The arrangement CSS Grid only contains arrangement columns (col 1…N).
+              ── */}
+              <div className="flex rounded-b-2xl">
+                {/* ── Time column: fixed-width, never scrolls ── */}
+                <div className="w-28 shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
                   {timeSlots.map((time) => (
-                    <div key={time} className="flex border-t border-border/30">
-                      <div className="w-28 shrink-0 flex flex-col justify-center pl-4 py-2.5 border-r border-border/30 bg-muted/10">
-                        <p className="text-xs font-bold text-foreground">{time}</p>
-                        <p className="text-[10px] font-medium text-muted-foreground mt-0.5">{grid.slot_duration_minutes} min slots</p>
-                      </div>
-                      {filteredArrangements.map((a, aIdx) => {
-                        const slot        = schedule[a.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
-                        const isClickable = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
-                        return (
-                          <div key={a.id} className={cn('flex-1 p-2 border-l border-border/30 transition-colors', COL_TINTS[aIdx % COL_TINTS.length])}>
+                    <div
+                      key={`tcol-${time}`}
+                      className="flex flex-col justify-center pl-4 py-2.5 border-t border-border/30"
+                      style={{ height: 98 }}
+                    >
+                      <p className="text-xs font-bold text-foreground">{time}</p>
+                      <p className="text-[10px] font-medium text-muted-foreground mt-0.5">
+                        {grid.slot_duration_minutes} min slots
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── Arrangement columns: CSS Grid inside overflow-x-auto ── */}
+                <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto">
+                  <div
+                    style={{
+                      width: `${filteredArrangements.length * 175}px`,
+                      minWidth: '100%',
+                      display: 'grid',
+                      gridTemplateColumns: `repeat(${filteredArrangements.length}, 175px)`,
+                      gridTemplateRows: `repeat(${timeSlots.length}, 98px)`,
+                    }}
+                  >
+                    {filteredArrangements.map((a, aIdx) => {
+                      const cells: React.ReactNode[] = [];
+                      let rowIdx = 0;
+
+                      while (rowIdx < timeSlots.length) {
+                        const time = timeSlots[rowIdx];
+                        const slot = schedule[a.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
+                        const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
+
+                        // Look-ahead: merge consecutive rows sharing the same booking reference
+                        let span = 1;
+                        if (isBooked && slot.reference) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const next = schedule[a.id]?.[timeSlots[rowIdx + span]];
+                            if (
+                              next &&
+                              (next.status === 'booking' || next.status === 'scheduled' || next.status === 'in_progress') &&
+                              next.reference === slot.reference
+                            ) { span++; } else { break; }
+                          }
+                        } else if (isBooked && slot.start && slot.end) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const next = schedule[a.id]?.[timeSlots[rowIdx + span]];
+                            if (
+                              next &&
+                              (next.status === 'booking' || next.status === 'scheduled' || next.status === 'in_progress') &&
+                              next.start === slot.start && next.end === slot.end
+                            ) { span++; } else { break; }
+                          }
+                        }
+
+                        const isClickable = isBooked;
+                        cells.push(
+                          <div
+                            key={`${a.id}-${time}`}
+                            style={{
+                              gridColumn: aIdx + 1,
+                              gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
+                            }}
+                            className={cn(
+                              'p-2 border-t border-l border-border/30 transition-colors first:border-l-0',
+                              COL_TINTS[aIdx % COL_TINTS.length],
+                            )}
+                          >
                             <SlotCell
                               slot={slot}
                               onClick={isClickable ? () => openModal(slot, a, time) : undefined}
                             />
-                          </div>
+                          </div>,
                         );
-                      })}
-                    </div>
-                  ))}
+
+                        rowIdx += span;
+                      }
+
+                      return cells;
+                    })}
+                  </div>
                 </div>
               </div>
             </>

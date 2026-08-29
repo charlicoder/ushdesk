@@ -108,67 +108,54 @@ export function DaySlotGrid({ date, branch, appointments, intervalMin, onSlotCli
         <span>{t('openingHours')}: {openLabel} – {closeLabel}</span>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '3.5rem 1fr',
-          gridTemplateRows: `repeat(${slots.length}, minmax(44px, auto))`,
-          columnGap: '8px',
-        }}
-      >
-        {slots.map((sl, rowIdx) => (
-          <div
-            key={`lbl-${rowIdx}`}
-            style={{ gridColumn: 1, gridRow: rowIdx + 1 }}
-            className="flex items-center border-b border-border/20 py-1"
-          >
-            {!sl.isContinuation && (
-              <span className="text-[10px] font-semibold leading-tight text-muted-foreground whitespace-nowrap">
-                {sl.label}
-              </span>
-            )}
-          </div>
-        ))}
+      {/*
+        Flex layout: time column is a fixed-width sibling OUTSIDE the slot card
+        area so it can never scroll out of view horizontally.
+      */}
+      <div className="flex">
+        {/* Time labels: fixed width, always visible */}
+        <div className="w-14 shrink-0 flex flex-col border-r border-border/20">
+          {slots.map((sl, idx) => (
+            <div
+              key={`lbl-${idx}`}
+              className="flex items-start pt-2 border-b border-border/20"
+              style={{ height: 52 }}
+            >
+              {!sl.isContinuation && (
+                <span className="text-[10px] font-semibold leading-tight text-muted-foreground whitespace-nowrap">
+                  {sl.label}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
 
-        {(() => {
-          const cells: React.ReactNode[] = [];
-          let rowIdx = 0;
-          while (rowIdx < slots.length) {
-            const sl = slots[rowIdx];
-
-            // Look-ahead: count consecutive slots sharing the same appointment.
-            // rowIdx advances by the full span, naturally skipping continuation rows.
-            let span = 1;
-            if (sl.appointment) {
-              while (
-                rowIdx + span < slots.length &&
-                slots[rowIdx + span].appointment?.id === sl.appointment.id
-              ) {
-                span++;
+        {/* Slot cards: look-ahead merge by appointment.id */}
+        <div className="flex-1 flex flex-col pl-2">
+          {(() => {
+            const rows: React.ReactNode[] = [];
+            let idx = 0;
+            while (idx < slots.length) {
+              const sl = slots[idx];
+              let span = 1;
+              if (sl.appointment) {
+                while (
+                  idx + span < slots.length &&
+                  slots[idx + span].appointment?.id === sl.appointment.id
+                ) {
+                  span++;
+                }
               }
+              rows.push(
+                <div key={`card-${idx}`} style={{ minHeight: 52 * span - 4 }} className="py-0.5">
+                  <SlotCard slot={sl} spanCount={span} onClick={() => onSlotClick(sl)} />
+                </div>,
+              );
+              idx += span;
             }
-
-            const startRow = rowIdx + 1;
-            const gridRow  = span > 1 ? `${startRow} / span ${span}` : startRow;
-
-            cells.push(
-              <div
-                key={`card-${rowIdx}`}
-                style={{ gridColumn: 2, gridRow }}
-                className="py-1"
-              >
-                <SlotCard
-                  slot={sl}
-                  spanCount={span}
-                  onClick={() => onSlotClick(sl)}
-                />
-              </div>,
-            );
-
-            rowIdx += span;
-          }
-          return cells;
-        })()}
+            return rows;
+          })()}
+        </div>
       </div>
     </div>
   );

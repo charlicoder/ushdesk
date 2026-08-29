@@ -842,61 +842,59 @@ export default function TherapistSchedulePage() {
             </div>
           ) : (
             <>
-              {/* ── Sticky header panel ── */}
-              <div
-                ref={headerScrollRef}
-                className="sticky top-16 z-20 overflow-x-hidden border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm"
-              >
-                <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }} className="flex">
-                  <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider">
-                    Time
-                  </div>
-                  {filteredTherapists.map((t, tIdx) => (
-                    <div key={t.id} className={cn(
-                      'flex-1 flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
-                      COL_TINTS[tIdx % COL_TINTS.length],
-                    )}>
-                      <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
-                        <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
-                          {t.photoUrl && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={t.photoUrl} alt={t.name} className="h-full w-full object-cover"
-                              onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                          )}
-                          <div className={cn('absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10', t.color)}>
-                            {t.initials}
+              {/* ── Sticky header panel ─────────────────────────────────────────────
+                  The “TIME” corner cell is a flex sibling OUTSIDE the horizontally
+                  scrollable div so it never moves when the user scrolls right.
+              ── */}
+              <div className="sticky top-16 z-20 flex border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
+                {/* Corner: always-visible TIME label */}
+                <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">
+                  Time
+                </div>
+                {/* Therapist name headers — scroll horizontally in sync with body */}
+                <div
+                  ref={headerScrollRef}
+                  className="flex-1 overflow-x-hidden"
+                >
+                  <div style={{ width: `${filteredTherapists.length * 175}px`, minWidth: '100%' }} className="flex">
+                    {filteredTherapists.map((t, tIdx) => (
+                      <div key={t.id} style={{ width: 175, minWidth: 175 }} className={cn(
+                        'flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
+                        COL_TINTS[tIdx % COL_TINTS.length],
+                      )}>
+                        <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
+                          <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
+                            {t.photoUrl && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={t.photoUrl} alt={t.name} className="h-full w-full object-cover"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                            )}
+                            <div className={cn('absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10', t.color)}>
+                              {t.initials}
+                            </div>
                           </div>
                         </div>
+                        <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
+                        <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">{dateDisplay}</p>
                       </div>
-                      <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
-                      <p className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">{dateDisplay}</p>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* ── Scrollable body panel ─────────────────────────────────────────
-                  Uses CSS Grid with explicit row/column placement so a multi-slot
-                  booking in one therapist column can span N rows (grid-row: span N)
-                  while every other column keeps its individual 30-min cells.
+              {/* ── Scrollable body panel ─────────────────────────────────────────────
+                  The time-label column is a flex sibling OUTSIDE the overflow-x-auto
+                  container, so it is always visible regardless of scroll position.
+                  The therapist CSS Grid only contains therapist columns (col 1…N).
               ── */}
-              <div ref={bodyScrollRef} onScroll={onBodyScroll} className="overflow-x-auto rounded-b-2xl">
-                <div
-                  style={{
-                    minWidth: `${112 + filteredTherapists.length * 175}px`,
-                    display: 'grid',
-                    // col 1 = time label (7rem), then one column per therapist
-                    gridTemplateColumns: `7rem repeat(${filteredTherapists.length}, 1fr)`,
-                    // one row per time slot, each at least 98px tall
-                    gridTemplateRows: `repeat(${timeSlots.length}, minmax(98px, auto))`,
-                  }}
-                >
-                  {/* ── Time-label column (column 1) ── */}
-                  {timeSlots.map((time, rowIdx) => (
+              <div className="flex rounded-b-2xl">
+                {/* ── Time column: fixed-width, never scrolls ── */}
+                <div className="w-28 shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
+                  {timeSlots.map((time) => (
                     <div
-                      key={`time-${time}`}
-                      style={{ gridColumn: 1, gridRow: rowIdx + 1 }}
-                      className="flex flex-col justify-center pl-4 py-2.5 border-t border-r border-border/30 bg-muted/10"
+                      key={`tcol-${time}`}
+                      className="flex flex-col justify-center pl-4 py-2.5 border-t border-border/30"
+                      style={{ height: 98 }}
                     >
                       <p className="text-xs font-bold text-foreground">{time}</p>
                       <p className="text-[10px] font-medium text-muted-foreground mt-0.5">
@@ -904,76 +902,79 @@ export default function TherapistSchedulePage() {
                       </p>
                     </div>
                   ))}
+                </div>
 
-                  {/* ── Therapist columns (columns 2…N+1) ── */}
-                  {filteredTherapists.map((t, tIdx) => {
-                    const cells: React.ReactNode[] = [];
-                    let rowIdx = 0;
+                {/* ── Therapist columns: CSS Grid inside overflow-x-auto ── */}
+                <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto">
+                  <div
+                    style={{
+                      width: `${filteredTherapists.length * 175}px`,
+                      minWidth: '100%',
+                      display: 'grid',
+                      // Each therapist gets a fixed 175px column
+                      gridTemplateColumns: `repeat(${filteredTherapists.length}, 175px)`,
+                      // Fixed 98px rows to stay aligned with the time column
+                      gridTemplateRows: `repeat(${timeSlots.length}, 98px)`,
+                    }}
+                  >
+                    {filteredTherapists.map((t, tIdx) => {
+                      const cells: React.ReactNode[] = [];
+                      let rowIdx = 0;
 
-                    while (rowIdx < timeSlots.length) {
-                      const time = timeSlots[rowIdx];
-                      const slot = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
+                      while (rowIdx < timeSlots.length) {
+                        const time = timeSlots[rowIdx];
+                        const slot = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
 
-                      const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
+                        const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
 
-                      // Look-ahead: count how many consecutive rows share the same booking reference
-                      // so we can render ONE card spanning all of them.
-                      let span = 1;
-                      if (isBooked && slot.reference) {
-                        while (rowIdx + span < timeSlots.length) {
-                          const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
-                          if (
-                            nextSlot &&
-                            (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') &&
-                            nextSlot.reference === slot.reference
-                          ) {
-                            span++;
-                          } else {
-                            break;
+                        // Look-ahead: count how many consecutive rows share the same booking
+                        let span = 1;
+                        if (isBooked && slot.reference) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                            if (
+                              nextSlot &&
+                              (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') &&
+                              nextSlot.reference === slot.reference
+                            ) { span++; } else { break; }
+                          }
+                        } else if (isBooked && slot.start && slot.end) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                            if (
+                              nextSlot &&
+                              (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') &&
+                              nextSlot.start === slot.start && nextSlot.end === slot.end
+                            ) { span++; } else { break; }
                           }
                         }
-                      } else if (isBooked && slot.start && slot.end) {
-                        // Fallback: match by start+end time string when reference is missing
-                        while (rowIdx + span < timeSlots.length) {
-                          const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
-                          if (
-                            nextSlot &&
-                            (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') &&
-                            nextSlot.start === slot.start &&
-                            nextSlot.end === slot.end
-                          ) {
-                            span++;
-                          } else {
-                            break;
-                          }
-                        }
+
+                        cells.push(
+                          <div
+                            key={`${t.id}-${time}`}
+                            style={{
+                              // Time column is now external — therapist columns start at 1
+                              gridColumn: tIdx + 1,
+                              gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
+                            }}
+                            className={cn(
+                              'p-2 border-t border-l border-border/30 transition-colors first:border-l-0',
+                              COL_TINTS[tIdx % COL_TINTS.length],
+                            )}
+                          >
+                            <SlotCell
+                              slot={slot}
+                              onClick={isBooked ? () => openModal(slot, t, time) : undefined}
+                            />
+                          </div>,
+                        );
+
+                        rowIdx += span;
                       }
 
-                      cells.push(
-                        <div
-                          key={`${t.id}-${time}`}
-                          style={{
-                            gridColumn: tIdx + 2,
-                            gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
-                          }}
-                          className={cn(
-                            'p-2 border-t border-l border-border/30 transition-colors',
-                            COL_TINTS[tIdx % COL_TINTS.length],
-                          )}
-                        >
-                          <SlotCell
-                            slot={slot}
-                            onClick={isBooked ? () => openModal(slot, t, time) : undefined}
-                          />
-                        </div>,
-                      );
-
-                      // Jump over all rows this card spans
-                      rowIdx += span;
-                    }
-
-                    return cells;
-                  })}
+                      return cells;
+                    })}
+                  </div>
                 </div>
               </div>
             </>
