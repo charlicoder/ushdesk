@@ -1,6 +1,6 @@
 'use client';
 // v2 – live API, calendar picker, dynamic branch/date
-import { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, User, Scissors,
@@ -311,6 +311,7 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
 }
 
 // ── Slot Cell ──────────────────────────────────────────────────────────────────
+// rowHeight/spanCount are no longer needed — the CSS Grid parent stretches the cell.
 function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   if (slot.status === 'unavailable') {
     return (
@@ -340,7 +341,8 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
       className={cn(
-        'relative h-full min-h-[82px] rounded-xl p-3 transition-all duration-200 cursor-pointer select-none active:scale-[0.98]',
+        // h-full so the card fills the entire merged grid cell vertically
+        'relative h-full min-h-[82px] w-full rounded-xl p-3 transition-all duration-200 cursor-pointer select-none active:scale-[0.98]',
         cfg.cardCls,
       )}
     >
@@ -537,9 +539,16 @@ function buildScheduleFromApi(
         let st: SlotStatus = 'scheduled';
         if (bk.status === 'in_progress') st = 'in_progress';
         else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
+        // Store full booking info on every overlapping slot.
+        // The render layer handles span merging via look-ahead.
         sched[therapist.id][slotLabel] = {
-          status: st, client: bk.client, service: bk.service,
-          start: bk.startLabel, end: bk.endLabel, duration: bk.duration, reference: bk.reference,
+          status: st,
+          client:    bk.client,
+          service:   bk.service,
+          start:     bk.startLabel,
+          end:       bk.endLabel,
+          duration:  bk.duration,
+          reference: bk.reference,
         };
         continue;
       }
@@ -866,29 +875,105 @@ export default function TherapistSchedulePage() {
                 </div>
               </div>
 
-              {/* ── Scrollable body panel ── */}
+              {/* ── Scrollable body panel ─────────────────────────────────────────
+                  Uses CSS Grid with explicit row/column placement so a multi-slot
+                  booking in one therapist column can span N rows (grid-row: span N)
+                  while every other column keeps its individual 30-min cells.
+              ── */}
               <div ref={bodyScrollRef} onScroll={onBodyScroll} className="overflow-x-auto rounded-b-2xl">
-                <div style={{ minWidth: `${120 + filteredTherapists.length * 175}px` }}>
-                  {timeSlots.map((time) => (
-                    <div key={time} className="flex border-t border-border/30">
-                      <div className="w-28 shrink-0 flex flex-col justify-center pl-4 py-2.5 border-r border-border/30 bg-muted/10">
-                        <p className="text-xs font-bold text-foreground">{time}</p>
-                        <p className="text-[10px] font-medium text-muted-foreground mt-0.5">{grid.slot_duration_minutes} min slots</p>
-                      </div>
-                      {filteredTherapists.map((t, tIdx) => {
-                        const slot        = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
-                        const isClickable = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
-                        return (
-                          <div key={t.id} className={cn('flex-1 p-2 border-l border-border/30 transition-colors', COL_TINTS[tIdx % COL_TINTS.length])}>
-                            <SlotCell
-                              slot={slot}
-                              onClick={isClickable ? () => openModal(slot, t, time) : undefined}
-                            />
-                          </div>
-                        );
-                      })}
+                <div
+                  style={{
+                    minWidth: `${112 + filteredTherapists.length * 175}px`,
+                    display: 'grid',
+                    // col 1 = time label (7rem), then one column per therapist
+                    gridTemplateColumns: `7rem repeat(${filteredTherapists.length}, 1fr)`,
+                    // one row per time slot, each at least 98px tall
+                    gridTemplateRows: `repeat(${timeSlots.length}, minmax(98px, auto))`,
+                  }}
+                >
+                  {/* ── Time-label column (column 1) ── */}
+                  {timeSlots.map((time, rowIdx) => (
+                    <div
+                      key={`time-${time}`}
+                      style={{ gridColumn: 1, gridRow: rowIdx + 1 }}
+                      className="flex flex-col justify-center pl-4 py-2.5 border-t border-r border-border/30 bg-muted/10"
+                    >
+                      <p className="text-xs font-bold text-foreground">{time}</p>
+                      <p className="text-[10px] font-medium text-muted-foreground mt-0.5">
+                        {grid.slot_duration_minutes} min slots
+                      </p>
                     </div>
                   ))}
+
+                  {/* ── Therapist columns (columns 2…N+1) ── */}
+                  {filteredTherapists.map((t, tIdx) => {
+                    const cells: React.ReactNode[] = [];
+                    let rowIdx = 0;
+
+                    while (rowIdx < timeSlots.length) {
+                      const time = timeSlots[rowIdx];
+                      const slot = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
+
+                      const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
+
+                      // Look-ahead: count how many consecutive rows share the same booking reference
+                      // so we can render ONE card spanning all of them.
+                      let span = 1;
+                      if (isBooked && slot.reference) {
+                        while (rowIdx + span < timeSlots.length) {
+                          const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                          if (
+                            nextSlot &&
+                            (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') &&
+                            nextSlot.reference === slot.reference
+                          ) {
+                            span++;
+                          } else {
+                            break;
+                          }
+                        }
+                      } else if (isBooked && slot.start && slot.end) {
+                        // Fallback: match by start+end time string when reference is missing
+                        while (rowIdx + span < timeSlots.length) {
+                          const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                          if (
+                            nextSlot &&
+                            (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') &&
+                            nextSlot.start === slot.start &&
+                            nextSlot.end === slot.end
+                          ) {
+                            span++;
+                          } else {
+                            break;
+                          }
+                        }
+                      }
+
+                      cells.push(
+                        <div
+                          key={`${t.id}-${time}`}
+                          style={{
+                            gridColumn: tIdx + 2,
+                            gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
+                          }}
+                          className={cn(
+                            'p-2 border-t border-l border-border/30 transition-colors',
+                            COL_TINTS[tIdx % COL_TINTS.length],
+                          )}
+                        >
+                          <SlotCell
+                            slot={slot}
+                            onClick={isBooked ? () => openModal(slot, t, time) : undefined}
+                          />
+                        </div>,
+                      );
+
+                      // Jump over all rows this card spans
+                      rowIdx += span;
+                    }
+
+                    return cells;
+                  })}
                 </div>
               </div>
             </>

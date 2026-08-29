@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { Clock, User, Sparkles, CheckCircle2, Circle } from 'lucide-react';
 import type { Appointment, Branch } from '@/lib/supabase';
 import { StatusBadge } from '@/components/dashboard/status-badge';
@@ -75,7 +75,7 @@ export function DaySlotGrid({ date, branch, appointments, intervalMin, onSlotCli
         appointment: appt,
         isContinuation,
       });
-      void slotEnd; // suppress unused warning
+      void slotEnd;
     }
     return result;
   }, [date, branch, appointments, intervalMin]);
@@ -102,112 +102,147 @@ export function DaySlotGrid({ date, branch, appointments, intervalMin, onSlotCli
   const closeLabel = fmtTime(parseTime(branch.close_time ?? DEFAULT_CLOSE));
 
   return (
-    <div className="space-y-1.5">
-      {/* branch hours header */}
+    <div>
       <div className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
         <Clock className="h-3.5 w-3.5" />
         <span>{t('openingHours')}: {openLabel} – {closeLabel}</span>
       </div>
 
-      {slots.map((slot, i) => (
-        <SlotRow
-          key={i}
-          slot={slot}
-          intervalMin={intervalMin}
-          onClick={() => onSlotClick(slot)}
-        />
-      ))}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '3.5rem 1fr',
+          gridTemplateRows: `repeat(${slots.length}, minmax(44px, auto))`,
+          columnGap: '8px',
+        }}
+      >
+        {slots.map((sl, rowIdx) => (
+          <div
+            key={`lbl-${rowIdx}`}
+            style={{ gridColumn: 1, gridRow: rowIdx + 1 }}
+            className="flex items-center border-b border-border/20 py-1"
+          >
+            {!sl.isContinuation && (
+              <span className="text-[10px] font-semibold leading-tight text-muted-foreground whitespace-nowrap">
+                {sl.label}
+              </span>
+            )}
+          </div>
+        ))}
+
+        {(() => {
+          const cells: React.ReactNode[] = [];
+          let rowIdx = 0;
+          while (rowIdx < slots.length) {
+            const sl = slots[rowIdx];
+
+            // Look-ahead: count consecutive slots sharing the same appointment.
+            // rowIdx advances by the full span, naturally skipping continuation rows.
+            let span = 1;
+            if (sl.appointment) {
+              while (
+                rowIdx + span < slots.length &&
+                slots[rowIdx + span].appointment?.id === sl.appointment.id
+              ) {
+                span++;
+              }
+            }
+
+            const startRow = rowIdx + 1;
+            const gridRow  = span > 1 ? `${startRow} / span ${span}` : startRow;
+
+            cells.push(
+              <div
+                key={`card-${rowIdx}`}
+                style={{ gridColumn: 2, gridRow }}
+                className="py-1"
+              >
+                <SlotCard
+                  slot={sl}
+                  spanCount={span}
+                  onClick={() => onSlotClick(sl)}
+                />
+              </div>,
+            );
+
+            rowIdx += span;
+          }
+          return cells;
+        })()}
+      </div>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Single slot row                                                      */
-/* ------------------------------------------------------------------ */
-
-function SlotRow({
+function SlotCard({
   slot,
-  intervalMin,
+  spanCount,
   onClick,
 }: {
   slot: TimeSlot;
-  intervalMin: number;
+  spanCount: number;
   onClick: () => void;
 }) {
   const { t } = useI18n();
   const a = slot.appointment;
 
   if (!a) {
-    // Available slot
     return (
       <button
         onClick={onClick}
         className={cn(
-          'group flex w-full items-center gap-3 rounded-xl border border-dashed border-emerald-400/40',
-          'bg-emerald-500/5 px-3 py-2 text-left transition-all',
-          'hover:border-emerald-400/70 hover:bg-emerald-500/10 hover:shadow-sm hover:shadow-emerald-500/10',
+          'group flex h-full min-h-[36px] w-full items-center gap-3 rounded-xl',
+          'border border-dashed border-emerald-400/40 bg-emerald-500/5 px-3 py-1.5 text-left transition-all',
+          'hover:border-emerald-400/70 hover:bg-emerald-500/10 hover:shadow-sm',
         )}
       >
-        <div className="flex w-16 shrink-0 flex-col items-center">
-          <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">{slot.label}</span>
-        </div>
-        <div className="flex flex-1 items-center gap-2">
-          <Circle className="h-3.5 w-3.5 text-emerald-500" />
-          <span className="text-xs text-emerald-700 dark:text-emerald-300">{t('slotAvailable')}</span>
-          <span className="ml-auto text-[10px] text-muted-foreground opacity-0 transition group-hover:opacity-100">
-            {t('bookSlot')} →
-          </span>
-        </div>
+        <Circle className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+        <span className="text-xs text-emerald-700 dark:text-emerald-300">{t('slotAvailable')}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground opacity-0 transition group-hover:opacity-100">
+          {t('bookSlot')} →
+        </span>
       </button>
     );
   }
 
-  // Booked slot
+  const apptStart  = new Date(a.start_time);
+  const apptEnd    = new Date(apptStart.getTime() + a.duration_min * 60_000);
+  const startLabel = apptStart.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const endLabel   = apptEnd.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit' });
+  const isSpanning = spanCount > 1;
+
   const statusColors: Record<string, string> = {
-    confirmed: 'border-sky-400/40 bg-sky-500/8 hover:bg-sky-500/12',
-    pending:   'border-amber-400/40 bg-amber-500/8 hover:bg-amber-500/12',
-    completed: 'border-emerald-400/40 bg-emerald-500/8 hover:bg-emerald-500/12',
-    cancelled: 'border-rose-400/40 bg-rose-500/8 hover:bg-rose-500/12 opacity-60',
-    no_show:   'border-slate-400/40 bg-slate-500/8 hover:bg-slate-500/12 opacity-60',
+    confirmed: 'border-sky-400/60 bg-sky-500/10 hover:bg-sky-500/15',
+    pending:   'border-amber-400/60 bg-amber-500/10 hover:bg-amber-500/15',
+    completed: 'border-emerald-400/60 bg-emerald-500/10 hover:emerald-500/15',
+    cancelled: 'border-rose-400/60 bg-rose-500/10 hover:bg-rose-500/15 opacity-60',
+    no_show:   'border-slate-400/60 bg-slate-500/10 hover:bg-slate-500/15 opacity-60',
   };
 
   return (
     <button
       onClick={onClick}
       className={cn(
-        'flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition-all',
-        'hover:shadow-sm',
+        'flex h-full min-h-[36px] w-full rounded-xl border px-3 py-2 text-left transition-all hover:shadow-sm',
+        isSpanning ? 'items-start' : 'items-center',
         statusColors[a.status] ?? statusColors.pending,
       )}
     >
-      {/* time */}
-      <div className="flex w-16 shrink-0 flex-col items-center">
-        <span className="text-xs font-bold">{slot.label}</span>
-        <span className="text-[10px] text-muted-foreground">{intervalMin}m</span>
-      </div>
+      <CheckCircle2 className="mr-2 mt-0.5 h-4 w-4 shrink-0 text-sky-500" />
 
-      {/* indicator */}
-      <CheckCircle2 className="h-4 w-4 shrink-0 text-sky-500" />
-
-      {/* info */}
       <div className="min-w-0 flex-1">
-        {slot.isContinuation ? (
-          <p className="truncate text-xs italic text-muted-foreground">
-            ↳ {t('continuesFrom')} {new Date(a.start_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+        <div className="flex items-center gap-1.5">
+          <User className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <p className="truncate text-xs font-semibold">{a.customer?.name ?? '—'}</p>
+        </div>
+        <div className="flex items-center gap-1.5 mt-0.5">
+          <Sparkles className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <p className="truncate text-[11px] text-muted-foreground">{a.service?.name ?? '—'}</p>
+        </div>
+        {isSpanning && (
+          <p className="mt-1 text-[10px] font-semibold text-muted-foreground">
+            {startLabel} – {endLabel} · {a.duration_min}m
           </p>
-        ) : (
-          <>
-            <div className="flex items-center gap-1.5">
-              <User className="h-3 w-3 text-muted-foreground" />
-              <p className="truncate text-xs font-semibold">{a.customer?.name ?? '—'}</p>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="h-3 w-3 text-muted-foreground" />
-              <p className="truncate text-[11px] text-muted-foreground">
-                {a.service?.name ?? '—'} · {a.duration_min}m
-              </p>
-            </div>
-          </>
         )}
       </div>
 

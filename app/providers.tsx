@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Provider } from 'react-redux';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { store } from '@/store';
-import { initAuthFromStorage } from '@/store/slices/authSlice';
+import { initAuthFromStorage, logout } from '@/store/slices/authSlice';
+import { getSessionRemainingMs } from '@/lib/api';
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
 const PUBLIC_ROUTES = ['/login'];
@@ -37,6 +38,9 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const pathname     = usePathname();
   const { user, initialized } = useAppSelector((s) => s.auth);
 
+  // Ref to hold the auto-expire timer so we can clear it on unmount/re-check
+  const expireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // On first mount: hydrate auth state from localStorage
   useEffect(() => {
     dispatch(initAuthFromStorage());
@@ -49,13 +53,43 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const isPublic = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
 
     if (!user && !isPublic) {
-      // Not logged in → go to login
       router.replace('/login');
     } else if (user && isPublic) {
-      // Already logged in → go to dashboard
       router.replace('/');
     }
   }, [initialized, user, pathname, router]);
+
+  // ── Session expiry: check on every route change and set a precise timer ──
+  useEffect(() => {
+    // Clear any existing expire timer
+    if (expireTimerRef.current) {
+      clearTimeout(expireTimerRef.current);
+      expireTimerRef.current = null;
+    }
+
+    if (!user) return; // not logged in, nothing to expire
+
+    const remaining = getSessionRemainingMs();
+
+    if (remaining <= 0) {
+      // Already expired — log out immediately
+      dispatch(logout());
+      router.replace('/login');
+      return;
+    }
+
+    // Schedule precise auto-logout at the exact moment the 12-hour window closes
+    expireTimerRef.current = setTimeout(() => {
+      dispatch(logout());
+      router.replace('/login');
+    }, remaining);
+
+    return () => {
+      if (expireTimerRef.current) clearTimeout(expireTimerRef.current);
+    };
+  // Re-run whenever the user or pathname changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, pathname]);
 
   // While hydrating, show nothing (prevents flash)
   if (!initialized) {

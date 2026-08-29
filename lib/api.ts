@@ -73,22 +73,61 @@ export async function apiRequest<T>(url: string, opts: ApiOptions = {}): Promise
 
 // ─── Token helpers (localStorage) ────────────────────────────────────────────
 
-const TOKEN_KEY = 'ush_access_token';
-const USER_KEY  = 'ush_auth_user';
+const TOKEN_KEY   = 'ush_access_token';
+const USER_KEY    = 'ush_auth_user';
+const LOGINAT_KEY = 'ush_login_at';
+
+/** 12 hours in milliseconds */
+export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export function saveToken(token: string): void {
-  if (typeof window !== 'undefined') localStorage.setItem(TOKEN_KEY, token);
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(TOKEN_KEY, token);
+    // Record the exact time of login so we can enforce the 12-hour TTL
+    localStorage.setItem(LOGINAT_KEY, String(Date.now()));
+  }
 }
 
+/**
+ * Returns the stored token only if the session is still within the 12-hour window.
+ * Automatically clears stale session data when the TTL has expired.
+ */
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
+
+  const token   = localStorage.getItem(TOKEN_KEY);
+  const loginAt = localStorage.getItem(LOGINAT_KEY);
+
+  if (!token) return null;
+
+  // If we have a timestamp, enforce the 12-hour TTL
+  if (loginAt) {
+    const elapsed = Date.now() - Number(loginAt);
+    if (elapsed > SESSION_TTL_MS) {
+      // Session expired — wipe everything
+      clearToken();
+      return null;
+    }
+  }
+
+  return token;
+}
+
+/** Returns how many milliseconds remain in the current session, or 0 if expired. */
+export function getSessionRemainingMs(): number {
+  if (typeof window === 'undefined') return 0;
+  const loginAt = localStorage.getItem(LOGINAT_KEY);
+  if (!loginAt) return 0;
+  const remaining = SESSION_TTL_MS - (Date.now() - Number(loginAt));
+  return Math.max(0, remaining);
 }
 
 export function clearToken(): void {
   if (typeof window !== 'undefined') {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(LOGINAT_KEY);
+    localStorage.removeItem('ush_refresh_token');
   }
 }
 
