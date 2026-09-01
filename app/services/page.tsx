@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import {
   Sparkles, Clock, Search, Building2,
   LayoutGrid, List, RefreshCw, AlertCircle,
-  ChevronDown, X, Layers, Tag, TrendingUp,
+  ChevronDown, X, Layers, TrendingUp, Home,
 } from 'lucide-react';
 import { useAppSelector } from '@/store/hooks';
 import { useI18n } from '@/hooks/use-i18n';
@@ -104,7 +104,7 @@ function normaliseService(
     price:               Number(raw.price ?? raw.base_price ?? raw.cost ?? 0),
     description:         (raw.description ?? raw.desc ?? null) as string | null,
     image:               (raw.image ?? raw.image_url ?? raw.image1 ?? raw.photo ?? raw.thumbnail ?? null) as string | null,
-    can_do_home_service: raw.can_do_home_service === true || raw.home_service === true,
+    can_do_home_service: raw.is_home_service_eligible === true || raw.can_do_home_service === true || raw.home_service === true,
     branch_ids:          branchIds,
     bookings:            appointmentCount,
   };
@@ -353,10 +353,10 @@ export default function ServicesPage() {
   const fallback = (reduxServices.length > 0 ? reduxServices : DEMO_SERVICES) as unknown as Record<string, unknown>[];
   const { data: rawServices, loading, error, refetch } = useApiList<Record<string, unknown>>('/api/v1/services', fallback);
 
-  // UI state — no homeOnly any more
+  // UI state
   const [search,         setSearch]         = useState('');
   const [branchFilter,   setBranchFilter]   = useState('');
-  const [roleFilter,     setRoleFilter]     = useState(''); // "role" = category
+  const [homeFilter,     setHomeFilter]     = useState(false);
   const [viewMode,       setViewMode]       = useState<'grid' | 'list'>('grid');
 
   // Branch map
@@ -390,11 +390,6 @@ export default function ServicesPage() {
     }),
   [rawServices, appointmentCounts, appointmentBranches]);
 
-  // Filter options
-  const roleOptions  = useMemo(() =>
-    Array.from(new Set(services.map((s) => s.category).filter(Boolean))).sort().map((c) => ({ value: c, label: c })),
-  [services]);
-
   const branchOptions = useMemo(() =>
     branches.map((b) => ({ value: b.id, label: b.name })),
   [branches]);
@@ -406,14 +401,14 @@ export default function ServicesPage() {
       const branchNames = s.branch_ids.map((id) => branchMap.get(id) ?? '').join(' ').toLowerCase();
       const matchSearch = !q || s.name.toLowerCase().includes(q) || s.category.toLowerCase().includes(q) || branchNames.includes(q) || (s.description?.toLowerCase().includes(q));
       const matchBranch = !branchFilter || s.branch_ids.length === 0 || s.branch_ids.includes(branchFilter);
-      const matchRole   = !roleFilter   || s.category === roleFilter;
-      return matchSearch && matchBranch && matchRole;
+      const matchHome   = !homeFilter   || s.can_do_home_service;
+      return matchSearch && matchBranch && matchHome;
     }).sort((a, b) => b.bookings - a.bookings);
-  }, [services, search, branchFilter, roleFilter, branchMap]);
+  }, [services, search, branchFilter, homeFilter, branchMap]);
 
-  const hasFilters = Boolean(search || branchFilter || roleFilter);
+  const hasFilters = Boolean(search || branchFilter || homeFilter);
 
-  const clearFilters = () => { setSearch(''); setBranchFilter(''); setRoleFilter(''); };
+  const clearFilters = () => { setSearch(''); setBranchFilter(''); setHomeFilter(false); };
 
   const isLoading = (dataStatus === 'idle' || dataStatus === 'loading') && loading && services.length === 0;
 
@@ -476,14 +471,20 @@ export default function ServicesPage() {
           onChange={setBranchFilter}
         />
 
-        {/* Role filter (= category) */}
-        <SelectFilter
-          icon={Tag}
-          label="All Roles"
-          value={roleFilter}
-          options={roleOptions}
-          onChange={setRoleFilter}
-        />
+        {/* Home Service filter */}
+        <button
+          onClick={() => setHomeFilter((v) => !v)}
+          className={cn(
+            'flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-semibold transition cursor-pointer',
+            homeFilter
+              ? 'border-sky-400/60 bg-sky-500/10 text-sky-700 dark:text-sky-400 shadow-sm'
+              : 'border-border bg-card text-muted-foreground hover:border-sky-400/40 hover:text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/20',
+          )}
+        >
+          <Home className={cn('h-4 w-4 transition', homeFilter ? 'text-sky-600 dark:text-sky-400' : 'text-muted-foreground')} />
+          Home Service
+          {homeFilter && <X className="h-3 w-3 ml-0.5 opacity-70" />}
+        </button>
 
         {/* Clear */}
         {hasFilters && (

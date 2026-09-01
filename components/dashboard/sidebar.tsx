@@ -26,6 +26,7 @@ import {
   CalendarOff,
   Landmark,
   CreditCard,
+  Building2,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -51,6 +52,7 @@ export function Sidebar() {
     appointments: pathname.startsWith('/appointments'),
     employees:    pathname.startsWith('/employees'),
     finance:      pathname.startsWith('/finance'),
+    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services'),
   });
 
   const items: NavItem[] = [
@@ -67,9 +69,17 @@ export function Sidebar() {
       ],
     },
     { href: '/reports',   label: t('navReports'),   icon: BarChart3 },
-    { href: '/customers', label: t('navCustomers'), icon: Users },
-    { href: '/branches',  label: t('navBranches'),  icon: Store },
-    { href: '/services',  label: t('navServices'),  icon: Sparkles },
+    {
+      href: '/ushspa',
+      label: 'UshSpa',
+      icon: Building2,
+      children: [
+        { href: '/branches',  label: t('navBranches'),  icon: Store },
+        { href: '/customers', label: t('navCustomers'), icon: Users },
+        { href: '/products',  label: t('navProducts'),  icon: Package },
+        { href: '/services',  label: t('navServices'),  icon: Sparkles },
+      ],
+    },
     {
       href: '/employees',
       label: t('navEmployees'),
@@ -80,7 +90,7 @@ export function Sidebar() {
         { href: '/employees/working-hours', label: 'Working Hours',     icon: Clock },
       ],
     },
-    { href: '/products',  label: t('navProducts'),  icon: Package },
+
     {
       href: '/bookings',
       label: 'Bookings',
