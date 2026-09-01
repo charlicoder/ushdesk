@@ -29,7 +29,12 @@ export interface Service {
   category: string;
   duration_min: number;
   price: number;
+  description?: string | null;
+  image?: string | null;
+  can_do_home_service?: boolean;
+  branch_ids?: string[];
 }
+
 
 export interface Staff {
   id: string;
