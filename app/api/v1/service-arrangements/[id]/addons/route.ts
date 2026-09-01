@@ -4,14 +4,20 @@ const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
 const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
 const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
 
-const CUSTOMERS_URL = `${BASE_URL}${UAUTH}/api/v1/customers/`;
-
-export async function GET(req: NextRequest) {
+/**
+ * GET /api/v1/service-arrangements/[id]/addons
+ *
+ * Fetches the single arrangement detail and returns just the `addons` array.
+ * The upstream endpoint returns the full arrangement object at top level
+ * (no { data } wrapper), so we pluck the addons field.
+ */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id }     = await params;
   const authHeader = req.headers.get('authorization') ?? '';
-
-  // Forward all query params (search, page, page_size, etc.)
-  const params = req.nextUrl.searchParams.toString();
-  const url    = params ? `${CUSTOMERS_URL}?${params}` : CUSTOMERS_URL;
+  const url        = `${BASE_URL}${UAUTH}/api/v1/service-arrangements/${id}/`;
 
   try {
     const upstream = await fetch(url, {
@@ -23,7 +29,15 @@ export async function GET(req: NextRequest) {
       },
     });
     const data = await upstream.json().catch(() => ({}));
-    return NextResponse.json(data, { status: upstream.status });
+
+    // The arrangement object has an `addons` array at the top level
+    const addons = Array.isArray(data.addons)
+      ? data.addons
+      : Array.isArray(data.data?.addons)
+        ? data.data.addons
+        : [];
+
+    return NextResponse.json(addons, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';
     return NextResponse.json({ detail: message }, { status: 502 });

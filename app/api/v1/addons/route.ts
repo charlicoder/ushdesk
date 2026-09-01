@@ -4,14 +4,12 @@ const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
 const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
 const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
 
-const CUSTOMERS_URL = `${BASE_URL}${UAUTH}/api/v1/customers/`;
+const ADDONS_URL = `${BASE_URL}${UAUTH}/api/v1/addons/`;
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization') ?? '';
-
-  // Forward all query params (search, page, page_size, etc.)
   const params = req.nextUrl.searchParams.toString();
-  const url    = params ? `${CUSTOMERS_URL}?${params}` : CUSTOMERS_URL;
+  const url    = params ? `${ADDONS_URL}?${params}` : ADDONS_URL;
 
   try {
     const upstream = await fetch(url, {

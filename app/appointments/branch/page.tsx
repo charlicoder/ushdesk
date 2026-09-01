@@ -1,12 +1,13 @@
 'use client';
 // Branch Appointments – mirrors Therapist Schedule design
 // Data: /api/v1/service-arrangements/schedule/?branch_id=all&date=YYYY-MM-DD
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, Layers,
   Timer, Hash, MapPin, ChevronLeft, ChevronRight, Loader2,
   LayoutGrid, Crown, Heart, Users, Sparkles,
+  Scissors, Package, User, Phone, Mail, DollarSign, FileText,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
@@ -58,6 +59,50 @@ interface ApiScheduleRecord {
   bookings: ApiBooking[];
 }
 
+interface ApiService {
+  id: string;
+  name: string;
+  duration_minutes?: number;
+  base_price?: string | number;
+  arrangement_price?: string | number;   // branch-specific price
+  home_service_price?: string | number;
+  price_for_extra_minutes?: string | number;
+  extra_minutes?: number;
+  category?: string;
+  gender?: string;
+  is_for_male?: boolean;
+  is_for_female?: boolean;
+  add_ons?: ApiAddOn[];
+}
+
+interface ApiAddOn {
+  id: string;
+  name: string;
+  price?: string | number;
+  home_service_price?: string | number;
+  duration_minutes?: number;
+}
+
+interface ApiTherapist {
+  id: string;
+  first_name?: string;
+  last_name?: string;
+  full_name?: string;
+  avatar?: string;           // actual API field
+  photo_url?: string;        // alias fallback
+  specialties?: { id: string; name: string }[];
+  specialization?: string;   // alias fallback
+}
+
+interface ApiCustomer {
+  id: string;
+  first_name?: string;
+  last_name?: string;
+  full_name?: string;
+  phone_number?: string;
+  email?: string;
+}
+
 // ── Slot model ─────────────────────────────────────────────────────────────────
 
 type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress';
@@ -83,6 +128,7 @@ interface Arrangement {
   arrangementType: string;
   capacity: number;
   branchName: string;
+  branchId: string;
   color: string;
 }
 
@@ -173,8 +219,8 @@ const STATUS_CFG = {
 
 type ActiveStatus = keyof typeof STATUS_CFG;
 
-// ── Slot Detail Modal ──────────────────────────────────────────────────────────
-interface ModalPayload {
+// ── Slot Detail Modal (for booked slots) ───────────────────────────────────────
+interface DetailModalPayload {
   slot:        Slot;
   arrangement: Arrangement;
   timeSlot:    string;
@@ -182,7 +228,7 @@ interface ModalPayload {
   date:        string;
 }
 
-function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose: () => void }) {
+function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; onClose: () => void }) {
   const { slot, arrangement, timeSlot, branch, date } = payload;
   const cfg = STATUS_CFG[slot.status as ActiveStatus];
   const typeCfg = getArrangementType(arrangement.arrangementType);
@@ -309,6 +355,864 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
   );
 }
 
+// ── Helpers: module-level form components (prevent remount on render) ───────────
+function BFormLabel({ children }: { children: React.ReactNode }) {
+  return <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{children}</p>;
+}
+function BFormInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      className={cn(
+        'h-10 w-full rounded-xl border border-border bg-muted/30 px-3 text-sm outline-none transition',
+        'focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50',
+        props.className,
+      )}
+    />
+  );
+}
+
+// ── Generic searchable dropdown ────────────────────────────────────────────────
+interface SearchDropdownProps<T> {
+  value: string;
+  placeholder: string;
+  loading?: boolean;
+  items: T[];
+  getKey: (item: T) => string;
+  isSelected: (item: T) => boolean;
+  selectedItem?: T | null;
+  icon?: React.ElementType;
+  onSearch: (q: string) => void;
+  onSelect: (item: T) => void;
+  onClear: () => void;
+  renderItem: (item: T) => React.ReactNode;
+}
+
+function BSearchDropdown<T>({
+  value, placeholder, loading, items, getKey, isSelected, selectedItem,
+  icon: Icon, onSearch, onSelect, onClear, renderItem,
+}: SearchDropdownProps<T>) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const isItemSelected = selectedItem != null;
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="relative flex items-center">
+        {Icon && (
+          <div className="pointer-events-none absolute left-3 z-10 grid h-5 w-5 place-items-center text-muted-foreground">
+            <Icon className="h-3.5 w-3.5" />
+          </div>
+        )}
+        <input
+          value={isItemSelected ? '' : value}
+          onChange={(e) => { onSearch(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder={isItemSelected ? '— selected —' : placeholder}
+          readOnly={isItemSelected}
+          className={cn(
+            'h-10 w-full rounded-xl border border-border bg-muted/30 pr-8 text-sm outline-none transition',
+            'focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50',
+            Icon ? 'pl-9' : 'pl-3',
+            isItemSelected && 'text-muted-foreground/50 cursor-default',
+          )}
+        />
+        {loading && (
+          <Loader2 className="pointer-events-none absolute right-3 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        )}
+        {isItemSelected && (
+          <button type="button" onClick={onClear}
+            className="absolute right-2.5 grid h-5 w-5 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition">
+            <X className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+      {open && !isItemSelected && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1.5 max-h-52 overflow-y-auto rounded-2xl border border-border bg-card shadow-2xl">
+          {items.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground italic">
+              {loading ? 'Loading…' : 'No results'}
+            </p>
+          ) : (
+            items.map((item) => (
+              <div
+                key={getKey(item)}
+                onClick={() => { onSelect(item); setOpen(false); }}
+                className={cn(
+                  'cursor-pointer transition hover:bg-muted/60',
+                  isSelected(item) && 'bg-primary/5',
+                )}
+              >
+                {renderItem(item)}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── New Booking Modal payload ──────────────────────────────────────────────────
+interface NewBookingPayload {
+  arrangement: Arrangement;
+  timeSlot:    string;
+  date:        string;
+}
+
+type BookingStep = 1 | 2;
+
+interface BranchBookingForm {
+  serviceId:      string;
+  serviceSearch:  string;
+  therapistId:    string;
+  therapistSearch: string;
+  customerId:     string;
+  customerSearch: string;
+  addonIds:       string[];
+  extraMinutes:   number;
+  notes:          string;
+}
+
+const INITIAL_FORM: BranchBookingForm = {
+  serviceId: '', serviceSearch: '', therapistId: '', therapistSearch: '',
+  customerId: '', customerSearch: '', addonIds: [], extraMinutes: 0, notes: '',
+};
+
+function fmtPriceB(v: string | number | undefined | null): string {
+  if (v === undefined || v === null || v === '') return '0.000';
+  const n = parseFloat(String(v));
+  return isNaN(n) ? '0.000' : n.toFixed(3);
+}
+
+// ── New Branch Booking Form Modal ──────────────────────────────────────────────
+function NewBranchBookingModal({
+  payload, onClose, onSuccess, token,
+}: {
+  payload: NewBookingPayload;
+  onClose: () => void;
+  onSuccess: () => void;
+  token: string;
+}) {
+  const { arrangement, timeSlot, date } = payload;
+
+  const [step, setStep]             = useState<BookingStep>(1);
+  const [form, setForm]             = useState<BranchBookingForm>(INITIAL_FORM);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Services
+  const [services, setServices]           = useState<ApiService[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(false);
+
+  // Therapists (after service selected)
+  const [therapists, setTherapists]           = useState<ApiTherapist[]>([]);
+  const [therapistsLoading, setTherapistsLoading] = useState(false);
+
+  // Global add-ons
+  const [globalAddons, setGlobalAddons] = useState<ApiAddOn[]>([]);
+  const [addonsLoading, setAddonsLoading] = useState(true);
+
+  // Customers
+  const [customers, setCustomers]             = useState<ApiCustomer[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [customerQuery, setCustomerQuery]     = useState('');
+
+  const authHeader = `Bearer ${token}`;
+
+  // Load services for this arrangement
+  useEffect(() => {
+    setServicesLoading(true);
+    fetch(`/api/v1/service-arrangements/${arrangement.id}/services`, {
+      headers: { Authorization: authHeader },
+    })
+      .then(r => r.json())
+      .then(d => {
+        // API shape: { success, data: [...], meta } OR plain array OR { results: [...] }
+        const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        setServices(list);
+      })
+      .catch(() => setServices([]))
+      .finally(() => setServicesLoading(false));
+  }, [arrangement.id, authHeader]);
+
+  // Load add-ons from the arrangement (arrangement-specific addons)
+  useEffect(() => {
+    setAddonsLoading(true);
+    fetch(`/api/v1/service-arrangements/${arrangement.id}/addons`, {
+      headers: { Authorization: authHeader },
+    })
+      .then(r => r.json())
+      .then(d => {
+        // The arrangement detail returns addons at top level (no data wrapper)
+        const list = Array.isArray(d) ? d : (d.addons ?? d.data ?? d.results ?? []);
+        setGlobalAddons(list);
+      })
+      .catch(() => setGlobalAddons([]))
+      .finally(() => setAddonsLoading(false));
+  }, [arrangement.id, authHeader]);
+
+  // Load therapists when service changes
+  useEffect(() => {
+    if (!form.serviceId) { setTherapists([]); return; }
+    setTherapistsLoading(true);
+    fetch(`/api/v1/services/${form.serviceId}/therapists`, {
+      headers: { Authorization: authHeader },
+    })
+      .then(r => r.json())
+      .then(d => {
+        // API shape: { success, data: [...], meta }
+        const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        setTherapists(list);
+      })
+      .catch(() => setTherapists([]))
+      .finally(() => setTherapistsLoading(false));
+  }, [form.serviceId, authHeader]);
+
+  // Customer search (debounced)
+  useEffect(() => {
+    setCustomersLoading(true);
+    const t = setTimeout(() => {
+      const qs = customerQuery ? `search=${encodeURIComponent(customerQuery)}` : '';
+      fetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: { Authorization: authHeader } })
+        .then(r => r.json())
+        .then(d => setCustomers(Array.isArray(d) ? d : (d.results ?? [])))
+        .catch(() => setCustomers([]))
+        .finally(() => setCustomersLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [customerQuery, authHeader]);
+
+  // Derived helpers
+  const selectedService  = useMemo(() => services.find(s => s.id === form.serviceId) ?? null, [services, form.serviceId]);
+  const selectedTherapist = useMemo(() => therapists.find(t => t.id === form.therapistId) ?? null, [therapists, form.therapistId]);
+  const selectedCustomer = useMemo(() => customers.find(c => c.id === form.customerId) ?? null, [customers, form.customerId]);
+
+  const filteredServices  = useMemo(() =>
+    form.serviceSearch ? services.filter(s => s.name.toLowerCase().includes(form.serviceSearch.toLowerCase())) : services,
+    [services, form.serviceSearch]);
+
+  const filteredTherapists = useMemo(() =>
+    form.therapistSearch ? therapists.filter(t => {
+      const name = (t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ')).toLowerCase();
+      return name.includes(form.therapistSearch.toLowerCase());
+    }) : therapists,
+    [therapists, form.therapistSearch]);
+
+  // Merge service add-ons + global add-ons
+  const serviceAddons: ApiAddOn[] = selectedService?.add_ons ?? [];
+  const allAddons = useMemo(() => {
+    const ids = new Set(serviceAddons.map(a => a.id));
+    return [...serviceAddons, ...globalAddons.filter(a => !ids.has(a.id))];
+  }, [serviceAddons, globalAddons]);
+
+  // Pricing
+  const servicePrice    = parseFloat(String(selectedService?.arrangement_price ?? selectedService?.base_price ?? '0')) || 0;
+  const selectedAddons  = allAddons.filter(a => form.addonIds.includes(a.id));
+  const addonTotal      = selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
+  const addonDuration   = selectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
+  const extraMinutesUnit = selectedService?.extra_minutes ?? 0;
+  const extraPricePerUnit = parseFloat(String(selectedService?.price_for_extra_minutes ?? '0')) || 0;
+  const extraSteps = extraMinutesUnit > 0 ? Math.round(form.extraMinutes / extraMinutesUnit) : 0;
+  const extraMinutesPrice = extraSteps * extraPricePerUnit;
+  const totalPrice    = servicePrice + addonTotal + extraMinutesPrice;
+  const baseDuration  = selectedService?.duration_minutes ?? 0;
+  const totalDuration = baseDuration + addonDuration + form.extraMinutes;
+  const hasExtraTime  = !!selectedService && extraMinutesUnit > 0;
+  const extraOptions  = hasExtraTime
+    ? [0, 1, 2, 3, 4].map(n => n * extraMinutesUnit)
+    : [];
+
+  const toggleAddon = (id: string) =>
+    setForm(p => ({ ...p, addonIds: p.addonIds.includes(id) ? p.addonIds.filter(x => x !== id) : [...p.addonIds, id] }));
+
+  const selectService = (s: ApiService) =>
+    setForm(p => ({ ...p, serviceId: s.id, serviceSearch: s.name, therapistId: '', therapistSearch: '', addonIds: [], extraMinutes: 0 }));
+  const clearService  = () => setForm(p => ({ ...p, serviceId: '', serviceSearch: '', therapistId: '', therapistSearch: '', addonIds: [], extraMinutes: 0 }));
+
+  const selectTherapist = (t: ApiTherapist) => {
+    const name = t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ');
+    setForm(p => ({ ...p, therapistId: t.id, therapistSearch: name }));
+  };
+  const clearTherapist = () => setForm(p => ({ ...p, therapistId: '', therapistSearch: '' }));
+
+  const selectCustomer = (c: ApiCustomer) => {
+    const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
+    setForm(p => ({ ...p, customerId: c.id, customerSearch: name }));
+  };
+  const clearCustomer = () => setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+
+  const goNext = () => {
+    if (!form.serviceId) { setSubmitError('Please select a service.'); return; }
+    setSubmitError(null);
+    setStep(2);
+  };
+  const goBack = () => { setSubmitError(null); setStep(1); };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
+    setSubmitting(true);
+    setSubmitError(null);
+
+    // Parse time slot to build start datetime
+    const [timePart, ampm] = timeSlot.split(' ');
+    const [hStr, mStr] = timePart.split(':');
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (ampm === 'AM' && h === 12) h = 0;
+    if (ampm === 'PM' && h !== 12) h += 12;
+    const startISO = `${date}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`;
+
+    const body = {
+      arrangement_id:  arrangement.id,
+      service_id:      form.serviceId,
+      therapist_id:    form.therapistId || undefined,
+      customer_id:     form.customerId,
+      addon_ids:       form.addonIds,
+      extra_minutes:   form.extraMinutes,
+      notes:           form.notes,
+      start:           startISO,
+      branch_id:       arrangement.branchId,
+    };
+
+    try {
+      const res = await fetch('/api/v1/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error((err as Record<string, string>).detail ?? `Error ${res.status}`);
+      }
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  // Date display helpers
+  const dateObj   = new Date(date + 'T00:00:00');
+  const dayName   = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+  const dayNum    = dateObj.getDate();
+  const monthFull = dateObj.toLocaleDateString('en-US', { month: 'long' });
+  const yearFull  = dateObj.getFullYear();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal shell */}
+      <div className="relative z-10 w-full max-w-2xl h-[88vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+
+        {/* Accent bar */}
+        <div className="h-1.5 w-full bg-gradient-to-r from-primary to-accent shrink-0" />
+
+        {/* Top header */}
+        <div className="shrink-0 flex items-center justify-between gap-4 border-b border-border/40 px-6 pt-4 pb-3">
+          <div className="flex items-center gap-2">
+            <Store className="h-4 w-4 text-primary" />
+            <p className="text-[11px] font-bold uppercase tracking-wider text-primary">New Branch Booking</p>
+            <div className="flex items-center gap-1 ml-2">
+              {([1, 2] as const).map((n) => (
+                <span key={n} className={cn(
+                  'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
+                  step === n ? 'bg-primary text-white shadow-sm' : step > n ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
+                )}>
+                  {step > n ? <CheckCircle2 className="h-3 w-3" /> : n}
+                </span>
+              ))}
+              <span className="text-[11px] text-muted-foreground font-medium ml-1">
+                {step === 1 ? 'Service & Therapist' : 'Customer'}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition" aria-label="Close">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Sub-header: Arrangement | Date + Time */}
+        <div className="shrink-0 border-b border-border/40 bg-muted/20">
+          <div className="flex items-stretch divide-x divide-border/40">
+
+            {/* LEFT: Arrangement portrait */}
+            <div className="flex flex-col items-center justify-center gap-2 px-5 py-4 w-[30%] shrink-0">
+              <div className="relative">
+                <div className={cn('absolute -inset-1.5 rounded-full opacity-20 blur-xl bg-gradient-to-br', arrangement.color)} />
+                <div className="relative h-[64px] w-[64px] rounded-full p-[3px] shadow-xl"
+                  style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(200,200,200,0.4) 100%)' }}>
+                  <div className={cn('h-full w-full rounded-full grid place-items-center bg-gradient-to-br text-white text-lg font-black', arrangement.color)}>
+                    {arrangement.initials}
+                  </div>
+                </div>
+              </div>
+              <div className="text-center">
+                <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[100px]">{arrangement.name}</p>
+                <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{arrangement.branchName}</p>
+                <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block" />
+                  {getArrangementType(arrangement.arrangementType).label}
+                </span>
+              </div>
+            </div>
+
+            {/* MIDDLE: Selected Therapist (visible once one is picked) */}
+            <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-4 w-[30%] shrink-0 border-x border-border/40">
+              {selectedTherapist ? (() => {
+                const tName = (selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist';
+                const tImg  = selectedTherapist.avatar ?? selectedTherapist.photo_url;
+                const tSpec = selectedTherapist.specialties?.[0]?.name ?? selectedTherapist.specialization ?? '';
+                return (
+                  <>
+                    <div className="relative">
+                      <div className="absolute -inset-1 rounded-full bg-primary/20 blur-md" />
+                      <div className="relative h-[60px] w-[60px] rounded-full ring-2 ring-primary/40 shadow-lg overflow-hidden">
+                        {tImg ? (
+                          <img src={tImg} alt={tName} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-lg font-black">
+                            {tName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-card">
+                        <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+                      </span>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[110px]">{tName}</p>
+                      {tSpec && <p className="text-[10px] text-muted-foreground truncate max-w-[110px]">{tSpec}</p>}
+                      <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                        <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block" />
+                        Therapist
+                      </span>
+                    </div>
+                  </>
+                );
+              })() : (
+                <div className="flex flex-col items-center gap-1 opacity-40">
+                  <div className="h-[60px] w-[60px] rounded-full border-2 border-dashed border-border grid place-items-center">
+                    <User className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                  <p className="text-[10px] text-muted-foreground text-center">No therapist<br/>selected</p>
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT: Date tile + Time slot */}
+            <div className="flex items-center justify-end gap-3.5 px-4 py-4 flex-1 min-w-0">
+              {/* Calendar tile */}
+              <div className="flex flex-col items-center justify-center w-[60px] h-[72px] rounded-2xl shrink-0 shadow-lg"
+                style={{ background: 'linear-gradient(160deg, #3b2f2f 0%, #4a3728 100%)' }}>
+                <p className="text-[11px] font-semibold text-white/70 uppercase tracking-widest leading-none mb-1">{dayName}</p>
+                <p className="text-[30px] font-black text-white leading-none">{dayNum}</p>
+              </div>
+              {/* Date + time text */}
+              <div className="flex flex-col gap-2 min-w-0">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Date</p>
+                  <p className="text-sm font-extrabold text-foreground leading-tight">{monthFull} {dayNum}, {yearFull}</p>
+                </div>
+                <div className="inline-flex items-center gap-2 rounded-xl border border-violet-200/60 dark:border-violet-800/40 bg-violet-50 dark:bg-violet-950/30 px-3 py-1.5 w-fit">
+                  <div className="grid h-5 w-5 place-items-center rounded-lg bg-violet-500/15 text-violet-600 dark:text-violet-400 shrink-0">
+                    <Clock className="h-3 w-3" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-violet-500/70 leading-none">Time Slot</p>
+                    <p className="text-xs font-extrabold text-violet-700 dark:text-violet-300 leading-tight">{timeSlot}</p>
+                  </div>
+                  {totalDuration > 0 && (
+                    <>
+                      <span className="text-violet-300/60 text-xs">·</span>
+                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+                        <Timer className="h-3 w-3" />{totalDuration}m
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable form body */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <form id="branch-booking-form" onSubmit={handleSubmit}>
+
+            {/* STEP 1: Service, Therapist, Extra Time, Add-ons */}
+            {step === 1 && (
+              <div className="px-6 py-5 space-y-5">
+
+                {/* Service search */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Scissors className="h-4 w-4 text-primary" />
+                    <p className="text-sm font-extrabold">Select Service</p>
+                    {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                  </div>
+                  <BFormLabel>Search & Select *</BFormLabel>
+                  <BSearchDropdown<ApiService>
+                    value={form.serviceSearch}
+                    placeholder={servicesLoading ? 'Loading services…' : 'Search services…'}
+                    loading={servicesLoading}
+                    items={filteredServices}
+                    getKey={(s) => s.id}
+                    isSelected={(s) => s.id === form.serviceId}
+                    selectedItem={selectedService}
+                    icon={Scissors}
+                    onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q, serviceId: '' }))}
+                    onSelect={selectService}
+                    onClear={clearService}
+                    renderItem={(s) => (
+                      <div className="flex items-start gap-3 px-4 py-3">
+                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                          <Scissors className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold truncate">{s.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {s.category && <span className="mr-2">{s.category}</span>}
+                            {s.duration_minutes && <span>{s.duration_minutes} min</span>}
+                          </p>
+                        </div>
+                          {(s.arrangement_price ?? s.base_price) && (
+                          <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
+                            {fmtPriceB(s.arrangement_price ?? s.base_price)} KWD
+                          </p>
+                        )}
+                        {s.id === form.serviceId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
+                      </div>
+                    )}
+                  />
+                  {selectedService && (
+                    <div className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {selectedService.duration_minutes && <span>{selectedService.duration_minutes} min</span>}
+                          {selectedService.category && <span> · {selectedService.category}</span>}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-extrabold text-primary">
+                        {fmtPriceB(selectedService.arrangement_price ?? selectedService.base_price)} KWD
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Therapist (only after service selected) */}
+                {selectedService && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <User className="h-4 w-4 text-primary" />
+                      <p className="text-sm font-extrabold">Select Therapist</p>
+                      {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                    </div>
+                    <BFormLabel>Search & Select (optional)</BFormLabel>
+                    <BSearchDropdown<ApiTherapist>
+                      value={form.therapistSearch}
+                      placeholder={therapistsLoading ? 'Loading therapists…' : 'Search therapists…'}
+                      loading={therapistsLoading}
+                      items={filteredTherapists}
+                      getKey={(t) => t.id}
+                      isSelected={(t) => t.id === form.therapistId}
+                      selectedItem={selectedTherapist}
+                      icon={User}
+                      onSearch={(q) => setForm(p => ({ ...p, therapistSearch: q, therapistId: '' }))}
+                      onSelect={selectTherapist}
+                      onClear={clearTherapist}
+                      renderItem={(t) => {
+                        const name  = (t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ')) || '—';
+                        const img   = t.avatar ?? t.photo_url;
+                        const spec  = t.specialties?.[0]?.name ?? t.specialization ?? '';
+                        return (
+                          <div className="flex items-center gap-3 px-4 py-2.5">
+                            {/* Avatar circle */}
+                            <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
+                              {img ? (
+                                <img src={img} alt={name} className="h-full w-full object-cover" />
+                              ) : (
+                                <div className="h-full w-full grid place-items-center bg-gradient-to-br from-sky-400 to-blue-500 text-white text-xs font-bold">
+                                  {name.slice(0, 2).toUpperCase()}
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold truncate">{name}</p>
+                              {spec && <p className="text-[11px] text-muted-foreground truncate">{spec}</p>}
+                            </div>
+                            {t.id === form.therapistId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+                          </div>
+                        );
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Extra time */}
+                {hasExtraTime && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Timer className="h-3.5 w-3.5 text-muted-foreground" />
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Extra Time
+                        {extraPricePerUnit > 0 && (
+                          <span className="ml-1 font-normal normal-case text-muted-foreground/70">
+                            ({fmtPriceB(extraPricePerUnit)} KWD / {extraMinutesUnit} min)
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-5 gap-2">
+                      {extraOptions.map((mins) => (
+                        <button key={mins} type="button"
+                          onClick={() => setForm(p => ({ ...p, extraMinutes: mins }))}
+                          className={cn(
+                            'flex flex-col items-center rounded-xl border py-2.5 text-center transition',
+                            form.extraMinutes === mins
+                              ? 'border-primary/50 bg-primary/10 text-primary shadow-sm'
+                              : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40',
+                          )}>
+                          <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins}`}</p>
+                          {mins > 0 && <p className="text-[10px]">min</p>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Add-ons – always shown */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Add-on Services</p>
+                    {addonsLoading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                  </div>
+                  {allAddons.length === 0 && !addonsLoading && (
+                    <p className="text-xs text-muted-foreground italic">No add-ons available</p>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    {allAddons.map((addon) => {
+                      const checked = form.addonIds.includes(addon.id);
+                      const price   = fmtPriceB(addon.price);
+                      const dur     = addon.duration_minutes;
+                      return (
+                        <label key={addon.id} className={cn(
+                          'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
+                          checked ? 'border-primary/40 bg-primary/5 text-primary' : 'border-border bg-muted/20 hover:border-border/80 hover:bg-muted/40',
+                        )}>
+                          <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
+                            className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold leading-tight">{addon.name}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {price && <span className="text-[10px] font-bold text-primary">+{price} KWD</span>}
+                              {dur && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Timer className="h-2.5 w-2.5" />+{dur}m</span>}
+                            </div>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {(addonDuration > 0 || addonTotal > 0) && (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                        {addonDuration > 0 && <span className="font-bold">+{addonDuration} min</span>}
+                        {addonDuration > 0 && addonTotal > 0 && ' · '}
+                        {addonTotal > 0 && <span className="font-bold">+{fmtPriceB(addonTotal)} KWD</span>}
+                        <span className="font-normal text-emerald-600/70"> added by selected add-ons</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            )}
+
+            {/* STEP 2: Customer + Notes */}
+            {step === 2 && (
+              <div className="px-6 py-5 space-y-5">
+
+                {/* Customer */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <User className="h-4 w-4 text-primary" />
+                    <p className="text-sm font-extrabold">Customer</p>
+                  </div>
+                  <BFormLabel>Search & Select Customer *</BFormLabel>
+                  <BSearchDropdown<ApiCustomer>
+                    value={form.customerSearch}
+                    placeholder="Search by name or phone…"
+                    loading={customersLoading}
+                    items={customers}
+                    getKey={(c) => c.id}
+                    isSelected={(c) => c.id === form.customerId}
+                    selectedItem={selectedCustomer}
+                    icon={User}
+                    onSearch={(q) => { setCustomerQuery(q); setForm(p => ({ ...p, customerSearch: q, customerId: '' })); }}
+                    onSelect={selectCustomer}
+                    onClear={clearCustomer}
+                    renderItem={(c) => {
+                      const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || '—';
+                      return (
+                        <div className="flex items-center gap-3 px-4 py-2.5">
+                          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 text-xs font-bold">
+                            {name.slice(0, 2).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold truncate">{name}</p>
+                            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                              {c.phone_number && <span className="flex items-center gap-0.5"><Phone className="h-2.5 w-2.5" /> {c.phone_number}</span>}
+                              {c.email && <span className="flex items-center gap-0.5"><Mail className="h-2.5 w-2.5" /> {c.email}</span>}
+                            </div>
+                          </div>
+                          {c.id === form.customerId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+                        </div>
+                      );
+                    }}
+                  />
+                  {selectedCustomer && (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer'} selected
+                        {selectedCustomer.phone_number && <span className="font-normal text-emerald-600/70"> · {selectedCustomer.phone_number}</span>}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Notes */}
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                    <BFormLabel>Notes</BFormLabel>
+                  </div>
+                  <textarea value={form.notes} onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))}
+                    placeholder="Any special instructions or notes…" rows={3}
+                    className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50 resize-none" />
+                </div>
+
+              </div>
+            )}
+          </form>
+        </div>
+
+        {/* Fixed footer: pricing strip + error + buttons */}
+        <div className="shrink-0 border-t border-border/40 bg-card">
+
+          {/* Pricing strip */}
+          <div className="border-b border-border/40 bg-muted/30 px-6 py-3">
+            {!selectedService ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground italic">
+                <DollarSign className="h-3.5 w-3.5" />
+                Select a service to see pricing
+              </div>
+            ) : (
+              <div className="flex items-center gap-0">
+                <div className="flex flex-col min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                    <Scissors className="h-2.5 w-2.5" />Service
+                  </p>
+                  <p className="text-xs font-semibold">{fmtPriceB(servicePrice)} KWD</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{selectedService.name}</p>
+                </div>
+                {addonTotal > 0 && (
+                  <>
+                    <div className="w-px self-stretch bg-border/60 mx-3" />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                        <Package className="h-2.5 w-2.5" />Add-ons
+                      </p>
+                      <p className="text-xs font-semibold text-primary">+{fmtPriceB(addonTotal)} KWD</p>
+                      <p className="text-[10px] text-muted-foreground">{form.addonIds.length} selected</p>
+                    </div>
+                  </>
+                )}
+                {extraMinutesPrice > 0 && (
+                  <>
+                    <div className="w-px self-stretch bg-border/60 mx-3" />
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                        <Timer className="h-2.5 w-2.5" />Extra
+                      </p>
+                      <p className="text-xs font-semibold text-primary">+{fmtPriceB(extraMinutesPrice)} KWD</p>
+                      <p className="text-[10px] text-muted-foreground">+{form.extraMinutes} min</p>
+                    </div>
+                  </>
+                )}
+                <div className="w-px self-stretch bg-border/60 mx-3" />
+                <div className="flex flex-col items-end shrink-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
+                  <p className="text-lg font-black text-primary leading-none">{fmtPriceB(totalPrice)}</p>
+                  <p className="text-[10px] font-semibold text-muted-foreground">KWD</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Error + buttons */}
+          <div className="px-6 py-3 space-y-3">
+            {submitError && (
+              <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" /><span>{submitError}</span>
+              </div>
+            )}
+            <div className="flex gap-2">
+              {step === 1 ? (
+                <>
+                  <button type="button" onClick={onClose}
+                    className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">
+                    Cancel
+                  </button>
+                  <button type="button" onClick={goNext}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
+                    Next: Customer <ChevronRight className="h-4 w-4" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={goBack}
+                    className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition">
+                    <ChevronLeft className="h-4 w-4" /> Back
+                  </button>
+                  <button type="submit" form="branch-booking-form" disabled={submitting}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                    {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {submitting ? 'Creating…' : 'Confirm Booking'}
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Slot Cell ──────────────────────────────────────────────────────────────────
 function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   if (slot.status === 'unavailable') {
@@ -321,7 +1225,13 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
 
   if (slot.status === 'available') {
     return (
-      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+        className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group"
+      >
         <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground/70 group-hover:text-primary transition">
           <Plus className="h-3.5 w-3.5" /> Available
         </span>
@@ -540,7 +1450,6 @@ function buildScheduleFromApi(
         continue;
       }
 
-      // All arrangements are always available when not booked (no availability intervals in this API)
       sched[arr.id][slotLabel] = { status: 'available' };
     }
   }
@@ -554,7 +1463,7 @@ function formatDateDisplay(isoDate: string): string {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BranchAppointmentsPage() {
-  const token = useAppSelector((s) => s.auth.token);
+  const token = useAppSelector((s) => s.auth.token) ?? '';
 
   const today    = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -562,7 +1471,8 @@ export default function BranchAppointmentsPage() {
   const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
   const [selectedDate,     setSelectedDate]      = useState<string>(todayStr);
   const [search,           setSearch]            = useState('');
-  const [modal,            setModal]             = useState<ModalPayload | null>(null);
+  const [detailModal,      setDetailModal]       = useState<DetailModalPayload | null>(null);
+  const [newBookingModal,  setNewBookingModal]   = useState<NewBookingPayload | null>(null);
   const [showBranchDrop,   setShowBranchDrop]    = useState(false);
   const [showCalendar,     setShowCalendar]      = useState(false);
 
@@ -617,7 +1527,6 @@ export default function BranchAppointmentsPage() {
   const grid      = scheduleData?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 as const };
   const timeSlots = generateTimeSlots(grid);
 
-  // Filter arrangements by selected branch
   const allArrangements: ApiArrangement[] = scheduleData?.arrangements ?? [];
   const filteredByBranch = selectedBranchId === 'all'
     ? allArrangements
@@ -630,6 +1539,7 @@ export default function BranchAppointmentsPage() {
     arrangementType: a.arrangement_type,
     capacity:        a.capacity,
     branchName:      a.branch_name,
+    branchId:        a.branch_id,
     color:           ARRANGEMENT_COLORS[i % ARRANGEMENT_COLORS.length],
   }));
 
@@ -662,9 +1572,25 @@ export default function BranchAppointmentsPage() {
 
   const dateDisplay = formatDateDisplay(selectedDate);
 
-  const openModal = useCallback((slot: Slot, arrangement: Arrangement, timeSlot: string) => {
-    setModal({ slot, arrangement, timeSlot, branch: branchLabel, date: dateDisplay });
+  const openDetailModal = useCallback((slot: Slot, arrangement: Arrangement, timeSlot: string) => {
+    setDetailModal({ slot, arrangement, timeSlot, branch: branchLabel, date: dateDisplay });
   }, [branchLabel, dateDisplay]);
+
+  const openNewBooking = useCallback((arrangement: Arrangement, timeSlot: string) => {
+    setNewBookingModal({ arrangement, timeSlot, date: selectedDate });
+  }, [selectedDate]);
+
+  const handleBookingSuccess = useCallback(() => {
+    // Reload schedule
+    setScheduleData(null);
+    setLoading(true);
+    const url = `/api/v1/service-arrangements/schedule?branch_id=${selectedBranchId}&date=${selectedDate}`;
+    fetch(url, { headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } })
+      .then(r => r.json())
+      .then((data: ApiScheduleRecord[]) => setScheduleData(data?.[0] ?? null))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [selectedBranchId, selectedDate, token]);
 
   return (
     <DashboardShell>
@@ -834,16 +1760,11 @@ export default function BranchAppointmentsPage() {
             </div>
           ) : (
             <>
-              {/* ── Sticky header panel ─────────────────────────────────────────────
-                  The "TIME" corner cell is a flex sibling OUTSIDE the horizontally
-                  scrollable div so it never moves when the user scrolls right.
-              ── */}
+              {/* Sticky header */}
               <div className="sticky top-16 z-20 flex border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
-                {/* Corner: always-visible TIME label */}
                 <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">
                   Time
                 </div>
-                {/* Arrangement name headers — scroll horizontally in sync with body */}
                 <div ref={headerScrollRef} className="flex-1 overflow-x-hidden">
                   <div style={{ width: `${filteredArrangements.length * 175}px`, minWidth: '100%' }} className="flex">
                     {filteredArrangements.map((a, aIdx) => {
@@ -872,13 +1793,9 @@ export default function BranchAppointmentsPage() {
                 </div>
               </div>
 
-              {/* ── Scrollable body panel ─────────────────────────────────────────────
-                  The time-label column is a flex sibling OUTSIDE the overflow-x-auto
-                  container, so it is always visible regardless of scroll position.
-                  The arrangement CSS Grid only contains arrangement columns (col 1…N).
-              ── */}
+              {/* Scrollable body */}
               <div className="flex rounded-b-2xl">
-                {/* ── Time column: fixed-width, never scrolls ── */}
+                {/* Time column */}
                 <div className="w-28 shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
                   {timeSlots.map((time) => (
                     <div
@@ -894,7 +1811,7 @@ export default function BranchAppointmentsPage() {
                   ))}
                 </div>
 
-                {/* ── Arrangement columns: CSS Grid inside overflow-x-auto ── */}
+                {/* Arrangement columns */}
                 <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto">
                   <div
                     style={{
@@ -914,7 +1831,6 @@ export default function BranchAppointmentsPage() {
                         const slot = schedule[a.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
                         const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
 
-                        // Look-ahead: merge consecutive rows sharing the same booking reference
                         let span = 1;
                         if (isBooked && slot.reference) {
                           while (rowIdx + span < timeSlots.length) {
@@ -936,7 +1852,6 @@ export default function BranchAppointmentsPage() {
                           }
                         }
 
-                        const isClickable = isBooked;
                         cells.push(
                           <div
                             key={`${a.id}-${time}`}
@@ -951,7 +1866,13 @@ export default function BranchAppointmentsPage() {
                           >
                             <SlotCell
                               slot={slot}
-                              onClick={isClickable ? () => openModal(slot, a, time) : undefined}
+                              onClick={
+                                isBooked
+                                  ? () => openDetailModal(slot, a, time)
+                                  : slot.status === 'available'
+                                    ? () => openNewBooking(a, time)
+                                    : undefined
+                              }
                             />
                           </div>,
                         );
@@ -969,8 +1890,18 @@ export default function BranchAppointmentsPage() {
         </div>
       )}
 
-      {/* ── Detail Modal ── */}
-      {modal && <SlotDetailModal payload={modal} onClose={() => setModal(null)} />}
+      {/* ── Detail Modal (booked slots) ── */}
+      {detailModal && <SlotDetailModal payload={detailModal} onClose={() => setDetailModal(null)} />}
+
+      {/* ── New Booking Modal (available slots) ── */}
+      {newBookingModal && (
+        <NewBranchBookingModal
+          payload={newBookingModal}
+          onClose={() => setNewBookingModal(null)}
+          onSuccess={handleBookingSuccess}
+          token={token}
+        />
+      )}
     </DashboardShell>
   );
 }

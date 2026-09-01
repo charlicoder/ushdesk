@@ -4,14 +4,14 @@ const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
 const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
 const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
 
-const CUSTOMERS_URL = `${BASE_URL}${UAUTH}/api/v1/customers/`;
-
-export async function GET(req: NextRequest) {
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id }     = await params;
   const authHeader = req.headers.get('authorization') ?? '';
+  const url        = `${BASE_URL}${UAUTH}/api/v1/therapists/${id}/services/`;
 
-  // Forward all query params (search, page, page_size, etc.)
-  const params = req.nextUrl.searchParams.toString();
-  const url    = params ? `${CUSTOMERS_URL}?${params}` : CUSTOMERS_URL;
 
   try {
     const upstream = await fetch(url, {
