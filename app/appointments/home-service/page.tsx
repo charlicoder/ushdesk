@@ -6,7 +6,7 @@ import {
   Search, Plus, ChevronDown, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, User, Scissors,
   Timer, Hash, MapPin, ChevronLeft, ChevronRight, Loader2, Home,
-  Phone, Mail, FileText, Package, Star, DollarSign,
+  Phone, Mail, FileText, Package, Star, DollarSign, Link as LinkIcon,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
@@ -85,6 +85,8 @@ interface Therapist {
   initials: string;
   photoUrl: string | null;
   color: string;
+  branchId:   string;
+  branchName: string;
 }
 
 // ── Service & AddOn types ──────────────────────────────────────────────────────
@@ -92,21 +94,24 @@ interface Therapist {
 interface ApiAddOn {
   id: string;
   name: string;
+  description?: string;
   price?: string | number;
   home_service_price?: string | number;
   duration_minutes?: number;
+  is_active?: boolean;
 }
 
 interface ApiService {
   id: string;
   name: string;
   category?: string;
+  service_types?: { id: string; name: string }[];
   base_price?: string | number;
   home_service_price?: string | number;
   duration_minutes?: number;
   is_home_service_eligible?: boolean;
-  gender?: string;                         // 'male' | 'female' | null
-  extra_minutes?: number;                  // e.g. 15
+  gender?: string;
+  extra_minutes?: number;
   price_for_extra_minutes?: string | number;
   add_ons?: ApiAddOn[];
 }
@@ -382,8 +387,8 @@ function FormInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
 interface BookingFormPayload {
   therapist:    Therapist;
   timeSlot:     string;
-  date:         string;
-  dateDisplay:  string;
+  date:         string;         // YYYY-MM-DD
+  dateDisplay:  string;         // "Sep 10, 2026"
   slotIsoStart: string;
 }
 
@@ -417,7 +422,14 @@ function BookingFormModal({
   const { therapist, timeSlot, date, dateDisplay, slotIsoStart } = payload;
 
   // ── Step ─────────────────────────────────────────────────────────────────
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // Holds the created booking returned by the API (step 3)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [bookingResult, setBookingResult] = useState<Record<string, any> | null>(null);
+  const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
+  const [paymentLinkSent,    setPaymentLinkSent]    = useState(false);
+  const [paymentLinkError,   setPaymentLinkError]   = useState<string | null>(null);
 
   // ── Data ─────────────────────────────────────────────────────────────────
   const [services,         setServices]         = useState<ApiService[]>([]);
@@ -435,9 +447,9 @@ function BookingFormModal({
     (async () => {
       setServicesLoading(true);
       try {
-        const res = await fetch(`/api/v1/therapists/${therapist.id}/services`, {
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...authHdr },
-        });
+        const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch(`/api/v1/therapists/${therapist.id}/services`, { headers });
         const raw = await res.json();
         setServices(Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []));
       } catch { setServices([]); }
@@ -451,9 +463,9 @@ function BookingFormModal({
     (async () => {
       setAddonsLoading(true);
       try {
-        const res = await fetch('/api/v1/addons', {
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...authHdr },
-        });
+        const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch('/api/v1/addons', { headers });
         const raw = await res.json();
         setGlobalAddons(Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []));
       } catch { setGlobalAddons([]); }
@@ -467,11 +479,11 @@ function BookingFormModal({
     const t = setTimeout(async () => {
       setCustomersLoading(true);
       try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
         const q = customerQuery.trim();
         const url = q ? `/api/v1/customers?search=${encodeURIComponent(q)}` : '/api/v1/customers';
-        const res = await fetch(url, {
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...authHdr },
-        });
+        const res = await fetch(url, { headers });
         const raw = await res.json();
         setCustomers(Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []));
       } catch { setCustomers([]); }
@@ -553,34 +565,145 @@ function BookingFormModal({
   };
   const goBack = () => { setSubmitError(null); setStep(1); };
 
-  // ── Submit ────────────────────────────────────────────────────────────────
+  // Convert "02:30 PM" → "14:30" (24-hour HH:MM)
+  const toHHMM = (slot: string): string => {
+    const [timePart, ampm] = slot.trim().split(' ');
+    const [hStr, mStr]     = timePart.split(':');
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr ?? '0', 10);
+    if (ampm === 'AM' && h === 12) h = 0;
+    if (ampm === 'PM' && h !== 12) h += 12;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  // Format price safely to 3 decimal string
+  const fmtPrice = (n: number) => n.toFixed(3);
+
+  // ── Submit (POST to /api/v1/booknpay/bookings) ────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customerId)  { setSubmitError('Please select a customer.'); return; }
     if (!form.addressLine1){ setSubmitError('Please enter the home address.'); return; }
     setSubmitting(true); setSubmitError(null);
     try {
-      const body: Record<string, unknown> = {
-        therapist_id: therapist.id, appointment_start: slotIsoStart, booking_type: 'home',
-        service_id: form.serviceId, add_on_ids: form.addonIds,
-        extra_minutes: form.extraMinutes || undefined,
-        customer_id: form.customerId,
-        home_address: { address_line_1: form.addressLine1, address_line_2: form.addressLine2, city: form.city, area: form.area },
-        notes: form.notes,
+      const svc         = selectedService!;
+      const svcCategory = svc.service_types?.[0]?.name ?? svc.category ?? '';
+      const baseP       = parseFloat(String(svc.home_service_price ?? svc.base_price ?? '0')) || 0;
+      const addonP      = addonTotal;
+      const extraP      = extraMinutesPrice;
+      const total       = totalPrice;
+      const timeHHMM    = toHHMM(timeSlot);
+
+      const body = {
+        service_id:         svc.id,
+        service_name:       svc.name,
+        service_category:   svcCategory,
+        base_price:         fmtPrice(parseFloat(String(svc.base_price ?? '0')) || 0),
+        home_service_price: fmtPrice(baseP),
+        baseDuration:       svc.duration_minutes ?? 0,
+        branch_id:        therapist.branchId || 'home',
+        branch_data: {
+          branch_name:    therapist.branchName || 'Home Service',
+          branch_address: 'Home Service',
+        },
+        service_arrangement_id:   null,
+        service_arrangement_data: null,
+        therapist_id:   therapist.id,
+        therapist_data: { therapist_name: therapist.name },
+        selected_addons: selectedAddons.map((a) => ({
+          id:          a.id,
+          name:        a.name,
+          description: (a as unknown as Record<string, string>).description ?? '',
+          price:       fmtPrice(parseFloat(String(a.home_service_price ?? a.price ?? '0')) || 0),
+          currency:    'KWD',
+          is_active:   true,
+        })),
+        addons_duration: addonDuration,
+        extra_minutes:   form.extraMinutes,
+        extra_price:     fmtPrice(extraP),
+        date:            date,
+        formattedDate:   dateDisplay,
+        time_slot:       timeHHMM,
+        displayTime:     timeSlot,
+        customerMessage: '',
+        customer_notes:  form.notes,
+        customer_id:     form.customerId,
+        home_address: {
+          address_line_1: form.addressLine1,
+          address_line_2: form.addressLine2,
+          city:           form.city,
+          area:           form.area,
+        },
+        booking_type: 'home',
+        appointment_start: slotIsoStart,
+        pricing_details: {
+          base:              fmtPrice(baseP),
+          base_price:        fmtPrice(baseP),
+          arrangement:       fmtPrice(baseP),
+          arrangement_price: fmtPrice(baseP),
+          addons:            fmtPrice(addonP),
+          addons_price:      fmtPrice(addonP),
+          extratime:         fmtPrice(extraP),
+          extra_time:        fmtPrice(extraP),
+          extra_time_price:  fmtPrice(extraP),
+          subtotal:          fmtPrice(total),
+          total:             fmtPrice(total),
+          total_price:       fmtPrice(total),
+          currency:          'KWD',
+        },
+        total_price:    fmtPrice(total),
+        // duration_minutes + addons_duration + extra_minutes
+        total_duration: (svc.duration_minutes ?? 0) + addonDuration + form.extraMinutes,
+        currency:       'KWD',
       };
-      const res = await fetch('/api/v1/bookings', {
+
+    const reqHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      if (token) reqHeaders['Authorization'] = `Bearer ${token}`;
+    const res = await fetch('/api/v1/booknpay/bookings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', ...authHdr },
+        headers: reqHeaders,
         body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = (json as Record<string, string>).detail ?? (json as Record<string, string>).message ?? `Error ${res.status}`;
+        throw new Error(detail);
+      }
+      // Success → show step 3
+      setBookingResult(json.data ?? json);
+      setStep(3);
+      onSuccess();
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
+    } finally { setSubmitting(false); }
+  };
+
+  // ── Create Payment Link ────────────────────────────────────────────────────
+  const handleCreatePaymentLink = async () => {
+    if (!bookingResult) return;
+    const bookingId = bookingResult.id ?? bookingResult.booking_id;
+    if (!bookingId) { setPaymentLinkError('Booking ID not found.'); return; }
+    setPaymentLinkLoading(true); setPaymentLinkError(null);
+    try {
+      const plHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+      if (token) plHeaders['Authorization'] = `Bearer ${token}`;
+      const res = await fetch(`/api/v1/booknpay/bookings/${bookingId}/status`, {
+        method: 'PATCH',
+        headers: plHeaders,
+        body: JSON.stringify({
+          status:         'confirmed',
+          payment_status: 'pending',
+          reason:         'Payment Link Sent to Customer',
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error((err as Record<string, string>).detail ?? `Error ${res.status}`);
       }
-      onSuccess(); onClose();
+      setPaymentLinkSent(true);
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
-    } finally { setSubmitting(false); }
+      setPaymentLinkError(err instanceof Error ? err.message : 'Failed to send payment link');
+    } finally { setPaymentLinkLoading(false); }
   };
 
   // FormLabel and FormInput are defined at module level to prevent remount on each render
@@ -611,7 +734,7 @@ function BookingFormModal({
                 </span>
               ))}
               <span className="text-[11px] text-muted-foreground font-medium ml-1">
-                {step === 1 ? 'Service Selection' : 'Customer & Address'}
+              {step === 1 ? 'Service Selection' : step === 2 ? 'Customer & Address' : 'Booking Confirmed'}
               </span>
             </div>
           </div>
@@ -768,7 +891,7 @@ function BookingFormModal({
                         </div>
                         {(s.home_service_price ?? s.base_price) && (
                           <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
-                            {fmtPrice(s.home_service_price ?? s.base_price)} KWD
+                            {fmtPrice(parseFloat(String(s.home_service_price ?? s.base_price ?? 0)) || 0)} KWD
                           </p>
                         )}
                         {s.id === form.serviceId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
@@ -787,7 +910,7 @@ function BookingFormModal({
                         </p>
                       </div>
                       <p className="shrink-0 text-sm font-extrabold text-primary">
-                        {fmtPrice(selectedService.home_service_price ?? selectedService.base_price)} KWD
+                        {fmtPrice(parseFloat(String(selectedService.home_service_price ?? selectedService.base_price ?? 0)) || 0)} KWD
                       </p>
                     </div>
                   )}
@@ -838,7 +961,7 @@ function BookingFormModal({
                   <div className="grid grid-cols-2 gap-2">
                     {allAddons.map((addon) => {
                       const checked = form.addonIds.includes(addon.id);
-                      const price   = fmtPrice(addon.home_service_price ?? addon.price);
+                      const price   = fmtPrice(parseFloat(String(addon.home_service_price ?? addon.price ?? 0)) || 0);
                       const dur     = addon.duration_minutes;
                       return (
                         <label key={addon.id} className={cn(
@@ -966,10 +1089,106 @@ function BookingFormModal({
 
               </div>
             )}
+            {/* ════════════ STEP 3: Booking Success ════════════ */}
+            {step === 3 && bookingResult && (
+              <div className="flex flex-col items-center justify-center h-full px-8 py-10 text-center gap-6">
+                {/* Success icon */}
+                <div className="relative">
+                  <div className="absolute -inset-4 rounded-full bg-emerald-500/15 blur-xl" />
+                  <div className="relative h-20 w-20 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 grid place-items-center shadow-xl">
+                    <CheckCircle2 className="h-10 w-10 text-white" />
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xl font-extrabold text-foreground">Booking Created!</h3>
+                  <p className="text-sm text-muted-foreground mt-1">The appointment has been successfully recorded.</p>
+                </div>
+
+                {/* Booking detail card */}
+                <div className="w-full rounded-2xl border border-border/60 bg-muted/30 divide-y divide-border/40 text-left">
+                  {bookingResult.booking_id && (
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Reference</span>
+                      <span className="text-sm font-extrabold text-primary font-mono">{bookingResult.booking_id}</span>
+                    </div>
+                  )}
+                  {(bookingResult.service_name || bookingResult.service?.name) && (
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Service</span>
+                      <span className="text-sm font-semibold truncate max-w-[60%] text-right">{bookingResult.service_name ?? bookingResult.service?.name}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Therapist</span>
+                    <span className="text-sm font-semibold">{bookingResult.therapist_data?.therapist_name ?? therapist.name}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Date & Time</span>
+                    <span className="text-sm font-semibold">{bookingResult.formattedDate ?? dateDisplay} · {bookingResult.displayTime ?? timeSlot}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total</span>
+                    <span className="text-sm font-extrabold text-primary">{bookingResult.total_price ?? bookingResult.pricing_details?.total_price ?? '—'} KWD</span>
+                  </div>
+                  {(bookingResult.status || bookingResult.payment_status) && (
+                    <div className="flex items-center justify-between px-4 py-3">
+                      <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Status</span>
+                      <div className="flex items-center gap-2">
+                        {bookingResult.status && (
+                          <span className="inline-flex items-center rounded-full bg-sky-100 dark:bg-sky-950/40 px-2.5 py-0.5 text-[11px] font-bold text-sky-700 dark:text-sky-300 capitalize">
+                            {bookingResult.status}
+                          </span>
+                        )}
+                        {bookingResult.payment_status && (
+                          <span className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-950/40 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 capitalize">
+                            {bookingResult.payment_status}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Payment link feedback */}
+                {paymentLinkError && (
+                  <div className="w-full flex items-center gap-2 rounded-xl bg-red-50 dark:bg-red-950/20 border border-red-200/60 dark:border-red-800/30 px-4 py-3 text-xs font-semibold text-red-600 dark:text-red-400">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />{paymentLinkError}
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="w-full flex flex-col gap-3">
+                  {paymentLinkSent ? (
+                    <div className="flex items-center justify-center gap-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200/60 px-4 py-3 text-sm font-bold text-emerald-700 dark:text-emerald-400">
+                      <CheckCircle2 className="h-4 w-4" /> Payment link sent to customer
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleCreatePaymentLink}
+                      disabled={paymentLinkLoading}
+                      className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-primary py-3 text-sm font-bold text-white shadow-lg hover:from-violet-700 hover:to-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {paymentLinkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <LinkIcon className="h-4 w-4" />}
+                      {paymentLinkLoading ? 'Sending…' : 'Create Payment Link'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="w-full rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
           </form>
         </div>
 
         {/* ── Fixed footer: pricing strip + error + action buttons ── */}
+        {step !== 3 && (
         <div className="shrink-0 border-t border-border/40 bg-card">
 
           {/* Pricing strip */}
@@ -987,7 +1206,9 @@ function BookingFormModal({
                     <Scissors className="h-2.5 w-2.5" />Service
                   </p>
                   <p className="text-xs font-semibold truncate">{fmtPrice(servicePrice)} KWD</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{selectedService.name}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {selectedService.name}{baseDuration > 0 ? ` · ${baseDuration}m` : ''}
+                  </p>
                 </div>
                 {/* Add-ons */}
                 {addonTotal > 0 && (
@@ -998,7 +1219,9 @@ function BookingFormModal({
                         <Package className="h-2.5 w-2.5" />Add-ons
                       </p>
                       <p className="text-xs font-semibold text-primary">+{fmtPrice(addonTotal)} KWD</p>
-                      <p className="text-[10px] text-muted-foreground">{form.addonIds.length} selected</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {form.addonIds.length} selected{addonDuration > 0 ? ` · +${addonDuration}m` : ''}
+                      </p>
                     </div>
                   </>
                 )}
@@ -1015,12 +1238,17 @@ function BookingFormModal({
                     </div>
                   </>
                 )}
-                {/* Total */}
+                {/* Total price + total duration */}
                 <div className="w-px self-stretch bg-border/60 mx-3" />
                 <div className="flex flex-col items-end shrink-0">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
                   <p className="text-lg font-black text-primary leading-none">{fmtPrice(totalPrice)}</p>
                   <p className="text-[10px] font-semibold text-muted-foreground">KWD</p>
+                  {totalDuration > 0 && (
+                    <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5 mt-0.5">
+                      <Timer className="h-2.5 w-2.5" />{totalDuration} min
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -1061,6 +1289,7 @@ function BookingFormModal({
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
@@ -1269,7 +1498,9 @@ export default function HomeServiceSchedulePage() {
   const grid      = scheduleData?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 as const };
   const timeSlots = generateTimeSlots(grid);
   const therapists: Therapist[] = (scheduleData?.therapists ?? []).map((t, i) => ({
-    id: t.id, name: t.name, initials: getInitials(t.name), photoUrl: t.photo_url, color: THERAPIST_COLORS[i % THERAPIST_COLORS.length],
+    id: t.id, name: t.name, initials: getInitials(t.name), photoUrl: t.photo_url,
+    color: THERAPIST_COLORS[i % THERAPIST_COLORS.length],
+    branchId: t.branch_id ?? '', branchName: t.branch_name ?? '',
   }));
   const schedule = scheduleData ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes) : {};
   const filteredTherapists = search ? therapists.filter(t => t.name.toLowerCase().includes(search.toLowerCase())) : therapists;
