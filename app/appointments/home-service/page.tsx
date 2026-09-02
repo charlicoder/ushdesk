@@ -601,12 +601,10 @@ function BookingFormModal({
         base_price:         fmtPrice(parseFloat(String(svc.base_price ?? '0')) || 0),
         home_service_price: fmtPrice(baseP),
         baseDuration:       svc.duration_minutes ?? 0,
-        branch_id:        therapist.branchId || 'home',
         branch_data: {
           branch_name:    therapist.branchName || 'Home Service',
           branch_address: 'Home Service',
         },
-        service_arrangement_id:   null,
         service_arrangement_data: null,
         therapist_id:   therapist.id,
         therapist_data: { therapist_name: therapist.name },
