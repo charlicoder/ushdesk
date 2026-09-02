@@ -101,6 +101,8 @@ interface ApiCustomer {
   full_name?: string;
   phone_number?: string;
   email?: string;
+  avatar?: string;
+  gender?: string;
 }
 
 // ── Slot model ─────────────────────────────────────────────────────────────────
@@ -561,22 +563,41 @@ function NewBranchBookingModal({
       .finally(() => setAddonsLoading(false));
   }, [arrangement.id, authHeader]);
 
-  // Load therapists when service changes
+  // Convert "02:30 PM" → "14:30" for the API's appointment_start param
+  const toHHMM = (slot: string): string => {
+    const [timePart, ampm] = slot.split(' ');
+    const [hStr, mStr] = timePart.split(':');
+    let h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (ampm === 'AM' && h === 12) h = 0;
+    if (ampm === 'PM' && h !== 12) h += 12;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  };
+
+  // Load therapists with availability check — fires when user enters step 2
   useEffect(() => {
-    if (!form.serviceId) { setTherapists([]); return; }
+    if (step !== 2 || !form.serviceId) { setTherapists([]); return; }
     setTherapistsLoading(true);
-    fetch(`/api/v1/services/${form.serviceId}/therapists`, {
+    const qs = new URLSearchParams({
+      branch_id:              arrangement.branchId,
+      no_service_list:        'true',
+      check_for_availability: 'true',
+      date:                   date,
+      appointment_start:      toHHMM(timeSlot),
+      duration:               String(totalDuration > 0 ? totalDuration : (selectedService?.duration_minutes ?? 60)),
+    });
+    fetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, {
       headers: { Authorization: authHeader },
     })
       .then(r => r.json())
       .then(d => {
-        // API shape: { success, data: [...], meta }
         const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
         setTherapists(list);
       })
       .catch(() => setTherapists([]))
       .finally(() => setTherapistsLoading(false));
-  }, [form.serviceId, authHeader]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, form.serviceId, authHeader]);
 
   // Customer search (debounced)
   useEffect(() => {
@@ -585,7 +606,11 @@ function NewBranchBookingModal({
       const qs = customerQuery ? `search=${encodeURIComponent(customerQuery)}` : '';
       fetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: { Authorization: authHeader } })
         .then(r => r.json())
-        .then(d => setCustomers(Array.isArray(d) ? d : (d.results ?? [])))
+        .then(d => {
+          // API shape: { success, data: [...], meta }
+          const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+          setCustomers(list);
+        })
         .catch(() => setCustomers([]))
         .finally(() => setCustomersLoading(false));
     }, 300);
@@ -648,6 +673,7 @@ function NewBranchBookingModal({
   const selectCustomer = (c: ApiCustomer) => {
     const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
     setForm(p => ({ ...p, customerId: c.id, customerSearch: name }));
+    setSubmitError(null);
   };
   const clearCustomer = () => setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
 
@@ -656,7 +682,12 @@ function NewBranchBookingModal({
     setSubmitError(null);
     setStep(2);
   };
-  const goBack = () => { setSubmitError(null); setStep(1); };
+  const goBack = () => {
+    setSubmitError(null);
+    // Clear therapist when going back so it re-fetches availability fresh on next step 2 visit
+    setForm(p => ({ ...p, therapistId: '', therapistSearch: '' }));
+    setStep(1);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -742,7 +773,7 @@ function NewBranchBookingModal({
                 </span>
               ))}
               <span className="text-[11px] text-muted-foreground font-medium ml-1">
-                {step === 1 ? 'Service & Therapist' : 'Customer'}
+                {step === 1 ? 'Service & Add-ons' : 'Customer & Notes'}
               </span>
             </div>
           </div>
@@ -921,54 +952,6 @@ function NewBranchBookingModal({
                   )}
                 </div>
 
-                {/* Therapist (only after service selected) */}
-                {selectedService && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <User className="h-4 w-4 text-primary" />
-                      <p className="text-sm font-extrabold">Select Therapist</p>
-                      {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                    </div>
-                    <BFormLabel>Search & Select (optional)</BFormLabel>
-                    <BSearchDropdown<ApiTherapist>
-                      value={form.therapistSearch}
-                      placeholder={therapistsLoading ? 'Loading therapists…' : 'Search therapists…'}
-                      loading={therapistsLoading}
-                      items={filteredTherapists}
-                      getKey={(t) => t.id}
-                      isSelected={(t) => t.id === form.therapistId}
-                      selectedItem={selectedTherapist}
-                      icon={User}
-                      onSearch={(q) => setForm(p => ({ ...p, therapistSearch: q, therapistId: '' }))}
-                      onSelect={selectTherapist}
-                      onClear={clearTherapist}
-                      renderItem={(t) => {
-                        const name  = (t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ')) || '—';
-                        const img   = t.avatar ?? t.photo_url;
-                        const spec  = t.specialties?.[0]?.name ?? t.specialization ?? '';
-                        return (
-                          <div className="flex items-center gap-3 px-4 py-2.5">
-                            {/* Avatar circle */}
-                            <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
-                              {img ? (
-                                <img src={img} alt={name} className="h-full w-full object-cover" />
-                              ) : (
-                                <div className="h-full w-full grid place-items-center bg-gradient-to-br from-sky-400 to-blue-500 text-white text-xs font-bold">
-                                  {name.slice(0, 2).toUpperCase()}
-                                </div>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold truncate">{name}</p>
-                              {spec && <p className="text-[11px] text-muted-foreground truncate">{spec}</p>}
-                            </div>
-                            {t.id === form.therapistId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
-                          </div>
-                        );
-                      }}
-                    />
-                  </div>
-                )}
 
                 {/* Extra time */}
                 {hasExtraTime && (
@@ -1076,16 +1059,24 @@ function NewBranchBookingModal({
                     onClear={clearCustomer}
                     renderItem={(c) => {
                       const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || '—';
+                      const img  = c.avatar;
                       return (
                         <div className="flex items-center gap-3 px-4 py-2.5">
-                          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet-100 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 text-xs font-bold">
-                            {name.slice(0, 2).toUpperCase()}
+                          {/* Avatar circle */}
+                          <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
+                            {img ? (
+                              <img src={img} alt={name} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="h-full w-full grid place-items-center bg-gradient-to-br from-violet-400 to-purple-600 text-white text-xs font-bold">
+                                {name.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold truncate">{name}</p>
                             <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                               {c.phone_number && <span className="flex items-center gap-0.5"><Phone className="h-2.5 w-2.5" /> {c.phone_number}</span>}
-                              {c.email && <span className="flex items-center gap-0.5"><Mail className="h-2.5 w-2.5" /> {c.email}</span>}
+                              {c.email && <span className="flex items-center gap-0.5 truncate"><Mail className="h-2.5 w-2.5" /> {c.email}</span>}
                             </div>
                           </div>
                           {c.id === form.customerId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
