@@ -5,11 +5,16 @@ const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
 
 const UPSTREAM_URL = `${BASE_URL}/booknpay/api/v1/bookings/`;
 
+/**
+ * POST /booknpay/api/v1/bookings
+ * Proxy to upstream booknpay service — avoids browser CORS restrictions.
+ * Frontend URL intentionally mirrors the backend path for clarity.
+ */
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization') ?? '';
   const body = await req.json().catch(() => ({}));
 
-  // Only forward Authorization header when a real token is present
+  // Only forward Authorization when a real token is present
   const upstreamHeaders: Record<string, string> = {
     'Content-Type':   'application/json',
     'Accept':         'application/json',

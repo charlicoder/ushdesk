@@ -3,13 +3,21 @@ import { NextRequest, NextResponse } from 'next/server';
 const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
 const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
 
-const UPSTREAM_URL = `${BASE_URL}/booknpay/api/v1/bookings/`;
-
-export async function POST(req: NextRequest) {
+/**
+ * PATCH /booknpay/api/v1/bookings/[id]/status
+ * Proxy to upstream booknpay service — avoids browser CORS restrictions.
+ * Example body: { status: "confirmed", payment_status: "pending", reason: "..." }
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id }     = await params;
   const authHeader = req.headers.get('authorization') ?? '';
-  const body = await req.json().catch(() => ({}));
+  const body       = await req.json().catch(() => ({}));
+  const url        = `${BASE_URL}/booknpay/api/v1/bookings/${id}/status/`;
 
-  // Only forward Authorization header when a real token is present
+  // Only forward Authorization when a real token is present
   const upstreamHeaders: Record<string, string> = {
     'Content-Type':   'application/json',
     'Accept':         'application/json',
@@ -20,8 +28,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const upstream = await fetch(UPSTREAM_URL, {
-      method: 'POST',
+    const upstream = await fetch(url, {
+      method: 'PATCH',
       headers: upstreamHeaders,
       body: JSON.stringify(body),
     });

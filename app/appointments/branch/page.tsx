@@ -471,7 +471,7 @@ interface NewBookingPayload {
   date:        string;
 }
 
-type BookingStep = 1 | 2;
+type BookingStep = 1 | 2 | 3;
 
 interface BranchBookingForm {
   serviceId:      string;
@@ -511,6 +511,20 @@ function NewBranchBookingModal({
   const [form, setForm]             = useState<BranchBookingForm>(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Step 3 – booking result
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [bookingResult, setBookingResult]   = useState<Record<string, any> | null>(null);
+  const [bookingId,     setBookingId]       = useState<string>('');
+  const [creatingPaymentLink, setCreatingPaymentLink] = useState(false);
+  const [paymentLinkError,    setPaymentLinkError]    = useState<string | null>(null);
+  const [paymentLinkSuccess,  setPaymentLinkSuccess]  = useState(false);
+  // Snapshot names captured at submit time — independent of reactive arrays
+  const [snapTherapistName, setSnapTherapistName] = useState<string>('');
+  const [snapTherapistImg,  setSnapTherapistImg]  = useState<string>('');
+  const [snapCustomerName,  setSnapCustomerName]  = useState<string>('');
+  const [snapCustomerImg,   setSnapCustomerImg]   = useState<string>('');
+  const [snapCustomerPhone, setSnapCustomerPhone] = useState<string>('');
 
   // Services
   const [services, setServices]           = useState<ApiService[]>([]);
@@ -695,43 +709,158 @@ function NewBranchBookingModal({
     setSubmitting(true);
     setSubmitError(null);
 
-    // Parse time slot to build start datetime
-    const [timePart, ampm] = timeSlot.split(' ');
-    const [hStr, mStr] = timePart.split(':');
-    let h = parseInt(hStr, 10);
-    const m = parseInt(mStr, 10);
-    if (ampm === 'AM' && h === 12) h = 0;
-    if (ampm === 'PM' && h !== 12) h += 12;
-    const startISO = `${date}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`;
+    const svc          = selectedService!;
+    const svcCategory  = svc.category ?? '';
+    const baseP        = parseFloat(String(svc.arrangement_price ?? svc.base_price ?? '0')) || 0;
+    const timeHHMM     = toHHMM(timeSlot);
+    const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+    const therapistName = selectedTherapist
+      ? ((selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist')
+      : null;
+    const customerName = selectedCustomer
+      ? ((selectedCustomer.full_name ?? [selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer')
+      : null;
 
     const body = {
-      arrangement_id:  arrangement.id,
-      service_id:      form.serviceId,
-      therapist_id:    form.therapistId || undefined,
-      customer_id:     form.customerId,
-      addon_ids:       form.addonIds,
+      service_id:       svc.id,
+      service_name:     svc.name,
+      service_category: svcCategory,
+      base_price:       fmtPriceB(svc.base_price),
+      baseDuration:     baseDuration,
+      branch_id:        arrangement.branchId,
+      branch_data: {
+        branch_name:    arrangement.branchName,
+        branch_address: arrangement.branchName,
+      },
+      service_arrangement_id:   arrangement.id,
+      service_arrangement_data: {
+        arrangement_name: arrangement.name,
+        arrangement_type: arrangement.arrangementType,
+      },
+      therapist_id:   form.therapistId || null,
+      therapist_data: therapistName ? { therapist_name: therapistName } : null,
+      selected_addons: selectedAddons.map((a) => ({
+        id:          a.id,
+        name:        a.name,
+        description: (a as unknown as Record<string, string>).description ?? '',
+        price:       fmtPriceB(a.price),
+        currency:    'KWD',
+        is_active:   true,
+      })),
+      addons_duration: addonDuration,
       extra_minutes:   form.extraMinutes,
-      notes:           form.notes,
-      start:           startISO,
-      branch_id:       arrangement.branchId,
+      extra_price:     fmtPriceB(extraMinutesPrice),
+      date:            date,
+      formattedDate:   formattedDate,
+      time_slot:       timeHHMM,
+      displayTime:     timeSlot,
+      customer_id:     form.customerId,
+      customer_data:   customerName ? {
+        customer_name:  customerName,
+        phone_number:   selectedCustomer?.phone_number ?? null,
+        email:          selectedCustomer?.email ?? null,
+      } : null,
+      customerMessage: '',
+      customer_notes:  form.notes,
+      booking_type:    'branch',
+      pricing_details: {
+        base:              fmtPriceB(baseP),
+        base_price:        fmtPriceB(baseP),
+        arrangement:       fmtPriceB(baseP),
+        arrangement_price: fmtPriceB(baseP),
+        addons:            fmtPriceB(addonTotal),
+        addons_price:      fmtPriceB(addonTotal),
+        extratime:         fmtPriceB(extraMinutesPrice),
+        extra_time:        fmtPriceB(extraMinutesPrice),
+        extra_time_price:  fmtPriceB(extraMinutesPrice),
+        subtotal:          fmtPriceB(totalPrice),
+        total:             fmtPriceB(totalPrice),
+        total_price:       fmtPriceB(totalPrice),
+        currency:          'KWD',
+      },
+      total_price:    fmtPriceB(totalPrice),
+      total_duration: totalDuration,
+      currency:       'KWD',
     };
 
     try {
-      const res = await fetch('/api/v1/bookings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: authHeader },
-        body: JSON.stringify(body),
+      const res = await fetch('/booknpay/api/v1/bookings/', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
+        body:    JSON.stringify(body),
       });
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as Record<string, string>).detail ?? `Error ${res.status}`);
+        const detail = (json as Record<string, string>).detail ?? (json as Record<string, string>).message ?? `Error ${res.status}`;
+        throw new Error(detail);
       }
+      const result = (json as Record<string, unknown>).data ?? json;
+      const raw    = result as Record<string, unknown>;
+
+      // Extract booking ID — try every common field name the backend might use
+      const rid = String(
+        raw.id ?? raw.booking_id ?? raw.bookings_id ?? raw.pk ?? ''
+      ).replace('undefined', '').replace('null', '');
+
+      // Snapshot therapist & customer at submit time so step 3 doesn't depend on reactive arrays
+      const tSnap = selectedTherapist;
+      const cSnap = selectedCustomer;
+      const tNameSnap = tSnap
+        ? ((tSnap.full_name ?? [tSnap.first_name, tSnap.last_name].filter(Boolean).join(' ')) || 'Therapist')
+        : (raw.therapist_data as Record<string, string> | null)?.therapist_name ?? '';
+      const cNameSnap = cSnap
+        ? ((cSnap.full_name ?? [cSnap.first_name, cSnap.last_name].filter(Boolean).join(' ')) || 'Customer')
+        : '';
+
+      setSnapTherapistName(tNameSnap);
+      setSnapTherapistImg(tSnap?.avatar ?? tSnap?.photo_url ?? '');
+      setSnapCustomerName(cNameSnap);
+      setSnapCustomerImg(cSnap?.avatar ?? '');
+      setSnapCustomerPhone(cSnap?.phone_number ?? '');
+      setBookingResult(raw);
+      setBookingId(rid);
+      setStep(3);
       onSuccess();
-      onClose();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleCreatePaymentLink = async () => {
+    // Try bookingId state first, fall back to bookingResult fields
+    const raw = bookingResult as Record<string, unknown> | null;
+    const id = bookingId ||
+      String(raw?.id ?? raw?.booking_id ?? raw?.bookings_id ?? raw?.pk ?? '')
+        .replace('undefined', '').replace('null', '');
+    if (!id) {
+      setPaymentLinkError('Booking ID not found in response. Cannot send payment link.');
+      return;
+    }
+    setCreatingPaymentLink(true);
+    setPaymentLinkError(null);
+    try {
+      const res = await fetch(`/booknpay/api/v1/bookings/${id}/status/`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
+        body: JSON.stringify({
+          status:         'confirmed',
+          payment_status: 'pending',
+          reason:         'Payment Link Sent to Customer',
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = (json as Record<string, string>).detail ?? (json as Record<string, string>).message ?? `Error ${res.status}`;
+        throw new Error(detail);
+      }
+      setPaymentLinkSuccess(true);
+    } catch (err) {
+      setPaymentLinkError(err instanceof Error ? err.message : 'Failed to create payment link');
+    } finally {
+      setCreatingPaymentLink(false);
     }
   };
 
@@ -763,19 +892,26 @@ function NewBranchBookingModal({
           <div className="flex items-center gap-2">
             <Store className="h-4 w-4 text-primary" />
             <p className="text-[11px] font-bold uppercase tracking-wider text-primary">New Branch Booking</p>
-            <div className="flex items-center gap-1 ml-2">
-              {([1, 2] as const).map((n) => (
-                <span key={n} className={cn(
-                  'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
-                  step === n ? 'bg-primary text-white shadow-sm' : step > n ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
-                )}>
-                  {step > n ? <CheckCircle2 className="h-3 w-3" /> : n}
+            {step < 3 && (
+              <div className="flex items-center gap-1 ml-2">
+                {([1, 2] as const).map((n) => (
+                  <span key={n} className={cn(
+                    'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
+                    step === n ? 'bg-primary text-white shadow-sm' : step > n ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
+                  )}>
+                    {step > n ? <CheckCircle2 className="h-3 w-3" /> : n}
+                  </span>
+                ))}
+                <span className="text-[11px] text-muted-foreground font-medium ml-1">
+                  {step === 1 ? 'Service & Add-ons' : 'Customer & Notes'}
                 </span>
-              ))}
-              <span className="text-[11px] text-muted-foreground font-medium ml-1">
-                {step === 1 ? 'Service & Add-ons' : 'Customer & Notes'}
+              </div>
+            )}
+            {step === 3 && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="h-3 w-3" /> Booking Confirmed
               </span>
-            </div>
+            )}
           </div>
           <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition" aria-label="Close">
             <X className="h-4 w-4" />
@@ -1034,9 +1170,70 @@ function NewBranchBookingModal({
               </div>
             )}
 
-            {/* STEP 2: Customer + Notes */}
+            {/* STEP 2: Therapist + Customer + Notes */}
             {step === 2 && (
               <div className="px-6 py-5 space-y-5">
+
+                {/* Therapist – searchable, filtered by availability for the chosen slot */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <User className="h-4 w-4 text-primary" />
+                    <p className="text-sm font-extrabold">Therapist</p>
+                    {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                    <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Optional</span>
+                  </div>
+                  <BFormLabel>Search &amp; Select Available Therapist</BFormLabel>
+                  <BSearchDropdown<ApiTherapist>
+                    value={form.therapistSearch}
+                    placeholder={
+                      therapistsLoading
+                        ? 'Loading available therapists…'
+                        : therapists.length === 0
+                        ? 'No therapists available for this slot'
+                        : 'Search therapists…'
+                    }
+                    loading={therapistsLoading}
+                    items={filteredTherapists}
+                    getKey={(t) => t.id}
+                    isSelected={(t) => t.id === form.therapistId}
+                    selectedItem={selectedTherapist}
+                    icon={User}
+                    onSearch={(q) => setForm(p => ({ ...p, therapistSearch: q, therapistId: '' }))}
+                    onSelect={selectTherapist}
+                    onClear={clearTherapist}
+                    renderItem={(t) => {
+                      const tName = (t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ')) || 'Therapist';
+                      const tImg  = t.avatar ?? t.photo_url;
+                      const tSpec = t.specialties?.[0]?.name ?? t.specialization ?? '';
+                      return (
+                        <div className="flex items-center gap-3 px-4 py-2.5">
+                          <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
+                            {tImg ? (
+                              <img src={tImg} alt={tName} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-xs font-bold">
+                                {tName.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold truncate">{tName}</p>
+                            {tSpec && <p className="text-[11px] text-muted-foreground truncate">{tSpec}</p>}
+                          </div>
+                          {t.id === form.therapistId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+                        </div>
+                      );
+                    }}
+                  />
+                  {selectedTherapist && (
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                      <p className="text-xs font-semibold text-primary">
+                        {(selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist'} assigned
+                      </p>
+                    </div>
+                  )}
+                </div>
 
                 {/* Customer */}
                 <div>
@@ -1108,6 +1305,124 @@ function NewBranchBookingModal({
 
               </div>
             )}
+
+            {/* STEP 3: Booking result */}
+            {step === 3 && bookingResult && (() => {
+              const r      = bookingResult as Record<string, unknown>;
+              // Booking reference — try every common field name
+              const ref    = String(
+                r.bookings_id ?? r.reference_number ?? r.booking_number ?? r.id ?? r.booking_id ?? r.pk ?? '—'
+              ).replace('undefined', '—').replace('null', '—');
+              const sName  = (r.service_name  ?? selectedService?.name ?? '—') as string;
+              const bName  = (r.branch_name   ?? arrangement.branchName ?? '—') as string;
+              const arrName= (r.arrangement_name ?? arrangement.name    ?? '—') as string;
+              // Use snapshots captured at submit time — never depend on reactive arrays
+              const tName  = snapTherapistName || 'Not assigned';
+              const cName  = snapCustomerName  || '—';
+              const tImg   = snapTherapistImg;
+              const cImg   = snapCustomerImg;
+              return (
+                <div className="px-6 py-5 space-y-4">
+
+                  {/* Success banner */}
+                  <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-500/10 to-emerald-400/5 border border-emerald-300/40 dark:border-emerald-700/30 px-4 py-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15">
+                      <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">Booking Created Successfully</p>
+                      <p className="text-[11px] text-emerald-600/70 dark:text-emerald-400/70 truncate">Ref: {ref}</p>
+                    </div>
+                  </div>
+
+                  {/* Service + arrangement */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
+                    <div className="flex items-start gap-3 px-4 py-3">
+                      <Scissors className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
+                        <p className="text-sm font-semibold truncate">{sName}</p>
+                        {selectedService?.category && <p className="text-[11px] text-muted-foreground">{selectedService.category}</p>}
+                      </div>
+                      <p className="shrink-0 text-sm font-extrabold text-primary">{fmtPriceB(servicePrice)} KWD</p>
+                    </div>
+                    <div className="flex items-start gap-3 px-4 py-3">
+                      <Layers className="h-3.5 w-3.5 mt-0.5 shrink-0 text-sky-500" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Arrangement · Branch</p>
+                        <p className="text-sm font-semibold truncate">{arrName}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">{bName}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Therapist + Customer */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Therapist */}
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3 flex items-center gap-3">
+                      <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
+                        {tImg ? (
+                          <img src={tImg} alt={tName} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-xs font-bold">
+                            {tName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Therapist</p>
+                        <p className="text-xs font-semibold truncate">{tName}</p>
+                      </div>
+                    </div>
+                    {/* Customer */}
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3 flex items-center gap-3">
+                      <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
+                        {cImg ? (
+                          <img src={cImg} alt={cName} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full grid place-items-center bg-gradient-to-br from-violet-400 to-purple-600 text-white text-xs font-bold">
+                            {cName.slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Customer</p>
+                        <p className="text-xs font-semibold truncate">{cName}</p>
+                        {snapCustomerPhone && <p className="text-[10px] text-muted-foreground">{snapCustomerPhone}</p>}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Date / time / duration */}
+                  <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
+                    <CalendarDays className="h-4 w-4 shrink-0 text-violet-500" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold">{date}</p>
+                      <p className="text-[11px] text-muted-foreground">{timeSlot} · {totalDuration} min total</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
+                      <p className="text-base font-black text-primary leading-none">{fmtPriceB(totalPrice)} <span className="text-[10px] font-semibold">KWD</span></p>
+                    </div>
+                  </div>
+
+                  {/* Payment link feedback */}
+                  {paymentLinkSuccess && (
+                    <div className="flex items-center gap-2.5 rounded-xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-2.5">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                      <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Payment link created — status set to Confirmed / Pending payment.</p>
+                    </div>
+                  )}
+                  {paymentLinkError && (
+                    <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5">
+                      <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
+                      <p className="text-xs text-destructive">{paymentLinkError}</p>
+                    </div>
+                  )}
+
+                </div>
+              );
+            })()}
           </form>
         </div>
 
@@ -1166,13 +1481,13 @@ function NewBranchBookingModal({
 
           {/* Error + buttons */}
           <div className="px-6 py-3 space-y-3">
-            {submitError && (
+            {submitError && step !== 3 && (
               <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
                 <AlertCircle className="h-4 w-4 shrink-0" /><span>{submitError}</span>
               </div>
             )}
             <div className="flex gap-2">
-              {step === 1 ? (
+              {step === 1 && (
                 <>
                   <button type="button" onClick={onClose}
                     className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">
@@ -1183,7 +1498,8 @@ function NewBranchBookingModal({
                     Next: Customer <ChevronRight className="h-4 w-4" />
                   </button>
                 </>
-              ) : (
+              )}
+              {step === 2 && (
                 <>
                   <button type="button" onClick={goBack}
                     className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition">
@@ -1193,6 +1509,22 @@ function NewBranchBookingModal({
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
                     {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                     {submitting ? 'Creating…' : 'Confirm Booking'}
+                  </button>
+                </>
+              )}
+              {step === 3 && (
+                <>
+                  <button type="button" onClick={onClose}
+                    className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreatePaymentLink}
+                    disabled={creatingPaymentLink || paymentLinkSuccess}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                    {creatingPaymentLink ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />}
+                    {creatingPaymentLink ? 'Sending…' : paymentLinkSuccess ? 'Payment Link Sent ✓' : 'Create Payment Link'}
                   </button>
                 </>
               )}

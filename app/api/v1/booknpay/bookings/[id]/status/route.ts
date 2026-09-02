@@ -18,15 +18,20 @@ export async function PATCH(
   const body       = await req.json().catch(() => ({}));
   const url        = `${BASE_URL}/booknpay/api/v1/bookings/${id}/status/`;
 
+  // Only forward Authorization header when a real token is present
+  const upstreamHeaders: Record<string, string> = {
+    'Content-Type':   'application/json',
+    'Accept':         'application/json',
+    'X-USHSPA-TOKEN': APP_TOKEN,
+  };
+  if (authHeader && authHeader.replace('Bearer ', '').trim()) {
+    upstreamHeaders['Authorization'] = authHeader;
+  }
+
   try {
     const upstream = await fetch(url, {
       method: 'PATCH',
-      headers: {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,
-        'Authorization':  authHeader,
-      },
+      headers: upstreamHeaders,
       body: JSON.stringify(body),
     });
     const data = await upstream.json().catch(() => ({}));

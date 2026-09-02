@@ -509,14 +509,10 @@ function BookingFormModal({
   }, [onClose]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
-  const genderFiltered = useMemo(() =>
-    services.filter((s) => { const g = s.gender; return !g || g.toLowerCase() === form.gender; }),
-  [services, form.gender]);
-
   const filteredServices = useMemo(() => {
     const q = form.serviceSearch.toLowerCase();
-    return genderFiltered.filter((s) => !q || s.name.toLowerCase().includes(q) || (s.category ?? '').toLowerCase().includes(q));
-  }, [genderFiltered, form.serviceSearch]);
+    return services.filter((s) => !q || s.name.toLowerCase().includes(q) || (s.category ?? '').toLowerCase().includes(q));
+  }, [services, form.serviceSearch]);
 
   const selectedService  = useMemo(() => services.find((s) => s.id === form.serviceId) ?? null, [services, form.serviceId]);
   const selectedCustomer = useMemo(() => customers.find((c) => c.id === form.customerId) ?? null, [customers, form.customerId]);
@@ -833,28 +829,6 @@ function BookingFormModal({
             {step === 1 && (
               <div className="px-6 py-5 space-y-5">
 
-                {/* Gender toggle */}
-                <div>
-                  <FormLabel>Service For</FormLabel>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['female', 'male'] as ServiceGender[]).map((g) => (
-                      <button key={g} type="button"
-                        onClick={() => setForm((p) => ({ ...p, gender: g, serviceId: '', serviceSearch: '', addonIds: [], extraMinutes: 0 }))}
-                        className={cn(
-                          'flex items-center justify-center gap-2 rounded-xl border py-2.5 text-sm font-bold transition',
-                          form.gender === g
-                            ? g === 'female'
-                              ? 'border-pink-400/60 bg-pink-50 dark:bg-pink-950/30 text-pink-700 dark:text-pink-300 shadow-sm'
-                              : 'border-blue-400/60 bg-blue-50 dark:bg-blue-950/30 text-blue-700 dark:text-blue-300 shadow-sm'
-                            : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40',
-                        )}>
-                        <span className="text-base">{g === 'female' ? '♀' : '♂'}</span>
-                        <span className="capitalize">{g}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
                 {/* Service search */}
                 <div>
                   <div className="flex items-center gap-2 mb-2">
@@ -865,7 +839,7 @@ function BookingFormModal({
                   <FormLabel>Search & Select *</FormLabel>
                   <SearchDropdown<ApiService>
                     value={form.serviceSearch}
-                    placeholder={servicesLoading ? 'Loading services…' : `Search ${form.gender} services…`}
+                    placeholder={servicesLoading ? 'Loading services…' : 'Search services…'}
                     loading={servicesLoading}
                     items={filteredServices}
                     getKey={(s) => s.id}
