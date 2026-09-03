@@ -19,7 +19,6 @@ import {
   List,
   PieChart,
   ChevronDown,
-  CalendarCheck2,
   LayoutGrid,
   HomeIcon,
   Clock,
@@ -37,7 +36,7 @@ interface NavItem {
   href: string;
   label: string;
   icon: React.ElementType;
-  children?: { href: string; label: string; icon: React.ElementType }[];
+  children?: { href: string; label: string; icon: React.ElementType; disabled?: boolean }[];
 }
 
 export function Sidebar() {
@@ -62,10 +61,9 @@ export function Sidebar() {
       label: t('navAppointments'),
       icon: CalendarDays,
       children: [
-        { href: '/appointments',                    label: 'Appointments',         icon: CalendarCheck2 },
         { href: '/appointments/therapist-schedule', label: 'Therapist Schedule',   icon: Clock },
         { href: '/appointments/branch',             label: 'Branch Appointments',  icon: LayoutGrid },
-        { href: '/appointments/home-service',       label: 'Home Service',         icon: HomeIcon },
+        { href: '/appointments/home-service',       label: 'Home Service',         icon: HomeIcon, disabled: true },
       ],
     },
     { href: '/reports',   label: t('navReports'),   icon: BarChart3 },
@@ -214,6 +212,22 @@ export function Sidebar() {
                       {item.children.map((child) => {
                         const ChildIcon = child.icon;
                         const childActive = pathname === child.href;
+
+                        // Disabled / coming-soon item — non-navigable
+                        if (child.disabled) {
+                          return (
+                            <span
+                              key={child.href}
+                              className="group relative flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm font-medium cursor-not-allowed opacity-45 select-none"
+                              title="Coming soon"
+                            >
+                              <ChildIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              <span className="flex-1">{child.label}</span>
+                              <span className="ml-auto rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground">Soon</span>
+                            </span>
+                          );
+                        }
+
                         return (
                           <Link
                             key={child.href}

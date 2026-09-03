@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { CalendarDays, List, Filter, ChevronDown, MapPin, Clock, Store } from 'lucide-react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { useI18n } from '@/hooks/use-i18n';
@@ -12,9 +12,11 @@ import { MonthCalendar } from '@/components/dashboard/month-calendar';
 import { AppointmentDialog } from '@/components/dashboard/appointment-dialog';
 import { DaySlotGrid, type TimeSlot } from '@/components/dashboard/day-slot-grid';
 import { BookingFormDialog } from '@/components/dashboard/booking-form-dialog';
+import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
 import {
   setBranch, setStatus, setViewMode, setSelectedDate,
 } from '@/store/slices/filtersSlice';
+
 import type { Appointment, AppointmentStatus, Branch } from '@/lib/supabase';
 import { formatCurrency, appointmentsOnDay } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
@@ -44,6 +46,60 @@ export default function AppointmentsPage() {
   // Booking form dialog
   const [bookingSlot, setBookingSlot] = useState<TimeSlot | null>(null);
   const [bookingOpen, setBookingOpen] = useState(false);
+
+  // Booking detail modal (booknpay API)
+  const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
+
+  // Auth token
+  const token = useAppSelector((s) => s.auth.token);
+
+  // ── booknpay booking_id map ────────────────────────────────────────
+  // Maps ISO-date+time keys to booknpay booking_id.
+  // Key format: "YYYY-MM-DD|HH:MM" (UTC, from appointment_start field)
+  const [bookingIdMap, setBookingIdMap] = useState<Record<string, string>>({});
+
+  // Fetch booknpay bookings list for current branch + date to build the map
+  const fetchBooknpayBookings = useCallback(async (branchId: string, date: string, tok: string | null) => {
+    if (!branchId || branchId === 'all' || !date || !tok) return;
+    try {
+      const qs  = new URLSearchParams({ branch_id: branchId, date });
+      const res = await fetch(`/booknpay/api/v1/bookings/?${qs}`, {
+        headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' },
+      });
+      const json = await res.json().catch(() => ({}));
+      // Response can be { results: [...] } or [...] or { data: [...] }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const list: any[] = Array.isArray(json) ? json
+        : Array.isArray(json?.results) ? json.results
+        : Array.isArray(json?.data)    ? json.data
+        : [];
+
+      const map: Record<string, string> = {};
+      for (const bk of list) {
+        const id = bk.booking_id ?? bk.bookings_id ?? bk.id ?? '';
+        // Build keys from all possible time representations
+        const isoStart: string = bk.appointment_start ?? bk.appointment_datetime ?? '';
+        const dateKey:  string = bk.date ?? bk.booking_date ?? '';
+        const timeKey:  string = bk.time_slot ?? bk.appointment_time ?? bk.time ?? '';
+        if (id) {
+          if (isoStart) {
+            const d = new Date(isoStart);
+            const k = `${d.toISOString().slice(0, 10)}|${d.toISOString().slice(11, 16)}`;
+            map[k] = id;
+          }
+          if (dateKey && timeKey) map[`${dateKey}|${timeKey}`] = id;
+        }
+      }
+      console.log('[Appointments] booknpay booking map:', map);
+      setBookingIdMap(map);
+    } catch (e) {
+      console.warn('[Appointments] could not fetch booknpay bookings:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBooknpayBookings(filters.branchId, filters.selectedDate, token);
+  }, [filters.branchId, filters.selectedDate, token, fetchBooknpayBookings]);
 
   // ── derived data ──────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -75,11 +131,17 @@ export default function AppointmentsPage() {
   // ── slot interactions ─────────────────────────────────────────────
   const handleSlotClick = (slot: TimeSlot) => {
     if (slot.appointment) {
-      // Show details for booked slot
-      setSelectedAppt(slot.appointment);
-      setDetailOpen(true);
+      const appt = slot.appointment;
+      // Try to find the booknpay booking_id from the fetched map.
+      // Key: "YYYY-MM-DD|HH:MM" (both UTC-ISO and local HH:MM tried)
+      const dt    = new Date(appt.start_time);
+      const isoK  = `${dt.toISOString().slice(0, 10)}|${dt.toISOString().slice(11, 16)}`;
+      const localH = String(dt.getHours()).padStart(2, '0');
+      const localM = String(dt.getMinutes()).padStart(2, '0');
+      const localK = `${filters.selectedDate}|${localH}:${localM}`;
+      const bookingId = bookingIdMap[isoK] ?? bookingIdMap[localK] ?? appt.id;
+      setDetailBookingId(bookingId);
     } else {
-      // Open booking form for available slot
       setBookingSlot(slot);
       setBookingOpen(true);
     }
@@ -269,7 +331,16 @@ export default function AppointmentsPage() {
 
       {/* ── DIALOGS ───────────────────────────────────────────────── */}
 
-      {/* Appointment details (for booked slots & list rows) */}
+      {/* Booking detail modal — fetches from /booknpay/api/v1/bookings/<id>/ */}
+      {detailBookingId && token && (
+        <BookingDetailModal
+          bookingId={detailBookingId}
+          token={token}
+          onClose={() => setDetailBookingId(null)}
+        />
+      )}
+
+      {/* Legacy appointment dialog kept for list-row clicks */}
       <AppointmentDialog
         appointment={selectedAppt}
         open={detailOpen}

@@ -9,6 +9,10 @@ import {
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import {
+  TherapistScheduleBookingModal,
+} from '@/components/bookings/TherapistScheduleBookingModal';
+import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -92,6 +96,8 @@ interface Therapist {
   initials: string;
   photoUrl: string | null;
   color: string;
+  branchId: string;
+  branchName: string;
 }
 
 // ── Column tints ───────────────────────────────────────────────────────────────
@@ -323,7 +329,12 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
 
   if (slot.status === 'available') {
     return (
-      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+        className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group">
         <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground/70 group-hover:text-primary transition">
           <Plus className="h-3.5 w-3.5" /> Available
         </span>
@@ -579,6 +590,8 @@ export default function TherapistSchedulePage() {
   const [selectedDate,     setSelectedDate]      = useState<string>(todayStr);
   const [search,           setSearch]            = useState('');
   const [modal,            setModal]             = useState<ModalPayload | null>(null);
+  const [detailBookingId,  setDetailBookingId]   = useState<string | null>(null);
+  const [bookingModal,     setBookingModal]      = useState<{ therapist: Therapist; timeSlot: string } | null>(null);
   const [showBranchDrop,   setShowBranchDrop]    = useState(false);
   const [showCalendar,     setShowCalendar]      = useState(false);
 
@@ -633,11 +646,13 @@ export default function TherapistSchedulePage() {
   const grid      = scheduleData?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 as const };
   const timeSlots = generateTimeSlots(grid);
   const therapists: Therapist[] = (scheduleData?.therapists ?? []).map((t, i) => ({
-    id:       t.id,
-    name:     t.name,
-    initials: getInitials(t.name),
-    photoUrl: t.photo_url,
-    color:    THERAPIST_COLORS[i % THERAPIST_COLORS.length],
+    id:         t.id,
+    name:       t.name,
+    initials:   getInitials(t.name),
+    photoUrl:   t.photo_url,
+    color:      THERAPIST_COLORS[i % THERAPIST_COLORS.length],
+    branchId:   t.branch_id,
+    branchName: t.branch_name,
   }));
 
   const schedule = scheduleData
@@ -669,8 +684,17 @@ export default function TherapistSchedulePage() {
   const dateDisplay = formatDateDisplay(selectedDate);
 
   const openModal = useCallback((slot: Slot, therapist: Therapist, timeSlot: string) => {
-    setModal({ slot, therapist, timeSlot, branch: branchLabel, date: dateDisplay });
+    // Prefer full API fetch when we have a booking reference ID
+    if (slot.reference && slot.reference.length > 10) {
+      setDetailBookingId(slot.reference);
+    } else {
+      setModal({ slot, therapist, timeSlot, branch: branchLabel, date: dateDisplay });
+    }
   }, [branchLabel, dateDisplay]);
+
+  const openBookingModal = useCallback((therapist: Therapist, timeSlot: string) => {
+    setBookingModal({ therapist, timeSlot });
+  }, []);
 
   return (
     <DashboardShell>
@@ -964,7 +988,13 @@ export default function TherapistSchedulePage() {
                           >
                             <SlotCell
                               slot={slot}
-                              onClick={isBooked ? () => openModal(slot, t, time) : undefined}
+                              onClick={
+                                isBooked
+                                  ? () => openModal(slot, t, time)
+                                  : slot.status === 'available'
+                                  ? () => openBookingModal(t, time)
+                                  : undefined
+                              }
                             />
                           </div>,
                         );
@@ -982,8 +1012,33 @@ export default function TherapistSchedulePage() {
         </div>
       )}
 
-      {/* ── Detail Modal ── */}
-      {modal && <SlotDetailModal payload={modal} onClose={() => setModal(null)} />}
+      {/* ── Booking Detail Modal (fetches full data from API) ── */}
+      {detailBookingId && token && (
+        <BookingDetailModal
+          bookingId={detailBookingId}
+          token={token}
+          onClose={() => setDetailBookingId(null)}
+        />
+      )}
+
+      {/* ── Slot Detail Modal (fallback: local slot data only) ── */}
+      {modal && !detailBookingId && <SlotDetailModal payload={modal} onClose={() => setModal(null)} />}
+
+      {/* ── New Therapist Schedule Booking Modal ── */}
+      {bookingModal && token && (
+        <TherapistScheduleBookingModal
+          token={token}
+          timeSlot={bookingModal.timeSlot}
+          date={selectedDate}
+          branchId={bookingModal.therapist.branchId || (selectedBranchId !== 'all' ? selectedBranchId : '')}
+          branchName={bookingModal.therapist.branchName || branchLabel}
+          therapistId={bookingModal.therapist.id}
+          therapistName={bookingModal.therapist.name}
+          therapistPhoto={bookingModal.therapist.photoUrl ?? null}
+          onClose={() => setBookingModal(null)}
+          onSuccess={() => { /* step 3 shows in-modal — no close needed */ }}
+        />
+      )}
     </DashboardShell>
   );
 }
