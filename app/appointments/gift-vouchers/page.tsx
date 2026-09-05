@@ -11,6 +11,7 @@ import {
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { CreateVoucherModal } from '@/components/bookings/CreateVoucherModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -494,6 +495,7 @@ export default function GiftVouchersPage() {
   const [error,           setError]           = useState<string | null>(null);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
   const [statusFilter,    setStatusFilter]    = useState<string>('all');
+  const [showCreate,      setShowCreate]      = useState(false);
 
   const fetchVouchers = useCallback(async () => {
     setLoading(true);
@@ -571,14 +573,23 @@ export default function GiftVouchersPage() {
 
       {/* ── Controls ── */}
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-        <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+        <div className="flex items-center gap-2">
+          <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+          <button
+            onClick={fetchVouchers}
+            disabled={loading}
+            className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition disabled:opacity-60"
+          >
+            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            Refresh
+          </button>
+        </div>
         <button
-          onClick={fetchVouchers}
-          disabled={loading}
-          className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition disabled:opacity-60"
+          onClick={() => setShowCreate(true)}
+          className="flex h-10 items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 px-5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98]"
         >
-          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-          Refresh
+          <Gift className="h-4 w-4" />
+          New Voucher
         </button>
       </div>
 
@@ -772,6 +783,15 @@ export default function GiftVouchersPage() {
         <VoucherDetailModal
           voucher={selectedVoucher}
           onClose={() => setSelectedVoucher(null)}
+        />
+      )}
+
+      {/* ── Create Voucher Modal ── */}
+      {showCreate && token && (
+        <CreateVoucherModal
+          token={token}
+          onClose={() => setShowCreate(false)}
+          onSuccess={() => { setShowCreate(false); fetchVouchers(); }}
         />
       )}
     </DashboardShell>
