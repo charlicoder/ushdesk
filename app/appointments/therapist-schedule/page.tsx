@@ -45,8 +45,21 @@ interface ApiBooking {
   status?: string;
   booking_type?: string;
   booking_id?: string;
-  customer?: { name?: string; phone?: string } | null;
-  service?: { name?: string } | null;
+  bookings_id?: string;
+  customer?: {
+    name?: string;
+    phone?: string;
+    full_name?: string;
+    first_name?: string;
+    last_name?: string;
+  } | null;
+  service?: {
+    name?: string;
+    service_name?: string;
+  } | null;
+  service_name?: string;
+  customer_name?: string;
+  client_name?: string;
 }
 
 interface ApiGrid {
@@ -317,7 +330,6 @@ function SlotDetailModal({ payload, onClose }: { payload: ModalPayload; onClose:
 }
 
 // ── Slot Cell ──────────────────────────────────────────────────────────────────
-// rowHeight/spanCount are no longer needed — the CSS Grid parent stretches the cell.
 function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   if (slot.status === 'unavailable') {
     return (
@@ -342,8 +354,30 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     );
   }
 
-  const cfg  = STATUS_CFG[slot.status as ActiveStatus];
+  const cfg  = STATUS_CFG[slot.status as ActiveStatus] ?? STATUS_CFG.scheduled;
   const Icon = cfg.Icon;
+  const st   = (slot.status as ActiveStatus) in STATUS_CFG ? (slot.status as ActiveStatus) : 'scheduled';
+
+  const accentBar: Record<ActiveStatus, string> = {
+    in_progress: 'bg-emerald-500',
+    booking:     'bg-blue-500',
+    scheduled:   'bg-violet-500',
+  };
+  const iconBg: Record<ActiveStatus, string> = {
+    in_progress: 'bg-emerald-500/15',
+    booking:     'bg-blue-500/15',
+    scheduled:   'bg-violet-500/15',
+  };
+  const durationCls: Record<ActiveStatus, string> = {
+    in_progress: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+    booking:     'bg-blue-500/15 text-blue-700 dark:text-blue-300',
+    scheduled:   'bg-violet-500/15 text-violet-700 dark:text-violet-300',
+  };
+  const borderHover: Record<ActiveStatus, string> = {
+    in_progress: 'border-emerald-300/70 dark:border-emerald-600/50 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/60 dark:to-emerald-900/30 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-400',
+    booking:     'border-blue-300/70 dark:border-blue-600/50 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 shadow-sm shadow-blue-500/10 hover:shadow-blue-500/20 hover:border-blue-400',
+    scheduled:   'border-violet-300/70 dark:border-violet-600/50 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 shadow-sm shadow-violet-500/10 hover:shadow-violet-500/20 hover:border-violet-400',
+  };
 
   return (
     <div
@@ -352,29 +386,67 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
       className={cn(
-        // h-full so the card fills the entire merged grid cell vertically
-        'relative h-full min-h-[82px] w-full rounded-xl p-3 transition-all duration-200 cursor-pointer select-none active:scale-[0.98]',
-        cfg.cardCls,
+        'group relative h-full min-h-[82px] w-full flex rounded-xl overflow-hidden cursor-pointer select-none',
+        'border transition-all duration-200 active:scale-[0.98]',
+        borderHover[st],
       )}
     >
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className={cn('text-[10px] uppercase tracking-wider', cfg.badgeCls)}>{cfg.badge}</span>
-        <div className="flex items-center gap-1">
-          <Icon className={cn('h-3.5 w-3.5', cfg.iconCls)} />
-          <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
+      {/* Left accent bar */}
+      <div className={cn('w-[3px] shrink-0', accentBar[st])} />
+
+      {/* Main content */}
+      <div className="flex flex-1 min-w-0 flex-col justify-between p-2.5 gap-1.5">
+
+        {/* Row 1: status badge + icon */}
+        <div className="flex items-center justify-between gap-1">
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-md px-1.5 py-[3px] text-[8px] font-extrabold uppercase tracking-widest leading-none',
+            cfg.pillCls,
+          )}>
+            <span className={cn('h-[5px] w-[5px] rounded-full shrink-0', cfg.dot)} />
+            {cfg.label}
+          </span>
+          <div className={cn('grid h-[18px] w-[18px] shrink-0 place-items-center rounded-md', iconBg[st])}>
+            <Icon className={cn('h-[10px] w-[10px]', cfg.iconCls)} />
+          </div>
         </div>
-      </div>
-      <p className="text-sm font-bold leading-tight text-foreground truncate">{slot.client}</p>
-      {slot.service && (
-        <p className="mt-0.5 text-[11px] text-muted-foreground leading-tight line-clamp-1">{slot.service}</p>
-      )}
-      <div className="mt-2 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5 text-[10px] font-bold text-foreground">
-          {slot.duration}
-        </span>
-        {slot.start && slot.end && (
-          <span className="text-[10px] font-medium text-muted-foreground">{slot.start} – {slot.end}</span>
-        )}
+
+        {/* Row 2: Customer full name and Service full name */}
+        <div className="flex flex-col gap-0.5 min-w-0">
+          {slot.client && (
+            <p className="text-xs font-bold leading-tight text-foreground break-words whitespace-normal line-clamp-2">
+              {slot.client}
+            </p>
+          )}
+          {slot.service && (
+            <p className="text-[11px] font-semibold leading-tight text-muted-foreground break-words whitespace-normal line-clamp-2">
+              {slot.service}
+            </p>
+          )}
+          {!slot.client && !slot.service && (
+            <p className="text-xs font-bold leading-tight text-foreground">
+              Booked
+            </p>
+          )}
+        </div>
+
+        {/* Row 3: duration pill + time range */}
+        <div className="flex items-center justify-between gap-1 flex-wrap pt-1 border-t border-border/20">
+          {slot.duration && (
+            <span className={cn(
+              'inline-flex items-center gap-[3px] rounded-md px-1.5 py-[3px] text-[11px] font-bold leading-none',
+              durationCls[st],
+            )}>
+              <Timer className="h-3 w-3 shrink-0" />
+              {slot.duration}
+            </span>
+          )}
+          {slot.start && slot.end && (
+            <span className="text-[11px] font-semibold text-muted-foreground leading-none tabular-nums">
+              {slot.start}–{slot.end}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -523,15 +595,26 @@ function buildScheduleFromApi(
       return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
     };
     const durationMin = bk.duration_minutes ?? (em - sm);
+    const clientName = bk.customer?.name ||
+      (bk.customer?.first_name ? `${bk.customer.first_name} ${bk.customer.last_name ?? ''}`.trim() : undefined) ||
+      (bk.customer as any)?.full_name ||
+      bk.customer_name ||
+      bk.client_name ||
+      undefined;
+    const serviceName = bk.service?.name ||
+      (bk.service as any)?.service_name ||
+      bk.service_name ||
+      undefined;
+
     bookingMap[bk.therapist_id].push({
       startMin:   sm,
       endMin:     em,
-      client:     bk.customer?.name ?? undefined,
-      service:    bk.service?.name  ?? undefined,
+      client:     clientName,
+      service:    serviceName,
       startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
       endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
       duration:   `${durationMin}m`,
-      reference:  bk.booking_id ?? bk.id,
+      reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
       status:     bk.status ?? 'scheduled',
     });
   }

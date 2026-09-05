@@ -26,6 +26,7 @@ import {
   Landmark,
   CreditCard,
   Building2,
+  Gift,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -64,6 +65,7 @@ export function Sidebar() {
         { href: '/appointments/therapist-schedule', label: 'Therapist Schedule',   icon: Clock },
         { href: '/appointments/branch',             label: 'Branch Appointments',  icon: LayoutGrid },
         { href: '/appointments/home-service',       label: 'Home Service',         icon: HomeIcon, disabled: true },
+        { href: '/appointments/gift-vouchers',      label: 'Gift Vouchers',        icon: Gift },
       ],
     },
     { href: '/reports',   label: t('navReports'),   icon: BarChart3 },
