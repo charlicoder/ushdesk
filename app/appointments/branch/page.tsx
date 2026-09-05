@@ -45,6 +45,7 @@ interface ApiBooking {
   duration_minutes: number;
   status: string;
   bookings_id: string;
+  service_name?: string;
 }
 
 interface ApiGrid {
@@ -74,7 +75,7 @@ type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_pr
 
 interface Slot {
   status: SlotStatus;
-  arrangementName?: string;
+  serviceName?: string;
   capacity?: number;
   start?: string;
   end?: string;
@@ -324,8 +325,31 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     );
   }
 
-  const cfg  = STATUS_CFG[slot.status as ActiveStatus];
+  const cfg = STATUS_CFG[slot.status as ActiveStatus];
   const Icon = cfg.Icon;
+
+  const accentBar: Record<ActiveStatus, string> = {
+    in_progress: 'bg-emerald-500',
+    booking:     'bg-blue-500',
+    scheduled:   'bg-violet-500',
+  };
+  const iconBg: Record<ActiveStatus, string> = {
+    in_progress: 'bg-emerald-500/15',
+    booking:     'bg-blue-500/15',
+    scheduled:   'bg-violet-500/15',
+  };
+  const durationCls: Record<ActiveStatus, string> = {
+    in_progress: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+    booking:     'bg-blue-500/15 text-blue-700 dark:text-blue-300',
+    scheduled:   'bg-violet-500/15 text-violet-700 dark:text-violet-300',
+  };
+  const borderHover: Record<ActiveStatus, string> = {
+    in_progress: 'border-emerald-300/70 dark:border-emerald-600/50 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/60 dark:to-emerald-900/30 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-400',
+    booking:     'border-blue-300/70 dark:border-blue-600/50 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 shadow-sm shadow-blue-500/10 hover:shadow-blue-500/20 hover:border-blue-400',
+    scheduled:   'border-violet-300/70 dark:border-violet-600/50 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 shadow-sm shadow-violet-500/10 hover:shadow-violet-500/20 hover:border-violet-400',
+  };
+
+  const st = slot.status as ActiveStatus;
 
   return (
     <div
@@ -334,25 +358,53 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
       className={cn(
-        'relative h-full min-h-[82px] rounded-xl p-3 transition-all duration-200 cursor-pointer select-none active:scale-[0.98]',
-        cfg.cardCls,
+        'group relative h-full min-h-[82px] flex rounded-xl overflow-hidden cursor-pointer select-none',
+        'border transition-all duration-200 active:scale-[0.98]',
+        borderHover[st],
       )}
     >
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className={cn('text-[10px] uppercase tracking-wider', cfg.badgeCls)}>{cfg.badge}</span>
-        <div className="flex items-center gap-1">
-          <Icon className={cn('h-3.5 w-3.5', cfg.iconCls)} />
-          <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
+      {/* Left accent bar */}
+      <div className={cn('w-[3px] shrink-0', accentBar[st])} />
+
+      {/* Main content */}
+      <div className="flex flex-1 min-w-0 flex-col justify-between px-2.5 py-2 gap-1">
+
+        {/* Row 1: status badge + icon */}
+        <div className="flex items-center justify-between gap-1">
+          <span className={cn(
+            'inline-flex items-center gap-1 rounded-md px-1.5 py-[3px] text-[8px] font-extrabold uppercase tracking-widest leading-none',
+            cfg.pillCls,
+          )}>
+            <span className={cn('h-[5px] w-[5px] rounded-full shrink-0', cfg.dot)} />
+            {cfg.label}
+          </span>
+          <div className={cn('grid h-[18px] w-[18px] shrink-0 place-items-center rounded-md', iconBg[st])}>
+            <Icon className={cn('h-[10px] w-[10px]', cfg.iconCls)} />
+          </div>
         </div>
-      </div>
-      <p className="text-sm font-bold leading-tight text-foreground truncate">{slot.arrangementName ?? 'Booked'}</p>
-      <div className="mt-2 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5 text-[10px] font-bold text-foreground">
-          {slot.duration}
-        </span>
-        {slot.start && slot.end && (
-          <span className="text-[10px] font-medium text-muted-foreground">{slot.start} – {slot.end}</span>
-        )}
+
+        {/* Row 2: service name — wraps up to 2 lines */}
+        <p className="text-[11px] font-bold leading-tight text-foreground break-words whitespace-normal line-clamp-2 min-h-[26px]">
+          {slot.serviceName || 'Booked'}
+        </p>
+
+        {/* Row 3: duration + time range */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {slot.duration && (
+            <span className={cn(
+              'inline-flex items-center gap-[3px] rounded-md px-1.5 py-[3px] text-[11px] font-bold leading-none',
+              durationCls[st],
+            )}>
+              <Timer className="h-3 w-3 shrink-0" />
+              {slot.duration}
+            </span>
+          )}
+          {slot.start && slot.end && (
+            <span className="text-[11px] font-semibold text-muted-foreground leading-none tabular-nums">
+              {slot.start}–{slot.end}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -482,6 +534,7 @@ function buildScheduleFromApi(
     startLabel: string; endLabel: string;
     duration: string; reference: string;
     bookingsId: string; status: string;
+    serviceName: string;
   };
 
   const bookingMap: Record<string, BkEntry[]> = {};
@@ -498,14 +551,15 @@ function buildScheduleFromApi(
     };
     const durationMin = bk.duration_minutes ?? (em - sm);
     bookingMap[bk.arrangement_id].push({
-      startMin:   sm,
-      endMin:     em,
-      startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
-      endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
-      duration:   `${durationMin}m`,
-      reference:  bk.id,
-      bookingsId: bk.bookings_id,
-      status:     bk.status ?? 'confirmed',
+      startMin:    sm,
+      endMin:      em,
+      startLabel:  fmt(s.getUTCHours(), s.getUTCMinutes()),
+      endLabel:    fmt(e.getUTCHours(), e.getUTCMinutes()),
+      duration:    `${durationMin}m`,
+      reference:   bk.id,
+      bookingsId:  bk.bookings_id,
+      status:      bk.status ?? 'confirmed',
+      serviceName: bk.service_name ?? '',
     });
   }
 
@@ -523,14 +577,15 @@ function buildScheduleFromApi(
         if (bk.status === 'in_progress') st = 'in_progress';
         else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
         sched[arr.id][slotLabel] = {
-          status: st,
-          arrangementName: arr.name,
-          capacity: arr.capacity,
-          start: bk.startLabel, end: bk.endLabel,
-          duration: bk.duration,
-          reference: bk.reference,
-          bookingsId: bk.bookingsId,
-          branchName: arr.branch_name,
+          status:      st,
+          serviceName: bk.serviceName || arr.name,
+          capacity:    arr.capacity,
+          start:       bk.startLabel,
+          end:         bk.endLabel,
+          duration:    bk.duration,
+          reference:   bk.reference,
+          bookingsId:  bk.bookingsId,
+          branchName:  arr.branch_name,
         };
         continue;
       }
