@@ -12,6 +12,7 @@ import {
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
 import {
   NewBranchBookingModal,
   getArrangementType,
@@ -560,6 +561,9 @@ export default function BranchAppointmentsPage() {
   const [showBranchDrop,   setShowBranchDrop]    = useState(false);
   const [showCalendar,     setShowCalendar]      = useState(false);
 
+  // BookingDetailModal — opens when a slot has a booknpay bookings_id
+  const [bookingDetailId,  setBookingDetailId]  = useState<string | null>(null);
+
   const [scheduleData, setScheduleData] = useState<ApiScheduleRecord | null>(null);
   const [loading,      setLoading]      = useState(false);
   const [error,        setError]        = useState<string | null>(null);
@@ -657,7 +661,13 @@ export default function BranchAppointmentsPage() {
   const dateDisplay = formatDateDisplay(selectedDate);
 
   const openDetailModal = useCallback((slot: Slot, arrangement: Arrangement, timeSlot: string) => {
-    setDetailModal({ slot, arrangement, timeSlot, branch: branchLabel, date: dateDisplay });
+    if (slot.bookingsId) {
+      // Prefer the rich BookingDetailModal that fetches from booknpay API
+      setBookingDetailId(slot.bookingsId);
+    } else {
+      // Fall back to the local SlotDetailModal
+      setDetailModal({ slot, arrangement, timeSlot, branch: branchLabel, date: dateDisplay });
+    }
   }, [branchLabel, dateDisplay]);
 
   const openNewBooking = useCallback((arrangement: Arrangement, timeSlot: string) => {
@@ -974,7 +984,16 @@ export default function BranchAppointmentsPage() {
         </div>
       )}
 
-      {/* ── Detail Modal (booked slots) ── */}
+      {/* ── BookingDetailModal — rich modal fetching from booknpay API ── */}
+      {bookingDetailId && token && (
+        <BookingDetailModal
+          bookingId={bookingDetailId}
+          token={token}
+          onClose={() => setBookingDetailId(null)}
+        />
+      )}
+
+      {/* ── Detail Modal (fallback for slots without a booknpay ID) ── */}
       {detailModal && <SlotDetailModal payload={detailModal} onClose={() => setDetailModal(null)} />}
 
       {/* ── New Booking Modal (available slots) ── */}
