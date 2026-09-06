@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAppSelector } from '@/store/hooks';
+import { authedFetch } from '@/lib/authedFetch';
 
 export interface PaginationMeta {
   count: number;
@@ -46,7 +47,7 @@ export function useBookings<T>(
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    fetch(proxyPath, { headers })
+    authedFetch(proxyPath, { headers })
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
         if (cancelled) return;

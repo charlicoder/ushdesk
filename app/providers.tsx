@@ -5,7 +5,7 @@ import { Provider } from 'react-redux';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { store } from '@/store';
-import { initAuthFromStorage, logout } from '@/store/slices/authSlice';
+import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice';
 import { getSessionRemainingMs } from '@/lib/api';
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
@@ -45,6 +45,24 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     dispatch(initAuthFromStorage());
   }, [dispatch]);
+
+  // Listen for silent refresh / forced-logout events from authedFetch
+  useEffect(() => {
+    const onRefreshed = (e: Event) => {
+      const token = (e as CustomEvent<{ token: string }>).detail?.token;
+      if (token) dispatch(setToken(token));
+    };
+    const onLogoutRequired = () => {
+      dispatch(logout());
+      router.replace('/login');
+    };
+    window.addEventListener('ush:token-refreshed',   onRefreshed);
+    window.addEventListener('ush:logout-required', onLogoutRequired);
+    return () => {
+      window.removeEventListener('ush:token-refreshed',   onRefreshed);
+      window.removeEventListener('ush:logout-required', onLogoutRequired);
+    };
+  }, [dispatch, router]);
 
   // After initialization, redirect based on auth state
   useEffect(() => {

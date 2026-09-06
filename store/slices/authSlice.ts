@@ -165,6 +165,10 @@ const authSlice = createSlice({
     clearError(state) {
       state.error = null;
     },
+    /** Called after a silent token refresh — keeps Redux in sync with localStorage. */
+    setToken(state, action: { payload: string }) {
+      state.token = action.payload;
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -195,5 +199,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { logout, clearError } = authSlice.actions;
+export const { logout, clearError, setToken } = authSlice.actions;
 export default authSlice.reducer;

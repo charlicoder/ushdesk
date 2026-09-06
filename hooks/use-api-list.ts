@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAppSelector } from '@/store/hooks';
+import { authedFetch } from '@/lib/authedFetch';
 
 interface UseApiListResult<T> {
   data: T[];
@@ -38,7 +39,7 @@ export function useApiList<T>(
     };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    fetch(proxyPath, { headers })
+    authedFetch(proxyPath, { headers })
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
         if (cancelled) return;
