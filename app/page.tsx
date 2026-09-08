@@ -30,7 +30,7 @@ import {
   appointmentsOnDay, appointmentsInRange, startOfMonth, endOfMonth,
   addMonths, formatCurrency, toISODate, addDays,
 } from '@/lib/helpers';
-import type { Appointment } from '@/lib/supabase';
+import type { Appointment } from '@/types/appointment';
 import {
   generateDemoEarningsTrend,
   generateDemoWeeklyOverview,

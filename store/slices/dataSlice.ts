@@ -1,5 +1,5 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from '@reduxjs/toolkit';
-import { supabase, type Appointment, type Branch, type Service, type Staff, type Customer } from '@/lib/supabase';
+import type { Appointment, Branch, Service, Staff, Customer } from '@/types/appointment';
 import {
   DEMO_BRANCHES,
   DEMO_SERVICES,
@@ -32,68 +32,21 @@ const initialState: DataState = {
 
 export const fetchDashboardData = createAsyncThunk(
   'data/fetchDashboardData',
-  async (_, { rejectWithValue }) => {
-    try {
-      const [appts, branches, services, staff, customers] = await Promise.all([
-        supabase
-          .from('appointments')
-          .select('*, branch:branches(*), service:services(*), staff:staff(*), customer:customers(*)')
-          .order('start_time', { ascending: true }),
-        supabase.from('branches').select('*').order('name'),
-        supabase.from('services').select('*').order('name'),
-        supabase.from('staff').select('*').order('name'),
-        supabase.from('customers').select('*').order('name'),
-      ]);
-
-      const errors = [appts.error, branches.error, services.error, staff.error, customers.error].filter(Boolean);
-      
-      // If supabase returns real rows without error, return them
-      if (!errors.length && appts.data && appts.data.length > 0 && branches.data && branches.data.length > 0) {
-        return {
-          appointments: appts.data as Appointment[],
-          branches: branches.data as Branch[],
-          services: services.data as Service[],
-          staff: staff.data as Staff[],
-          customers: customers.data as Customer[],
-        };
-      }
-
-      // Fallback to high-quality demo data
-      return {
-        appointments: generateDemoAppointments(),
-        branches: DEMO_BRANCHES,
-        services: DEMO_SERVICES,
-        staff: DEMO_STAFF,
-        customers: DEMO_CUSTOMERS,
-      };
-    } catch {
-      // Offline / network fallback to demo data
-      return {
-        appointments: generateDemoAppointments(),
-        branches: DEMO_BRANCHES,
-        services: DEMO_SERVICES,
-        staff: DEMO_STAFF,
-        customers: DEMO_CUSTOMERS,
-      };
-    }
+  async () => {
+    return {
+      appointments: generateDemoAppointments(),
+      branches: DEMO_BRANCHES,
+      services: DEMO_SERVICES,
+      staff: DEMO_STAFF,
+      customers: DEMO_CUSTOMERS,
+    };
   },
 );
 
 export const updateAppointmentStatus = createAsyncThunk(
   'data/updateAppointmentStatus',
   async ({ id, status }: { id: string; status: Appointment['status'] }) => {
-    try {
-      const { data, error } = await supabase
-        .from('appointments')
-        .update({ status })
-        .eq('id', id)
-        .select('*, branch:branches(*), service:services(*), staff:staff(*), customer:customers(*)')
-        .single();
-      if (error || !data) return { id, status };
-      return data as Appointment;
-    } catch {
-      return { id, status };
-    }
+    return { id, status };
   },
 );
 
@@ -113,68 +66,31 @@ export interface CreateAppointmentInput {
 export const createAppointment = createAsyncThunk(
   'data/createAppointment',
   async (input: CreateAppointmentInput, { getState }) => {
-    try {
-      const { data, error } = await supabase
-        .from('appointments')
-        .insert([input])
-        .select('*, branch:branches(*), service:services(*), staff:staff(*), customer:customers(*)')
-        .single();
-      if (error || !data) {
-        // Build local demo appointment from state
-        const state = (getState() as { data: DataState }).data;
-        const branch = state.branches.find((b) => b.id === input.branch_id);
-        const service = state.services.find((s) => s.id === input.service_id);
-        const staff = state.staff.find((st) => st.id === input.staff_id);
-        const customer = state.customers.find((c) => c.id === input.customer_id);
+    const state = (getState() as { data: DataState }).data;
+    const branch = state.branches.find((b) => b.id === input.branch_id);
+    const service = state.services.find((s) => s.id === input.service_id);
+    const staff = state.staff.find((st) => st.id === input.staff_id);
+    const customer = state.customers.find((c) => c.id === input.customer_id);
 
-        const newAppt: Appointment = {
-          id: `appt-demo-${Date.now()}`,
-          customer_id: input.customer_id,
-          service_id: input.service_id,
-          staff_id: input.staff_id,
-          branch_id: input.branch_id,
-          start_time: input.start_time,
-          duration_min: input.duration_min,
-          price: input.price,
-          status: input.status,
-          payment_method: input.payment_method,
-          notes: input.notes,
-          created_at: new Date().toISOString(),
-          branch,
-          service,
-          staff,
-          customer,
-        };
-        return newAppt;
-      }
-      return data as Appointment;
-    } catch {
-      const state = (getState() as { data: DataState }).data;
-      const branch = state.branches.find((b) => b.id === input.branch_id);
-      const service = state.services.find((s) => s.id === input.service_id);
-      const staff = state.staff.find((st) => st.id === input.staff_id);
-      const customer = state.customers.find((c) => c.id === input.customer_id);
-
-      const newAppt: Appointment = {
-        id: `appt-demo-${Date.now()}`,
-        customer_id: input.customer_id,
-        service_id: input.service_id,
-        staff_id: input.staff_id,
-        branch_id: input.branch_id,
-        start_time: input.start_time,
-        duration_min: input.duration_min,
-        price: input.price,
-        status: input.status,
-        payment_method: input.payment_method,
-        notes: input.notes,
-        created_at: new Date().toISOString(),
-        branch,
-        service,
-        staff,
-        customer,
-      };
-      return newAppt;
-    }
+    const newAppt: Appointment = {
+      id: `appt-${Date.now()}`,
+      customer_id: input.customer_id,
+      service_id: input.service_id,
+      staff_id: input.staff_id,
+      branch_id: input.branch_id,
+      start_time: input.start_time,
+      duration_min: input.duration_min,
+      price: input.price,
+      status: input.status,
+      payment_method: input.payment_method,
+      notes: input.notes,
+      created_at: new Date().toISOString(),
+      branch,
+      service,
+      staff,
+      customer,
+    };
+    return newAppt;
   },
 );
 

@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react';
 import { Clock, User, Sparkles, CheckCircle2, Circle } from 'lucide-react';
-import type { Appointment, Branch } from '@/lib/supabase';
+import type { Appointment, Branch } from '@/types/appointment';
 import { StatusBadge } from '@/components/dashboard/status-badge';
 import { useI18n } from '@/hooks/use-i18n';
 import { cn } from '@/lib/utils';
