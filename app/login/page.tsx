@@ -233,22 +233,6 @@ export default function LoginPage() {
               <span className="font-semibold text-foreground">USH Spa employees</span> only.
             </p>
           </div>
-
-          {/* Demo credentials */}
-          <div className="mt-5 rounded-2xl border border-border/60 bg-muted/40 p-4">
-            <p className="text-xs font-semibold text-foreground mb-2">Demo Credentials</p>
-            <div className="space-y-1 text-xs text-muted-foreground font-mono">
-              <p><span className="text-foreground">Phone:</span> +96590000011</p>
-              <p><span className="text-foreground">Password:</span> Demo@123</p>
-            </div>
-            <button
-              type="button"
-              className="mt-3 text-xs text-primary hover:underline font-semibold"
-              onClick={() => { setPhone('+96590000011'); setPassword('Demo@123'); }}
-            >
-              Fill demo credentials →
-            </button>
-          </div>
         </div>
       </div>
     </div>
