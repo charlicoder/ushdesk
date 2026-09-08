@@ -85,7 +85,7 @@ export function Sidebar() {
       label: t('navEmployees'),
       icon: UserCheck,
       children: [
-        { href: '/employees',               label: 'Employee List',     icon: UserCheck },
+        { href: '/employees',               label: t('navEmployees'),   icon: UserCheck },
         { href: '/employees/leaves',        label: 'Leave Management',  icon: CalendarOff },
         { href: '/employees/working-hours', label: 'Working Hours',     icon: Clock },
       ],
