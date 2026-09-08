@@ -1,20 +1,22 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import {
   Sparkles, Clock, Search, Building2,
   LayoutGrid, List, RefreshCw, AlertCircle,
   ChevronDown, X, Layers, TrendingUp, Home,
+  Eye, Info,
 } from 'lucide-react';
 import { useAppSelector } from '@/store/hooks';
 import { useI18n } from '@/hooks/use-i18n';
 import type { TranslationKey } from '@/lib/i18n';
-import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { formatCurrency } from '@/lib/helpers';
 import { DEMO_SERVICES } from '@/data/mockData';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
+import { ServiceDetailModal, type BranchInfo } from '@/components/services/ServiceDetailModal';
 
 // ── Category / Role Palette ──────────────────────────────────────────────────
 const CATEGORY_STYLES: Record<string, { badge: string; dot: string; gradient: string }> = {
@@ -68,13 +70,15 @@ interface ServiceRow {
   id: string;
   name: string;
   category: string;
-  duration_min: number;
+  duration_minutes: number;
   price: number;
   description: string | null;
   image: string | null;
   can_do_home_service: boolean;
   branch_ids: string[];
+  branches: BranchInfo[];
   bookings: number;
+  raw: Record<string, unknown>;
 }
 
 // ── Normalise ─────────────────────────────────────────────────────────────────
@@ -84,29 +88,58 @@ function normaliseService(
   appointmentBranches: string[],
 ): ServiceRow {
   let branchIds: string[] = [];
-  if (Array.isArray(raw.branch_ids)) {
+  const branchList: BranchInfo[] = [];
+
+  // Parse branches from service item (supports [{ id, name }], string IDs, etc.)
+  if (Array.isArray(raw.branches)) {
+    raw.branches.forEach((b) => {
+      if (typeof b === 'object' && b !== null) {
+        const bObj = b as Record<string, unknown>;
+        const bId = String(bObj.id ?? bObj.branch_id ?? bObj.uuid ?? '');
+        const bName = String(bObj.name ?? bObj.branch_name ?? bObj.title ?? bId);
+        if (bId) {
+          branchIds.push(bId);
+          branchList.push({ id: bId, name: bName });
+        }
+      } else if (typeof b === 'string' || typeof b === 'number') {
+        const bId = String(b);
+        if (bId) {
+          branchIds.push(bId);
+          branchList.push({ id: bId, name: bId });
+        }
+      }
+    });
+  } else if (Array.isArray(raw.branch_ids)) {
     branchIds = raw.branch_ids.map(String);
-  } else if (Array.isArray(raw.branches)) {
-    branchIds = raw.branches
-      .map((b) => (typeof b === 'object' && b !== null ? String((b as Record<string, unknown>).id ?? '') : String(b)))
-      .filter(Boolean);
   } else if (raw.branch_id) {
     branchIds = [String(raw.branch_id)];
   }
+
   if (branchIds.length === 0 && appointmentBranches.length > 0) {
     branchIds = appointmentBranches;
   }
+
+  // Use duration_minutes as requested
+  const duration = Number(
+    raw.duration_minutes ??
+    raw.duration_min ??
+    raw.duration ??
+    60,
+  );
+
   return {
     id:                  String(raw.id ?? raw.service_id ?? ''),
     name:                String(raw.name ?? raw.service_name ?? 'Unnamed Service'),
     category:            String(raw.category ?? raw.service_category ?? 'General'),
-    duration_min:        Number(raw.duration_min ?? raw.duration ?? 60),
+    duration_minutes:    duration,
     price:               Number(raw.price ?? raw.base_price ?? raw.cost ?? 0),
     description:         (raw.description ?? raw.desc ?? null) as string | null,
     image:               (raw.image ?? raw.image_url ?? raw.image1 ?? raw.photo ?? raw.thumbnail ?? null) as string | null,
     can_do_home_service: raw.is_home_service_eligible === true || raw.can_do_home_service === true || raw.home_service === true,
     branch_ids:          branchIds,
+    branches:            branchList,
     bookings:            appointmentCount,
+    raw,
   };
 }
 
@@ -192,15 +225,20 @@ function GridCard({
   s,
   branchSummary,
   t,
+  onSelect,
 }: {
   s: ServiceRow;
   branchSummary: string;
   t: (k: TranslationKey) => string;
+  onSelect: (s: ServiceRow) => void;
 }) {
   const catStyle = getCatStyle(s.category);
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs transition-all duration-300 hover:shadow-xl hover:-translate-y-1 hover:border-primary/30 animate-fade-in-up">
+    <div
+      onClick={() => onSelect(s)}
+      className="group flex flex-col rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs transition-all duration-300 hover:shadow-xl hover:-translate-y-1 hover:border-primary/40 cursor-pointer animate-fade-in-up"
+    >
       {/* Large image header */}
       <div className="relative aspect-[4/3] w-full overflow-hidden">
         <ServiceThumb image={s.image} name={s.name} category={s.category} className="h-full w-full" iconSize="lg" />
@@ -214,6 +252,14 @@ function GridCard({
           </span>
           <span className="rounded-full bg-black/50 border border-white/15 px-2.5 py-1 text-xs font-bold text-white backdrop-blur-sm">
             {formatCurrency(Number(s.price), t('currency'))}
+          </span>
+        </div>
+
+        {/* Hover Quick View pill */}
+        <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
+          <span className="inline-flex items-center gap-1 rounded-full bg-black/70 border border-white/20 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md shadow-sm">
+            <Eye className="h-3 w-3 text-primary" />
+            Details
           </span>
         </div>
       </div>
@@ -231,16 +277,16 @@ function GridCard({
           )}
         </div>
 
-        <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground border-t border-border/40 pt-3">
+        <div className="mt-auto flex flex-wrap items-center justify-between gap-y-1.5 text-xs text-muted-foreground border-t border-border/40 pt-3">
           <span className="inline-flex items-center gap-1 font-medium">
             <Clock className="h-3 w-3" />
-            {s.duration_min} {t('min')}
+            {s.duration_minutes} {t('min')}
           </span>
           <span className="inline-flex items-center gap-1 font-medium">
             <TrendingUp className="h-3 w-3 text-primary/70" />
             {s.bookings} {t('reportBookings').toLowerCase()}
           </span>
-          <span className="inline-flex items-center gap-1 font-medium truncate">
+          <span className="inline-flex items-center gap-1 font-medium truncate max-w-[130px]">
             <Building2 className="h-3 w-3 shrink-0" />
             <span className="truncate">{branchSummary}</span>
           </span>
@@ -255,15 +301,20 @@ function ListRow({
   s,
   branchSummary,
   t,
+  onSelect,
 }: {
   s: ServiceRow;
   branchSummary: string;
   t: (k: TranslationKey) => string;
+  onSelect: (s: ServiceRow) => void;
 }) {
   const catStyle = getCatStyle(s.category);
 
   return (
-    <div className="group grid grid-cols-[56px_1fr_auto_auto_auto_auto] items-center gap-4 rounded-2xl border border-border/60 bg-card px-4 py-3 shadow-xs transition-all duration-200 hover:shadow-md hover:border-primary/30 hover:bg-card/80 animate-fade-in-up">
+    <div
+      onClick={() => onSelect(s)}
+      className="group grid grid-cols-[56px_1fr_auto_auto_auto_auto_auto] items-center gap-4 rounded-2xl border border-border/60 bg-card px-4 py-3 shadow-xs transition-all duration-200 hover:shadow-md hover:border-primary/40 hover:bg-card/80 cursor-pointer animate-fade-in-up"
+    >
       {/* Thumbnail — small, fixed */}
       <ServiceThumb
         image={s.image}
@@ -294,7 +345,7 @@ function ListRow({
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Duration</span>
         <span className="inline-flex items-center gap-1 text-sm font-semibold text-foreground">
           <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-          {s.duration_min} {t('min')}
+          {s.duration_minutes} {t('min')}
         </span>
       </div>
 
@@ -323,6 +374,21 @@ function ListRow({
           {formatCurrency(Number(s.price), t('currency'))}
         </span>
       </div>
+
+      {/* View Details action */}
+      <div className="shrink-0 pl-1">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect(s);
+          }}
+          className="inline-flex items-center gap-1 rounded-xl border border-border bg-muted/50 px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-primary hover:text-primary-foreground hover:border-primary transition"
+        >
+          <Eye className="h-3.5 w-3.5" />
+          Details
+        </button>
+      </div>
     </div>
   );
 }
@@ -330,13 +396,14 @@ function ListRow({
 // ── List Column Headers ───────────────────────────────────────────────────────
 function ListHeader() {
   return (
-    <div className="grid grid-cols-[56px_1fr_auto_auto_auto_auto] items-center gap-4 px-4 py-2 mb-1">
+    <div className="grid grid-cols-[56px_1fr_auto_auto_auto_auto_auto] items-center gap-4 px-4 py-2 mb-1">
       <div />
       <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">Service</span>
       <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center w-24">Duration</span>
       <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center w-20">Bookings</span>
       <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center w-36">Branch</span>
       <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-right w-24">Price</span>
+      <span className="w-16" />
     </div>
   );
 }
@@ -344,27 +411,106 @@ function ListHeader() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ServicesPage() {
   const { t } = useI18n();
+  const token = useAppSelector((s) => s.auth.token);
 
   const reduxServices = useAppSelector((s) => s.data.services);
   const appointments  = useAppSelector((s) => s.data.appointments);
-  const branches      = useAppSelector((s) => s.data.branches);
+  const reduxBranches = useAppSelector((s) => s.data.branches);
   const dataStatus    = useAppSelector((s) => s.data.status);
 
   const fallback = (reduxServices.length > 0 ? reduxServices : DEMO_SERVICES) as unknown as Record<string, unknown>[];
-  const { data: rawServices, loading, error, refetch } = useApiList<Record<string, unknown>>('/api/v1/services', fallback);
+
+  // API State
+  const [rawServices, setRawServices] = useState<Record<string, unknown>[]>(fallback);
+  const [responseBranches, setResponseBranches] = useState<Array<{ id: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
 
   // UI state
   const [search,         setSearch]         = useState('');
   const [branchFilter,   setBranchFilter]   = useState('');
   const [homeFilter,     setHomeFilter]     = useState(false);
   const [viewMode,       setViewMode]       = useState<'grid' | 'list'>('grid');
+  const [selectedService, setSelectedService] = useState<ServiceRow | null>(null);
 
-  // Branch map
-  const branchMap = useMemo(() => {
-    const m = new Map<string, string>();
-    branches.forEach((b) => m.set(b.id, b.name));
-    return m;
-  }, [branches]);
+  const refetch = useCallback(() => setTick((t) => t + 1), []);
+
+  // Fetch /api/v1/services and extract both services and response-level `branches`
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    authedFetch('/api/v1/services', { headers })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (!res.ok) {
+          throw new Error(
+            (json as Record<string, string>)?.detail ??
+            (json as Record<string, string>)?.message ??
+            `Request failed (${res.status})`
+          );
+        }
+
+        // 1. Extract branches from response key `branches` (top-level or nested)
+        const foundBranches: Array<{ id: string; name: string }> = [];
+        const rawBranches = (json?.branches ?? json?.data?.branches) as unknown;
+        if (Array.isArray(rawBranches)) {
+          rawBranches.forEach((b) => {
+            if (typeof b === 'object' && b !== null) {
+              const bObj = b as Record<string, unknown>;
+              const bId = String(bObj.id ?? bObj.branch_id ?? '');
+              const bName = String(bObj.name ?? bObj.branch_name ?? bObj.title ?? bId);
+              if (bId) foundBranches.push({ id: bId, name: bName });
+            } else if (typeof b === 'string' || typeof b === 'number') {
+              foundBranches.push({ id: String(b), name: String(b) });
+            }
+          });
+        }
+        setResponseBranches(foundBranches);
+
+        // 2. Unwrap services list
+        let list: Record<string, unknown>[] = [];
+        if (Array.isArray(json)) {
+          list = json;
+        } else if (json?.success && Array.isArray(json?.data)) {
+          list = json.data;
+        } else if (json?.success && json?.data && typeof json.data === 'object') {
+          const inner = json.data as Record<string, unknown>;
+          list = (Array.isArray(inner.results)
+            ? inner.results
+            : Array.isArray(inner.services)
+            ? inner.services
+            : Object.values(inner)) as Record<string, unknown>[];
+        } else if (Array.isArray(json?.results)) {
+          list = json.results;
+        } else if (Array.isArray(json?.data)) {
+          list = json.data;
+        } else if (Array.isArray(json?.services)) {
+          list = json.services;
+        }
+
+        setRawServices(list.length > 0 ? list : fallback);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        console.warn('[ServicesPage] fetch failed:', err.message);
+        setError(err.message);
+        setRawServices(fallback);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, tick]);
 
   // Appointment analytics per service
   const { appointmentCounts, appointmentBranches } = useMemo(() => {
@@ -390,9 +536,52 @@ export default function ServicesPage() {
     }),
   [rawServices, appointmentCounts, appointmentBranches]);
 
+  // Aggregate branches from BOTH response.branches and each item.branches
+  const allBranches = useMemo(() => {
+    const map = new Map<string, string>();
+
+    // 1. From response key `branches`
+    responseBranches.forEach((b) => {
+      if (b.id) map.set(b.id, b.name);
+    });
+
+    // 2. From each service's `branches` array
+    rawServices.forEach((s) => {
+      const bList = (s as Record<string, unknown>).branches;
+      if (Array.isArray(bList)) {
+        bList.forEach((b) => {
+          if (typeof b === 'object' && b !== null) {
+            const bObj = b as Record<string, unknown>;
+            const bId = String(bObj.id ?? bObj.branch_id ?? '');
+            const bName = String(bObj.name ?? bObj.branch_name ?? bObj.title ?? bId);
+            if (bId) map.set(bId, bName);
+          } else if (typeof b === 'string' || typeof b === 'number') {
+            const bId = String(b);
+            if (bId && !map.has(bId)) map.set(bId, bId);
+          }
+        });
+      }
+    });
+
+    // 3. Fallback to Redux mock branches only if no branches were found in API
+    if (map.size === 0 && reduxBranches.length > 0) {
+      reduxBranches.forEach((b) => map.set(b.id, b.name));
+    }
+
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [responseBranches, rawServices, reduxBranches]);
+
+  // Branch map for quick lookup
+  const branchMap = useMemo(() => {
+    const m = new Map<string, string>();
+    allBranches.forEach((b) => m.set(b.id, b.name));
+    return m;
+  }, [allBranches]);
+
+  // Branch filter dropdown options
   const branchOptions = useMemo(() =>
-    branches.map((b) => ({ value: b.id, label: b.name })),
-  [branches]);
+    allBranches.map((b) => ({ value: b.id, label: b.name })),
+  [allBranches]);
 
   // Filtered list
   const filtered = useMemo(() => {
@@ -414,10 +603,18 @@ export default function ServicesPage() {
 
   // Helper to compose branch summary string
   const getBranchSummary = (s: ServiceRow) => {
-    if (s.branch_ids.length === 0 || s.branch_ids.length >= branches.length) return 'All branches';
+    if (s.branches && s.branches.length > 0) {
+      if (s.branches.length === 1) return s.branches[0].name;
+      if (allBranches.length > 0 && s.branches.length >= allBranches.length) return 'All branches';
+      return `${s.branches.length} branches`;
+    }
+    if (s.branch_ids.length === 0 || (allBranches.length > 0 && s.branch_ids.length >= allBranches.length)) {
+      return 'All branches';
+    }
     const names = s.branch_ids.map((id) => branchMap.get(id)).filter(Boolean) as string[];
     if (names.length === 1) return names[0];
-    return `${names.length} branches`;
+    if (names.length > 1) return `${names.length} branches`;
+    return 'All branches';
   };
 
   return (
@@ -425,7 +622,7 @@ export default function ServicesPage() {
       {/* ── Header ── */}
       <PageHeader
         title={t('navServices')}
-        subtitle={loading ? 'Loading…' : `${services.length} services · ${branches.length} branches`}
+        subtitle={loading ? 'Loading…' : `${services.length} services · ${allBranches.length} branches`}
       />
 
       {/* ── Error banner ── */}
@@ -571,7 +768,13 @@ export default function ServicesPage() {
       {!isLoading && filtered.length > 0 && viewMode === 'grid' && (
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {filtered.map((s) => (
-            <GridCard key={s.id} s={s} branchSummary={getBranchSummary(s)} t={t} />
+            <GridCard
+              key={s.id}
+              s={s}
+              branchSummary={getBranchSummary(s)}
+              t={t}
+              onSelect={setSelectedService}
+            />
           ))}
         </div>
       )}
@@ -582,10 +785,25 @@ export default function ServicesPage() {
           <ListHeader />
           <div className="space-y-2">
             {filtered.map((s) => (
-              <ListRow key={s.id} s={s} branchSummary={getBranchSummary(s)} t={t} />
+              <ListRow
+                key={s.id}
+                s={s}
+                branchSummary={getBranchSummary(s)}
+                t={t}
+                onSelect={setSelectedService}
+              />
             ))}
           </div>
         </div>
+      )}
+
+      {/* ── Service Details Popup Modal ── */}
+      {selectedService && (
+        <ServiceDetailModal
+          serviceId={selectedService.id}
+          initialService={selectedService}
+          onClose={() => setSelectedService(null)}
+        />
       )}
     </DashboardShell>
   );
