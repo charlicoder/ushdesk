@@ -17,7 +17,7 @@ import {
   setBranch, setStatus, setViewMode, setSelectedDate,
 } from '@/store/slices/filtersSlice';
 
-import type { Appointment, AppointmentStatus, Branch } from '@/lib/supabase';
+import type { Appointment, AppointmentStatus, Branch } from '@/types/appointment';
 import { formatCurrency, appointmentsOnDay } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 

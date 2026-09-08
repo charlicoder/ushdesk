@@ -1,4 +1,4 @@
-import type { Appointment, Branch, Service, Staff, Customer } from '@/lib/supabase';
+import type { Appointment, Branch, Service, Staff, Customer } from '@/types/appointment';
 import { addDays, toISODate } from '@/lib/helpers';
 
 export interface LegacyBranch {

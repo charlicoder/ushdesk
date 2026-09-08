@@ -7,7 +7,7 @@ import {
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { createAppointment } from '@/store/slices/dataSlice';
-import type { Branch, Service, Customer, Staff } from '@/lib/supabase';
+import type { Branch, Service, Customer, Staff } from '@/types/appointment';
 import { User, Sparkles, Clock, StickyNote, CreditCard, ChevronDown, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
