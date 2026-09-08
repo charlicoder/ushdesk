@@ -1,7 +1,7 @@
 'use client';
 
 import { STATUS_COLORS } from '@/lib/helpers';
-import type { AppointmentStatus } from '@/lib/supabase';
+import type { AppointmentStatus } from '@/types/appointment';
 import { useI18n } from '@/hooks/use-i18n';
 import { cn } from '@/lib/utils';
 

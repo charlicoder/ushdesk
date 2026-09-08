@@ -6,7 +6,7 @@ import {
 import { useI18n } from '@/hooks/use-i18n';
 import { StatusBadge } from '@/components/dashboard/status-badge';
 import { formatCurrency } from '@/lib/helpers';
-import type { Appointment, AppointmentStatus } from '@/lib/supabase';
+import type { Appointment, AppointmentStatus } from '@/types/appointment';
 import { useAppDispatch } from '@/store/hooks';
 import { updateAppointmentStatus } from '@/store/slices/dataSlice';
 import { User, Sparkles, Store, Calendar, Clock, CreditCard, StickyNote } from 'lucide-react';

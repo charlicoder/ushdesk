@@ -1,4 +1,4 @@
-import type { Appointment, AppointmentStatus } from '@/lib/supabase';
+import type { Appointment, AppointmentStatus } from '@/types/appointment';
 
 export const STATUS_COLORS: Record<AppointmentStatus, { bg: string; text: string; dot: string; soft: string }> = {
   pending: { bg: 'bg-amber-500/15', text: 'text-amber-700 dark:text-amber-300', dot: 'bg-amber-500', soft: 'amber' },

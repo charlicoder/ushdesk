@@ -12,13 +12,30 @@ const jakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   title: 'USH Spa — Spa Center Dashboard',
   description:
-    'Monitor appointments, availability and earnings across all your spa branches in real time.',
+    'Comprehensive multi-branch spa management platform for USH Spa. Monitor real-time appointments, branch availability, therapist schedules, and luxury wellness, massage, and spa services across all branches.',
   openGraph: {
-    images: [{ url: 'https://bolt.new/static/og_default.png' }],
+    title: 'USH Spa — Spa Center Dashboard',
+    description:
+      'Comprehensive multi-branch spa management platform for USH Spa. Monitor real-time appointments, branch availability, therapist schedules, and luxury wellness, massage, and spa services across all branches.',
+    siteName: 'USH Spa',
+    images: [
+      {
+        url: '/ush-spa-logo.png',
+        alt: 'USH Spa Logo',
+      },
+    ],
+    type: 'website',
   },
   twitter: {
     card: 'summary_large_image',
-    images: [{ url: 'https://bolt.new/static/og_default.png' }],
+    title: 'USH Spa — Spa Center Dashboard',
+    description:
+      'Comprehensive multi-branch spa management platform for USH Spa. Monitor real-time appointments, branch availability, therapist schedules, and luxury wellness, massage, and spa services across all branches.',
+    images: ['/ush-spa-logo.png'],
+  },
+  icons: {
+    icon: '/ush-spa-logo.png',
+    apple: '/ush-spa-logo.png',
   },
 };
 

@@ -6,7 +6,7 @@ import {
   toISODate, appointmentsOnDay, isToday,
 } from '@/lib/helpers';
 import { useI18n } from '@/hooks/use-i18n';
-import type { Appointment } from '@/lib/supabase';
+import type { Appointment } from '@/types/appointment';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState } from 'react';
 

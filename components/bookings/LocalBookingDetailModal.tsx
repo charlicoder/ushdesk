@@ -2,8 +2,8 @@
 
 /**
  * LocalBookingDetailModal
- * Displays appointment details from local Supabase data in a rich popup.
- * Used on the Branch Appointments page where slots come from Supabase,
+ * Displays appointment details from local dashboard data in a rich popup.
+ * Used on the Branch Appointments page where slots come from local state,
  * not the booknpay API.
  */
 
@@ -12,7 +12,7 @@ import {
   X, User, Scissors, MapPin, CalendarDays, Clock, Timer,
   CreditCard, StickyNote, Hash, CheckCircle2, Loader2, AlertCircle,
 } from 'lucide-react';
-import type { Appointment, AppointmentStatus } from '@/lib/supabase';
+import type { Appointment, AppointmentStatus } from '@/types/appointment';
 import { cn } from '@/lib/utils';
 
 // ── status config ───────────────────────────────────────────────────────────
