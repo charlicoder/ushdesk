@@ -376,7 +376,8 @@ const FALLBACK_SCHEDULES: WorkingHoursRecord[] = [
 
 // ── Component ──────────────────────────────────────────────────────────────────
 export default function WorkingHoursPage() {
-  const token = useAppSelector((s) => s.auth.token);
+  const token       = useAppSelector((s) => s.auth.token);
+  const initialized = useAppSelector((s) => s.auth.initialized);
 
   // Data states
   const [schedules,        setSchedules]        = useState<WorkingHoursRecord[]>(FALLBACK_SCHEDULES);
@@ -400,6 +401,8 @@ export default function WorkingHoursPage() {
 
   // Fetch from /uauth/api/v1/therapists/working-hours/
   useEffect(() => {
+    if (!initialized) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -469,7 +472,7 @@ export default function WorkingHoursPage() {
       });
 
     return () => { cancelled = true; };
-  }, [token, tick, search, branchFilter, dayFilter, statusFilter, weekendOffFilter]);
+  }, [token, initialized, tick, search, branchFilter, dayFilter, statusFilter, weekendOffFilter]);
 
   // Unified branches list from API response + records
   const allBranches = useMemo(() => {

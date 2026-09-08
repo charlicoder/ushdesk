@@ -411,7 +411,8 @@ function ListHeader() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ServicesPage() {
   const { t } = useI18n();
-  const token = useAppSelector((s) => s.auth.token);
+  const token       = useAppSelector((s) => s.auth.token);
+  const initialized = useAppSelector((s) => s.auth.initialized);
 
   const reduxServices = useAppSelector((s) => s.data.services);
   const appointments  = useAppSelector((s) => s.data.appointments);
@@ -438,6 +439,8 @@ export default function ServicesPage() {
 
   // Fetch /api/v1/services and extract both services and response-level `branches`
   useEffect(() => {
+    if (!initialized) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -510,7 +513,7 @@ export default function ServicesPage() {
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, tick]);
+  }, [token, initialized, tick]);
 
   // Appointment analytics per service
   const { appointmentCounts, appointmentBranches } = useMemo(() => {

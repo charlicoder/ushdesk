@@ -22,14 +22,18 @@ interface UseBookingsResult<T> {
 }
 
 /**
- * Fetches bookings from the proxy, unwraps { success, data, meta.pagination }.
- * Backend max page_size is 100 (enforced by proxy).
+ * Fetches data from a proxy path, unwraps { success, data, meta.pagination }.
+ * Waits for the auth store to be initialized before making any requests so
+ * we never fire an unauthenticated request that could trigger a spurious
+ * refresh-token cycle.
  */
 export function useBookings<T>(
   proxyPath: string,
   fallback: T[] = [],
 ): UseBookingsResult<T> {
-  const token = useAppSelector((s) => s.auth.token);
+  // Read both token AND initialized flag so we don't fire until hydration is done
+  const token       = useAppSelector((s) => s.auth.token);
+  const initialized = useAppSelector((s) => s.auth.initialized);
 
   const [data,       setData]       = useState<T[]>(fallback);
   const [loading,    setLoading]    = useState(true);
@@ -40,10 +44,17 @@ export function useBookings<T>(
   const refetch = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
+    // ── Guard: don't fire until the Redux store has been hydrated from
+    //           localStorage. This prevents a premature unauthenticated
+    //           request that would trigger a 401 → refresh → failure cycle.
+    if (!initialized) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
 
+    // authedFetch reads the token from localStorage itself (source of truth),
+    // but we also set it here so the header is consistent with Redux state.
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -92,7 +103,7 @@ export function useBookings<T>(
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proxyPath, token, tick]);
+  }, [proxyPath, token, initialized, tick]);
 
   return { data, loading, error, pagination, refetch };
 }

@@ -15,12 +15,16 @@ interface UseApiListResult<T> {
  * Fetches a paginated or flat list from a Next.js proxy endpoint.
  * Handles the backend envelope: { success, data: T[] } or { results: T[] } or T[]
  * Falls back to `fallback` data when the request fails.
+ *
+ * Waits for auth store to be initialized (hydrated from localStorage) before
+ * making any requests to avoid premature unauthenticated fetches.
  */
 export function useApiList<T>(
   proxyPath: string,
   fallback: T[] = [],
 ): UseApiListResult<T> {
-  const token = useAppSelector((s) => s.auth.token);
+  const token       = useAppSelector((s) => s.auth.token);
+  const initialized = useAppSelector((s) => s.auth.initialized);
 
   const [data, setData]       = useState<T[]>(fallback);
   const [loading, setLoading] = useState(true);
@@ -30,6 +34,11 @@ export function useApiList<T>(
   const refetch = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
+    // Don't fire until the Redux store has been hydrated from localStorage.
+    // This prevents a premature unauthenticated request that would trigger
+    // a 401 → failed refresh → clearAuth cycle on page navigation.
+    if (!initialized) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -82,7 +91,7 @@ export function useApiList<T>(
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proxyPath, token, tick]);
+  }, [proxyPath, token, initialized, tick]);
 
   return { data, loading, error, refetch };
 }

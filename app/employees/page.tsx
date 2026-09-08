@@ -167,7 +167,8 @@ function SelectFilter({
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function EmployeesPage() {
-  const token = useAppSelector((s) => s.auth.token);
+  const token       = useAppSelector((s) => s.auth.token);
+  const initialized = useAppSelector((s) => s.auth.initialized);
   const reduxBranches = useAppSelector((s) => s.data.branches);
 
   // API State
@@ -189,6 +190,8 @@ export default function EmployeesPage() {
 
   // Fetch /api/v1/employees and extract both employees and response-level `branches`
   useEffect(() => {
+    if (!initialized) return;
+
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -260,7 +263,7 @@ export default function EmployeesPage() {
       });
 
     return () => { cancelled = true; };
-  }, [token, tick]);
+  }, [token, initialized, tick]);
 
   const employees = useMemo(() => rawEmployees.map(normalise), [rawEmployees]);
 
