@@ -70,5 +70,8 @@
     "typescript": "5.2.2",
     "vaul": "^0.9.9",
     "zod": "^3.25.0"
+  },
+  "allowScripts": {
+    "fsevents@2.3.3": true
   }
 }
