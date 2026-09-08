@@ -10,6 +10,7 @@ const jakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'https://desk.ushspa.co'),
   title: 'USH Spa — Spa Center Dashboard',
   description:
     'Comprehensive multi-branch spa management platform for USH Spa. Monitor real-time appointments, branch availability, therapist schedules, and luxury wellness, massage, and spa services across all branches.',
@@ -17,13 +18,18 @@ export const metadata: Metadata = {
     title: 'USH Spa — Spa Center Dashboard',
     description:
       'Comprehensive multi-branch spa management platform for USH Spa. Monitor real-time appointments, branch availability, therapist schedules, and luxury wellness, massage, and spa services across all branches.',
+    url: 'https://desk.ushspa.co',
     siteName: 'USH Spa',
     images: [
       {
-        url: '/ush-spa-logo.png',
-        alt: 'USH Spa Logo',
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        type: 'image/png',
+        alt: 'USH Spa — Spa Center Dashboard',
       },
     ],
+    locale: 'en_US',
     type: 'website',
   },
   twitter: {
@@ -31,7 +37,7 @@ export const metadata: Metadata = {
     title: 'USH Spa — Spa Center Dashboard',
     description:
       'Comprehensive multi-branch spa management platform for USH Spa. Monitor real-time appointments, branch availability, therapist schedules, and luxury wellness, massage, and spa services across all branches.',
-    images: ['/ush-spa-logo.png'],
+    images: ['/og-image.png'],
   },
   icons: {
     icon: '/ush-spa-logo.png',
