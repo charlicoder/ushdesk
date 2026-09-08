@@ -96,8 +96,10 @@ interface Voucher {
   status: string;
   sender_id: string;
   sender_details: PersonDetails;
+  sender_data?: PersonDetails;
   recipient_phone: string;
   recipient_details: PersonDetails;
+  recipient_data?: PersonDetails;
   created_by: string;
   total_duration: number;
   total_amount: string;
@@ -174,7 +176,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
         <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <Gift className="h-4 w-4 text-violet-500 shrink-0" />
+              <Gift className="h-4 w-4 text-primary shrink-0" />
               <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Gift Voucher</p>
             </div>
             <h2 className="text-base font-extrabold leading-tight">{voucher.service_data?.name ?? 'Voucher Details'}</h2>
@@ -207,12 +209,12 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
 
           {/* Secret Code + Template */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5 rounded-2xl border border-border/60 bg-gradient-to-br from-violet-50 to-indigo-50/60 dark:from-violet-950/30 dark:to-indigo-950/20 px-4 py-3">
+            <div className="flex flex-col gap-1.5 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
               <div className="flex items-center gap-1.5">
-                <Lock className="h-3 w-3 text-violet-500" />
+                <Lock className="h-3 w-3 text-primary" />
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
               </div>
-              <p className="text-lg font-black tracking-[0.3em] text-violet-700 dark:text-violet-300 font-mono">{voucher.secret_code ?? '—'}</p>
+              <p className="text-lg font-black tracking-[0.3em] text-primary font-mono">{voucher.secret_code ?? '—'}</p>
             </div>
             <div className="flex flex-col gap-1.5 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
               <div className="flex items-center gap-1.5">
@@ -227,8 +229,8 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
           <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
             {/* Service */}
             <div className="flex items-start gap-3 px-4 py-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-500/10">
-                <Scissors className="h-4 w-4 text-violet-500" />
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10">
+                <Scissors className="h-4 w-4 text-primary" />
               </div>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
@@ -238,7 +240,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
                 )}
               </div>
               <div className="text-right shrink-0">
-                <p className="text-sm font-extrabold text-violet-600 dark:text-violet-400">
+                <p className="text-sm font-extrabold text-primary">
                   {fmtMoney(voucher.total_amount, voucher.currency)}
                 </p>
                 <p className="text-[10px] text-muted-foreground">{voucher.total_duration} min</p>
@@ -281,10 +283,10 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sender</p>
               </div>
               <div>
-                <p className="text-xs font-bold">{voucher.sender_details?.name ?? '—'}</p>
-                {voucher.sender_details?.phone_number && (
+                <p className="text-xs font-bold">{voucher.sender_data?.name || voucher.sender_details?.name || '—'}</p>
+                {(voucher.sender_data?.phone_number || voucher.sender_details?.phone_number) && (
                   <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Phone className="h-2.5 w-2.5" />{voucher.sender_details.phone_number}
+                    <Phone className="h-2.5 w-2.5" />{voucher.sender_data?.phone_number ?? voucher.sender_details?.phone_number}
                   </p>
                 )}
               </div>
@@ -295,15 +297,15 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Recipient</p>
               </div>
               <div>
-                <p className="text-xs font-bold">{voucher.recipient_details?.name ?? '—'}</p>
-                {voucher.recipient_details?.phone_number && (
+                <p className="text-xs font-bold">{voucher.recipient_data?.name || voucher.recipient_details?.name || '—'}</p>
+                {(voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number) && (
                   <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Phone className="h-2.5 w-2.5" />{voucher.recipient_details.phone_number}
+                    <Phone className="h-2.5 w-2.5" />{voucher.recipient_data?.phone_number ?? voucher.recipient_details?.phone_number}
                   </p>
                 )}
-                {voucher.recipient_details?.email && (
+                {(voucher.recipient_data?.email || voucher.recipient_details?.email) && (
                   <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                    <Mail className="h-2.5 w-2.5" />{voucher.recipient_details.email}
+                    <Mail className="h-2.5 w-2.5" />{voucher.recipient_data?.email ?? voucher.recipient_details?.email}
                   </p>
                 )}
               </div>
@@ -429,7 +431,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
               href={voucher.payment_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 shadow-sm transition active:scale-[0.98]"
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-primary hover:bg-primary/90 shadow-sm transition active:scale-[0.98]"
             >
               <ExternalLink className="h-3.5 w-3.5" /> View Payment
             </a>
@@ -544,7 +546,7 @@ export default function GiftVouchersPage() {
       {/* ── Page header ── */}
       <div className="mb-6">
         <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-sm">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
             <Gift className="h-5 w-5 text-white" />
           </div>
           <div>
@@ -557,7 +559,7 @@ export default function GiftVouchersPage() {
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
-          { label: 'Total Vouchers', value: stats.total,                          sub: 'all time',        grad: 'from-violet-500 to-indigo-600', bg: 'bg-violet-50 dark:bg-violet-950/30', border: 'border-violet-200/80 dark:border-violet-800/40' },
+          { label: 'Total Vouchers', value: stats.total,                          sub: 'all time',        grad: 'from-primary to-accent', bg: 'bg-primary/5 dark:bg-primary/10', border: 'border-primary/20' },
           { label: 'Active',         value: stats.active,                         sub: 'ready to redeem', grad: 'from-emerald-500 to-teal-500',   bg: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',       value: stats.redeemed,                       sub: 'used vouchers',   grad: 'from-blue-500 to-sky-500',       bg: 'bg-blue-50 dark:bg-blue-950/30',  border: 'border-blue-200/80 dark:border-blue-800/40' },
           { label: 'Total Revenue',  value: `${stats.revenue.toFixed(3)} ${stats.currency}`, sub: 'voucher sales', grad: 'from-amber-500 to-orange-500', bg: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200/80 dark:border-amber-800/40' },
@@ -586,7 +588,7 @@ export default function GiftVouchersPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex h-10 items-center gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 px-5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98]"
+          className="flex h-10 items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 px-5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98]"
         >
           <Gift className="h-4 w-4" />
           New Voucher
@@ -596,7 +598,7 @@ export default function GiftVouchersPage() {
       {/* ── Loading ── */}
       {loading && (
         <div className="flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card py-20">
-          <Loader2 className="h-6 w-6 animate-spin text-violet-500" />
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <span className="text-sm font-semibold text-muted-foreground">Loading vouchers…</span>
         </div>
       )}
@@ -657,27 +659,40 @@ export default function GiftVouchersPage() {
                     >
                       {/* Sender */}
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 min-w-[120px]">
-                          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-blue-400 to-violet-500 text-white text-[10px] font-bold">
-                            {v.sender_details?.name?.slice(0, 2)?.toUpperCase() ?? '??'}
-                          </div>
-                          <span className="font-medium text-[13px] leading-tight line-clamp-1">{v.sender_details?.name ?? '—'}</span>
-                        </div>
+                        {(() => {
+                          const senderName = v.sender_data?.name || v.sender_details?.name;
+                          const initials = senderName?.slice(0, 2)?.toUpperCase() ?? '??';
+                          return (
+                            <div className="flex items-center gap-2 min-w-[120px]">
+                              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-blue-400 to-violet-500 text-white text-[10px] font-bold">
+                                {initials}
+                              </div>
+                              <span className="font-medium text-[13px] leading-tight line-clamp-1">{senderName ?? '—'}</span>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Recipient */}
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2 min-w-[120px]">
-                          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-rose-400 to-pink-500 text-white text-[10px] font-bold">
-                            {v.recipient_details?.name?.slice(0, 2)?.toUpperCase() ?? '??'}
-                          </div>
-                          <div>
-                            <p className="font-medium text-[13px] leading-tight">{v.recipient_details?.name ?? '—'}</p>
-                            {v.recipient_details?.phone_number && (
-                              <p className="text-[10px] text-muted-foreground">{v.recipient_details.phone_number}</p>
-                            )}
-                          </div>
-                        </div>
+                        {(() => {
+                          const recipientName = v.recipient_data?.name || v.recipient_details?.name;
+                          const recipientPhone = v.recipient_data?.phone_number || v.recipient_details?.phone_number;
+                          const initials = recipientName?.slice(0, 2)?.toUpperCase() ?? '??';
+                          return (
+                            <div className="flex items-center gap-2 min-w-[120px]">
+                              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-rose-400 to-pink-500 text-white text-[10px] font-bold">
+                                {initials}
+                              </div>
+                              <div>
+                                <p className="font-medium text-[13px] leading-tight">{recipientName ?? '—'}</p>
+                                {recipientPhone && (
+                                  <p className="text-[10px] text-muted-foreground">{recipientPhone}</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </td>
 
                       {/* Service */}
@@ -703,7 +718,7 @@ export default function GiftVouchersPage() {
 
                       {/* Total Price */}
                       <td className="px-4 py-3">
-                        <p className="text-[13px] font-extrabold text-violet-600 dark:text-violet-400 tabular-nums">
+                        <p className="text-[13px] font-extrabold text-primary tabular-nums">
                           {fmtMoney(v.total_amount, v.currency)}
                         </p>
                       </td>
@@ -747,7 +762,7 @@ export default function GiftVouchersPage() {
                       <td className="px-4 py-3">
                         <button
                           onClick={() => setSelectedVoucher(v)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-violet-300/60 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-950/30 px-3 py-1.5 text-[11px] font-bold text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition"
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] font-bold text-primary hover:bg-primary/10 transition"
                         >
                           <Eye className="h-3 w-3" /> View
                         </button>
@@ -769,7 +784,7 @@ export default function GiftVouchersPage() {
               <Hash className="h-3 w-3 text-muted-foreground" />
               <p className="text-[11px] text-muted-foreground">
                 Total value:{' '}
-                <span className="font-bold text-violet-600 dark:text-violet-400">
+                <span className="font-bold text-primary">
                   {filtered.reduce((s, v) => s + (parseFloat(v.total_amount) || 0), 0).toFixed(3)} {stats.currency}
                 </span>
               </p>
