@@ -5,13 +5,14 @@
  *
  * Flow:
  *  1. Attaches `Authorization: Bearer <access_token>` from localStorage.
- *  2. On 401 WITH a stored refresh token: attempts to refresh via POST /api/v1/auth/refresh.
- *  3. On successful refresh: saves new token, fires `ush:token-refreshed`
- *     so the Redux store can stay in sync, then retries the original request.
- *  4. On failed refresh: clears auth storage and fires `ush:logout-required`
- *     so the app can redirect to /login.
- *  5. On 401 WITHOUT a refresh token: just fires `ush:logout-required`
- *     (no storage is wiped prematurely, so the redirect can happen cleanly).
+ *  2. On 401 WITH a stored refresh token: attempts a silent token refresh via
+ *     POST /api/v1/auth/refresh.
+ *  3. On successful refresh: saves new token, fires `ush:token-refreshed` so
+ *     the Redux store can stay in sync, then retries the original request once.
+ *  4. On failed refresh OR no refresh token: returns the original 401 response
+ *     to the calling component so it can show an error. We do NOT dispatch any
+ *     logout event here — global session expiry is handled exclusively by the
+ *     12-hour TTL timer in providers.tsx.
  *
  * Use `authedFetch` as a drop-in replacement for `fetch` in client components.
  */
@@ -20,7 +21,7 @@ const TOKEN_KEY   = 'ush_access_token';
 const REFRESH_KEY = 'ush_refresh_token';
 const LOGINAT_KEY = 'ush_login_at';
 
-// Single in-flight refresh to prevent parallel refresh storms
+// Single in-flight refresh promise to prevent parallel refresh storms
 let refreshPromise: Promise<string | null> | null = null;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -39,19 +40,6 @@ function saveNewToken(token: string): void {
   if (typeof window === 'undefined') return;
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(LOGINAT_KEY, String(Date.now()));
-}
-
-function clearAuth(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(REFRESH_KEY);
-  localStorage.removeItem(LOGINAT_KEY);
-}
-
-function dispatchLogoutRequired(): void {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('ush:logout-required'));
-  }
 }
 
 // ── Refresh logic ──────────────────────────────────────────────────────────────
@@ -82,9 +70,11 @@ async function doRefresh(): Promise<string | null> {
     if (newToken) {
       saveNewToken(newToken);
       // Notify the Redux layer (providers.tsx listens for this)
-      window.dispatchEvent(
-        new CustomEvent('ush:token-refreshed', { detail: { token: newToken } }),
-      );
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('ush:token-refreshed', { detail: { token: newToken } }),
+        );
+      }
     }
 
     return newToken;
@@ -96,14 +86,15 @@ async function doRefresh(): Promise<string | null> {
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /**
- * Drop-in replacement for `fetch` that handles token auth + silent refresh.
+ * Drop-in replacement for `fetch` with transparent token auth + silent refresh.
  *
- * Key behaviours vs the original:
- * - If no refresh token is stored, a 401 simply signals logout WITHOUT
- *   wiping localStorage first — this prevents losing tokens during the
- *   brief window before the redirect fires.
- * - Refresh failures do clear storage and then signal logout (genuine
- *   session expiry path).
+ * IMPORTANT: This function never triggers a global logout. It only:
+ *  - Attaches the current token to every request.
+ *  - On 401, silently tries a token refresh and retries once if it succeeds.
+ *  - On refresh failure (or no refresh token), returns the original 401 to the
+ *    caller so the component can show a friendly error message.
+ *
+ * Global logout is handled solely by the session TTL timer in providers.tsx.
  */
 export async function authedFetch(
   input: RequestInfo | URL,
@@ -117,19 +108,18 @@ export async function authedFetch(
 
   const res = await fetch(input, { ...init, headers });
 
-  // 2. Not a 401 — nothing to do
+  // 2. Not a 401 — return as-is
   if (res.status !== 401) return res;
 
-  // 3. Got a 401. Check whether we even have a refresh token to attempt with.
+  // 3. Got a 401 — check whether we have a refresh token to attempt with
   const storedRefresh = getStoredRefreshToken();
   if (!storedRefresh) {
-    // No refresh token: session is simply over — signal logout without
-    // wiping storage prematurely (let logout() action / redirect do that).
-    dispatchLogoutRequired();
+    // No refresh token available — return the 401 to the caller.
+    // Do NOT wipe storage or dispatch logout here; the page will show an error.
     return res;
   }
 
-  // 4. We have a refresh token — ensure only one refresh is in-flight at a time
+  // 4. Deduplicate: ensure only one refresh is in-flight across all concurrent requests
   if (!refreshPromise) {
     refreshPromise = doRefresh().finally(() => {
       refreshPromise = null;
@@ -137,11 +127,11 @@ export async function authedFetch(
   }
   const newToken = await refreshPromise;
 
-  // 5. Refresh failed (token expired, revoked, etc.) → wipe auth + redirect
+  // 5. Refresh failed — return the original 401 to the caller.
+  //    Do NOT wipe auth storage or trigger a global logout. The calling page
+  //    will show an error. The session TTL timer handles real session expiry.
   if (!newToken) {
-    clearAuth();
-    dispatchLogoutRequired();
-    return res; // return original 401
+    return res;
   }
 
   // 6. Refresh succeeded — retry the original request with the new token

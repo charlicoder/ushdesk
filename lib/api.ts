@@ -89,8 +89,12 @@ export function saveToken(token: string): void {
 }
 
 /**
- * Returns the stored token only if the session is still within the 12-hour window.
- * Automatically clears stale session data when the TTL has expired.
+ * Returns the stored token.
+ * If ush_login_at is present and the 12-hour TTL has elapsed, the session is
+ * considered expired — returns null (but does NOT clear storage here; the TTL
+ * timer in providers.tsx handles cleanup via the Redux logout action).
+ * If ush_login_at is absent (e.g. older sessions), the token is returned as-is
+ * so we don't silently log out users who were already authenticated.
  */
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -100,24 +104,29 @@ export function getToken(): string | null {
 
   if (!token) return null;
 
-  // If we have a timestamp, enforce the 12-hour TTL
+  // Only enforce the TTL when we actually have a recorded login timestamp.
+  // If the timestamp is missing, trust the token — don't silently wipe it.
   if (loginAt) {
     const elapsed = Date.now() - Number(loginAt);
     if (elapsed > SESSION_TTL_MS) {
-      // Session expired — wipe everything
-      clearToken();
-      return null;
+      return null; // expired — caller (TTL timer) will handle cleanup
     }
   }
 
   return token;
 }
 
-/** Returns how many milliseconds remain in the current session, or 0 if expired. */
+/** Returns how many milliseconds remain in the current session.
+ * Returns SESSION_TTL_MS (full TTL) when the login timestamp is missing —
+ * this prevents an instant logout for users whose sessions pre-date the
+ * timestamp feature, giving the TTL timer a safe value to work with.
+ */
 export function getSessionRemainingMs(): number {
   if (typeof window === 'undefined') return 0;
   const loginAt = localStorage.getItem(LOGINAT_KEY);
-  if (!loginAt) return 0;
+  // No timestamp recorded: treat as a fresh full-TTL session rather than
+  // returning 0 (which would instantly log the user out).
+  if (!loginAt) return SESSION_TTL_MS;
   const remaining = SESSION_TTL_MS - (Date.now() - Number(loginAt));
   return Math.max(0, remaining);
 }

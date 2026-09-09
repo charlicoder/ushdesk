@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { store } from '@/store';
 import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice';
-import { getSessionRemainingMs } from '@/lib/api';
+import { getSessionRemainingMs, clearToken } from '@/lib/api';
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
 const PUBLIC_ROUTES = ['/login'];
@@ -46,23 +46,17 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     dispatch(initAuthFromStorage());
   }, [dispatch]);
 
-  // Listen for silent refresh / forced-logout events from authedFetch
+  // Listen for silent token-refresh events from authedFetch
   useEffect(() => {
     const onRefreshed = (e: Event) => {
       const token = (e as CustomEvent<{ token: string }>).detail?.token;
       if (token) dispatch(setToken(token));
     };
-    const onLogoutRequired = () => {
-      dispatch(logout());
-      router.replace('/login');
-    };
-    window.addEventListener('ush:token-refreshed',   onRefreshed);
-    window.addEventListener('ush:logout-required', onLogoutRequired);
+    window.addEventListener('ush:token-refreshed', onRefreshed);
     return () => {
-      window.removeEventListener('ush:token-refreshed',   onRefreshed);
-      window.removeEventListener('ush:logout-required', onLogoutRequired);
+      window.removeEventListener('ush:token-refreshed', onRefreshed);
     };
-  }, [dispatch, router]);
+  }, [dispatch]);
 
   // After initialization, redirect based on auth state
   useEffect(() => {
@@ -90,7 +84,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const remaining = getSessionRemainingMs();
 
     if (remaining <= 0) {
-      // Already expired — log out immediately
+      // Already expired — clean up storage then log out
+      clearToken();
       dispatch(logout());
       router.replace('/login');
       return;
@@ -98,6 +93,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
     // Schedule precise auto-logout at the exact moment the 12-hour window closes
     expireTimerRef.current = setTimeout(() => {
+      clearToken(); // clean up storage before Redux logout
       dispatch(logout());
       router.replace('/login');
     }, remaining);
