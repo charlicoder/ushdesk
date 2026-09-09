@@ -556,12 +556,6 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose }: Pr
               </p>
             </div>
           )}
-
-          {/* System reference */}
-          <div className="pt-2 flex items-center justify-between text-[11px] text-muted-foreground/70 border-t border-border/40">
-            <span>Employee ID: <code className="font-mono text-foreground/80">{employeeId}</code></span>
-            <span>API: <code className="font-mono">/uauth/api/v1/employees/{employeeId}/</code></span>
-          </div>
         </div>
 
         {/* ── Footer ── */}
