@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo } from 'react';
 import {
   X, Sparkles, Clock, Building2, MapPin, DollarSign,
   Home, CheckCircle2, AlertCircle, RefreshCw, Layers,
-  Users, Scissors, ChevronRight, Tag,
+  Users, Scissors, ChevronRight, Tag, Maximize2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/helpers';
@@ -60,18 +60,25 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
   const { t } = useI18n();
   const token = useAppSelector((s) => s.auth.token);
 
-  const [detail, setDetail]   = useState<ServiceDetailData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [detail, setDetail]               = useState<ServiceDetailData | null>(null);
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState<string | null>(null);
+  const [showFullImage, setShowFullImage] = useState(false);
 
   // Close on Escape key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (showFullImage) {
+          setShowFullImage(false);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, showFullImage]);
 
   // Fetch service details from /uauth/api/v1/services/<service_id>/
   const fetchDetail = async () => {
@@ -175,71 +182,90 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
     >
       <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] rounded-3xl border border-border/70 bg-card shadow-2xl overflow-hidden animate-fade-in-up">
 
-        {/* ── Top Header Image Banner ── */}
-        <div className="relative h-48 sm:h-56 w-full shrink-0 bg-muted/40 overflow-hidden">
+        {/* ── Top Header Image Showcase ── */}
+        <div className="relative w-full shrink-0 bg-slate-950/80 dark:bg-black/90 flex items-center justify-center overflow-hidden border-b border-border/60">
           {current?.image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={current.image}
-              alt={current.name}
-              className="h-full w-full object-cover"
-            />
+            <div
+              className="relative w-full max-h-72 sm:max-h-84 flex items-center justify-center group/img cursor-pointer py-2 px-3"
+              onClick={() => setShowFullImage(true)}
+              title="Click to view full image"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={current.image}
+                alt={current.name}
+                className="max-h-72 sm:max-h-84 w-auto max-w-full object-contain rounded-lg transition-transform duration-300 group-hover/img:scale-[1.01]"
+              />
+
+              {/* View Full Image pill */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowFullImage(true);
+                }}
+                className="absolute bottom-3 right-3 flex items-center gap-1.5 rounded-full bg-black/75 hover:bg-black/90 border border-white/20 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md transition shadow-md cursor-pointer"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+                <span>Full Image</span>
+              </button>
+            </div>
           ) : (
-            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary/30 via-slate-800 to-slate-950">
+            <div className="flex h-44 w-full items-center justify-center bg-gradient-to-br from-primary/25 via-slate-800 to-slate-950">
               <Sparkles className="h-16 w-16 text-primary/40" />
             </div>
           )}
 
-          {/* Dark gradient overlay for text legibility */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-black/40 to-black/20" />
-
-          {/* Top action buttons */}
-          <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-10">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 border border-white/20 px-3 py-1 text-xs font-semibold text-white backdrop-blur-md">
+          {/* Top action buttons (Category badge & Close) */}
+          <div className="absolute top-3.5 left-4 right-4 flex items-center justify-between z-10 pointer-events-none">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/70 border border-white/20 px-3 py-1 text-xs font-semibold text-white backdrop-blur-md pointer-events-auto">
               <Tag className="h-3 w-3 text-primary" />
               {category}
             </span>
 
             <button
               onClick={onClose}
-              className="grid h-9 w-9 place-items-center rounded-full bg-black/60 border border-white/20 text-white hover:bg-black/80 transition backdrop-blur-md cursor-pointer"
+              className="grid h-9 w-9 place-items-center rounded-full bg-black/70 border border-white/20 text-white hover:bg-black/90 transition backdrop-blur-md cursor-pointer pointer-events-auto shadow-md"
               aria-label="Close modal"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
-
-          {/* Title and Price Overlay */}
-          <div className="absolute bottom-4 left-5 right-5 flex items-end justify-between gap-4 z-10">
-            <div className="min-w-0">
-              <h2 className="text-xl sm:text-2xl font-black text-white drop-shadow-md truncate">
-                {current?.name ?? 'Loading Service…'}
-              </h2>
-              <div className="mt-1 flex items-center gap-2 flex-wrap">
-                <span className="inline-flex items-center gap-1 rounded-full bg-primary/20 border border-primary/40 px-2.5 py-0.5 text-xs font-semibold text-primary-foreground backdrop-blur-sm">
-                  <Clock className="h-3 w-3" />
-                  {duration} {t('min')}
-                </span>
-                {isHomeEligible && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/20 border border-sky-400/40 px-2.5 py-0.5 text-xs font-semibold text-sky-200 backdrop-blur-sm">
-                    <Home className="h-3 w-3 text-sky-400" />
-                    Home Service
-                  </span>
-                )}
-              </div>
-            </div>
-
-            <div className="shrink-0 text-right">
-              <span className="block text-[10px] uppercase font-bold text-white/70 tracking-wider">Price</span>
-              <span className="text-xl sm:text-2xl font-black text-primary drop-shadow-md">
-                {formatCurrency(price, t('currency'))}
-              </span>
-            </div>
-          </div>
         </div>
 
         {/* ── Scrollable Content Body ── */}
         <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6" style={{ scrollbarWidth: 'none' }}>
+
+          {/* Service Title and Price Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-border/50">
+            <div className="min-w-0">
+              <h2 className="text-xl sm:text-2xl font-black text-foreground tracking-tight">
+                {current?.name ?? 'Loading Service…'}
+              </h2>
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs font-semibold text-primary">
+                  <Clock className="h-3 w-3" />
+                  {duration} {t('min')}
+                </span>
+                {isHomeEligible && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/20 px-2.5 py-0.5 text-xs font-semibold text-sky-600 dark:text-sky-400">
+                    <Home className="h-3 w-3" />
+                    Home Service
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 rounded-full bg-muted border border-border/70 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                  {category}
+                </span>
+              </div>
+            </div>
+
+            <div className="sm:text-right shrink-0">
+              <span className="block text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Price</span>
+              <span className="text-2xl sm:text-3xl font-black text-primary">
+                {formatCurrency(price, t('currency'))}
+              </span>
+            </div>
+          </div>
 
           {/* Error Banner if fetch failed */}
           {error && (
@@ -407,12 +433,7 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
             </div>
           )}
 
-          {/* Service ID reference pill */}
-          <div className="pt-2 flex items-center justify-between text-[11px] text-muted-foreground/70 border-t border-border/40">
-            <span>Service ID: <code className="font-mono text-foreground/80">{serviceId}</code></span>
-            <span>API: <code className="font-mono">/uauth/api/v1/services/{serviceId}/</code></span>
           </div>
-        </div>
 
         {/* ── Modal Footer ── */}
         <div className="flex items-center justify-end gap-3 border-t border-border/60 bg-card px-6 py-4">
@@ -425,6 +446,38 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
           </button>
         </div>
       </div>
+
+      {/* ── Full Size Image Lightbox ── */}
+      {showFullImage && current?.image && (
+        <div
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-black/95 backdrop-blur-md p-4 animate-fade-in"
+          onClick={() => setShowFullImage(false)}
+        >
+          <div className="absolute top-4 left-4 right-4 flex items-center justify-between z-10 pointer-events-none">
+            <span className="text-sm font-semibold text-white/90 truncate max-w-[80vw] bg-black/60 px-3.5 py-1.5 rounded-full border border-white/20 backdrop-blur-md pointer-events-auto">
+              {current.name}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowFullImage(false)}
+              className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 hover:bg-black/90 border border-white/20 text-white transition cursor-pointer pointer-events-auto shadow-lg"
+              aria-label="Close full image"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="relative max-h-[90vh] max-w-[92vw] flex items-center justify-center">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={current.image}
+              alt={current.name}
+              className="max-h-[90vh] max-w-[92vw] object-contain rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

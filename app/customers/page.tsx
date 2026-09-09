@@ -1,11 +1,11 @@
 'use client';
 
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   Phone, Mail, Calendar, RefreshCw, AlertCircle, Search,
   LayoutGrid, List, CheckCircle2, XCircle, ChevronDown,
   MessageCircle, ShieldCheck, User, Send, X, CheckCheck,
-  MessageSquare, Loader2,
+  MessageSquare, Loader2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -76,6 +76,19 @@ function VerifiedBadge({ ok, label }: { ok: boolean; label: string }) {
       {label}
     </span>
   );
+}
+
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1);
+  }
+  if (current <= 3) {
+    return [1, 2, 3, 4, 'ellipsis', total];
+  }
+  if (current >= total - 2) {
+    return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+  }
+  return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
 }
 
 function Avatar({ customer, size = 'md' }: { customer: Customer; size?: 'sm' | 'md' | 'lg' }) {
@@ -298,29 +311,56 @@ export default function CustomersPage() {
   const { t } = useI18n();
 
   const [search,          setSearch]          = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [page,            setPage]            = useState(1);
+  const [pageSize,        setPageSize]        = useState(20);
   const [genderFilter,    setGenderFilter]    = useState('');
   const [whatsappOnly,    setWhatsappOnly]    = useState(false);
   const [emailOnly,       setEmailOnly]       = useState(false);
   const [viewMode,        setViewMode]        = useState<'grid' | 'list'>('grid');
+
+  // Debounce search so we query backend cleanly
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Reset page when client filters change
+  useEffect(() => {
+    setPage(1);
+  }, [genderFilter, whatsappOnly, emailOnly]);
 
   // Multi-select
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
   const [showMsgModal,    setShowMsgModal]    = useState(false);
   const [successInfo,     setSuccessInfo]     = useState<{ channel: MessageChannel; count: number } | null>(null);
 
-  const { data: rawCustomers, loading, error, refetch } = useApiList<Record<string, unknown>>(
-    '/api/v1/customers',
+  const proxyUrl = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('page_size', String(pageSize));
+    if (debouncedSearch.trim()) {
+      params.set('search', debouncedSearch.trim());
+    }
+    return `/api/v1/customers?${params.toString()}`;
+  }, [page, pageSize, debouncedSearch]);
+
+  const { data: rawCustomers, loading, error, pagination, refetch } = useApiList<Record<string, unknown>>(
+    proxyUrl,
   );
 
   const customers = useMemo(() => rawCustomers.map(normalise), [rawCustomers]);
 
   const genderOptions = useMemo(
-    () => customers.map((c) => c.gender ?? '').filter((v, i, a) => v && a.indexOf(v) === i).sort(),
-    [customers],
+    () => ['female', 'male'],
+    [],
   );
 
   const filtered = useMemo(() => {
-    const q = search.toLowerCase();
+    const q = debouncedSearch ? '' : search.toLowerCase();
     return customers.filter((c) => {
       const matchSearch   = !q || c.name.toLowerCase().includes(q) || c.phone?.includes(q) || c.email?.toLowerCase().includes(q);
       const matchGender   = !genderFilter || c.gender === genderFilter;
@@ -328,10 +368,23 @@ export default function CustomersPage() {
       const matchEmail    = !emailOnly    || c.is_email_verified;
       return matchSearch && matchGender && matchWhatsapp && matchEmail;
     });
-  }, [customers, search, genderFilter, whatsappOnly, emailOnly]);
+  }, [customers, search, debouncedSearch, genderFilter, whatsappOnly, emailOnly]);
+
+  const totalCount  = pagination?.count ?? customers.length;
+  const totalPages  = pagination?.total_pages ?? Math.max(1, Math.ceil(totalCount / pageSize));
+  const hasNextPage = pagination ? Boolean(pagination.next) : page < totalPages;
+  const hasPrevPage = pagination ? Boolean(pagination.previous) : page > 1;
+  const pageNumbers = useMemo(() => getPageNumbers(page, totalPages), [page, totalPages]);
 
   const hasFilter = search || genderFilter || whatsappOnly || emailOnly;
-  const clearAll  = () => { setSearch(''); setGenderFilter(''); setWhatsappOnly(false); setEmailOnly(false); };
+  const clearAll  = () => {
+    setSearch('');
+    setDebouncedSearch('');
+    setGenderFilter('');
+    setWhatsappOnly(false);
+    setEmailOnly(false);
+    setPage(1);
+  };
 
   // Selection helpers
   const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id));
@@ -379,7 +432,13 @@ export default function CustomersPage() {
     <DashboardShell>
       <PageHeader
         title={t('navCustomers')}
-        subtitle={loading ? 'Loading…' : `${customers.length} ${t('navCustomers').toLowerCase()}`}
+        subtitle={
+          loading
+            ? 'Loading…'
+            : pagination
+              ? `${pagination.count.toLocaleString()} ${t('navCustomers').toLowerCase()}`
+              : `${customers.length} ${t('navCustomers').toLowerCase()}`
+        }
       />
 
       {/* Error */}
@@ -430,7 +489,19 @@ export default function CustomersPage() {
         )}
 
         <div className="flex-1" />
-        {!loading && <span className="text-xs text-muted-foreground">{filtered.length} of {customers.length}</span>}
+        {!loading && (
+          <span className="text-xs text-muted-foreground font-medium">
+            {pagination ? (
+              <>
+                Page <span className="font-semibold text-foreground">{page}</span> of{' '}
+                <span className="font-semibold text-foreground">{totalPages}</span> ·{' '}
+                <span className="font-semibold text-foreground">{totalCount.toLocaleString()}</span> total
+              </>
+            ) : (
+              <>{filtered.length} customers</>
+            )}
+          </span>
+        )}
 
         {/* View toggle */}
         <div className="flex rounded-xl border border-border overflow-hidden">
@@ -684,6 +755,171 @@ export default function CustomersPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Pagination ── */}
+      {!loading && totalPages > 1 && (
+        <div className="mt-6 flex flex-col md:flex-row items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+          {/* Left: Summary & page size selector */}
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            <span>
+              Showing{' '}
+              <strong className="text-foreground font-semibold">
+                {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}
+              </strong>
+              –
+              <strong className="text-foreground font-semibold">
+                {Math.min(page * pageSize, totalCount)}
+              </strong>{' '}
+              of <strong className="text-foreground font-semibold">{totalCount.toLocaleString()}</strong> customers
+            </span>
+
+            <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
+
+            <div className="flex items-center gap-1.5">
+              <span>Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-8 rounded-lg border border-border bg-muted/40 px-2 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+              >
+                {[10, 20, 50, 100].map((sz) => (
+                  <option key={sz} value={sz}>
+                    {sz}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Right: Page navigation buttons and jump */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Quick jump to page */}
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-2">
+              <span>Go to:</span>
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                defaultValue={page}
+                key={`jump-${page}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const val = Number((e.target as HTMLInputElement).value);
+                    if (val >= 1 && val <= totalPages) {
+                      setPage(val);
+                    }
+                  }
+                }}
+                onBlur={(e) => {
+                  const val = Number(e.target.value);
+                  if (val >= 1 && val <= totalPages && val !== page) {
+                    setPage(val);
+                  }
+                }}
+                className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20"
+              />
+            </div>
+
+            {/* First page button */}
+            <button
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              title="First page"
+              aria-label="First page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                page === 1
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
+            >
+              <ChevronsLeft className="h-4 w-4" />
+            </button>
+
+            {/* Previous page button */}
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={!hasPrevPage}
+              title="Previous page"
+              aria-label="Previous page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                !hasPrevPage
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            {/* Numbered page buttons */}
+            <div className="flex items-center gap-1">
+              {pageNumbers.map((p, idx) => {
+                if (p === 'ellipsis') {
+                  return (
+                    <span
+                      key={`ellipsis-${idx}`}
+                      className="px-1 text-xs text-muted-foreground select-none"
+                    >
+                      …
+                    </span>
+                  );
+                }
+                const isCurrent = p === page;
+                return (
+                  <button
+                    key={`page-${p}`}
+                    onClick={() => setPage(p)}
+                    className={cn(
+                      'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95',
+                      isCurrent
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Next page button */}
+            <button
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={!hasNextPage}
+              title="Next page"
+              aria-label="Next page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                !hasNextPage
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+
+            {/* Last page button */}
+            <button
+              onClick={() => setPage(totalPages)}
+              disabled={page === totalPages}
+              title="Last page"
+              aria-label="Last page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                page === totalPages
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
+            >
+              <ChevronsRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
 
