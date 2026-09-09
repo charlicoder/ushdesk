@@ -12,7 +12,7 @@ import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { useI18n } from '@/hooks/use-i18n';
 import { cn } from '@/lib/utils';
-import { DEMO_CUSTOMERS } from '@/data/mockData';
+
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Customer {
@@ -310,7 +310,6 @@ export default function CustomersPage() {
 
   const { data: rawCustomers, loading, error, refetch } = useApiList<Record<string, unknown>>(
     '/api/v1/customers',
-    DEMO_CUSTOMERS as unknown as Record<string, unknown>[],
   );
 
   const customers = useMemo(() => rawCustomers.map(normalise), [rawCustomers]);

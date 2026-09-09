@@ -1,6 +1,5 @@
 import React from 'react';
 import { Language, t } from '@/lib/translations';
-import { REVENUE_TREND } from '@/data/mockData';
 import AreaChartInner from './RevenueAreaChartInner';
 
 interface Props {
@@ -19,7 +18,7 @@ export default function RevenueAreaChart({ language, period }: Props) {
           </p>
         </div>
       </div>
-      <AreaChartInner data={REVENUE_TREND} />
+      <AreaChartInner data={[]} />
     </div>
   );
 }

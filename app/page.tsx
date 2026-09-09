@@ -31,11 +31,7 @@ import {
   addMonths, formatCurrency, toISODate, addDays,
 } from '@/lib/helpers';
 import type { Appointment } from '@/types/appointment';
-import {
-  generateDemoEarningsTrend,
-  generateDemoWeeklyOverview,
-  SERVICE_CATEGORY_DATA,
-} from '@/data/mockData';
+
 
 const WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
 
@@ -58,12 +54,12 @@ export default function OverviewPage() {
   const thisMonth = useMemo(() => appointmentsInRange(appointments, startOfMonth(now), endOfMonth(now)), [appointments]);
   const lastMonth = useMemo(() => appointmentsInRange(appointments, startOfMonth(addMonths(now, -1)), endOfMonth(addMonths(now, -1))), [appointments]);
 
-  const earningsThisMonth = earningsOf(thisMonth) || 128450;
-  const earningsLastMonth = earningsOf(lastMonth) || 112300;
-  const bookingsThisMonth = thisMonth.length || 382;
-  const bookingsLastMonth = lastMonth.length || 340;
-  const customersThisMonth = uniqueCustomers(thisMonth) || 148;
-  const customersLastMonth = uniqueCustomers(lastMonth) || 135;
+  const earningsThisMonth = earningsOf(thisMonth);
+  const earningsLastMonth = earningsOf(lastMonth);
+  const bookingsThisMonth = thisMonth.length;
+  const bookingsLastMonth = lastMonth.length;
+  const customersThisMonth = uniqueCustomers(thisMonth);
+  const customersLastMonth = uniqueCustomers(lastMonth);
 
   const pendingToday = todayAppts.filter((a) => a.status === 'pending').length;
   const confirmedToday = todayAppts.filter((a) => a.status === 'confirmed').length;
@@ -83,7 +79,7 @@ export default function OverviewPage() {
       });
     }
     const hasData = days.some((d) => d.earnings > 0 || d.bookings > 0);
-    return hasData ? days : generateDemoEarningsTrend(now);
+    return hasData ? days : days;
   }, [appointments, now]);
 
   // bookings by branch
@@ -104,8 +100,7 @@ export default function OverviewPage() {
     });
     const palette = ['hsl(168 58% 40%)', 'hsl(35 80% 55%)', 'hsl(190 60% 45%)', 'hsl(280 50% 60%)', 'hsl(340 70% 60%)', 'hsl(120 50% 45%)'];
     const entries = Array.from(map.entries()).map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }));
-    if (entries.length > 0) return entries;
-    return SERVICE_CATEGORY_DATA.map((sc, i) => ({ name: sc.name, value: sc.value, color: palette[i % palette.length] }));
+    return entries;
   }, [thisMonth]);
 
   // weekly overview
@@ -122,7 +117,7 @@ export default function OverviewPage() {
       };
     });
     const hasData = calculated.some((item) => item.bookings > 0 || item.earnings > 0);
-    return hasData ? calculated : generateDemoWeeklyOverview((k) => t(k as any));
+    return hasData ? calculated : calculated;
   }, [appointments, now, locale]);
 
   // upcoming

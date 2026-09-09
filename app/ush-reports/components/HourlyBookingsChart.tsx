@@ -1,6 +1,5 @@
 import React from 'react';
 import { Language, t } from '@/lib/translations';
-import { HOURLY_BOOKINGS } from '@/data/mockData';
 import HourlyChartInner from './HourlyBookingsChartInner';
 
 interface Props { language: Language; }
@@ -14,7 +13,7 @@ export default function HourlyBookingsChart({ language }: Props) {
           {language === 'ar' ? 'توزيع الحجوزات حسب الساعة — متوسط شهري' : 'Booking distribution by hour — monthly average'}
         </p>
       </div>
-      <HourlyChartInner data={HOURLY_BOOKINGS} />
+      <HourlyChartInner data={[]} />
     </div>
   );
 }

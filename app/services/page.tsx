@@ -13,7 +13,7 @@ import type { TranslationKey } from '@/lib/i18n';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { formatCurrency } from '@/lib/helpers';
-import { DEMO_SERVICES } from '@/data/mockData';
+
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { ServiceDetailModal, type BranchInfo } from '@/components/services/ServiceDetailModal';
@@ -414,15 +414,9 @@ export default function ServicesPage() {
   const token       = useAppSelector((s) => s.auth.token);
   const initialized = useAppSelector((s) => s.auth.initialized);
 
-  const reduxServices = useAppSelector((s) => s.data.services);
-  const appointments  = useAppSelector((s) => s.data.appointments);
-  const reduxBranches = useAppSelector((s) => s.data.branches);
-  const dataStatus    = useAppSelector((s) => s.data.status);
-
-  const fallback = (reduxServices.length > 0 ? reduxServices : DEMO_SERVICES) as unknown as Record<string, unknown>[];
 
   // API State
-  const [rawServices, setRawServices] = useState<Record<string, unknown>[]>(fallback);
+  const [rawServices, setRawServices] = useState<Record<string, unknown>[]>([]);
   const [responseBranches, setResponseBranches] = useState<Array<{ id: string; name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -499,13 +493,13 @@ export default function ServicesPage() {
           list = json.services;
         }
 
-        setRawServices(list.length > 0 ? list : fallback);
+        setRawServices(list);
       })
       .catch((err: Error) => {
         if (cancelled) return;
         console.warn('[ServicesPage] fetch failed:', err.message);
         setError(err.message);
-        setRawServices(fallback);
+        setRawServices([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -515,21 +509,12 @@ export default function ServicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, initialized, tick]);
 
-  // Appointment analytics per service
+  // Appointment analytics per service (no appointments in Redux — reserved for future real API)
   const { appointmentCounts, appointmentBranches } = useMemo(() => {
     const counts: Record<string, number> = {};
-    const brMap: Record<string, Set<string>> = {};
-    appointments.forEach((a) => {
-      if (a.service_id) {
-        counts[a.service_id] = (counts[a.service_id] ?? 0) + 1;
-        if (!brMap[a.service_id]) brMap[a.service_id] = new Set();
-        if (a.branch_id) brMap[a.service_id].add(a.branch_id);
-      }
-    });
     const brArrayMap: Record<string, string[]> = {};
-    Object.entries(brMap).forEach(([k, v]) => { brArrayMap[k] = Array.from(v); });
     return { appointmentCounts: counts, appointmentBranches: brArrayMap };
-  }, [appointments]);
+  }, []);
 
   // Normalised rows
   const services: ServiceRow[] = useMemo(() =>
@@ -566,13 +551,10 @@ export default function ServicesPage() {
       }
     });
 
-    // 3. Fallback to Redux mock branches only if no branches were found in API
-    if (map.size === 0 && reduxBranches.length > 0) {
-      reduxBranches.forEach((b) => map.set(b.id, b.name));
-    }
+    // No Redux fallback — only use what the API returns
 
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [responseBranches, rawServices, reduxBranches]);
+  }, [responseBranches, rawServices]);
 
   // Branch map for quick lookup
   const branchMap = useMemo(() => {
@@ -602,7 +584,7 @@ export default function ServicesPage() {
 
   const clearFilters = () => { setSearch(''); setBranchFilter(''); setHomeFilter(false); };
 
-  const isLoading = (dataStatus === 'idle' || dataStatus === 'loading') && loading && services.length === 0;
+  const isLoading = loading && services.length === 0;
 
   // Helper to compose branch summary string
   const getBranchSummary = (s: ServiceRow) => {

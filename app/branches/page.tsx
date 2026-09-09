@@ -12,7 +12,7 @@ import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { formatCurrency, earningsOf, startOfMonth, endOfMonth, appointmentsInRange } from '@/lib/helpers';
-import { DEMO_BRANCHES } from '@/data/mockData';
+
 import { cn } from '@/lib/utils';
 
 // ── Extended internal type (covers new API shape) ──────────────────────────────
@@ -141,7 +141,6 @@ export default function BranchesPage() {
 
   const { data: rawBranches, loading, error, refetch } = useApiList<Record<string, unknown>>(
     '/api/v1/branches',
-    DEMO_BRANCHES as unknown as Record<string, unknown>[],
   );
 
   const branches = useMemo(() => rawBranches.map(normalise), [rawBranches]);

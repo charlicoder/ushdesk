@@ -13,12 +13,7 @@ import { useAppSelector } from '@/store/hooks';
 import { useI18n } from '@/hooks/use-i18n';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { cn } from '@/lib/utils';
-import {
-  REVENUE_TREND,
-  HOURLY_BOOKINGS,
-  TOP_SERVICES,
-  TOP_CUSTOMERS,
-} from '@/data/mockData';
+
 
 type Period = 'daily' | 'weekly' | 'monthly';
 
@@ -31,9 +26,9 @@ const PERIOD_CONFIGS: Record<Period, {
   revenueTrend: number;
   bookingsTrend: number;
 }> = {
-  daily: { revenueMultiplier: 1, bookingsMultiplier: 1, avgValue: 287, newCustomers: 4, cancellationRate: 8.3, revenueTrend: 12.4, bookingsTrend: 6.7 },
-  weekly: { revenueMultiplier: 7, bookingsMultiplier: 7, avgValue: 294, newCustomers: 28, cancellationRate: 7.1, revenueTrend: -3.2, bookingsTrend: 4.1 },
-  monthly: { revenueMultiplier: 30, bookingsMultiplier: 30, avgValue: 301, newCustomers: 112, cancellationRate: 6.8, revenueTrend: 18.9, bookingsTrend: 14.3 },
+  daily:   { revenueMultiplier: 1,  bookingsMultiplier: 1,  avgValue: 0, newCustomers: 0, cancellationRate: 0, revenueTrend: 0, bookingsTrend: 0 },
+  weekly:  { revenueMultiplier: 7,  bookingsMultiplier: 7,  avgValue: 0, newCustomers: 0, cancellationRate: 0, revenueTrend: 0, bookingsTrend: 0 },
+  monthly: { revenueMultiplier: 30, bookingsMultiplier: 30, avgValue: 0, newCustomers: 0, cancellationRate: 0, revenueTrend: 0, bookingsTrend: 0 },
 };
 
 // --- Page Main Component ---
@@ -47,8 +42,8 @@ export default function ReportsPage() {
   }, []);
 
   const cfg = PERIOD_CONFIGS[period];
-  const baseRevenue = 3800;
-  const baseBookings = 12;
+  const baseRevenue = 0;
+  const baseBookings = 0;
 
   const tabs: { key: Period; label: string }[] = [
     { key: 'daily', label: locale === 'ar' ? 'يومي' : 'Daily' },
@@ -250,7 +245,7 @@ function RevenueAreaChart({ locale, period }: { locale: string; period: string }
           </p>
         </div>
       </div>
-      <RevenueAreaChartInner data={REVENUE_TREND} />
+      <RevenueAreaChartInner data={[]} />
     </div>
   );
 }
@@ -264,7 +259,7 @@ const SERVICE_CATEGORY_DATA = [
   { name: 'Wellness', value: 7, revenue: 7900, color: '#ffe4e6' },
 ];
 
-function RevenueAreaChartInner({ data }: { data: typeof REVENUE_TREND }) {
+function RevenueAreaChartInner({ data }: { data: { date: string; revenue: number; bookings: number }[] }) {
   return (
     <div className="h-60 w-full min-w-0">
       <ResponsiveContainer width="100%" height="100%">
@@ -317,7 +312,6 @@ function RevenueTooltip({ active, payload, label }: { active?: boolean; payload?
 
 // --- Service Pie Chart ---
 function ServicePieChart({ locale }: { locale: string }) {
-  const sar = locale === 'ar' ? 'ر.س' : 'SAR';
   return (
     <div className="rounded-2xl border border-border/60 bg-card p-5 h-full flex flex-col shadow-sm">
       <div className="mb-4">
@@ -328,20 +322,8 @@ function ServicePieChart({ locale }: { locale: string }) {
           {locale === 'ar' ? 'توزيع الإيرادات حسب الفئة' : 'Revenue by service category'}
         </p>
       </div>
-      <ServicePieChartInner data={SERVICE_CATEGORY_DATA} />
-      <div className="mt-4 space-y-2">
-        {SERVICE_CATEGORY_DATA.map((item) => (
-          <div key={`legend-svc-${item.name}`} className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-              <span className="text-xs text-foreground font-medium">{item.name}</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-muted-foreground">{item.value}%</span>
-              <span className="text-xs font-semibold text-foreground">{item.revenue.toLocaleString()} {sar}</span>
-            </div>
-          </div>
-        ))}
+      <div className="flex-1 flex items-center justify-center py-8 text-muted-foreground text-sm">
+        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
       </div>
     </div>
   );
@@ -398,13 +380,15 @@ function HourlyBookingsChart({ locale }: { locale: string }) {
           {locale === 'ar' ? 'توزيع الحجوزات حسب الساعة — متوسط شهري' : 'Booking distribution by hour — monthly average'}
         </p>
       </div>
-      <HourlyBookingsChartInner data={HOURLY_BOOKINGS} />
+      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
+      </div>
     </div>
   );
 }
 
-function HourlyBookingsChartInner({ data }: { data: typeof HOURLY_BOOKINGS }) {
-  const maxVal = Math.max(...data.map((d) => d.bookings));
+function HourlyBookingsChartInner({ data }: { data: { hour: string; bookings: number }[] }) {
+  const maxVal = data.length > 0 ? Math.max(...data.map((d) => d.bookings)) : 0;
   return (
     <div className="h-52 w-full min-w-0">
       <ResponsiveContainer width="100%" height="100%">
@@ -448,7 +432,6 @@ function HourlyTooltip({ active, payload, label }: { active?: boolean; payload?:
 
 // --- Top Services Table ---
 function TopServicesTable({ locale }: { locale: string }) {
-  const sar = locale === 'ar' ? 'ر.س' : 'SAR';
   return (
     <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-sm">
       <div className="px-5 py-4 border-b border-border/60">
@@ -459,49 +442,8 @@ function TopServicesTable({ locale }: { locale: string }) {
           {locale === 'ar' ? 'مرتبة حسب الإيرادات' : 'Ranked by revenue'}
         </p>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-border/60 bg-muted/40">
-              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'الخدمة' : 'Service'}</th>
-              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'الفئة' : 'Category'}</th>
-              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'الحجوزات' : 'Bookings'}</th>
-              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'الإيرادات' : 'Revenue'}</th>
-              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'النمو' : 'Growth'}</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/40">
-            {TOP_SERVICES.map((svc, idx) => (
-              <tr key={`top-svc-${svc.id}`} className="hover:bg-muted/40 transition-colors">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground shrink-0">
-                      {idx + 1}
-                    </span>
-                    <span className="font-medium text-foreground text-xs">{svc.name}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-                    {svc.category}
-                  </span>
-                </td>
-                <td className="px-4 py-3 text-end font-semibold text-foreground">
-                  {svc.bookings}
-                </td>
-                <td className="px-4 py-3 text-end font-bold text-foreground">
-                  {svc.revenue.toLocaleString()} {sar}
-                </td>
-                <td className="px-4 py-3 text-end">
-                  <span className={cn('inline-flex items-center gap-1 font-semibold text-xs', svc.growth >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
-                    {svc.growth >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-                    {Math.abs(svc.growth)}%
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
       </div>
     </div>
   );
@@ -509,7 +451,6 @@ function TopServicesTable({ locale }: { locale: string }) {
 
 // --- Top Customers Table ---
 function TopCustomersTable({ locale }: { locale: string }) {
-  const sar = locale === 'ar' ? 'ر.س' : 'SAR';
   return (
     <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-sm">
       <div className="px-5 py-4 border-b border-border/60">
@@ -520,45 +461,8 @@ function TopCustomersTable({ locale }: { locale: string }) {
           {locale === 'ar' ? 'مرتبة حسب إجمالي الإنفاق' : 'Ranked by total spend'}
         </p>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="border-b border-border/60 bg-muted/40">
-              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'العميل' : 'Customer'}</th>
-              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'الزيارات' : 'Visits'}</th>
-              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'إجمالي الإنفاق' : 'Total Spend'}</th>
-              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'آخر زيارة' : 'Last Visit'}</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/40">
-            {TOP_CUSTOMERS.map((cust) => (
-              <tr key={`top-cust-${cust.id}`} className="hover:bg-muted/40 transition-colors">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
-                      {cust.name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
-                    </div>
-                    <div>
-                      <p className="font-semibold text-foreground text-xs">{cust.name}</p>
-                      <p className="text-[10px] text-muted-foreground truncate max-w-32">{cust.branch}</p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-end font-semibold text-foreground">
-                  {cust.visits}
-                </td>
-                <td className="px-4 py-3 text-end font-bold text-foreground">
-                  {cust.totalSpend.toLocaleString()} {sar}
-                </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs text-muted-foreground">
-                    {cust.lastVisit.split('-').reverse().join('/')}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
       </div>
     </div>
   );

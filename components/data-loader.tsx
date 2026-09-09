@@ -1,16 +1,10 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useAppDispatch, useAppSelector } from '@/store/hooks';
-import { fetchDashboardData } from '@/store/slices/dataSlice';
-
+/**
+ * DataLoader — previously dispatched fetchDashboardData to seed mock data into Redux.
+ * Now that mock data is removed, this component is a transparent pass-through.
+ * Each page fetches its own data directly from the real API via authedFetch.
+ */
 export function DataLoader({ children }: { children: React.ReactNode }) {
-  const dispatch = useAppDispatch();
-  const status = useAppSelector((s) => s.data.status);
-
-  useEffect(() => {
-    if (status === 'idle') dispatch(fetchDashboardData());
-  }, [dispatch, status]);
-
   return <>{children}</>;
 }
