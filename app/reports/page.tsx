@@ -1,19 +1,19 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import dynamic from 'next/dynamic';
 import {
   DollarSign, CalendarCheck, Star, Users, XCircle, TrendingUp, TrendingDown
 } from 'lucide-react';
-import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar
-} from 'recharts';
-import { useAppSelector } from '@/store/hooks';
+import { RevenueAreaChartDynamic, HourlyBarChartDynamic, ServicePieChartDynamic } from '@/components/dashboard/reports-charts';
 import { useI18n } from '@/hooks/use-i18n';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { cn } from '@/lib/utils';
-
+import {
+  REVENUE_TREND,
+  HOURLY_BOOKINGS,
+  TOP_SERVICES,
+  TOP_CUSTOMERS,
+} from '@/data/mockData';
 
 type Period = 'daily' | 'weekly' | 'monthly';
 
@@ -26,9 +26,9 @@ const PERIOD_CONFIGS: Record<Period, {
   revenueTrend: number;
   bookingsTrend: number;
 }> = {
-  daily:   { revenueMultiplier: 1,  bookingsMultiplier: 1,  avgValue: 0, newCustomers: 0, cancellationRate: 0, revenueTrend: 0, bookingsTrend: 0 },
-  weekly:  { revenueMultiplier: 7,  bookingsMultiplier: 7,  avgValue: 0, newCustomers: 0, cancellationRate: 0, revenueTrend: 0, bookingsTrend: 0 },
-  monthly: { revenueMultiplier: 30, bookingsMultiplier: 30, avgValue: 0, newCustomers: 0, cancellationRate: 0, revenueTrend: 0, bookingsTrend: 0 },
+  daily:   { revenueMultiplier: 1,  bookingsMultiplier: 1,  avgValue: 287, newCustomers: 4,   cancellationRate: 8.3, revenueTrend: 12.4, bookingsTrend: 6.7  },
+  weekly:  { revenueMultiplier: 7,  bookingsMultiplier: 7,  avgValue: 294, newCustomers: 28,  cancellationRate: 7.1, revenueTrend: -3.2, bookingsTrend: 4.1  },
+  monthly: { revenueMultiplier: 30, bookingsMultiplier: 30, avgValue: 301, newCustomers: 112, cancellationRate: 6.8, revenueTrend: 18.9, bookingsTrend: 14.3 },
 };
 
 // --- Page Main Component ---
@@ -42,8 +42,8 @@ export default function ReportsPage() {
   }, []);
 
   const cfg = PERIOD_CONFIGS[period];
-  const baseRevenue = 0;
-  const baseBookings = 0;
+  const baseRevenue = 3800;
+  const baseBookings = 12;
 
   const tabs: { key: Period; label: string }[] = [
     { key: 'daily', label: locale === 'ar' ? 'يومي' : 'Daily' },
@@ -245,7 +245,7 @@ function RevenueAreaChart({ locale, period }: { locale: string; period: string }
           </p>
         </div>
       </div>
-      <RevenueAreaChartInner data={[]} />
+      <RevenueAreaChartDynamic data={REVENUE_TREND} />
     </div>
   );
 }
@@ -259,44 +259,9 @@ const SERVICE_CATEGORY_DATA = [
   { name: 'Wellness', value: 7, revenue: 7900, color: '#ffe4e6' },
 ];
 
-function RevenueAreaChartInner({ data }: { data: { date: string; revenue: number; bookings: number }[] }) {
-  return (
-    <div className="h-60 w-full min-w-0">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-          <defs>
-            <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#be123c" stopOpacity={0.35} />
-              <stop offset="95%" stopColor="#be123c" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" vertical={false} />
-          <XAxis
-            dataKey="date"
-            tick={{ fontSize: 11, fill: '#6b7280' }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 11, fill: '#6b7280' }}
-            axisLine={false}
-            tickLine={false}
-            tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
-          />
-          <RechartsTooltip content={<RevenueTooltip />} />
-          <Area
-            type="monotone"
-            dataKey="revenue"
-            stroke="#be123c"
-            strokeWidth={3}
-            fill="url(#revenueGrad)"
-            animationDuration={1200}
-            isAnimationActive={true}
-          />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-  );
+function RevenueAreaChartInner(_props: { data: { date: string; revenue: number; bookings: number }[] }) {
+  // Replaced by dynamic component — this stub is kept to avoid removing the local SERVICE_CATEGORY_DATA constant below
+  return null;
 }
 
 function RevenueTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
@@ -312,6 +277,7 @@ function RevenueTooltip({ active, payload, label }: { active?: boolean; payload?
 
 // --- Service Pie Chart ---
 function ServicePieChart({ locale }: { locale: string }) {
+  const sar = locale === 'ar' ? 'ر.س' : 'SAR';
   return (
     <div className="rounded-2xl border border-border/60 bg-card p-5 h-full flex flex-col shadow-sm">
       <div className="mb-4">
@@ -322,38 +288,28 @@ function ServicePieChart({ locale }: { locale: string }) {
           {locale === 'ar' ? 'توزيع الإيرادات حسب الفئة' : 'Revenue by service category'}
         </p>
       </div>
-      <div className="flex-1 flex items-center justify-center py-8 text-muted-foreground text-sm">
-        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
+      <ServicePieChartDynamic data={SERVICE_CATEGORY_DATA} />
+      <div className="mt-4 space-y-2">
+        {SERVICE_CATEGORY_DATA.map((item) => (
+          <div key={`legend-svc-${item.name}`} className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+              <span className="text-xs text-foreground font-medium">{item.name}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">{item.value}%</span>
+              <span className="text-xs font-semibold text-foreground">{item.revenue.toLocaleString()} {sar}</span>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function ServicePieChartInner({ data }: { data: typeof SERVICE_CATEGORY_DATA }) {
-  return (
-    <div className="h-44 w-full min-w-0">
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={50}
-            outerRadius={80}
-            paddingAngle={3}
-            dataKey="value"
-            animationDuration={1000}
-            isAnimationActive={true}
-          >
-            {data.map((entry, index) => (
-              <Cell key={`pie-cell-${index + 1}`} fill={entry.color} />
-            ))}
-          </Pie>
-          <RechartsTooltip content={<ServicePieTooltip />} />
-        </PieChart>
-      </ResponsiveContainer>
-    </div>
-  );
+function ServicePieChartInner(_props: { data: { name: string; value: number; revenue: number; color: string }[] }) {
+  // Replaced by ServicePieChartDynamic above
+  return null;
 }
 
 function ServicePieTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
@@ -380,58 +336,16 @@ function HourlyBookingsChart({ locale }: { locale: string }) {
           {locale === 'ar' ? 'توزيع الحجوزات حسب الساعة — متوسط شهري' : 'Booking distribution by hour — monthly average'}
         </p>
       </div>
-      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
-      </div>
+      <HourlyBarChartDynamic data={HOURLY_BOOKINGS} />
     </div>
   );
 }
 
-function HourlyBookingsChartInner({ data }: { data: { hour: string; bookings: number }[] }) {
-  const maxVal = data.length > 0 ? Math.max(...data.map((d) => d.bookings)) : 0;
-  return (
-    <div className="h-52 w-full min-w-0">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
-          <CartesianGrid stroke="#e5e7eb" strokeDasharray="3 3" vertical={false} />
-          <XAxis
-            dataKey="hour"
-            tick={{ fontSize: 11, fill: '#6b7280' }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 11, fill: '#6b7280' }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <RechartsTooltip content={<HourlyTooltip />} />
-          <Bar dataKey="bookings" radius={[6, 6, 0, 0]} animationDuration={1000} isAnimationActive={true}>
-            {data.map((entry, index) => (
-              <Cell
-                key={`bar-cell-${index + 1}`}
-                fill={entry.bookings === maxVal ? '#be123c' : '#fb7185'}
-              />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
-function HourlyTooltip({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="bg-card border border-border rounded-xl shadow-lg px-3 py-2 text-xs">
-      <p className="font-semibold text-foreground">{label}</p>
-      <p className="text-primary font-bold">{payload[0]?.value} bookings</p>
-    </div>
-  );
-}
+// HourlyBookingsChartInner replaced by HourlyBarChartDynamic
 
 // --- Top Services Table ---
 function TopServicesTable({ locale }: { locale: string }) {
+  const sar = locale === 'ar' ? 'ر.س' : 'SAR';
   return (
     <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-sm">
       <div className="px-5 py-4 border-b border-border/60">
@@ -442,8 +356,45 @@ function TopServicesTable({ locale }: { locale: string }) {
           {locale === 'ar' ? 'مرتبة حسب الإيرادات' : 'Ranked by revenue'}
         </p>
       </div>
-      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border/60 bg-muted/40">
+              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'الخدمة' : 'Service'}</th>
+              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'الفئة' : 'Category'}</th>
+              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'الحجوزات' : 'Bookings'}</th>
+              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'الإيرادات' : 'Revenue'}</th>
+              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'النمو' : 'Growth'}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/40">
+            {TOP_SERVICES.map((svc, idx) => (
+              <tr key={`top-svc-${svc.id}`} className="hover:bg-muted/40 transition-colors">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold text-muted-foreground shrink-0">
+                      {idx + 1}
+                    </span>
+                    <span className="font-medium text-foreground text-xs">{svc.name}</span>
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                    {svc.category}
+                  </span>
+                </td>
+                <td className="px-4 py-3 text-end font-semibold text-foreground">{svc.bookings}</td>
+                <td className="px-4 py-3 text-end font-bold text-foreground">{svc.revenue.toLocaleString()} {sar}</td>
+                <td className="px-4 py-3 text-end">
+                  <span className={cn('inline-flex items-center gap-1 font-semibold text-xs', svc.growth >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400')}>
+                    {svc.growth >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                    {Math.abs(svc.growth)}%
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -451,6 +402,7 @@ function TopServicesTable({ locale }: { locale: string }) {
 
 // --- Top Customers Table ---
 function TopCustomersTable({ locale }: { locale: string }) {
+  const sar = locale === 'ar' ? 'ر.س' : 'SAR';
   return (
     <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-sm">
       <div className="px-5 py-4 border-b border-border/60">
@@ -461,8 +413,41 @@ function TopCustomersTable({ locale }: { locale: string }) {
           {locale === 'ar' ? 'مرتبة حسب إجمالي الإنفاق' : 'Ranked by total spend'}
         </p>
       </div>
-      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-        {locale === 'ar' ? 'لا توجد بيانات متاحة' : 'No data available'}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border/60 bg-muted/40">
+              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'العميل' : 'Customer'}</th>
+              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'الزيارات' : 'Visits'}</th>
+              <th className="px-4 py-2.5 text-end font-semibold text-muted-foreground">{locale === 'ar' ? 'إجمالي الإنفاق' : 'Total Spend'}</th>
+              <th className="px-4 py-2.5 text-start font-semibold text-muted-foreground">{locale === 'ar' ? 'آخر زيارة' : 'Last Visit'}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/40">
+            {TOP_CUSTOMERS.map((cust) => (
+              <tr key={`top-cust-${cust.id}`} className="hover:bg-muted/40 transition-colors">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold shrink-0">
+                      {cust.name.split(' ').map((n) => n[0]).join('').slice(0, 2)}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-foreground text-xs">{cust.name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate max-w-32">{cust.branch}</p>
+                    </div>
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-end font-semibold text-foreground">{cust.visits}</td>
+                <td className="px-4 py-3 text-end font-bold text-foreground">{cust.totalSpend.toLocaleString()} {sar}</td>
+                <td className="px-4 py-3">
+                  <span className="text-xs text-muted-foreground">
+                    {cust.lastVisit.split('-').reverse().join('/')}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
