@@ -29,3 +29,28 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ detail: message }, { status: 502 });
   }
 }
+
+export async function POST(req: NextRequest) {
+  const authHeader = req.headers.get('authorization') ?? '';
+
+  try {
+    const body = await req.json();
+
+    const upstream = await fetch(CUSTOMERS_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type':   'application/json',
+        'Accept':         'application/json',
+        'X-USHSPA-TOKEN': APP_TOKEN,
+        'Authorization':  authHeader,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await upstream.json().catch(() => ({}));
+    return NextResponse.json(data, { status: upstream.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Proxy error';
+    return NextResponse.json({ detail: message }, { status: 502 });
+  }
+}

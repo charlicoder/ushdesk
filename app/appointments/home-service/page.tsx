@@ -310,7 +310,7 @@ interface SearchDropdownProps<T> {
   items: T[];
   renderItem: (item: T) => React.ReactNode;
   renderSelected?: (item: T) => React.ReactNode;
-  getKey: (item: T) => string;
+  getKey?: (item: T, index?: number) => string | number;
   isSelected: (item: T) => boolean;
   onSearch: (q: string) => void;
   onSelect: (item: T) => void;
@@ -353,13 +353,25 @@ function SearchDropdown<T>({
         <div className="absolute top-full left-0 right-0 z-50 mt-1.5 max-h-60 overflow-y-auto rounded-2xl border border-border bg-card shadow-xl">
           {loading && <div className="flex items-center gap-2 px-4 py-3 text-sm text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…</div>}
           {!loading && items.length === 0 && <p className="px-4 py-3 text-sm text-muted-foreground">No results found</p>}
-          {!loading && items.map((item) => (
-            <button key={getKey(item)} type="button"
-              onClick={() => { onSelect(item); setOpen(false); }}
-              className={cn('w-full text-left transition hover:bg-muted/60 px-1 py-0.5', isSelected(item) && 'bg-primary/5')}>
-              {renderItem(item)}
-            </button>
-          ))}
+          {!loading && (() => {
+            const seenKeys = new Set<string>();
+            return items.map((item, index) => {
+              const keyCandidate = getKey ? getKey(item, index) : undefined;
+              const rawKey = keyCandidate ?? (item as Record<string, unknown>)?.id ?? (item as Record<string, unknown>)?.pk ?? (item as Record<string, unknown>)?.uuid;
+              let itemKey = (rawKey != null && rawKey !== '') ? String(rawKey) : `search-item-${index}`;
+              if (seenKeys.has(itemKey)) {
+                itemKey = `${itemKey}-${index}`;
+              }
+              seenKeys.add(itemKey);
+              return (
+                <button key={itemKey} type="button"
+                  onClick={() => { onSelect(item); setOpen(false); }}
+                  className={cn('w-full text-left transition hover:bg-muted/60 px-1 py-0.5', isSelected(item) && 'bg-primary/5')}>
+                  {renderItem(item)}
+                </button>
+              );
+            });
+          })()}
         </div>
       )}
     </div>
@@ -485,7 +497,12 @@ function BookingFormModal({
         const url = q ? `/api/v1/customers?search=${encodeURIComponent(q)}` : '/api/v1/customers';
         const res = await fetch(url, { headers });
         const raw = await res.json();
-        setCustomers(Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []));
+        const rawList = Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []);
+        const list = rawList.map((item: any, idx: number) => ({
+          ...item,
+          id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
+        }));
+        setCustomers(list);
       } catch { setCustomers([]); }
       finally { setCustomersLoading(false); }
     }, 300);
@@ -842,8 +859,8 @@ function BookingFormModal({
                     placeholder={servicesLoading ? 'Loading services…' : 'Search services…'}
                     loading={servicesLoading}
                     items={filteredServices}
-                    getKey={(s) => s.id}
-                    isSelected={(s) => s.id === form.serviceId}
+                    getKey={(s, idx) => String(s.id ?? (s as any).service_id ?? (s as any).pk ?? idx)}
+                    isSelected={(s) => String(s.id ?? '') === form.serviceId}
                     selectedItem={selectedService}
                     icon={Scissors}
                     onSearch={(q) => setForm((p) => ({ ...p, serviceSearch: q, serviceId: '' }))}
@@ -986,8 +1003,8 @@ function BookingFormModal({
                     placeholder="Search by name or phone…"
                     loading={customersLoading}
                     items={customers}
-                    getKey={(c) => c.id}
-                    isSelected={(c) => c.id === form.customerId}
+                    getKey={(c, idx) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? idx)}
+                    isSelected={(c) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === form.customerId}
                     selectedItem={selectedCustomer}
                     icon={User}
                     onSearch={(q) => { setCustomerQuery(q); setForm((p) => ({ ...p, customerSearch: q, customerId: '' })); }}

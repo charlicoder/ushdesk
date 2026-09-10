@@ -1,6 +1,6 @@
 'use client';
 // Dedicated booking popup for the Therapist Schedule page.
-// Title: "New Therapist Schedule Booking" — violet/indigo theme.
+// Title: "New Therapist Schedule Booking" — Ush Spa company brand theme.
 // Therapist is pre-selected from the clicked slot (editable if needed).
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
@@ -8,9 +8,10 @@ import {
   CalendarDays, CheckCircle2, Clock, AlertCircle, X,
   Timer, Loader2, Scissors, Package, User, Phone, Mail,
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
-  LayoutGrid, Crown, Heart, Sparkles, Layers, Store,
+  LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -129,7 +130,7 @@ interface DropProps<T> {
   placeholder: string;
   loading?: boolean;
   items: T[];
-  getKey: (item: T) => string;
+  getKey?: (item: T, index?: number) => string | number;
   isSelected: (item: T) => boolean;
   selectedItem?: T | null;
   icon?: React.ElementType;
@@ -172,7 +173,7 @@ function SearchDrop<T>({
           readOnly={sel}
           className={cn(
             'h-10 w-full rounded-xl border border-border bg-muted/30 pr-8 text-sm outline-none transition',
-            'focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 placeholder:text-muted-foreground/50',
+            'focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50',
             Icon ? 'pl-9' : 'pl-3',
             sel && 'text-muted-foreground/50 cursor-default',
           )}
@@ -194,15 +195,27 @@ function SearchDrop<T>({
               {loading ? 'Loading…' : 'No results'}
             </p>
           ) : (
-            items.map((item) => (
-              <div
-                key={getKey(item)}
-                onClick={() => { onSelect(item); setOpen(false); }}
-                className={cn('cursor-pointer transition hover:bg-muted/60', isSelected(item) && 'bg-violet-500/5')}
-              >
-                {renderItem(item)}
-              </div>
-            ))
+            (() => {
+              const seenKeys = new Set<string>();
+              return items.map((item, idx) => {
+                const keyCandidate = getKey ? getKey(item, idx) : undefined;
+                const rawKey = keyCandidate ?? (item as Record<string, unknown>)?.id ?? (item as Record<string, unknown>)?.pk ?? (item as Record<string, unknown>)?.uuid;
+                let itemKey = (rawKey != null && rawKey !== '') ? String(rawKey) : `item-${idx}`;
+                if (seenKeys.has(itemKey)) {
+                  itemKey = `${itemKey}-${idx}`;
+                }
+                seenKeys.add(itemKey);
+                return (
+                  <div
+                    key={itemKey}
+                    onClick={() => { onSelect(item); setOpen(false); }}
+                    className={cn('cursor-pointer transition hover:bg-muted/60', isSelected(item) && 'bg-primary/5')}
+                  >
+                    {renderItem(item)}
+                  </div>
+                );
+              });
+            })()
           )}
         </div>
       )}
@@ -272,6 +285,7 @@ export function TherapistScheduleBookingModal({
   const [customers,             setCustomers]             = useState<ApiCustomer[]>([]);
   const [customersLoading,      setCustomersLoading]      = useState(false);
   const [customerQuery,         setCustomerQuery]         = useState('');
+  const [showCreateCustomer,    setShowCreateCustomer]    = useState(false);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -400,7 +414,14 @@ export function TherapistScheduleBookingModal({
       const qs = customerQuery ? `search=${encodeURIComponent(customerQuery)}` : '';
       fetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: { Authorization: authHeader } })
         .then(r => r.json())
-        .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setCustomers(list); })
+        .then(d => {
+          const rawList = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+          const list = rawList.map((item: any, idx: number) => ({
+            ...item,
+            id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
+          }));
+          setCustomers(list);
+        })
         .catch(() => setCustomers([]))
         .finally(() => setCustomersLoading(false));
     }, 300);
@@ -417,11 +438,25 @@ export function TherapistScheduleBookingModal({
   };
   const clearTherapist  = () => setForm(p => ({ ...p, therapistId: '', therapistSearch: '' }));
   const selectCustomer  = (c: ApiCustomer) => {
+    const id = String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? '');
     const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
-    setForm(p => ({ ...p, customerId: c.id, customerSearch: name }));
+    setForm(p => ({ ...p, customerId: id, customerSearch: name }));
     setSubmitError(null);
   };
   const clearCustomer   = () => setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+  const handleCustomerCreated = (created: CreatedCustomer) => {
+    const asApiCustomer: ApiCustomer = {
+      id:           created.id,
+      first_name:   created.first_name ?? '',
+      last_name:    created.last_name  ?? '',
+      full_name:    created.full_name,
+      phone_number: created.phone_number,
+      email:        created.email,
+      avatar:       created.avatar,
+    };
+    setCustomers(prev => [asApiCustomer, ...prev.filter(c => c.id !== created.id)]);
+    selectCustomer(asApiCustomer);
+  };
   const toggleAddon     = (id: string) =>
     setForm(p => ({ ...p, addonIds: p.addonIds.includes(id) ? p.addonIds.filter(x => x !== id) : [...p.addonIds, id] }));
   const toggleArrAddon  = (id: string) =>
@@ -629,18 +664,19 @@ export function TherapistScheduleBookingModal({
     : therapistName;
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-2xl h-[88vh] flex flex-col rounded-3xl border border-violet-200/30 dark:border-violet-800/30 bg-card shadow-2xl overflow-hidden">
+      <div className="relative z-10 w-full max-w-2xl h-[88vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
 
         {/* Accent bar */}
-        <div className="h-1.5 w-full bg-gradient-to-r from-violet-500 via-indigo-500 to-purple-500 shrink-0" />
+        <div className="h-1.5 w-full bg-gradient-to-r from-primary to-accent shrink-0" />
 
         {/* Top header */}
         <div className="shrink-0 flex items-center justify-between gap-4 border-b border-border/40 px-6 pt-4 pb-3">
           <div className="flex items-center gap-2">
-            <CalendarCheck className="h-4 w-4 text-violet-500" />
-            <p className="text-[11px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400">
+            <CalendarCheck className="h-4 w-4 text-primary" />
+            <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
               New Therapist Schedule Booking
             </p>
             {step < 3 && (
@@ -648,7 +684,7 @@ export function TherapistScheduleBookingModal({
                 {([1, 2] as const).map((n) => (
                   <span key={n} className={cn(
                     'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
-                    step === n ? 'bg-violet-500 text-white shadow-sm'
+                    step === n ? 'bg-primary text-white shadow-sm'
                       : step > n ? 'bg-emerald-500 text-white'
                       : 'bg-muted text-muted-foreground',
                   )}>
@@ -675,16 +711,16 @@ export function TherapistScheduleBookingModal({
 
         {/* Sub-header */}
         <div className="shrink-0 border-b border-border/40 bg-muted/20">
-          <div className="flex items-stretch divide-x divide-border/40">
+          <div className="flex items-stretch divide-x border-border/40">
 
             {/* Therapist portrait */}
             <div className="flex flex-col items-center justify-center gap-2 px-5 py-4 w-[32%] shrink-0">
               <div className="relative">
-                <div className="absolute -inset-1.5 rounded-full opacity-20 blur-xl bg-gradient-to-br from-violet-400 to-indigo-500" />
-                <div className="relative h-[64px] w-[64px] rounded-full ring-2 ring-violet-400/40 shadow-xl overflow-hidden">
+                <div className="absolute -inset-1.5 rounded-full opacity-20 blur-xl bg-primary/30" />
+                <div className="relative h-[64px] w-[64px] rounded-full ring-2 ring-primary/40 shadow-xl overflow-hidden">
                   {activeThImg
                     ? <img src={activeThImg} alt={activeThDisplayName} className="h-full w-full object-cover" />
-                    : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-violet-500 to-indigo-600 text-white text-lg font-black">
+                    : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-lg font-black">
                         {activeThDisplayName.slice(0, 2).toUpperCase()}
                       </div>
                   }
@@ -697,8 +733,8 @@ export function TherapistScheduleBookingModal({
                 <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[110px]">
                   {activeThDisplayName}
                 </p>
-                <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-violet-500 inline-block" />
+                <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block" />
                   Therapist
                 </span>
               </div>
@@ -706,8 +742,8 @@ export function TherapistScheduleBookingModal({
 
             {/* Branch */}
             <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-4 w-[28%] shrink-0">
-              <div className="h-[48px] w-[48px] rounded-2xl grid place-items-center bg-gradient-to-br from-indigo-400/20 to-violet-400/20 border border-indigo-200/40 dark:border-indigo-800/30">
-                <CalendarDays className="h-5 w-5 text-indigo-500 dark:text-indigo-400" />
+              <div className="h-[48px] w-[48px] rounded-2xl grid place-items-center bg-gradient-to-br from-primary/10 to-accent/10 border border-primary/20">
+                <CalendarDays className="h-5 w-5 text-primary" />
               </div>
               <div className="text-center">
                 <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[100px]">
@@ -723,7 +759,7 @@ export function TherapistScheduleBookingModal({
             {/* Date + time */}
             <div className="flex items-center justify-end gap-3.5 px-4 py-4 flex-1 min-w-0">
               <div className="flex flex-col items-center justify-center w-[60px] h-[72px] rounded-2xl shrink-0 shadow-lg"
-                style={{ background: 'linear-gradient(160deg, #3730a3 0%, #4c1d95 100%)' }}>
+                style={{ background: 'linear-gradient(160deg, #3b2f2f 0%, #4a3728 100%)' }}>
                 <p className="text-[11px] font-semibold text-white/70 uppercase tracking-widest leading-none mb-1">{dayName}</p>
                 <p className="text-[30px] font-black text-white leading-none">{dayNum}</p>
               </div>
@@ -732,17 +768,17 @@ export function TherapistScheduleBookingModal({
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Date</p>
                   <p className="text-sm font-extrabold text-foreground leading-tight">{monthFull} {dayNum}, {yearFull}</p>
                 </div>
-                <div className="inline-flex items-center gap-2 rounded-xl border border-violet-200/60 dark:border-violet-800/40 bg-violet-50 dark:bg-violet-950/30 px-3 py-1.5 w-fit">
-                  <div className="grid h-5 w-5 place-items-center rounded-lg bg-violet-500/15 text-violet-600 dark:text-violet-400 shrink-0">
+                <div className="inline-flex items-center gap-2 rounded-xl border border-primary/20 bg-primary/5 px-3 py-1.5 w-fit">
+                  <div className="grid h-5 w-5 place-items-center rounded-lg bg-primary/15 text-primary shrink-0">
                     <Clock className="h-3 w-3" />
                   </div>
                   <div>
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-violet-500/70 leading-none">Time Slot</p>
-                    <p className="text-xs font-extrabold text-violet-700 dark:text-violet-300 leading-tight">{timeSlot}</p>
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-primary/70 leading-none">Time Slot</p>
+                    <p className="text-xs font-extrabold text-primary leading-tight">{timeSlot}</p>
                   </div>
                   {totalDuration > 0 && (
                     <>
-                      <span className="text-violet-300/60 text-xs">·</span>
+                      <span className="text-primary/40 text-xs">·</span>
                       <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
                         <Timer className="h-3 w-3" />{totalDuration}m
                       </span>
@@ -763,7 +799,7 @@ export function TherapistScheduleBookingModal({
               <div className="px-6 py-5 space-y-5">
                 <div>
                   <div className="flex items-center gap-2 mb-2">
-                    <Scissors className="h-4 w-4 text-violet-500" />
+                    <Scissors className="h-4 w-4 text-primary" />
                     <p className="text-sm font-extrabold">Select Service</p>
                     {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                   </div>
@@ -773,8 +809,8 @@ export function TherapistScheduleBookingModal({
                     placeholder={servicesLoading ? 'Loading services…' : 'Search services…'}
                     loading={servicesLoading}
                     items={filteredServices}
-                    getKey={(s) => s.id}
-                    isSelected={(s) => s.id === form.serviceId}
+                    getKey={(s, idx) => String(s.id ?? (s as any).service_id ?? (s as any).pk ?? idx)}
+                    isSelected={(s) => String(s.id ?? '') === form.serviceId}
                     selectedItem={selectedService}
                     icon={Scissors}
                     onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q, serviceId: '' }))}
@@ -782,7 +818,7 @@ export function TherapistScheduleBookingModal({
                     onClear={clearService}
                     renderItem={(s) => (
                       <div className="flex items-start gap-3 px-4 py-3">
-                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-violet-500/10 text-violet-500">
+                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
                           <Scissors className="h-3.5 w-3.5" />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -793,7 +829,7 @@ export function TherapistScheduleBookingModal({
                           </p>
                         </div>
                         {(s.arrangement_price ?? s.base_price) && (
-                          <p className="shrink-0 text-sm font-bold text-violet-600 dark:text-violet-400 mt-0.5">
+                          <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
                             {fmt(s.arrangement_price ?? s.base_price)} KWD
                           </p>
                         )}
@@ -802,16 +838,16 @@ export function TherapistScheduleBookingModal({
                     )}
                   />
                   {selectedService && (
-                    <div className="mt-2 flex items-center gap-3 rounded-xl border border-violet-500/20 bg-violet-500/5 px-3 py-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+                    <div className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-violet-600 dark:text-violet-400 truncate">{selectedService.name}</p>
+                        <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
                         <p className="text-[10px] text-muted-foreground">
                           {selectedService.duration_minutes && <span>{selectedService.duration_minutes} min</span>}
                           {selectedService.category && <span> · {selectedService.category}</span>}
                         </p>
                       </div>
-                      <p className="shrink-0 text-sm font-extrabold text-violet-600 dark:text-violet-400">
+                      <p className="shrink-0 text-sm font-extrabold text-primary">
                         {fmt(selectedService.arrangement_price ?? selectedService.base_price)} KWD
                       </p>
                     </div>
@@ -838,7 +874,7 @@ export function TherapistScheduleBookingModal({
                           className={cn(
                             'flex flex-col items-center rounded-xl border py-2.5 text-center transition',
                             form.extraMinutes === mins
-                              ? 'border-violet-500/50 bg-violet-500/10 text-violet-600 dark:text-violet-400 shadow-sm'
+                              ? 'border-primary/50 bg-primary/10 text-primary shadow-sm'
                               : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40',
                           )}>
                           <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins}`}</p>
@@ -1044,15 +1080,15 @@ export function TherapistScheduleBookingModal({
                       return (
                         <label key={addon.id} className={cn(
                           'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
-                          checked ? 'border-violet-500/40 bg-violet-500/5 text-violet-600 dark:text-violet-400'
+                          checked ? 'border-primary/40 bg-primary/5 text-primary'
                             : 'border-border bg-muted/20 hover:bg-muted/40',
                         )}>
                           <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
-                            className="mt-0.5 h-3.5 w-3.5 accent-violet-500 shrink-0" />
+                            className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0" />
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold leading-tight">{addon.name}</p>
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              {addon.price && <span className="text-[10px] font-bold text-violet-600 dark:text-violet-400">+{fmt(addon.price)} KWD</span>}
+                              {addon.price && <span className="text-[10px] font-bold text-primary">+{fmt(addon.price)} KWD</span>}
                               {addon.duration_minutes && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Timer className="h-2.5 w-2.5" />+{addon.duration_minutes}m</span>}
                             </div>
                           </div>
@@ -1081,17 +1117,28 @@ export function TherapistScheduleBookingModal({
                 {/* Customer */}
                 <div>
                   <div className="flex items-center gap-2 mb-3">
-                    <User className="h-4 w-4 text-violet-500" />
+                    <User className="h-4 w-4 text-primary" />
                     <p className="text-sm font-extrabold">Customer</p>
                   </div>
-                  <FLabel>Search & Select Customer *</FLabel>
+                  <div className="flex items-center justify-between mb-1">
+                    <FLabel>Search &amp; Select Customer *</FLabel>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateCustomer(true)}
+                      title="Create new customer"
+                      className="flex items-center gap-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 text-[11px] font-bold text-primary transition cursor-pointer"
+                    >
+                      <UserPlus className="h-3 w-3" />
+                      New
+                    </button>
+                  </div>
                   <SearchDrop<ApiCustomer>
                     value={form.customerSearch}
                     placeholder="Search by name or phone…"
                     loading={customersLoading}
                     items={customers}
-                    getKey={(c) => c.id}
-                    isSelected={(c) => c.id === form.customerId}
+                    getKey={(c, idx) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? idx)}
+                    isSelected={(c) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === form.customerId}
                     selectedItem={selectedCustomer}
                     icon={User}
                     onSearch={(q) => { setCustomerQuery(q); setForm(p => ({ ...p, customerSearch: q, customerId: '' })); }}
@@ -1103,7 +1150,7 @@ export function TherapistScheduleBookingModal({
                         <div className="flex items-center gap-3 px-4 py-2.5">
                           <div className="h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
                             {c.avatar ? <img src={c.avatar} alt={name} className="h-full w-full object-cover" />
-                              : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-violet-400 to-purple-600 text-white text-xs font-bold">{name.slice(0, 2).toUpperCase()}</div>}
+                              : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-xs font-bold">{name.slice(0, 2).toUpperCase()}</div>}
                           </div>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-semibold truncate">{name}</p>
@@ -1112,7 +1159,7 @@ export function TherapistScheduleBookingModal({
                               {c.email && <span className="flex items-center gap-0.5 truncate"><Mail className="h-2.5 w-2.5" /> {c.email}</span>}
                             </div>
                           </div>
-                          {c.id === form.customerId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
+                          {String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === form.customerId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />}
                         </div>
                       );
                     }}
@@ -1139,7 +1186,7 @@ export function TherapistScheduleBookingModal({
                     onChange={(e) => setForm(p => ({ ...p, notes: e.target.value }))}
                     placeholder="Any special instructions or notes…"
                     rows={3}
-                    className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 placeholder:text-muted-foreground/50 resize-none"
+                    className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50 resize-none"
                   />
                 </div>
               </div>
@@ -1169,13 +1216,13 @@ export function TherapistScheduleBookingModal({
                   {/* ── Service & Arrangement ── */}
                   <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
                     <div className="flex items-start gap-3 px-4 py-3">
-                      <Scissors className="h-3.5 w-3.5 mt-0.5 shrink-0 text-violet-500" />
+                      <Scissors className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
                       <div className="min-w-0 flex-1">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
                         <p className="text-sm font-semibold truncate">{sName}</p>
                         {selectedService?.category && <p className="text-[11px] text-muted-foreground">{selectedService.category}</p>}
                       </div>
-                      <p className="shrink-0 text-sm font-extrabold text-violet-600 dark:text-violet-400">{fmt(servicePrice)} KWD</p>
+                      <p className="shrink-0 text-sm font-extrabold text-primary">{fmt(servicePrice)} KWD</p>
                     </div>
 
                     {form.arrangementId && (
@@ -1205,13 +1252,13 @@ export function TherapistScheduleBookingModal({
 
                     {allSelectedAddons.length > 0 && (
                       <div className="flex items-start gap-3 px-4 py-3">
-                        <Package className="h-3.5 w-3.5 mt-0.5 shrink-0 text-violet-400" />
+                        <Package className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary/70" />
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Add-ons</p>
                           {allSelectedAddons.map(a => (
                             <div key={a.id} className="flex items-center justify-between">
                               <p className="text-[11px] font-medium truncate">{a.name}</p>
-                              {a.price && <p className="text-[11px] font-bold text-violet-500 shrink-0 ml-2">+{fmt(a.price)} KWD</p>}
+                              {a.price && <p className="text-[11px] font-bold text-primary shrink-0 ml-2">+{fmt(a.price)} KWD</p>}
                             </div>
                           ))}
                         </div>
@@ -1222,8 +1269,8 @@ export function TherapistScheduleBookingModal({
                   {/* ── Therapist & Customer ── */}
                   <div className="grid grid-cols-2 gap-3">
                     {[
-                      { label: 'Therapist', name: tName, img: snapTherapistImg, grad: 'from-violet-500 to-indigo-600' },
-                      { label: 'Customer',  name: cName, img: snapCustomerImg,  grad: 'from-violet-400 to-purple-600' },
+                      { label: 'Therapist', name: tName, img: snapTherapistImg, grad: 'from-primary/80 to-accent' },
+                      { label: 'Customer',  name: cName, img: snapCustomerImg,  grad: 'from-primary/70 to-accent' },
                     ].map(({ label, name, img, grad }) => (
                       <div key={label} className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3 flex items-center gap-3">
                         <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
@@ -1243,7 +1290,7 @@ export function TherapistScheduleBookingModal({
 
                   {/* ── Date / Time / Total ── */}
                   <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-                    <CalendarDays className="h-4 w-4 shrink-0 text-violet-500" />
+                    <CalendarDays className="h-4 w-4 shrink-0 text-primary" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold">{date}</p>
                       <p className="text-[11px] text-muted-foreground">{timeSlot} · {totalDuration} min total</p>
@@ -1252,8 +1299,8 @@ export function TherapistScheduleBookingModal({
                       {addonTotal > 0 && (
                         <p className="text-[10px] text-muted-foreground">Service: {fmt(servicePrice)} + Add-ons: {fmt(addonTotal)}</p>
                       )}
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400">Total</p>
-                      <p className="text-base font-black text-violet-600 dark:text-violet-400 leading-none">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
+                      <p className="text-base font-black text-primary leading-none">
                         {fmt(totalPrice)} <span className="text-[10px] font-semibold">KWD</span>
                       </p>
                     </div>
@@ -1296,7 +1343,7 @@ export function TherapistScheduleBookingModal({
                   <div className="w-px self-stretch bg-border/60 mx-3" />
                   <div className="flex flex-col min-w-0 flex-1">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Package className="h-2.5 w-2.5" />Add-ons</p>
-                    <p className="text-xs font-semibold text-violet-600 dark:text-violet-400">+{fmt(addonTotal)} KWD</p>
+                    <p className="text-xs font-semibold text-primary">+{fmt(addonTotal)} KWD</p>
                     <p className="text-[10px] text-muted-foreground">{form.addonIds.length} selected</p>
                   </div>
                 </>)}
@@ -1304,14 +1351,14 @@ export function TherapistScheduleBookingModal({
                   <div className="w-px self-stretch bg-border/60 mx-3" />
                   <div className="flex flex-col min-w-0 flex-1">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Timer className="h-2.5 w-2.5" />Extra</p>
-                    <p className="text-xs font-semibold text-violet-600 dark:text-violet-400">+{fmt(extraMinutesPrice)} KWD</p>
+                    <p className="text-xs font-semibold text-primary">+{fmt(extraMinutesPrice)} KWD</p>
                     <p className="text-[10px] text-muted-foreground">+{form.extraMinutes} min</p>
                   </div>
                 </>)}
                 <div className="w-px self-stretch bg-border/60 mx-3" />
                 <div className="flex flex-col items-end shrink-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400">Total</p>
-                  <p className="text-lg font-black text-violet-600 dark:text-violet-400 leading-none">{fmt(totalPrice)}</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
+                  <p className="text-lg font-black text-primary leading-none">{fmt(totalPrice)}</p>
                   <p className="text-[10px] font-semibold text-muted-foreground">KWD</p>
                 </div>
               </div>
@@ -1330,7 +1377,7 @@ export function TherapistScheduleBookingModal({
                   Cancel
                 </button>
                 <button type="button" onClick={goNext}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-violet-700 transition">
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
                   Next: Customer <ChevronRight className="h-4 w-4" />
                 </button>
               </>)}
@@ -1340,7 +1387,7 @@ export function TherapistScheduleBookingModal({
                   <ChevronLeft className="h-4 w-4" /> Back
                 </button>
                 <button type="submit" form="ts-booking-form" disabled={submitting}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-violet-700 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                   {submitting ? 'Creating…' : 'Confirm Booking'}
                 </button>
@@ -1361,6 +1408,16 @@ export function TherapistScheduleBookingModal({
         </div>
       </div>
     </div>
+
+      {/* ── Quick-add new customer ── */}
+      {showCreateCustomer && (
+        <CreateCustomerModal
+          authHeader={authHeader}
+          onCreated={handleCustomerCreated}
+          onClose={() => setShowCreateCustomer(false)}
+        />
+      )}
+    </>
   );
 }
 

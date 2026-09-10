@@ -9,9 +9,10 @@ import {
   Store, CalendarDays, CheckCircle2, Clock, AlertCircle, X, Layers,
   Timer, Loader2, Crown, Heart, Sparkles, LayoutGrid,
   Scissors, Package, User, Phone, Mail, DollarSign, FileText,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
 // ── Exported types ─────────────────────────────────────────────────────────────
 
@@ -132,7 +133,7 @@ interface SearchDropdownProps<T> {
   placeholder: string;
   loading?: boolean;
   items: T[];
-  getKey: (item: T) => string;
+  getKey?: (item: T, index?: number) => string | number;
   isSelected: (item: T) => boolean;
   selectedItem?: T | null;
   icon?: React.ElementType;
@@ -194,21 +195,33 @@ function BSearchDropdown<T>({
         <div className="absolute top-full left-0 right-0 z-50 mt-1.5 max-h-52 overflow-y-auto rounded-2xl border border-border bg-card shadow-2xl">
           {items.length === 0 ? (
             <p className="px-4 py-3 text-sm text-muted-foreground italic">
-              {loading ? 'Loading\u2026' : 'No results'}
+              {loading ? 'Loading…' : 'No results'}
             </p>
           ) : (
-            items.map((item) => (
-              <div
-                key={getKey(item)}
-                onClick={() => { onSelect(item); setOpen(false); }}
-                className={cn(
-                  'cursor-pointer transition hover:bg-muted/60',
-                  isSelected(item) && 'bg-primary/5',
-                )}
-              >
-                {renderItem(item)}
-              </div>
-            ))
+            (() => {
+              const seenKeys = new Set<string>();
+              return items.map((item, index) => {
+                const keyCandidate = getKey ? getKey(item, index) : undefined;
+                const rawKey = keyCandidate ?? (item as Record<string, unknown>)?.id ?? (item as Record<string, unknown>)?.pk ?? (item as Record<string, unknown>)?.uuid;
+                let itemKey = (rawKey != null && rawKey !== '') ? String(rawKey) : `bsearch-item-${index}`;
+                if (seenKeys.has(itemKey)) {
+                  itemKey = `${itemKey}-${index}`;
+                }
+                seenKeys.add(itemKey);
+                return (
+                  <div
+                    key={itemKey}
+                    onClick={() => { onSelect(item); setOpen(false); }}
+                    className={cn(
+                      'cursor-pointer transition hover:bg-muted/60',
+                      isSelected(item) && 'bg-primary/5',
+                    )}
+                  >
+                    {renderItem(item)}
+                  </div>
+                );
+              });
+            })()
           )}
         </div>
       )}
@@ -269,6 +282,7 @@ export function NewBranchBookingModal({
   const [customers,        setCustomers]        = useState<ApiCustomer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customerQuery,    setCustomerQuery]    = useState('');
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
 
   const authHeader = `Bearer ${token}`;
 
@@ -368,7 +382,14 @@ export function NewBranchBookingModal({
       const qs = customerQuery ? `search=${encodeURIComponent(customerQuery)}` : '';
       fetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: { Authorization: authHeader } })
         .then(r => r.json())
-        .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setCustomers(list); })
+        .then(d => {
+          const rawList = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+          const list = rawList.map((item: any, idx: number) => ({
+            ...item,
+            id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
+          }));
+          setCustomers(list);
+        })
         .catch(() => setCustomers([]))
         .finally(() => setCustomersLoading(false));
     }, 300);
@@ -392,6 +413,19 @@ export function NewBranchBookingModal({
     setSubmitError(null);
   };
   const clearCustomer   = () => setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+  const handleCustomerCreated = (created: CreatedCustomer) => {
+    const asApiCustomer: ApiCustomer = {
+      id:           created.id,
+      first_name:   created.first_name ?? '',
+      last_name:    created.last_name  ?? '',
+      full_name:    created.full_name,
+      phone_number: created.phone_number,
+      email:        created.email,
+      avatar:       created.avatar,
+    };
+    setCustomers(prev => [asApiCustomer, ...prev.filter(c => c.id !== created.id)]);
+    selectCustomer(asApiCustomer);
+  };
 
   const goNext = () => {
     if (!form.serviceId) { setSubmitError('Please select a service.'); return; }
@@ -545,6 +579,7 @@ export function NewBranchBookingModal({
   const isDirect  = !arrangement.id;
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
       <div className="relative z-10 w-full max-w-2xl h-[88vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
@@ -697,8 +732,8 @@ export function NewBranchBookingModal({
                     placeholder={servicesLoading ? 'Loading services\u2026' : 'Search services\u2026'}
                     loading={servicesLoading}
                     items={filteredServices}
-                    getKey={(s) => s.id}
-                    isSelected={(s) => s.id === form.serviceId}
+                    getKey={(s, idx) => String(s.id ?? (s as any).service_id ?? (s as any).pk ?? idx)}
+                    isSelected={(s) => String(s.id ?? '') === form.serviceId}
                     selectedItem={selectedService}
                     icon={Scissors}
                     onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q, serviceId: '' }))}
@@ -838,8 +873,8 @@ export function NewBranchBookingModal({
                     }
                     loading={therapistsLoading}
                     items={filteredTherapists}
-                    getKey={(t) => t.id}
-                    isSelected={(t) => t.id === form.therapistId}
+                    getKey={(t, idx) => String(t.id ?? (t as any).therapist_id ?? (t as any).pk ?? idx)}
+                    isSelected={(t) => String(t.id ?? '') === form.therapistId}
                     selectedItem={selectedTherapist}
                     icon={User}
                     onSearch={(q) => setForm(p => ({ ...p, therapistSearch: q, therapistId: '' }))}
@@ -879,14 +914,25 @@ export function NewBranchBookingModal({
                     <User className="h-4 w-4 text-primary" />
                     <p className="text-sm font-extrabold">Customer</p>
                   </div>
-                  <BFormLabel>Search &amp; Select Customer *</BFormLabel>
+                  <div className="flex items-center justify-between mb-1">
+                    <BFormLabel>Search &amp; Select Customer *</BFormLabel>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateCustomer(true)}
+                      title="Create new customer"
+                      className="flex items-center gap-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 text-[11px] font-bold text-primary transition cursor-pointer"
+                    >
+                      <UserPlus className="h-3 w-3" />
+                      New
+                    </button>
+                  </div>
                   <BSearchDropdown<ApiCustomer>
                     value={form.customerSearch}
                     placeholder="Search by name or phone\u2026"
                     loading={customersLoading}
                     items={customers}
-                    getKey={(c) => c.id}
-                    isSelected={(c) => c.id === form.customerId}
+                    getKey={(c, idx) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? idx)}
+                    isSelected={(c) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === form.customerId}
                     selectedItem={selectedCustomer}
                     icon={User}
                     onSearch={(q) => { setCustomerQuery(q); setForm(p => ({ ...p, customerSearch: q, customerId: '' })); }}
@@ -1103,5 +1149,15 @@ export function NewBranchBookingModal({
         </div>
       </div>
     </div>
+
+      {/* ── Quick-add new customer ── */}
+      {showCreateCustomer && (
+        <CreateCustomerModal
+          authHeader={authHeader}
+          onCreated={handleCustomerCreated}
+          onClose={() => setShowCreateCustomer(false)}
+        />
+      )}
+    </>
   );
 }

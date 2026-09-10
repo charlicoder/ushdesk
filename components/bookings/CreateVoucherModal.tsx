@@ -12,9 +12,10 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   X, Search, Loader2, ChevronDown, Check, Gift,
   MapPin, Scissors, Package, Timer, User, MessageSquare,
-  Sparkles, ChevronRight, ChevronLeft, AlertCircle,
+  Sparkles, ChevronRight, ChevronLeft, AlertCircle, UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
 const B = {
@@ -413,6 +414,7 @@ function CustomerPicker({
   customers,
   loading,
   excludeId,
+  onCreateNew,
 }: {
   label: string;
   value: Customer | null;
@@ -420,6 +422,7 @@ function CustomerPicker({
   customers: Customer[];
   loading: boolean;
   excludeId?: string;
+  onCreateNew?: () => void;
 }) {
   const [open,   setOpen]   = useState(false);
   const [search, setSearch] = useState('');
@@ -489,6 +492,18 @@ function CustomerPicker({
         {loading
           ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: B.textMuted }} />
           : <ChevronDown className="h-4 w-4 shrink-0" style={{ color: B.textMuted }} />}
+        {onCreateNew && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onCreateNew(); }}
+            title="Create new customer"
+            className="flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold transition hover:opacity-80 cursor-pointer"
+            style={{ background: B.blush, color: B.espresso }}
+          >
+            <UserPlus className="h-3 w-3" />
+            New
+          </button>
+        )}
       </button>
 
       {/* Dropdown list */}
@@ -687,6 +702,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [recipient,        setRecipient]        = useState<Customer | null>(null);
   const [giftMessage,      setGiftMessage]      = useState('');
   const [giftTemplate,     setGiftTemplate]     = useState(GIFT_TEMPLATES[0]);
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
+  const [createForRole,      setCreateForRole]      = useState<'sender' | 'recipient'>('sender');
 
   // Totals
   const currency     = fullDetail?.currency ?? selectedService?.currency ?? 'KWD';
@@ -790,6 +807,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
   // ────────────────────────────────────────────────────────────────────────────
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
@@ -997,10 +1015,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
           {step === 2 && (
             <>
               <CustomerPicker label="Sender (From)" value={sender} onSelect={setSender}
-                customers={customers} loading={customersLoading} excludeId={recipient?.id} />
+                customers={customers} loading={customersLoading} excludeId={recipient?.id}
+                onCreateNew={() => { setCreateForRole('sender'); setShowCreateCustomer(true); }} />
 
               <CustomerPicker label="Recipient (To)" value={recipient} onSelect={setRecipient}
-                customers={customers} loading={customersLoading} excludeId={sender?.id} />
+                customers={customers} loading={customersLoading} excludeId={sender?.id}
+                onCreateNew={() => { setCreateForRole('recipient'); setShowCreateCustomer(true); }} />
 
               {/* Gift message */}
               <div>
@@ -1135,5 +1155,27 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         </div>
       </div>
     </div>
+
+      {/* ── Quick-add new customer ── */}
+      {showCreateCustomer && (
+        <CreateCustomerModal
+          authHeader={authHeader}
+          onCreated={(created: CreatedCustomer) => {
+            const asCustomer: Customer = {
+              id:           created.id,
+              first_name:   created.first_name ?? '',
+              last_name:    created.last_name  ?? '',
+              phone_number: created.phone_number,
+              email:        created.email,
+              avatar:       created.avatar as string | undefined,
+            };
+            setCustomers(prev => [asCustomer, ...prev.filter(c => c.id !== created.id)]);
+            if (createForRole === 'sender')    setSender(asCustomer);
+            if (createForRole === 'recipient') setRecipient(asCustomer);
+          }}
+          onClose={() => setShowCreateCustomer(false)}
+        />
+      )}
+    </>
   );
 }
