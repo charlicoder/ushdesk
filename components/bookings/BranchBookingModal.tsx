@@ -12,6 +12,7 @@ import {
   ChevronLeft, ChevronRight, UserPlus,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
 // ── Exported types ─────────────────────────────────────────────────────────────
@@ -169,16 +170,16 @@ function BSearchDropdown<T>({
           </div>
         )}
         <input
-          value={isItemSelected ? '' : value}
+          value={isItemSelected ? (value || '— selected —') : value}
           onChange={(e) => { onSearch(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          placeholder={isItemSelected ? '— selected —' : placeholder}
+          onFocus={() => { if (!isItemSelected) setOpen(true); }}
+          placeholder={isItemSelected ? (value || '— selected —') : placeholder}
           readOnly={isItemSelected}
           className={cn(
             'h-10 w-full rounded-xl border border-border bg-muted/30 pr-8 text-sm outline-none transition',
             'focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50',
             Icon ? 'pl-9' : 'pl-3',
-            isItemSelected && 'text-muted-foreground/50 cursor-default',
+            isItemSelected ? 'font-medium text-foreground cursor-default bg-emerald-500/5 border-emerald-500/30' : '',
           )}
         />
         {loading && (
@@ -284,7 +285,9 @@ export function NewBranchBookingModal({
   const [customerQuery,    setCustomerQuery]    = useState('');
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
 
-  const authHeader = `Bearer ${token}`;
+  const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
+  const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
+  const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
   // Load services — all services when no arrangement, arrangement-specific otherwise
   useEffect(() => {
@@ -292,7 +295,7 @@ export function NewBranchBookingModal({
     const url = arrangement.id
       ? `/api/v1/service-arrangements/${arrangement.id}/services`
       : `/api/v1/services/`;
-    fetch(url, { headers: { Authorization: authHeader } })
+    authedFetch(url, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setServices(list); })
       .catch(() => setServices([]))
@@ -303,7 +306,7 @@ export function NewBranchBookingModal({
   useEffect(() => {
     if (!arrangement.id) { setGlobalAddons([]); setAddonsLoading(false); return; }
     setAddonsLoading(true);
-    fetch(`/api/v1/service-arrangements/${arrangement.id}/addons`, { headers: { Authorization: authHeader } })
+    authedFetch(`/api/v1/service-arrangements/${arrangement.id}/addons`, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d) ? d : (d.addons ?? d.data ?? d.results ?? []); setGlobalAddons(list); })
       .catch(() => setGlobalAddons([]))
@@ -322,7 +325,10 @@ export function NewBranchBookingModal({
 
   const selectedService   = useMemo(() => services.find(s => s.id === form.serviceId) ?? null, [services, form.serviceId]);
   const selectedTherapist = useMemo(() => therapists.find(t => t.id === form.therapistId) ?? null, [therapists, form.therapistId]);
-  const selectedCustomer  = useMemo(() => customers.find(c => c.id === form.customerId) ?? null, [customers, form.customerId]);
+  const selectedCustomer  = useMemo(() => {
+    if (!form.customerId) return null;
+    return customers.find(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId)) ?? null;
+  }, [customers, form.customerId]);
 
   const filteredServices = useMemo(() =>
     form.serviceSearch ? services.filter(s => s.name.toLowerCase().includes(form.serviceSearch.toLowerCase())) : services,
@@ -367,7 +373,7 @@ export function NewBranchBookingModal({
       appointment_start:      toHHMM(timeSlot),
       duration:               String(totalDuration > 0 ? totalDuration : (selectedService?.duration_minutes ?? 60)),
     });
-    fetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, { headers: { Authorization: authHeader } })
+    authedFetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setTherapists(list); })
       .catch(() => setTherapists([]))
@@ -380,7 +386,7 @@ export function NewBranchBookingModal({
     setCustomersLoading(true);
     const t = setTimeout(() => {
       const qs = customerQuery ? `search=${encodeURIComponent(customerQuery)}` : '';
-      fetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: { Authorization: authHeader } })
+      authedFetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
         .then(r => r.json())
         .then(d => {
           const rawList = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
@@ -388,13 +394,21 @@ export function NewBranchBookingModal({
             ...item,
             id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
           }));
-          setCustomers(list);
+          setCustomers(prev => {
+            if (form.customerId) {
+              const currentSelected = prev.find(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId));
+              if (currentSelected && !list.some((c: any) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId))) {
+                return [currentSelected, ...list];
+              }
+            }
+            return list;
+          });
         })
         .catch(() => setCustomers([]))
         .finally(() => setCustomersLoading(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [customerQuery, authHeader]);
+  }, [customerQuery, authHeader, form.customerId]);
 
   const toggleAddon     = (id: string) =>
     setForm(p => ({ ...p, addonIds: p.addonIds.includes(id) ? p.addonIds.filter(x => x !== id) : [...p.addonIds, id] }));
@@ -408,22 +422,29 @@ export function NewBranchBookingModal({
   };
   const clearTherapist  = () => setForm(p => ({ ...p, therapistId: '', therapistSearch: '' }));
   const selectCustomer  = (c: ApiCustomer) => {
+    const id = String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? '');
     const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
-    setForm(p => ({ ...p, customerId: c.id, customerSearch: name }));
+    const label = [name, c.phone_number].filter(Boolean).join(' · ') || name;
+    setForm(p => ({ ...p, customerId: id, customerSearch: label }));
     setSubmitError(null);
   };
-  const clearCustomer   = () => setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+  const clearCustomer   = () => {
+    setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+    setCustomerQuery('');
+  };
   const handleCustomerCreated = (created: CreatedCustomer) => {
+    const id = String(created.id);
+    const fullName = created.full_name || [created.first_name, created.last_name].filter(Boolean).join(' ');
     const asApiCustomer: ApiCustomer = {
-      id:           created.id,
+      id,
       first_name:   created.first_name ?? '',
       last_name:    created.last_name  ?? '',
-      full_name:    created.full_name,
+      full_name:    fullName,
       phone_number: created.phone_number,
       email:        created.email,
       avatar:       created.avatar,
     };
-    setCustomers(prev => [asApiCustomer, ...prev.filter(c => c.id !== created.id)]);
+    setCustomers(prev => [asApiCustomer, ...prev.filter(c => String(c.id ?? (c as any).customer_id ?? '') !== id)]);
     selectCustomer(asApiCustomer);
   };
 
@@ -489,7 +510,7 @@ export function NewBranchBookingModal({
       } : null,
       customerMessage:  '',
       customer_notes:   form.notes,
-      booking_type:     'branch',
+      booking_type:     'branch_service',
       pricing_details: {
         base: fmtPriceB(baseP), base_price: fmtPriceB(baseP),
         arrangement: fmtPriceB(baseP), arrangement_price: fmtPriceB(baseP),
@@ -503,14 +524,31 @@ export function NewBranchBookingModal({
     };
 
     try {
-      const res  = await fetch('/booknpay/api/v1/bookings/', {
+      const res  = await authedFetch('/booknpay/api/v1/bookings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
         body:    JSON.stringify(body),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error((json as Record<string, string>).detail ?? (json as Record<string, string>).message ?? `Error ${res.status}`);
+        const errObj = json as Record<string, unknown>;
+        const errField = errObj.error;
+        const nestedMsg = (errField && typeof errField === 'object')
+          ? ((errField as Record<string, unknown>).message ?? (errField as Record<string, unknown>).detail)
+          : (typeof errField === 'string' ? errField : null);
+        let msg = (errObj.detail ?? errObj.message ?? nestedMsg ?? errObj.non_field_errors);
+        if (!msg) {
+          if (res.status === 401) {
+            msg = 'Authentication failed (401). Your session may have expired. Please log in again.';
+          } else {
+            msg = Object.keys(errObj).length > 0 ? JSON.stringify(errObj) : `Booking failed with status ${res.status}`;
+          }
+        }
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
       }
       const result = (json as Record<string, unknown>).data ?? json;
       const raw    = result as Record<string, unknown>;
@@ -550,13 +588,25 @@ export function NewBranchBookingModal({
     if (!id) { setPaymentLinkError('Booking ID not found in response. Cannot send payment link.'); return; }
     setCreatingPaymentLink(true); setPaymentLinkError(null);
     try {
-      const res  = await fetch(`/booknpay/api/v1/bookings/${id}/status/`, {
+      const res  = await authedFetch(`/booknpay/api/v1/bookings/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
         body:    JSON.stringify({ status: 'confirmed', payment_status: 'pending', reason: 'Payment Link Sent to Customer' }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((json as Record<string, string>).detail ?? `Error ${res.status}`);
+      if (!res.ok) {
+        const errObj = json as Record<string, unknown>;
+        const errField = errObj.error;
+        const nestedMsg = (errField && typeof errField === 'object')
+          ? ((errField as Record<string, unknown>).message ?? (errField as Record<string, unknown>).detail)
+          : (typeof errField === 'string' ? errField : null);
+        const msg = (errObj.detail ?? errObj.message ?? nestedMsg ?? `Error ${res.status}`);
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
       setPaymentLinkSuccess(true);
     } catch (err) {
       setPaymentLinkError(err instanceof Error ? err.message : 'Failed to create payment link');
@@ -962,7 +1012,7 @@ export function NewBranchBookingModal({
                     <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer'} selected
+                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || selectedCustomer.full_name || 'Customer'} selected
                         {selectedCustomer.phone_number && <span className="font-normal text-emerald-600/70"> · {selectedCustomer.phone_number}</span>}
                       </p>
                     </div>

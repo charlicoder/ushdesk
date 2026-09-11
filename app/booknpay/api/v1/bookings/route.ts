@@ -11,8 +11,10 @@ function buildHeaders(authHeader: string): Record<string, string> {
     'Accept':         'application/json',
     'X-USHSPA-TOKEN': APP_TOKEN,
   };
-  const bearer = authHeader.replace('Bearer ', '').trim();
-  if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+  const token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
+  if (token && token !== 'null' && token !== 'undefined') {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   return headers;
 }
 
@@ -27,7 +29,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const upstream = await fetch(url, { headers: buildHeaders(authHeader) });
-    const data = await upstream.json().catch(() => ({}));
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+    }
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';
@@ -49,7 +57,13 @@ export async function POST(req: NextRequest) {
       headers: buildHeaders(authHeader),
       body: JSON.stringify(body),
     });
-    const data = await upstream.json().catch(() => ({}));
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+    }
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';

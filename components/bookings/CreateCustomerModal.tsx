@@ -72,8 +72,32 @@ export async function createCustomerApi(
     throw new Error(msg);
   }
 
-  const data: CreatedCustomer = await res.json();
-  return data;
+  const raw: any = await res.json().catch(() => ({}));
+  const item: any = (raw && typeof raw === 'object' && (raw.data ?? raw.customer ?? raw.result)) || raw;
+  const id = String(
+    item?.id ?? item?.customer_id ?? item?.pk ?? item?.uuid ??
+    raw?.id ?? raw?.customer_id ?? raw?.pk ??
+    Date.now()
+  );
+  const firstName = String(item?.first_name ?? raw?.first_name ?? payload.first_name ?? '').trim();
+  const lastName = String(item?.last_name ?? raw?.last_name ?? payload.last_name ?? '').trim();
+  const fullName = String(item?.full_name ?? raw?.full_name ?? [firstName, lastName].filter(Boolean).join(' ')).trim();
+  const phoneNumber = String(item?.phone_number ?? item?.phone ?? raw?.phone_number ?? raw?.phone ?? payload.phone_number ?? '').trim();
+  const email = (item?.email ?? raw?.email ?? payload.email ?? '').trim();
+  const avatar = item?.avatar ?? raw?.avatar;
+
+  return {
+    ...raw,
+    ...item,
+    id,
+    first_name: firstName,
+    last_name: lastName,
+    full_name: fullName,
+    phone_number: phoneNumber,
+    phone: phoneNumber,
+    email: email || undefined,
+    avatar: avatar || undefined,
+  };
 }
 
 // ── Props ──────────────────────────────────────────────────────────────────────

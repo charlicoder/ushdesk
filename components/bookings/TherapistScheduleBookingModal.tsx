@@ -9,9 +9,11 @@ import {
   Timer, Loader2, Scissors, Package, User, Phone, Mail,
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
+  CreditCard, Hash, Fingerprint, Calendar,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
+import { authedFetch } from '@/lib/authedFetch';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -166,16 +168,16 @@ function SearchDrop<T>({
           </div>
         )}
         <input
-          value={sel ? '' : value}
+          value={sel ? (value || '— selected —') : value}
           onChange={(e) => { onSearch(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          placeholder={sel ? '— selected —' : placeholder}
+          onFocus={() => { if (!sel) setOpen(true); }}
+          placeholder={sel ? (value || '— selected —') : placeholder}
           readOnly={sel}
           className={cn(
             'h-10 w-full rounded-xl border border-border bg-muted/30 pr-8 text-sm outline-none transition',
             'focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50',
             Icon ? 'pl-9' : 'pl-3',
-            sel && 'text-muted-foreground/50 cursor-default',
+            sel ? 'font-medium text-foreground cursor-default bg-emerald-500/5 border-emerald-500/30' : '',
           )}
         />
         {loading && (
@@ -223,7 +225,16 @@ function SearchDrop<T>({
   );
 }
 
-type Step = 1 | 2 | 3;
+type Step = 1 | 2 | 3 | 4;
+
+interface PaymentForm {
+  invoice_id: string;
+  transaction_date: string;
+  total_amount: string;
+  trace_id: string;
+  reference_id: string;
+  received_by: string;
+}
 
 interface Form {
   serviceId: string;
@@ -248,7 +259,9 @@ export function TherapistScheduleBookingModal({
   therapistId, therapistName, therapistPhoto,
   onClose, onSuccess,
 }: TherapistScheduleBookingProps) {
-  const authHeader = `Bearer ${token}`;
+  const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
+  const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
+  const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<Form>({
@@ -262,11 +275,15 @@ export function TherapistScheduleBookingModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [bookingResult,       setBookingResult]       = useState<Record<string, any> | null>(null);
-  const [bookingId,           setBookingId]           = useState('');
-  const [creatingPaymentLink, setCreatingPaymentLink] = useState(false);
-  const [paymentLinkError,    setPaymentLinkError]    = useState<string | null>(null);
-  const [paymentLinkSuccess,  setPaymentLinkSuccess]  = useState(false);
+  const [bookingResult,          setBookingResult]          = useState<Record<string, any> | null>(null);
+  const [bookingId,              setBookingId]              = useState('');
+  const [confirmingPayment,      setConfirmingPayment]      = useState(false);
+  const [confirmPaymentError,    setConfirmPaymentError]    = useState<string | null>(null);
+  const [confirmPaymentSuccess,  setConfirmPaymentSuccess]  = useState(false);
+  const [paymentForm, setPaymentForm] = useState<PaymentForm>({
+    invoice_id: '', transaction_date: '', total_amount: '',
+    trace_id: '', reference_id: '', received_by: '',
+  });
 
   const [snapTherapistName, setSnapTherapistName] = useState('');
   const [snapTherapistImg,  setSnapTherapistImg]  = useState('');
@@ -296,7 +313,7 @@ export function TherapistScheduleBookingModal({
   // Load therapist-specific services
   useEffect(() => {
     setServicesLoading(true);
-    fetch(`/api/v1/therapists/${therapistId}/services/`, { headers: { Authorization: authHeader } })
+    authedFetch(`/api/v1/therapists/${therapistId}/services/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setServices(list); })
       .catch(() => setServices([]))
@@ -308,7 +325,7 @@ export function TherapistScheduleBookingModal({
     if (!form.serviceId || !branchId) { setArrangements([]); return; }
     setArrangementsLoading(true);
     const qs = new URLSearchParams({ branch_id: branchId });
-    fetch(`/api/v1/services/${form.serviceId}/arrangements/?${qs}`, { headers: { Authorization: authHeader } })
+    authedFetch(`/api/v1/services/${form.serviceId}/arrangements/?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setArrangements(list.filter((a: ApiArrangement) => a.is_active !== false)); })
       .catch(() => setArrangements([]))
@@ -323,7 +340,7 @@ export function TherapistScheduleBookingModal({
   useEffect(() => {
     if (!form.arrangementId) { setArrangementAddons([]); return; }
     setArrAddonsLoading(true);
-    fetch(`/api/v1/service-arrangements/${form.arrangementId}/addons/`, { headers: { Authorization: authHeader } })
+    authedFetch(`/api/v1/service-arrangements/${form.arrangementId}/addons/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setArrangementAddons(list); })
       .catch(() => setArrangementAddons([]))
@@ -336,7 +353,10 @@ export function TherapistScheduleBookingModal({
   // Derived pricing (need before therapist effect for duration)
   const selectedService   = useMemo(() => services.find(s => s.id === form.serviceId) ?? null, [services, form.serviceId]);
   const selectedTherapist = useMemo(() => therapists.find(t => t.id === form.therapistId) ?? null, [therapists, form.therapistId]);
-  const selectedCustomer  = useMemo(() => customers.find(c => c.id === form.customerId) ?? null, [customers, form.customerId]);
+  const selectedCustomer  = useMemo(() => {
+    if (!form.customerId) return null;
+    return customers.find(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId)) ?? null;
+  }, [customers, form.customerId]);
 
   const filteredServices   = useMemo(() =>
     form.serviceSearch ? services.filter(s => s.name.toLowerCase().includes(form.serviceSearch.toLowerCase())) : services,
@@ -389,7 +409,7 @@ export function TherapistScheduleBookingModal({
       appointment_start:      toHHMM(timeSlot),
       duration:               String(totalDuration > 0 ? totalDuration : (selectedService?.duration_minutes ?? 60)),
     });
-    fetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, { headers: { Authorization: authHeader } })
+    authedFetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => {
         const list: ApiTherapist[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
@@ -412,7 +432,7 @@ export function TherapistScheduleBookingModal({
     setCustomersLoading(true);
     const t = setTimeout(() => {
       const qs = customerQuery ? `search=${encodeURIComponent(customerQuery)}` : '';
-      fetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: { Authorization: authHeader } })
+      authedFetch(`/api/v1/customers${qs ? '?' + qs : ''}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
         .then(r => r.json())
         .then(d => {
           const rawList = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
@@ -420,13 +440,21 @@ export function TherapistScheduleBookingModal({
             ...item,
             id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
           }));
-          setCustomers(list);
+          setCustomers(prev => {
+            if (form.customerId) {
+              const currentSelected = prev.find(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId));
+              if (currentSelected && !list.some((c: any) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId))) {
+                return [currentSelected, ...list];
+              }
+            }
+            return list;
+          });
         })
         .catch(() => setCustomers([]))
         .finally(() => setCustomersLoading(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [customerQuery, authHeader]);
+  }, [customerQuery, authHeader, form.customerId]);
 
   const selectService   = (s: ApiService) =>
     setForm(p => ({ ...p, serviceId: s.id, serviceSearch: s.name, addonIds: [], arrangementAddonIds: [], extraMinutes: 0, arrangementId: '', arrangementName: '', arrangementType: '' }));
@@ -440,21 +468,27 @@ export function TherapistScheduleBookingModal({
   const selectCustomer  = (c: ApiCustomer) => {
     const id = String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? '');
     const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
-    setForm(p => ({ ...p, customerId: id, customerSearch: name }));
+    const label = [name, c.phone_number].filter(Boolean).join(' · ') || name;
+    setForm(p => ({ ...p, customerId: id, customerSearch: label }));
     setSubmitError(null);
   };
-  const clearCustomer   = () => setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+  const clearCustomer   = () => {
+    setForm(p => ({ ...p, customerId: '', customerSearch: '' }));
+    setCustomerQuery('');
+  };
   const handleCustomerCreated = (created: CreatedCustomer) => {
+    const id = String(created.id);
+    const fullName = created.full_name || [created.first_name, created.last_name].filter(Boolean).join(' ');
     const asApiCustomer: ApiCustomer = {
-      id:           created.id,
+      id,
       first_name:   created.first_name ?? '',
       last_name:    created.last_name  ?? '',
-      full_name:    created.full_name,
+      full_name:    fullName,
       phone_number: created.phone_number,
       email:        created.email,
       avatar:       created.avatar,
     };
-    setCustomers(prev => [asApiCustomer, ...prev.filter(c => c.id !== created.id)]);
+    setCustomers(prev => [asApiCustomer, ...prev.filter(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') !== id)]);
     selectCustomer(asApiCustomer);
   };
   const toggleAddon     = (id: string) =>
@@ -566,7 +600,7 @@ export function TherapistScheduleBookingModal({
       } : null,
       customerMessage: '', customer_notes: form.notes,
       // ── Booking meta ────────────────────────────────────────────────────────
-      booking_type: 'branch',
+      booking_type: 'branch_service',
       pricing_details: {
         base:              fmt(baseP),
         base_price:        fmt(baseP),
@@ -588,16 +622,31 @@ export function TherapistScheduleBookingModal({
     };
 
     try {
-      const res  = await fetch('/booknpay/api/v1/bookings/', {
+      const res  = await authedFetch('/booknpay/api/v1/bookings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
         body:   JSON.stringify(body),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         const errObj = json as Record<string, unknown>;
         console.error('[TherapistScheduleBooking] POST failed', res.status, errObj);
-        const msg = (errObj.detail ?? errObj.message ?? errObj.error ?? errObj.non_field_errors ?? JSON.stringify(errObj));
+        const errField = errObj.error;
+        const nestedMsg = (errField && typeof errField === 'object')
+          ? ((errField as Record<string, unknown>).message ?? (errField as Record<string, unknown>).detail)
+          : (typeof errField === 'string' ? errField : null);
+        let msg = (errObj.detail ?? errObj.message ?? nestedMsg ?? errObj.non_field_errors);
+        if (!msg) {
+          if (res.status === 401) {
+            msg = 'Authentication failed (401). Your session may have expired. Please log in again.';
+          } else {
+            msg = Object.keys(errObj).length > 0 ? JSON.stringify(errObj) : `Booking failed with status ${res.status}`;
+          }
+        }
         throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
       }
       const result = (json as Record<string, unknown>).data ?? json;
@@ -629,28 +678,216 @@ export function TherapistScheduleBookingModal({
     }
   };
 
-  const handleCreatePaymentLink = async () => {
+  const handleConfirmPayment = async () => {
     const raw = bookingResult as Record<string, unknown> | null;
     const id  = bookingId ||
       String(raw?.id ?? raw?.booking_id ?? raw?.bookings_id ?? raw?.pk ?? '')
         .replace('undefined', '').replace('null', '');
-    if (!id) { setPaymentLinkError('Booking ID not found. Cannot send payment link.'); return; }
-    setCreatingPaymentLink(true); setPaymentLinkError(null);
+    if (!id) { setConfirmPaymentError('Booking ID not found. Cannot confirm payment.'); return; }
+    setConfirmingPayment(true); setConfirmPaymentError(null);
     try {
-      const res  = await fetch(`/booknpay/api/v1/bookings/${id}/status/`, {
+      // ── 1. PATCH booking status → confirmed ──────────────────────────────────
+      const statusPayload = {
+        status:         'confirmed',
+        payment_status: 'success',
+        reason:         'Payment Success',
+        source:         'ushdesk',
+        payments_data: {
+          is_paid:          true,
+          invoice_id:       paymentForm.invoice_id,
+          status:           'Paid',
+          reference_id:     paymentForm.reference_id,
+          invoice_value:    paymentForm.total_amount,
+          transaction_date: paymentForm.transaction_date,
+          payment_gateway:  'KNET',
+          trace_id:         paymentForm.trace_id,
+          received_by:      paymentForm.received_by,
+        },
+      };
+      const statusRes = await authedFetch(`/booknpay/api/v1/bookings/${id}/status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
-        body:   JSON.stringify({ status: 'confirmed', payment_status: 'pending', reason: 'Payment Link Sent to Customer' }),
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify(statusPayload),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((json as Record<string, string>).detail ?? `Error ${res.status}`);
-      setPaymentLinkSuccess(true);
+      const statusJson = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok) {
+        const errObj = statusJson as Record<string, unknown>;
+        const errField = errObj.error;
+        const nestedMsg = (errField && typeof errField === 'object')
+          ? ((errField as Record<string, unknown>).message ?? (errField as Record<string, unknown>).detail)
+          : (typeof errField === 'string' ? errField : null);
+        const msg = (errObj.detail ?? errObj.message ?? nestedMsg ?? `Error ${statusRes.status}`);
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+
+      // ── 2. POST payment record ────────────────────────────────────────────────
+      // Resolve fields from bookingResult + component state
+      const activeThId   = form.therapistId || therapistId;
+      const activeThName = form.therapistSearch || therapistName;
+      const customerName = selectedCustomer
+        ? ((selectedCustomer.full_name ?? [selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer')
+        : snapCustomerName || '';
+
+      const timeHHMM = (() => {
+        const parts = timeSlot.trim().split(' ');
+        const [hStr, mStr] = parts[0].split(':');
+        const ampm = parts[1] ?? '';
+        let h = parseInt(hStr, 10);
+        const m = parseInt(mStr, 10);
+        if (ampm === 'AM' && h === 12) h = 0;
+        if (ampm === 'PM' && h !== 12) h += 12;
+        return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      })();
+
+      const paymentRecord = {
+        // ── Booking reference ──────────────────────────────────────────────────
+        booking_id:   id,
+        booking_data: raw ?? {},
+        booking_type: 'branch_service',
+        source:       'ushdesk',
+
+        // ── KNET transaction (from payment form) ──────────────────────────────
+        invoice_id:       paymentForm.invoice_id,
+        reference_id:     paymentForm.reference_id,
+        trace_id:         paymentForm.trace_id,
+        transaction_date: paymentForm.transaction_date,
+        total_amount:     parseFloat(paymentForm.total_amount) || totalPrice,
+        invoice_value:    paymentForm.total_amount,
+        received_by:      paymentForm.received_by,
+        payment_gateway:  'KNET',
+        payment_status:   'success',
+        is_paid:          true,
+        status:           'Paid',
+        payment_through:  'desk',
+        provider:         'directlink',
+        currency:         'KWD',
+
+        // ── Service ────────────────────────────────────────────────────────────
+        service_id:   selectedService?.id ?? (raw?.service_id as string) ?? '',
+        service_name: selectedService?.name ?? (raw?.service_name as string) ?? '',
+        service_data: {
+          service_id:        selectedService?.id ?? '',
+          service_name:      selectedService?.name ?? '',
+          service_category:  selectedService?.category ?? '',
+          base_price:        fmt(selectedService?.base_price),
+          arrangement_price: fmt(selectedService?.arrangement_price ?? selectedService?.base_price),
+          duration_minutes:  selectedService?.duration_minutes ?? baseDuration,
+        },
+
+        // ── Branch ─────────────────────────────────────────────────────────────
+        branch_id:   branchId,
+        branch_name: branchName,
+        branch_data: {
+          branch_id:   branchId,
+          branch_name: branchName,
+        },
+
+        // ── Arrangement ────────────────────────────────────────────────────────
+        ...(form.arrangementId ? {
+          service_arrangement_id: form.arrangementId,
+          service_arrangement_data: {
+            arrangement_id:    form.arrangementId,
+            arrangement_name:  form.arrangementName,
+            arrangement_type:  form.arrangementType,
+            ...(selectedArrangement?.arrangement_price != null
+              ? { arrangement_price: fmt(selectedArrangement.arrangement_price) }
+              : {}),
+          },
+        } : {}),
+
+        // ── Therapist ──────────────────────────────────────────────────────────
+        therapist_id:   activeThId || null,
+        therapist_name: activeThName,
+        therapist_data: activeThName ? {
+          therapist_id:   activeThId || null,
+          therapist_name: activeThName,
+          ...(selectedTherapist?.avatar ?? selectedTherapist?.photo_url ?? therapistPhoto
+            ? { photo_url: selectedTherapist?.avatar ?? selectedTherapist?.photo_url ?? therapistPhoto }
+            : {}),
+          ...(selectedTherapist?.specialties?.[0]?.name ?? selectedTherapist?.specialization
+            ? { specialization: selectedTherapist?.specialties?.[0]?.name ?? selectedTherapist?.specialization }
+            : {}),
+        } : null,
+
+        // ── Customer ───────────────────────────────────────────────────────────
+        customer_id:   form.customerId || (raw?.customer_id as string) || '',
+        customer_name: customerName,
+        customer_data: customerName ? {
+          customer_id:   form.customerId,
+          customer_name: customerName,
+          phone_number:  selectedCustomer?.phone_number ?? snapCustomerPhone ?? null,
+          email:         selectedCustomer?.email ?? null,
+        } : null,
+
+        // ── Add-ons ────────────────────────────────────────────────────────────
+        selected_addons: allSelectedAddons.map(a => ({
+          id:       a.id,
+          name:     a.name,
+          price:    fmt(a.price),
+          currency: 'KWD',
+          duration: a.duration_minutes ?? 0,
+        })),
+        addons_total:    fmt(addonTotal),
+        addons_duration: addonDuration,
+
+        // ── Extra time ─────────────────────────────────────────────────────────
+        extra_minutes: form.extraMinutes,
+        extra_price:   fmt(extraMinutesPrice),
+
+        // ── Appointment date/time ──────────────────────────────────────────────
+        date,
+        time_slot:    timeHHMM,
+        display_time: timeSlot,
+
+        // ── Pricing summary ────────────────────────────────────────────────────
+        pricing_details: {
+          base_price:        fmt(servicePrice),
+          arrangement_price: fmt(servicePrice),
+          addons_price:      fmt(addonTotal),
+          extra_time_price:  fmt(extraMinutesPrice),
+          subtotal:          fmt(totalPrice),
+          total:             fmt(totalPrice),
+          total_price:       fmt(totalPrice),
+          currency:          'KWD',
+        },
+        total_price:    fmt(totalPrice),
+        total_duration: totalDuration,
+      };
+
+      // Fire the payment record creation — errors are non-fatal (booking already confirmed)
+      try {
+        const payRes = await authedFetch('/booknpay/api/v1/payments/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+          body: JSON.stringify(paymentRecord),
+        });
+        const payJson = await payRes.json().catch(() => ({}));
+        if (!payRes.ok) {
+          console.warn('[TherapistScheduleBooking] Payment record creation failed', payRes.status, payJson);
+        }
+      } catch (payErr) {
+        console.warn('[TherapistScheduleBooking] Payment record POST error', payErr);
+      }
+
+      setConfirmPaymentSuccess(true);
+      setTimeout(() => { onSuccess?.(); onClose(); }, 1800);
     } catch (err) {
-      setPaymentLinkError(err instanceof Error ? err.message : 'Failed to send payment link');
+      setConfirmPaymentError(err instanceof Error ? err.message : 'Failed to confirm payment');
     } finally {
-      setCreatingPaymentLink(false);
+      setConfirmingPayment(false);
     }
   };
+
+  const updatePaymentField = (field: keyof PaymentForm) => (v: string) =>
+    setPaymentForm(prev => ({ ...prev, [field]: v }));
 
   const dateObj   = new Date(date + 'T00:00:00');
   const dayName   = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
@@ -679,7 +916,7 @@ export function TherapistScheduleBookingModal({
             <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
               New Therapist Schedule Booking
             </p>
-            {step < 3 && (
+            {step <= 2 && (
               <div className="flex items-center gap-1 ml-2">
                 {([1, 2] as const).map((n) => (
                   <span key={n} className={cn(
@@ -698,7 +935,12 @@ export function TherapistScheduleBookingModal({
             )}
             {step === 3 && (
               <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                <CheckCircle2 className="h-3 w-3" /> Booking Confirmed
+                <CheckCircle2 className="h-3 w-3" /> Booking Created
+              </span>
+            )}
+            {step === 4 && (
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold text-primary">
+                <CreditCard className="h-3 w-3" /> Confirm Payment
               </span>
             )}
           </div>
@@ -1168,7 +1410,7 @@ export function TherapistScheduleBookingModal({
                     <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer'} selected
+                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || selectedCustomer.full_name || 'Customer'} selected
                         {selectedCustomer.phone_number && <span className="font-normal text-emerald-600/70"> · {selectedCustomer.phone_number}</span>}
                       </p>
                     </div>
@@ -1305,19 +1547,165 @@ export function TherapistScheduleBookingModal({
                       </p>
                     </div>
                   </div>
-                  {paymentLinkSuccess && (
+                </div>
+              );
+            })()}
+
+            {/* ── STEP 4: Payment Form ── */}
+            {step === 4 && (() => {
+              const payFormValid =
+                paymentForm.invoice_id.trim() !== '' &&
+                paymentForm.transaction_date.trim() !== '' &&
+                paymentForm.total_amount.trim() !== '' &&
+                paymentForm.received_by.trim() !== '';
+              return (
+                <div className="px-6 py-5 space-y-5">
+                  {/* Header */}
+                  <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-primary/10 to-accent/5 border border-primary/20 px-4 py-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/15">
+                      <CreditCard className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-extrabold text-foreground">Payment Details</p>
+                      <p className="text-[11px] text-muted-foreground">Enter the KNET transaction information to confirm payment</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total Due</p>
+                      <p className="text-base font-black text-primary leading-none">{fmt(totalPrice)} <span className="text-[10px] font-semibold">KWD</span></p>
+                    </div>
+                  </div>
+
+                  {/* Payment fields grid — matching design */}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-4">
+                    {/* Order Number (Invoice ID) */}
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Order Number (Invoice ID) <span className="text-destructive">*</span>
+                      </p>
+                      <div className="relative flex items-center">
+                        <DollarSign className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground/60" />
+                        <input
+                          type="text"
+                          id="pay-invoice-id"
+                          value={paymentForm.invoice_id}
+                          onChange={e => updatePaymentField('invoice_id')(e.target.value)}
+                          placeholder="e.g. ORD-00123"
+                          className="h-10 w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Transaction Date */}
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Transaction Date <span className="text-destructive">*</span>
+                      </p>
+                      <div className="relative flex items-center">
+                        <Calendar className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground/60" />
+                        <input
+                          type="datetime-local"
+                          id="pay-transaction-date"
+                          value={paymentForm.transaction_date}
+                          onChange={e => updatePaymentField('transaction_date')(e.target.value)}
+                          className="h-10 w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 text-foreground"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Amount Paid */}
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Amount Paid <span className="text-destructive">*</span>
+                      </p>
+                      <div className="relative flex items-center">
+                        <CreditCard className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground/60" />
+                        <input
+                          type="text"
+                          id="pay-total-amount"
+                          value={paymentForm.total_amount}
+                          onChange={e => updatePaymentField('total_amount')(e.target.value)}
+                          placeholder={`e.g. ${fmt(totalPrice)}`}
+                          className="h-10 w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Trace ID */}
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Trace ID
+                      </p>
+                      <div className="relative flex items-center">
+                        <Hash className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground/60" />
+                        <input
+                          type="text"
+                          id="pay-trace-id"
+                          value={paymentForm.trace_id}
+                          onChange={e => updatePaymentField('trace_id')(e.target.value)}
+                          placeholder="Transaction trace ID"
+                          className="h-10 w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+                        />
+                      </div>
+                    </div>
+
+                    {/* KNET Ref ID */}
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        KNET Ref ID
+                      </p>
+                      <div className="relative flex items-center">
+                        <Fingerprint className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground/60" />
+                        <input
+                          type="text"
+                          id="pay-reference-id"
+                          value={paymentForm.reference_id}
+                          onChange={e => updatePaymentField('reference_id')(e.target.value)}
+                          placeholder="KNET reference ID"
+                          className="h-10 w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Received By */}
+                    <div>
+                      <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                        Received By <span className="text-destructive">*</span>
+                      </p>
+                      <div className="relative flex items-center">
+                        <User className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground/60" />
+                        <input
+                          type="text"
+                          id="pay-received-by"
+                          value={paymentForm.received_by}
+                          onChange={e => updatePaymentField('received_by')(e.target.value)}
+                          placeholder="Staff name or ID"
+                          className="h-10 w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Success / Error banners */}
+                  {confirmPaymentSuccess && (
                     <div className="flex items-center gap-2.5 rounded-xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-2.5">
                       <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
-                        Payment link created — status set to Confirmed / Pending payment.
+                        Payment confirmed — booking status updated to Confirmed.
                       </p>
                     </div>
                   )}
-                  {paymentLinkError && (
+                  {confirmPaymentError && (
                     <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5">
                       <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
-                      <p className="text-xs text-destructive">{paymentLinkError}</p>
+                      <p className="text-xs text-destructive">{confirmPaymentError}</p>
                     </div>
+                  )}
+
+                  {/* Required-field note */}
+                  {!payFormValid && (
+                    <p className="text-[10px] text-muted-foreground italic">
+                      <span className="text-destructive">*</span> Required fields must be filled to confirm payment.
+                    </p>
                   )}
                 </div>
               );
@@ -1397,10 +1785,30 @@ export function TherapistScheduleBookingModal({
                   className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">
                   Close
                 </button>
-                <button type="button" onClick={handleCreatePaymentLink} disabled={creatingPaymentLink || paymentLinkSuccess}
+                <button type="button" onClick={() => setStep(4)}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
+                  <CreditCard className="h-4 w-4" />
+                  Next: Confirm Payment
+                </button>
+              </>)}
+              {step === 4 && (<>
+                <button type="button" onClick={() => { setStep(3); setConfirmPaymentError(null); }}
+                  className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition">
+                  <ChevronLeft className="h-4 w-4" /> Back
+                </button>
+                <button
+                  type="button"
+                  id="confirm-payment-btn"
+                  onClick={handleConfirmPayment}
+                  disabled={confirmingPayment || confirmPaymentSuccess ||
+                    !paymentForm.invoice_id.trim() ||
+                    !paymentForm.transaction_date.trim() ||
+                    !paymentForm.total_amount.trim() ||
+                    !paymentForm.received_by.trim()
+                  }
                   className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 transition disabled:opacity-60 disabled:cursor-not-allowed">
-                  {creatingPaymentLink ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />}
-                  {creatingPaymentLink ? 'Sending…' : paymentLinkSuccess ? 'Payment Link Sent ✓' : 'Create Payment Link'}
+                  {confirmingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {confirmingPayment ? 'Confirming…' : confirmPaymentSuccess ? 'Payment Confirmed ✓' : 'Confirm Payment'}
                 </button>
               </>)}
             </div>

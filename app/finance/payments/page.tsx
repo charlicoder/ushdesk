@@ -15,6 +15,54 @@ import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+interface CustomerData {
+  first_name?: string;
+  last_name?: string;
+  name?: string;
+  customer_name?: string;
+  phone_number?: string;
+  phone?: string;
+  mobile?: string;
+  email?: string;
+  [key: string]: unknown;
+}
+
+interface RawPayment {
+  id?: unknown;
+  booking_id?: unknown;
+  customer_id?: unknown;
+  amount?: unknown;
+  currency?: unknown;
+  provider?: unknown;
+  payment_method?: unknown;
+  status?: unknown;
+  is_paid?: unknown;
+  payment_id?: unknown;
+  transaction_id?: unknown;
+  invoice_id?: unknown;
+  invoice_value?: unknown;
+  invoice_reference?: unknown;
+  customer_reference?: unknown;
+  customer_name?: unknown;
+  customer_mobile?: unknown;
+  customer_email?: unknown;
+  created_date?: unknown;
+  transaction_date?: unknown;
+  payment_gateway?: unknown;
+  gateway_name?: unknown;
+  reference_id?: unknown;
+  track_id?: unknown;
+  service_charge?: unknown;
+  vat_amount?: unknown;
+  due_deposit?: unknown;
+  deposit_status?: unknown;
+  customer_data?: CustomerData | Record<string, unknown>;
+  booking_data?: Record<string, unknown>;
+  paid_at?: unknown;
+  created_at?: unknown;
+  [key: string]: unknown;
+}
+
 interface Payment {
   id: string;
   booking_id: string;
@@ -44,10 +92,67 @@ interface Payment {
   vat_amount: string;
   due_deposit: string | null;
   deposit_status: string;
-  customer_data: Record<string, unknown>;
+  customer_data: CustomerData;
   booking_data: Record<string, unknown>;
   paid_at: string | null;
   created_at: string;
+}
+
+// ── Normalise raw API response → Payment ──────────────────────────────────────
+function normalise(raw: RawPayment): Payment {
+  const cd = (raw.customer_data ?? {}) as CustomerData;
+
+  // Resolve customer name: prefer customer_data fields, fall back to flat fields
+  const cdFL =
+    [cd.first_name, cd.last_name].filter(Boolean).join(' ') ||
+    String(cd.name ?? cd.customer_name ?? '');
+  const customerName =
+    cdFL ||
+    String(raw.customer_name ?? '') ||
+    'Unknown Customer';
+
+  // Resolve mobile: customer_data.phone_number / phone / mobile → flat field
+  const customerMobile =
+    String(cd.phone_number ?? cd.phone ?? cd.mobile ?? raw.customer_mobile ?? '');
+
+  // Resolve email: customer_data.email → flat field
+  const customerEmail =
+    String(cd.email ?? raw.customer_email ?? '');
+
+  return {
+    id:                 String(raw.id                 ?? ''),
+    booking_id:         String(raw.booking_id         ?? ''),
+    customer_id:        String(raw.customer_id        ?? ''),
+    amount:             String(raw.amount             ?? '0'),
+    currency:           String(raw.currency           ?? 'KWD'),
+    provider:           String(raw.provider           ?? ''),
+    payment_method:     String(raw.payment_method     ?? ''),
+    status:             String(raw.status             ?? ''),
+    is_paid:            raw.is_paid === true,
+    payment_id:         String(raw.payment_id         ?? ''),
+    transaction_id:     String(raw.transaction_id     ?? ''),
+    invoice_id:         String(raw.invoice_id         ?? ''),
+    invoice_value:      String(raw.invoice_value      ?? '0'),
+    invoice_reference:  String(raw.invoice_reference  ?? ''),
+    customer_reference: String(raw.customer_reference ?? ''),
+    customer_name:      customerName,
+    customer_mobile:    customerMobile,
+    customer_email:     customerEmail,
+    created_date:       String(raw.created_date       ?? ''),
+    transaction_date:   String(raw.transaction_date   ?? ''),
+    payment_gateway:    String(raw.payment_gateway    ?? ''),
+    gateway_name:       (raw.gateway_name             ?? null) as string | null,
+    reference_id:       (raw.reference_id             ?? null) as string | null,
+    track_id:           (raw.track_id                 ?? null) as string | null,
+    service_charge:     String(raw.service_charge     ?? '0'),
+    vat_amount:         String(raw.vat_amount         ?? '0'),
+    due_deposit:        (raw.due_deposit              ?? null) as string | null,
+    deposit_status:     String(raw.deposit_status     ?? ''),
+    customer_data:      cd,
+    booking_data:       (raw.booking_data             ?? {}) as Record<string, unknown>,
+    paid_at:            (raw.paid_at                  ?? null) as string | null,
+    created_at:         String(raw.created_at         ?? ''),
+  };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -76,7 +181,8 @@ function shortId(id: string) {
   return id ? `${id.slice(0, 8)}…` : '—';
 }
 
-function initials(name: string) {
+function initials(name?: string | null) {
+  if (!name) return '?';
   return name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
 }
 
@@ -317,7 +423,7 @@ export default function PaymentsPage() {
   const { data: raw, loading, error, refetch, pagination } = useBookings<Record<string, unknown>>(proxyUrl);
 
   const payments: Payment[] = useMemo(() =>
-    raw.map((r) => r as unknown as Payment),
+    raw.map((r) => normalise(r as RawPayment)),
     [raw],
   );
 

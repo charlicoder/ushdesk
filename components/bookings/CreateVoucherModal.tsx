@@ -1,20 +1,26 @@
 'use client';
 
 /**
- * CreateVoucherModal — v2
+ * CreateVoucherModal — v3
  * Brand theme: #543c30 (deep espresso), #dbcdc2 / #daccc1 (warm linen/blush)
  *
  * Step 1 – Service & Room
- * Step 2 – Recipients & Message
+ * Step 2 – Recipients & Message  →  POST /booknpay/api/v1/vouchers/
+ * Step 3 – Confirm Payment       →  POST /booknpay/api/v1/payments/
+ *                                →  PATCH /booknpay/api/v1/vouchers/<id>/status/
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useAppSelector } from '@/store/hooks';
 import {
   X, Search, Loader2, ChevronDown, Check, Gift,
   MapPin, Scissors, Package, Timer, User, MessageSquare,
   Sparkles, ChevronRight, ChevronLeft, AlertCircle, UserPlus,
+  CreditCard, Receipt, Calendar, Hash, Fingerprint, UserCheck,
+  CheckCircle2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
@@ -29,6 +35,10 @@ const B = {
   textMain:   '#2c1a12',
   textMuted:  '#8a6f63',
   pillBg:     '#f2ede9',
+  success:    '#2e7d5e',
+  successBg:  '#edf7f3',
+  errorBg:    '#fff0f0',
+  errorBorder:'#f5c6c6',
 } as const;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -40,6 +50,7 @@ interface SlimService {
   price?: string;
   duration_minutes?: number;
   currency?: string;
+  category?: string;
 }
 
 interface AddonItem {
@@ -56,13 +67,16 @@ interface Arrangement {
   arrangement_name: string;
   arrangement_type?: string;
   image?: string | null;
-  // The API returns price as `arrangement_price`; `price` kept as fallback
   arrangement_price?: string | number | null;
   price?: string | number | null;
   currency?: string;
   capacity?: number | null;
   addons?: AddonItem[];
   extra_time_options?: number[];
+  // Extra-time pricing — one of these may be present depending on the API version
+  extra_time_price?:             string | number | null;
+  price_per_extra_minute?:       string | number | null;
+  extra_time_price_per_minute?:  string | number | null;
 }
 
 interface Branch {
@@ -80,6 +94,7 @@ interface ServiceFullDetail {
   price?: string;
   duration_minutes?: number;
   currency?: string;
+  category?: string;
   branches?: Branch[];
   service_arrangements?: Arrangement[];
 }
@@ -94,6 +109,16 @@ interface Customer {
   phone?: string;
   email?: string;
   avatar?: string | null;
+}
+
+// Payment form state
+interface PaymentFormState {
+  invoice_id:       string;  // Order Number
+  transaction_date: string;
+  total_amount:     string;  // Amount Paid
+  trace_id:         string;
+  reference_id:     string;  // KNET Ref ID
+  received_by:      string;
 }
 
 interface Props {
@@ -111,16 +136,18 @@ function customerLabel(c: Customer): string {
   return fl || c.phone_number || c.phone || c.id;
 }
 
+function customerPhone(c: Customer): string {
+  return c.phone_number ?? c.phone ?? '';
+}
+
 function fmtPrice(val: string | number | null | undefined, currency = 'KWD'): string {
   const n = parseFloat(String(val ?? 0));
   return `${isNaN(n) ? '0.000' : n.toFixed(3)} ${currency}`;
 }
 
 const GIFT_TEMPLATES = ['Classic Gold', 'Elegant Rose', 'Midnight Blue', 'Floral Bliss', 'Luxury Black', 'Spring Breeze'];
-// Only 4 extra-time options to fit in one row
 const EXTRA_TIME_OPTIONS = [0, 15, 30, 45];
 
-// Fallback gradient images for arrangements
 const ARR_FALLBACKS = [
   'linear-gradient(135deg,#daccc1 0%,#c4a99c 100%)',
   'linear-gradient(135deg,#d4c4b8 0%,#b89d8e 100%)',
@@ -234,7 +261,7 @@ function SearchableDropdown<T>({
   );
 }
 
-// ── Arrangement Card (portrait, image-driven) ──────────────────────────────────
+// ── Arrangement Card ──────────────────────────────────────────────────────────
 
 function ArrangementCard({
   arr,
@@ -249,10 +276,8 @@ function ArrangementCard({
 }) {
   const fallback = ARR_FALLBACKS[index % ARR_FALLBACKS.length];
   const currency  = arr.currency ?? 'KWD';
-  // API may return name/price under different keys — fall back safely
   const rawArr    = arr as unknown as Record<string, unknown>;
   const name      = (arr.arrangement_name ?? rawArr.name ?? rawArr.title ?? 'Room') as string;
-  // The real API field is `arrangement_price`; fall back through several aliases
   const priceRaw  = arr.arrangement_price ?? arr.price ?? rawArr.base_price ?? rawArr.amount ?? rawArr.cost;
   const priceNum  = parseFloat(String(priceRaw ?? ''));
   const hasPrice  = priceRaw != null && priceRaw !== '' && !isNaN(priceNum) && priceNum > 0;
@@ -273,7 +298,6 @@ function ArrangementCard({
         flexShrink: 0,
       }}
     >
-      {/* Full-bleed background image */}
       <div className="absolute inset-0">
         {arr.image ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -283,13 +307,11 @@ function ArrangementCard({
         )}
       </div>
 
-      {/* Dark gradient overlay — covers bottom 60% */}
       <div
         className="absolute inset-0"
         style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.30) 55%, transparent 100%)' }}
       />
 
-      {/* ── TOP-RIGHT: Price badge ── */}
       {hasPrice && (
         <div
           className="absolute top-2.5 right-2.5 rounded-xl px-2 py-1 leading-none"
@@ -305,7 +327,6 @@ function ArrangementCard({
         </div>
       )}
 
-      {/* ── TOP-LEFT: Selected checkmark ── */}
       {active && (
         <div
           className="absolute top-2.5 left-2.5 h-6 w-6 rounded-full grid place-items-center"
@@ -315,7 +336,6 @@ function ArrangementCard({
         </div>
       )}
 
-      {/* ── BOTTOM overlay: name + type + capacity ── */}
       <div className="absolute bottom-0 left-0 right-0 px-3 pb-3 pt-8 text-left">
         <p
           className="text-[13px] font-extrabold leading-tight text-white mb-2"
@@ -346,8 +366,6 @@ function ArrangementCard({
     </button>
   );
 }
-
-// ── Customer Picker ────────────────────────────────────────────────────────────
 
 // ── Customer Avatar ──────────────────────────────────────────────────────────
 
@@ -405,7 +423,7 @@ function CustomerAvatar({ customer, size = 32 }: { customer: Customer; size?: nu
   );
 }
 
-// ── Customer Picker (with avatar dropdown) ─────────────────────────────────────
+// ── Customer Picker ─────────────────────────────────────────────────────────────
 
 function CustomerPicker({
   label,
@@ -447,10 +465,23 @@ function CustomerPicker({
 
   return (
     <div ref={ref} className="relative">
-      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-wider"
-        style={{ color: B.textMuted }}>{label}</label>
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="block text-[11px] font-bold uppercase tracking-wider"
+          style={{ color: B.textMuted }}>{label}</label>
+        {onCreateNew && (
+          <button
+            type="button"
+            onClick={onCreateNew}
+            title="Create new customer"
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold transition hover:opacity-80 cursor-pointer"
+            style={{ background: B.blush, color: B.espresso }}
+          >
+            <UserPlus className="h-3 w-3" />
+            New
+          </button>
+        )}
+      </div>
 
-      {/* Trigger */}
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
@@ -492,27 +523,13 @@ function CustomerPicker({
         {loading
           ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: B.textMuted }} />
           : <ChevronDown className="h-4 w-4 shrink-0" style={{ color: B.textMuted }} />}
-        {onCreateNew && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onCreateNew(); }}
-            title="Create new customer"
-            className="flex items-center gap-0.5 rounded-md px-1.5 py-0.5 text-[10px] font-bold transition hover:opacity-80 cursor-pointer"
-            style={{ background: B.blush, color: B.espresso }}
-          >
-            <UserPlus className="h-3 w-3" />
-            New
-          </button>
-        )}
       </button>
 
-      {/* Dropdown list */}
       {open && (
         <div
           className="absolute top-full left-0 right-0 mt-1.5 z-50 rounded-2xl border shadow-2xl overflow-hidden"
           style={{ borderColor: B.linen, background: B.cardBg }}
         >
-          {/* Search bar */}
           <div className="p-2 border-b" style={{ borderColor: B.lineMuted }}>
             <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ background: B.bg }}>
               <Search className="h-3.5 w-3.5 shrink-0" style={{ color: B.textMuted }} />
@@ -527,7 +544,6 @@ function CustomerPicker({
             </div>
           </div>
 
-          {/* Results */}
           <ul className="max-h-64 overflow-y-auto py-1">
             {items.length === 0 ? (
               <li className="px-4 py-3 text-sm text-center" style={{ color: B.textMuted }}>No results</li>
@@ -540,16 +556,11 @@ function CustomerPicker({
                       type="button"
                       onClick={() => { onSelect(c); setOpen(false); setSearch(''); }}
                       className="w-full flex items-center gap-3 px-3 py-2 text-left transition"
-                      style={{
-                        background: active ? B.blush : undefined,
-                      }}
+                      style={{ background: active ? B.blush : undefined }}
                       onMouseEnter={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.background = B.bg; }}
                       onMouseLeave={e => { if (!active) (e.currentTarget as HTMLButtonElement).style.background = active ? B.blush : ''; }}
                     >
-                      {/* Avatar thumbnail */}
                       <CustomerAvatar customer={c} size={32} />
-
-                      {/* Name + phone */}
                       <div className="flex-1 min-w-0">
                         <p
                           className="text-[13px] font-semibold leading-tight truncate"
@@ -563,8 +574,6 @@ function CustomerPicker({
                           </p>
                         )}
                       </div>
-
-                      {/* Active check */}
                       {active && <Check className="h-3.5 w-3.5 shrink-0" style={{ color: B.espresso }} />}
                     </button>
                   </li>
@@ -630,13 +639,18 @@ function AddonCheckbox({
   );
 }
 
-// ── Step Bar ──────────────────────────────────────────────────────────────────
+// ── Step Bar (3 steps) ─────────────────────────────────────────────────────────
 
-function StepBar({ step }: { step: 1 | 2 }) {
+function StepBar({ step }: { step: 1 | 2 | 3 }) {
+  const steps = [
+    { n: 1, label: 'Service & Room' },
+    { n: 2, label: 'Recipients' },
+    { n: 3, label: 'Payment' },
+  ];
   return (
     <div className="flex items-center shrink-0 px-6 py-3 border-b"
       style={{ borderColor: B.lineMuted, background: B.bg }}>
-      {[{ n: 1, label: 'Service & Room' }, { n: 2, label: 'Recipients & Message' }].map((s, idx) => (
+      {steps.map((s, idx) => (
         <React.Fragment key={s.n}>
           {idx > 0 && (
             <div className="flex-1 h-px mx-3 transition-colors"
@@ -676,14 +690,72 @@ function SectionLabel({ icon: Icon, label }: { icon: React.ElementType; label: s
   );
 }
 
+// ── Payment Field ─────────────────────────────────────────────────────────────
+
+function PaymentField({
+  icon: Icon,
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  required,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  type?: string;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="block text-[11px] font-bold uppercase tracking-wider mb-1.5"
+        style={{ color: B.textMuted }}>
+        {label}{required && <span className="ml-0.5 text-red-500">*</span>}
+      </label>
+      <div className="flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 transition-all"
+        style={{ borderColor: B.linen, background: B.cardBg }}
+        onFocus={() => {}} // handled on child
+      >
+        <Icon className="h-4 w-4 shrink-0" style={{ color: B.textMuted }} />
+        <input
+          type={type}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 bg-transparent text-sm outline-none"
+          style={{ color: B.textMain }}
+          onFocus={e => {
+            const parent = e.currentTarget.parentElement;
+            if (parent) {
+              parent.style.borderColor = B.espresso;
+              parent.style.boxShadow = `0 0 0 3px ${B.blush}`;
+            }
+          }}
+          onBlur={e => {
+            const parent = e.currentTarget.parentElement;
+            if (parent) {
+              parent.style.borderColor = B.linen;
+              parent.style.boxShadow = '';
+            }
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Main Modal ─────────────────────────────────────────────────────────────────
 
 export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const authHeader = `Bearer ${token}`;
+  const currentUser = useAppSelector((s) => s.auth.user);
 
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
 
-  // Step 1
+  // ── Step 1 state ──
   const [services,        setServices]        = useState<SlimService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
   const [selectedService, setSelectedService] = useState<SlimService | null>(null);
@@ -695,7 +767,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [selectedAddons,  setSelectedAddons]  = useState<AddonItem[]>([]);
   const [extraTime,       setExtraTime]       = useState<number>(0);
 
-  // Step 2
+  // ── Step 2 state ──
   const [customers,        setCustomers]        = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [sender,           setSender]           = useState<Customer | null>(null);
@@ -705,31 +777,73 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
   const [createForRole,      setCreateForRole]      = useState<'sender' | 'recipient'>('sender');
 
-  // Totals
+  // ── Create Voucher request state ──
+  const [isCreatingVoucher, setIsCreatingVoucher] = useState(false);
+  const [createVoucherError, setCreateVoucherError] = useState<string | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [createdVoucher, setCreatedVoucher] = useState<Record<string, any> | null>(null);
+
+  // ── Step 3: Payment form state ──
+  const [paymentForm, setPaymentForm] = useState<PaymentFormState>({
+    invoice_id:       '',
+    transaction_date: '',
+    total_amount:     '',
+    trace_id:         '',
+    reference_id:     '',
+    received_by:      '',
+  });
+  const [isConfirmingPayment, setIsConfirmingPayment] = useState(false);
+  const [confirmPaymentError, setConfirmPaymentError] = useState<string | null>(null);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+
+  // ── Totals ──
   const currency     = fullDetail?.currency ?? selectedService?.currency ?? 'KWD';
   const basePrice    = parseFloat(fullDetail?.base_price ?? fullDetail?.price ?? selectedService?.base_price ?? selectedService?.price ?? '0') || 0;
   const baseDuration = fullDetail?.duration_minutes ?? selectedService?.duration_minutes ?? 0;
   const addonPrice   = selectedAddons.reduce((s, a) => s + (parseFloat(a.price) || 0), 0);
   const addonDur     = selectedAddons.reduce((s, a) => s + (a.duration_minutes || 0), 0);
-  // arrangement_price is the real API field; fall back through price aliases
   const arrangPriceRaw = selectedArrangt?.arrangement_price ?? selectedArrangt?.price;
   const arrangPrice    = parseFloat(String(arrangPriceRaw ?? '')) || 0;
-  const totalPrice     = (arrangPrice || basePrice) + addonPrice;
-  const totalDuration = baseDuration + addonDur + extraTime;
 
-  // Close on Escape
+  // Extra-time price: use a dedicated per-minute field if available, otherwise
+  // derive a per-minute rate from the arrangement/base price ÷ base duration.
+  const extraTimePricePerMin = (() => {
+    const arr = selectedArrangt;
+    if (!arr) return 0;
+    // Try dedicated API fields first (various naming conventions)
+    const raw =
+      arr.extra_time_price_per_minute ??
+      arr.price_per_extra_minute ??
+      arr.extra_time_price;
+    if (raw != null) {
+      const parsed = parseFloat(String(raw));
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+    }
+    // Fallback: derive per-minute rate from arrangement/base price and base duration
+    const effectivePrice    = arrangPrice || basePrice;
+    const effectiveDuration = baseDuration || 60; // avoid division by zero
+    return effectivePrice > 0 && effectiveDuration > 0
+      ? effectivePrice / effectiveDuration
+      : 0;
+  })();
+
+  const extraTimePrice = extraTime > 0 ? parseFloat((extraTimePricePerMin * extraTime).toFixed(3)) : 0;
+  const totalPrice     = (arrangPrice || basePrice) + addonPrice + extraTimePrice;
+  const totalDuration  = baseDuration + addonDur + extraTime;
+
+  // ── Escape key ──
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
-  // Fetch services-slim
+  // ── Fetch services-slim ──
   useEffect(() => {
     (async () => {
       setServicesLoading(true);
       try {
-        const res  = await fetch('/api/v1/services/slim/', {
+        const res  = await authedFetch('/api/v1/services/slim/', {
           headers: { Authorization: authHeader, Accept: 'application/json' },
         });
         const data = await res.json().catch(() => ({}));
@@ -740,7 +854,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     })();
   }, [authHeader]);
 
-  // Fetch full detail on service select
+  // ── Fetch full service detail ──
   const fetchFullDetail = useCallback(async (svc: SlimService) => {
     setDetailLoading(true);
     setDetailError(null);
@@ -750,7 +864,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     setSelectedAddons([]);
     setExtraTime(0);
     try {
-      const res = await fetch(`/api/v1/services/${svc.id}/full-detail/`, {
+      const res = await authedFetch(`/api/v1/services/${svc.id}/full-detail/`, {
         headers: { Authorization: authHeader, Accept: 'application/json' },
       });
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -768,12 +882,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     fetchFullDetail(svc);
   }, [fetchFullDetail]);
 
-  // Fetch customers for step 2
+  // ── Fetch customers ──
   const fetchCustomers = useCallback(async () => {
     if (customers.length > 0) return;
     setCustomersLoading(true);
     try {
-      const res  = await fetch('/api/v1/customers/', {
+      const res  = await authedFetch('/api/v1/customers/', {
         headers: { Authorization: authHeader, Accept: 'application/json' },
       });
       const data = await res.json().catch(() => ({}));
@@ -785,7 +899,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
   const goToStep2 = () => { setStep(2); fetchCustomers(); };
 
-  // Derived
+  // ── Derived ──
   const branches: Branch[] = fullDetail?.branches ?? [];
 
   const arrangements: Arrangement[] = (() => {
@@ -804,6 +918,168 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     setSelectedAddons(prev => checked ? [...prev, addon] : prev.filter(a => a.id !== addon.id));
 
   const step1Valid = !!selectedService && !!selectedBranch && !!selectedArrangt && !detailLoading;
+  const step2Valid = !!sender && !!recipient;
+
+  // ── Build voucher payload ──
+  const buildVoucherPayload = () => {
+    const svcCategory = fullDetail?.category ?? selectedService?.category ?? '';
+    const arrRaw = selectedArrangt as unknown as Record<string, unknown>;
+    const arrName = selectedArrangt?.arrangement_name ?? String(arrRaw?.name ?? '');
+
+    return {
+      service_id: selectedService?.id ?? '',
+      service_data: {
+        category: svcCategory,
+        name: selectedService?.name ?? '',
+      },
+      branch_id: selectedBranch?.id ?? selectedBranch?.branch_id ?? '',
+      branch_data: {
+        name: selectedBranch?.name ?? selectedBranch?.branch_name ?? '',
+      },
+      service_arrangement_id: selectedArrangt?.id ?? '',
+      service_arrangement_data: {
+        room:  arrName,
+        image: selectedArrangt?.image ?? '',
+      },
+      addons: selectedAddons.map(a => ({
+        addon_id: a.id,
+        duration: a.duration_minutes,
+        name:     a.name,
+        price:    a.price,
+      })),
+      extra_time:            extraTime,
+      price_for_extra_time:  extraTimePrice,
+      total_duration:        totalDuration,
+      total_amount:          totalPrice,
+      currency,
+      status:                'created',
+      recipient_phone:       customerPhone(recipient!),
+      recipient_id:          recipient?.id ?? '',
+      recipient_data: {
+        name:         customerLabel(recipient!),
+        email:        recipient?.email ?? '',
+        phone_number: customerPhone(recipient!),
+      },
+      sender_id: sender?.id ?? '',
+      sender_data: {
+        name:         customerLabel(sender!),
+        email:        sender?.email ?? '',
+        phone_number: customerPhone(sender!),
+      },
+      gift_message:      giftMessage,
+      gift_template:     giftTemplate,
+      booking_id:        '',
+      booking_data:      {},
+      payment_url:       '',
+      payment_id:        '',
+      payment_provider:  'directlink',
+      payment_through:   'desk',
+      payment_data:      {},
+    };
+  };
+
+  // ── Create voucher (Step 2 → Step 3) ──
+  const handleCreateVoucher = async () => {
+    if (!step2Valid) return;
+    setIsCreatingVoucher(true);
+    setCreateVoucherError(null);
+    try {
+      const payload = buildVoucherPayload();
+      // customer_id (= sender_id) is required by the upstream API when using an app token
+      const customerId = sender?.id ?? '';
+      const voucherUrl = customerId
+        ? `/booknpay/api/v1/vouchers/?customer_id=${encodeURIComponent(customerId)}`
+        : '/booknpay/api/v1/vouchers/';
+      const res = await authedFetch(voucherUrl, {
+        method:  'POST',
+        headers: { Authorization: authHeader, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body:    JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = typeof data?.detail === 'string'
+          ? data.detail
+          : JSON.stringify(data);
+        throw new Error(detail || `Server error ${res.status}`);
+      }
+      // Unwrap common API envelopes: { data: {...} }, { result: {...} }, { voucher: {...} }
+      // so that createdVoucher always has the ID at the top level.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const voucher: Record<string, any> =
+        (data?.data    && typeof data.data    === 'object' && !Array.isArray(data.data))    ? data.data    :
+        (data?.result  && typeof data.result  === 'object' && !Array.isArray(data.result))  ? data.result  :
+        (data?.voucher && typeof data.voucher === 'object' && !Array.isArray(data.voucher)) ? data.voucher :
+        data;
+      setCreatedVoucher(voucher);
+      setStep(3);
+    } catch (err) {
+      setCreateVoucherError(err instanceof Error ? err.message : 'Failed to create voucher');
+    } finally {
+      setIsCreatingVoucher(false);
+    }
+  };
+
+  // ── Confirm payment (Step 3) ──
+  const handleConfirmPayment = async () => {
+    if (!createdVoucher) return;
+    setIsConfirmingPayment(true);
+    setConfirmPaymentError(null);
+    try {
+      // Resolve IDs
+      const voucherId  = (createdVoucher.id ?? createdVoucher.voucher_id ?? createdVoucher.pk ?? '') as string;
+      const customerId = (createdVoucher.sender_id ?? sender?.id ?? '') as string;
+
+      if (!voucherId) {
+        throw new Error('Voucher ID missing from create response — cannot confirm payment');
+      }
+
+      // PATCH voucher status → active with payment details
+      const statusPayload = {
+        status:       'active',
+        payment_data: {
+          reference_id:     paymentForm.reference_id,
+          trace_id:         paymentForm.trace_id,
+          invoice_id:       paymentForm.invoice_id,
+          total_amount:     parseFloat(paymentForm.total_amount) || totalPrice,
+          transaction_date: paymentForm.transaction_date,
+          received_by:      paymentForm.received_by,
+          created_by:       currentUser ? String(currentUser.id) : undefined,
+        },
+        customer_id:  customerId,
+      };
+
+      const statusUrl = customerId
+        ? `/booknpay/api/v1/vouchers/${voucherId}/status/?customer_id=${encodeURIComponent(customerId)}`
+        : `/booknpay/api/v1/vouchers/${voucherId}/status/`;
+
+      const statusRes = await authedFetch(statusUrl, {
+        method:  'PATCH',
+        headers: { Authorization: authHeader, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body:    JSON.stringify(statusPayload),
+      });
+      const statusData = await statusRes.json().catch(() => ({}));
+      if (!statusRes.ok) {
+        const detail = typeof statusData?.detail === 'string'
+          ? statusData.detail
+          : JSON.stringify(statusData);
+        throw new Error(detail || `Status update error ${statusRes.status}`);
+      }
+
+      // Done
+      setPaymentSuccess(true);
+      setTimeout(() => {
+        onSuccess?.();
+        onClose();
+      }, 1800);
+    } catch (err) {
+      setConfirmPaymentError(err instanceof Error ? err.message : 'Payment confirmation failed');
+    } finally {
+      setIsConfirmingPayment(false);
+    }
+  };
+
+  const updatePaymentField = (field: keyof PaymentFormState) => (v: string) =>
+    setPaymentForm(prev => ({ ...prev, [field]: v }));
 
   // ────────────────────────────────────────────────────────────────────────────
   return (
@@ -812,11 +1088,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
 
-      {/* Modal shell — fixed height, flex column */}
+      {/* Modal shell */}
       <div
         className="relative z-10 flex flex-col w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl"
         style={{
-          height: 'min(92vh, 780px)',
+          height: 'min(92vh, 800px)',
           background: B.cardBg,
           border: `1.5px solid ${B.linen}`,
         }}
@@ -869,7 +1145,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 />
               </div>
 
-              {/* Loading */}
               {detailLoading && (
                 <div className="flex items-center gap-2 text-sm" style={{ color: B.textMuted }}>
                   <Loader2 className="h-4 w-4 animate-spin" style={{ color: B.espresso }} />
@@ -877,10 +1152,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {/* Error */}
               {detailError && (
                 <div className="flex items-center gap-2 rounded-xl border px-4 py-2.5"
-                  style={{ borderColor: '#f5c6c6', background: '#fff0f0' }}>
+                  style={{ borderColor: B.errorBorder, background: B.errorBg }}>
                   <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
                   <p className="text-xs text-red-600">{detailError}</p>
                 </div>
@@ -921,7 +1195,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {/* Arrangements — horizontal scroll, portrait cards */}
+              {/* Arrangements */}
               {selectedBranch && arrangements.length > 0 && (
                 <div className="min-w-0">
                   <div className="flex items-center justify-between mb-2">
@@ -930,15 +1204,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       {arrangements.length} option{arrangements.length !== 1 ? 's' : ''}
                     </span>
                   </div>
-                  {/* Scroll wrapper: overflow-x-auto with explicit width to force scrolling */}
                   <div
                     className="overflow-x-auto"
                     style={{ scrollbarWidth: 'thin', scrollbarColor: `${B.linen} transparent` }}
                   >
-                    <div
-                      className="flex gap-3 pb-3"
-                      style={{ width: 'max-content' }}
-                    >
+                    <div className="flex gap-3 pb-3" style={{ width: 'max-content' }}>
                       {arrangements.map((arr, idx) => (
                         <ArrangementCard
                           key={arr.id ?? idx}
@@ -971,7 +1241,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 </div>
               )}
 
-              {/* Extra time — 4 options in one row */}
+              {/* Extra time */}
               {selectedArrangt && (
                 <div>
                   <SectionLabel icon={Timer} label="Extra Time (optional)" />
@@ -1031,11 +1301,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   rows={3}
                   placeholder="Write a personal message for the recipient…"
                   className="w-full rounded-xl border px-4 py-3 text-sm resize-none outline-none transition"
-                  style={{
-                    borderColor: B.linen,
-                    background: B.cardBg,
-                    color: B.textMain,
-                  }}
+                  style={{ borderColor: B.linen, background: B.cardBg, color: B.textMain }}
                   onFocus={e => { e.currentTarget.style.borderColor = B.espresso; e.currentTarget.style.boxShadow = `0 0 0 3px ${B.blush}`; }}
                   onBlur={e => { e.currentTarget.style.borderColor = B.linen; e.currentTarget.style.boxShadow = ''; }}
                 />
@@ -1065,6 +1331,108 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   })}
                 </div>
               </div>
+
+              {/* Create voucher error */}
+              {createVoucherError && (
+                <div className="flex items-start gap-2 rounded-xl border px-4 py-3"
+                  style={{ borderColor: B.errorBorder, background: B.errorBg }}>
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-500 mt-0.5" />
+                  <p className="text-xs text-red-600">{createVoucherError}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ══ STEP 3 — Payment Confirmation ══ */}
+          {step === 3 && (
+            <>
+              {/* Voucher created banner */}
+              <div className="flex items-start gap-3 rounded-2xl border px-4 py-3.5"
+                style={{ borderColor: '#a3d9c2', background: B.successBg }}>
+                <CheckCircle2 className="h-5 w-5 shrink-0 mt-0.5" style={{ color: B.success }} />
+                <div>
+                  <p className="text-sm font-bold" style={{ color: B.success }}>Voucher Created Successfully</p>
+                  {createdVoucher?.id && (
+                    <p className="text-[11px] mt-0.5" style={{ color: '#4a9e7a' }}>
+                      Voucher ID: <span className="font-mono font-bold">{createdVoucher.id ?? createdVoucher.voucher_id ?? createdVoucher.pk ?? '—'}</span>
+                    </p>
+                  )}
+                  <p className="text-[11px] mt-0.5" style={{ color: '#4a9e7a' }}>
+                    Please record the payment details below to activate the voucher.
+                  </p>
+                </div>
+              </div>
+
+              {/* Payment fields */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <PaymentField
+                  icon={Receipt}
+                  label="Order Number (Invoice ID)"
+                  value={paymentForm.invoice_id}
+                  onChange={updatePaymentField('invoice_id')}
+                  placeholder="e.g. ORD-00123"
+                  required
+                />
+                <PaymentField
+                  icon={Calendar}
+                  label="Transaction Date"
+                  value={paymentForm.transaction_date}
+                  onChange={updatePaymentField('transaction_date')}
+                  type="datetime-local"
+                  required
+                />
+                <PaymentField
+                  icon={CreditCard}
+                  label="Amount Paid"
+                  value={paymentForm.total_amount}
+                  onChange={updatePaymentField('total_amount')}
+                  placeholder={`e.g. ${totalPrice.toFixed(3)}`}
+                  type="number"
+                  required
+                />
+                <PaymentField
+                  icon={Hash}
+                  label="Trace ID"
+                  value={paymentForm.trace_id}
+                  onChange={updatePaymentField('trace_id')}
+                  placeholder="Transaction trace ID"
+                />
+                <PaymentField
+                  icon={Fingerprint}
+                  label="KNET Ref ID"
+                  value={paymentForm.reference_id}
+                  onChange={updatePaymentField('reference_id')}
+                  placeholder="KNET reference ID"
+                />
+                <PaymentField
+                  icon={UserCheck}
+                  label="Received By"
+                  value={paymentForm.received_by}
+                  onChange={updatePaymentField('received_by')}
+                  placeholder="Staff name or ID"
+                  required
+                />
+              </div>
+
+              {/* Confirm payment error */}
+              {confirmPaymentError && (
+                <div className="flex items-start gap-2 rounded-xl border px-4 py-3"
+                  style={{ borderColor: B.errorBorder, background: B.errorBg }}>
+                  <AlertCircle className="h-4 w-4 shrink-0 text-red-500 mt-0.5" />
+                  <p className="text-xs text-red-600">{confirmPaymentError}</p>
+                </div>
+              )}
+
+              {/* Payment success */}
+              {paymentSuccess && (
+                <div className="flex items-center gap-3 rounded-2xl border px-4 py-3.5"
+                  style={{ borderColor: '#a3d9c2', background: B.successBg }}>
+                  <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: B.success }} />
+                  <p className="text-sm font-bold" style={{ color: B.success }}>
+                    Payment confirmed! Voucher is now active.
+                  </p>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1114,15 +1482,20 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 <ChevronLeft className="h-4 w-4" /> Back
               </button>
             )}
-            <button type="button" onClick={onClose}
-              className="rounded-xl border px-4 py-2.5 text-sm font-semibold transition"
-              style={{ borderColor: B.linen, background: B.cardBg, color: B.textMain }}>
-              Cancel
-            </button>
+
+            {/* No back on step 3 — voucher already created */}
+
+            {!paymentSuccess && (
+              <button type="button" onClick={onClose}
+                className="rounded-xl border px-4 py-2.5 text-sm font-semibold transition"
+                style={{ borderColor: B.linen, background: B.cardBg, color: B.textMain }}>
+                Cancel
+              </button>
+            )}
 
             <div className="flex-1" />
 
-            {step === 1 ? (
+            {step === 1 && (
               <button
                 type="button"
                 disabled={!step1Valid}
@@ -1137,18 +1510,43 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               >
                 Next <ChevronRight className="h-4 w-4" />
               </button>
-            ) : (
+            )}
+
+            {step === 2 && (
               <button
                 type="button"
-                disabled={!sender || !recipient}
+                disabled={!step2Valid || isCreatingVoucher}
+                onClick={handleCreateVoucher}
                 className="flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98]"
                 style={{
-                  background: sender && recipient ? '#2e7d5e' : B.linen,
-                  color:      sender && recipient ? '#fff'    : B.textMuted,
-                  cursor:     sender && recipient ? 'pointer' : 'not-allowed',
+                  background: step2Valid && !isCreatingVoucher ? B.success : B.linen,
+                  color:      step2Valid && !isCreatingVoucher ? '#fff'    : B.textMuted,
+                  cursor:     step2Valid && !isCreatingVoucher ? 'pointer' : 'not-allowed',
                 }}
               >
-                <Gift className="h-4 w-4" /> Create Voucher
+                {isCreatingVoucher
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> Creating…</>
+                  : <><Gift className="h-4 w-4" /> Create Voucher</>
+                }
+              </button>
+            )}
+
+            {step === 3 && !paymentSuccess && (
+              <button
+                type="button"
+                disabled={!paymentForm.invoice_id || !paymentForm.transaction_date || !paymentForm.received_by || isConfirmingPayment}
+                onClick={handleConfirmPayment}
+                className="flex items-center gap-2 rounded-xl px-6 py-2.5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98]"
+                style={{
+                  background: (paymentForm.invoice_id && paymentForm.transaction_date && paymentForm.received_by && !isConfirmingPayment) ? B.success : B.linen,
+                  color:      (paymentForm.invoice_id && paymentForm.transaction_date && paymentForm.received_by && !isConfirmingPayment) ? '#fff'    : B.textMuted,
+                  cursor:     (paymentForm.invoice_id && paymentForm.transaction_date && paymentForm.received_by && !isConfirmingPayment) ? 'pointer' : 'not-allowed',
+                }}
+              >
+                {isConfirmingPayment
+                  ? <><Loader2 className="h-4 w-4 animate-spin" /> Confirming…</>
+                  : <><CreditCard className="h-4 w-4" /> Confirm Payment</>
+                }
               </button>
             )}
           </div>
@@ -1156,26 +1554,31 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       </div>
     </div>
 
-      {/* ── Quick-add new customer ── */}
-      {showCreateCustomer && (
-        <CreateCustomerModal
-          authHeader={authHeader}
-          onCreated={(created: CreatedCustomer) => {
-            const asCustomer: Customer = {
-              id:           created.id,
-              first_name:   created.first_name ?? '',
-              last_name:    created.last_name  ?? '',
-              phone_number: created.phone_number,
-              email:        created.email,
-              avatar:       created.avatar as string | undefined,
-            };
-            setCustomers(prev => [asCustomer, ...prev.filter(c => c.id !== created.id)]);
-            if (createForRole === 'sender')    setSender(asCustomer);
-            if (createForRole === 'recipient') setRecipient(asCustomer);
-          }}
-          onClose={() => setShowCreateCustomer(false)}
-        />
-      )}
+    {/* ── Quick-add new customer ── */}
+    {showCreateCustomer && (
+      <CreateCustomerModal
+        authHeader={authHeader}
+        onCreated={(created: CreatedCustomer) => {
+          const id = String(created.id);
+          const fullName = created.full_name || [created.first_name, created.last_name].filter(Boolean).join(' ');
+          const asCustomer: Customer = {
+            id,
+            name:          fullName,
+            customer_name: fullName,
+            first_name:    created.first_name ?? '',
+            last_name:     created.last_name  ?? '',
+            phone_number:  created.phone_number,
+            phone:         created.phone_number,
+            email:         created.email,
+            avatar:        created.avatar as string | undefined,
+          };
+          setCustomers(prev => [asCustomer, ...prev.filter(c => String(c.id) !== id)]);
+          if (createForRole === 'sender')    setSender(asCustomer);
+          if (createForRole === 'recipient') setRecipient(asCustomer);
+        }}
+        onClose={() => setShowCreateCustomer(false)}
+      />
+    )}
     </>
   );
 }

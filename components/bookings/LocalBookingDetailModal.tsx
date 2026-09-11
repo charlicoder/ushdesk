@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { Appointment, AppointmentStatus } from '@/types/appointment';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 
 // ── status config ───────────────────────────────────────────────────────────
 
@@ -91,17 +92,18 @@ export function LocalBookingDetailModal({ appointment, token, onClose, onStatusC
   const handlePaymentLink = async () => {
     setPaymentLoading(true); setPaymentError(null);
     try {
-      const res = await fetch(`/booknpay/api/v1/bookings/${a.id}/status/`, {
+      const cleanToken = token ? token.replace(/^(Bearer\s+)+/i, '').trim() : '';
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${a.id}/status`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
+          ...(cleanToken ? { Authorization: `Bearer ${cleanToken}` } : {}),
         },
         body: JSON.stringify({ status: 'confirmed', payment_status: 'pending', reason: 'Payment Link Sent to Customer' }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.detail ?? json.message ?? `Error ${res.status}`);
+      if (!res.ok) throw new Error(json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? `Error ${res.status}`);
       setPaymentSuccess(true);
     } catch (err) {
       setPaymentError(err instanceof Error ? err.message : 'Failed to send payment link');

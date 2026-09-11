@@ -14,6 +14,7 @@ import {
   Hash, RefreshCw, CreditCard, Building2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -60,7 +61,9 @@ export interface BookingDetailModalProps {
 // ── component ──────────────────────────────────────────────────────────────────
 
 export function BookingDetailModal({ bookingId, token, onClose }: BookingDetailModalProps) {
-  const authHeader = `Bearer ${token}`;
+  const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
+  const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
+  const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
   const [booking,          setBooking]          = useState<AnyRecord | null>(null);
   const [loading,          setLoading]          = useState(true);
@@ -81,13 +84,13 @@ export function BookingDetailModal({ bookingId, token, onClose }: BookingDetailM
     if (!bookingId) return;
     setLoading(true); setError(null);
     try {
-      const res  = await fetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
-        headers: { Authorization: authHeader, Accept: 'application/json' },
+      const res  = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}`, {
+        headers: authHeader ? { Authorization: authHeader, Accept: 'application/json' } : { Accept: 'application/json' },
       });
       const json = await res.json().catch(() => ({}));
       console.log('[BookingDetailModal] GET', res.status, json);
       if (!res.ok) {
-        const detail = json.detail ?? json.message ?? json.error ?? JSON.stringify(json);
+        const detail = json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? json.error ?? JSON.stringify(json);
         throw new Error(`${res.status}: ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`);
       }
       // Handle both flat and wrapped responses
@@ -105,13 +108,20 @@ export function BookingDetailModal({ bookingId, token, onClose }: BookingDetailM
   const handlePaymentLink = async () => {
     setPaymentLoading(true); setPaymentError(null);
     try {
-      const res  = await fetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
+      const res  = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status`, {
         method:  'PATCH',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: authHeader },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
         body:    JSON.stringify({ status: 'confirmed', payment_status: 'pending', reason: 'Payment Link Sent to Customer' }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.detail ?? json.message ?? `Error ${res.status}`);
+      if (!res.ok) {
+        const msg = json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? `Error ${res.status}`;
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
       setPaymentSuccess(true);
       fetchBooking(); // Refresh to reflect new status
     } catch (err) {

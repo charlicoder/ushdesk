@@ -4,8 +4,8 @@ const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
 const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
 const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
 
-// Standard Django SimpleJWT refresh endpoint
-const REFRESH_URL = `${BASE_URL}${UAUTH}/api/v1/auth/token/refresh/`;
+// Correct ushauth refresh endpoint: /uauth/api/v1/auth/refresh/
+const REFRESH_URL = `${BASE_URL}${UAUTH}/api/v1/auth/refresh/`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,7 +21,13 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(body),
     });
 
-    const data = await upstream.json().catch(() => ({}));
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Refresh failed' };
+    }
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';

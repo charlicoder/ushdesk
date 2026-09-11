@@ -69,6 +69,15 @@ async function doRefresh(): Promise<string | null> {
 
     if (newToken) {
       saveNewToken(newToken);
+      const newRefreshToken =
+        (data.refresh as string) ??
+        (data.refresh_token as string) ??
+        ((data.data as Record<string, unknown>)?.refresh_token as string) ??
+        ((data.data as Record<string, unknown>)?.refresh as string) ??
+        null;
+      if (newRefreshToken && typeof window !== 'undefined') {
+        localStorage.setItem(REFRESH_KEY, newRefreshToken);
+      }
       // Notify the Redux layer (providers.tsx listens for this)
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -103,7 +112,11 @@ export async function authedFetch(
   // 1. Attach current access token from localStorage (authoritative source)
   const token = getStoredToken();
   const headers = new Headers(init.headers ?? {});
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const rawToken = token || headers.get('Authorization') || '';
+  const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
+  if (cleanToken && cleanToken !== 'null' && cleanToken !== 'undefined') {
+    headers.set('Authorization', `Bearer ${cleanToken}`);
+  }
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
   const res = await fetch(input, { ...init, headers });
@@ -136,7 +149,8 @@ export async function authedFetch(
 
   // 6. Refresh succeeded — retry the original request with the new token
   const retryHeaders = new Headers(init.headers ?? {});
-  retryHeaders.set('Authorization', `Bearer ${newToken}`);
+  const cleanNewToken = newToken.replace(/^(Bearer\s+)+/i, '').trim();
+  retryHeaders.set('Authorization', `Bearer ${cleanNewToken}`);
   if (!retryHeaders.has('Content-Type')) retryHeaders.set('Content-Type', 'application/json');
 
   return fetch(input, { ...init, headers: retryHeaders });

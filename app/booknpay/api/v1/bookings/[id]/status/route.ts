@@ -23,8 +23,9 @@ export async function PATCH(
     'Accept':         'application/json',
     'X-USHSPA-TOKEN': APP_TOKEN,
   };
-  if (authHeader && authHeader.replace('Bearer ', '').trim()) {
-    upstreamHeaders['Authorization'] = authHeader;
+  const token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
+  if (token && token !== 'null' && token !== 'undefined') {
+    upstreamHeaders['Authorization'] = `Bearer ${token}`;
   }
 
   try {
@@ -33,7 +34,13 @@ export async function PATCH(
       headers: upstreamHeaders,
       body: JSON.stringify(body),
     });
-    const data = await upstream.json().catch(() => ({}));
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+    }
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';

@@ -6,11 +6,12 @@ import {
   Search, Plus, ChevronDown, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, User, Scissors,
   Timer, Hash, MapPin, ChevronLeft, ChevronRight, Loader2, Home,
-  Phone, Mail, FileText, Package, Star, DollarSign, Link as LinkIcon,
+  Phone, Mail, FileText, Package, Star, DollarSign, Link as LinkIcon, UserPlus,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { CreateCustomerModal, type CreatedCustomer } from '@/components/bookings/CreateCustomerModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -451,6 +452,7 @@ function BookingFormModal({
   const [customers,        setCustomers]        = useState<ApiCustomer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customerQuery,    setCustomerQuery]    = useState('');
+  const [showCreateCustomer, setShowCreateCustomer] = useState(false);
 
   const authHdr = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -486,6 +488,15 @@ function BookingFormModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // ── Form state ────────────────────────────────────────────────────────────
+  const [form, setForm] = useState<BookingFormState>({
+    gender: 'female', serviceId: '', serviceSearch: '', addonIds: [], extraMinutes: 0,
+    customerId: '', customerSearch: '',
+    addressLine1: '', addressLine2: '', city: '', area: '', notes: '',
+  });
+  const [submitting,  setSubmitting]  = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
   // Fetch customers (debounced)
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -502,22 +513,21 @@ function BookingFormModal({
           ...item,
           id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
         }));
-        setCustomers(list);
+        setCustomers((prev) => {
+          if (form.customerId) {
+            const currentSelected = prev.find(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId));
+            if (currentSelected && !list.some((c: any) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId))) {
+              return [currentSelected, ...list];
+            }
+          }
+          return list;
+        });
       } catch { setCustomers([]); }
       finally { setCustomersLoading(false); }
     }, 300);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerQuery, token]);
-
-  // ── Form state ────────────────────────────────────────────────────────────
-  const [form, setForm] = useState<BookingFormState>({
-    gender: 'female', serviceId: '', serviceSearch: '', addonIds: [], extraMinutes: 0,
-    customerId: '', customerSearch: '',
-    addressLine1: '', addressLine2: '', city: '', area: '', notes: '',
-  });
-  const [submitting,  setSubmitting]  = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  }, [customerQuery, token, form.customerId]);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -532,7 +542,10 @@ function BookingFormModal({
   }, [services, form.serviceSearch]);
 
   const selectedService  = useMemo(() => services.find((s) => s.id === form.serviceId) ?? null, [services, form.serviceId]);
-  const selectedCustomer = useMemo(() => customers.find((c) => c.id === form.customerId) ?? null, [customers, form.customerId]);
+  const selectedCustomer = useMemo(() => {
+    if (!form.customerId) return null;
+    return customers.find((c) => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId)) ?? null;
+  }, [customers, form.customerId]);
 
   // Merge service add-ons with global add-ons (de-duped by id)
   const serviceAddons: ApiAddOn[] = selectedService?.add_ons ?? [];
@@ -568,9 +581,29 @@ function BookingFormModal({
     setForm((p) => ({ ...p, addonIds: p.addonIds.includes(id) ? p.addonIds.filter((x) => x !== id) : [...p.addonIds, id] }));
 
   const selectService  = (s: ApiService) => setForm((p) => ({ ...p, serviceId: s.id, serviceSearch: s.name, addonIds: [], extraMinutes: 0 }));
-  const selectCustomer = (c: ApiCustomer) => setForm((p) => ({ ...p, customerId: c.id, customerSearch: customerLabel(c) }));
+  const selectCustomer = (c: ApiCustomer) => {
+    const id = String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '');
+    setForm((p) => ({ ...p, customerId: id, customerSearch: customerLabel(c) }));
+  };
   const clearService   = () => setForm((p) => ({ ...p, serviceId: '', serviceSearch: '', addonIds: [], extraMinutes: 0 }));
-  const clearCustomer  = () => setForm((p) => ({ ...p, customerId: '', customerSearch: '' }));
+  const clearCustomer  = () => {
+    setForm((p) => ({ ...p, customerId: '', customerSearch: '' }));
+    setCustomerQuery('');
+  };
+  const handleCustomerCreated = (created: CreatedCustomer) => {
+    const id = String(created.id);
+    const fullName = created.full_name || [created.first_name, created.last_name].filter(Boolean).join(' ');
+    const asApiCustomer: ApiCustomer = {
+      id,
+      first_name:   created.first_name ?? '',
+      last_name:    created.last_name  ?? '',
+      full_name:    fullName,
+      phone_number: created.phone_number,
+      email:        created.email,
+    };
+    setCustomers((prev) => [asApiCustomer, ...prev.filter((c) => String(c.id ?? (c as any).customer_id ?? '') !== id)]);
+    selectCustomer(asApiCustomer);
+  };
 
   const goNext = () => {
     if (!form.serviceId) { setSubmitError('Please select a service to continue.'); return; }
@@ -997,7 +1030,18 @@ function BookingFormModal({
                     <User className="h-4 w-4 text-primary" />
                     <p className="text-sm font-extrabold">Customer</p>
                   </div>
-                  <FormLabel>Search & Select Customer *</FormLabel>
+                  <div className="flex items-center justify-between mb-1">
+                    <FormLabel>Search & Select Customer *</FormLabel>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateCustomer(true)}
+                      title="Create new customer"
+                      className="flex items-center gap-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 text-[11px] font-bold text-primary transition cursor-pointer"
+                    >
+                      <UserPlus className="h-3 w-3" />
+                      New
+                    </button>
+                  </div>
                   <SearchDropdown<ApiCustomer>
                     value={form.customerSearch}
                     placeholder="Search by name or phone…"
@@ -1033,7 +1077,7 @@ function BookingFormModal({
                     <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                       <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer'} selected
+                        {([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || selectedCustomer.full_name || 'Customer'} selected
                         {selectedCustomer.phone_number && <span className="font-normal text-emerald-600/70"> · {selectedCustomer.phone_number}</span>}
                       </p>
                     </div>
@@ -1277,6 +1321,14 @@ function BookingFormModal({
               )}
             </div>
           </div>
+        {/* ── Quick-add new customer ── */}
+        {showCreateCustomer && (
+          <CreateCustomerModal
+            authHeader={token ? `Bearer ${token}` : ''}
+            onCreated={handleCustomerCreated}
+            onClose={() => setShowCreateCustomer(false)}
+          />
+        )}
         </div>
         )}
       </div>

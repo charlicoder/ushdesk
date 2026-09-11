@@ -320,8 +320,8 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Add-ons ({voucher.addons.length})</p>
               </div>
               <div className="space-y-2">
-                {voucher.addons.map((addon) => (
-                  <div key={addon.id} className="flex items-start justify-between gap-2">
+                {voucher.addons.map((addon, index) => (
+                  <div key={addon.id ?? index} className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-[11px] font-semibold">{addon.name}</p>
                       {addon.duration_minutes > 0 && (
