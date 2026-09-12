@@ -12,9 +12,29 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  X, User, Phone, Mail, Loader2, UserPlus, AlertCircle, CheckCircle2,
+  X, User, Phone, Mail, Loader2, UserPlus, AlertCircle, CheckCircle2, ChevronDown,
 } from 'lucide-react';
 import { authedFetch } from '@/lib/authedFetch';
+
+// ── Country Codes ─────────────────────────────────────────────────────────────
+
+export const COUNTRY_CODES = [
+  { code: '+965', country: 'KW', flag: '🇰🇼', name: 'Kuwait' },
+  { code: '+966', country: 'SA', flag: '🇸🇦', name: 'Saudi Arabia' },
+  { code: '+971', country: 'AE', flag: '🇦🇪', name: 'UAE' },
+  { code: '+974', country: 'QA', flag: '🇶🇦', name: 'Qatar' },
+  { code: '+973', country: 'BH', flag: '🇧🇭', name: 'Bahrain' },
+  { code: '+968', country: 'OM', flag: '🇴🇲', name: 'Oman' },
+  { code: '+20',  country: 'EG', flag: '🇪🇬', name: 'Egypt' },
+  { code: '+962', country: 'JO', flag: '🇯🇴', name: 'Jordan' },
+  { code: '+961', country: 'LB', flag: '🇱🇧', name: 'Lebanon' },
+  { code: '+964', country: 'IQ', flag: '🇮🇶', name: 'Iraq' },
+  { code: '+91',  country: 'IN', flag: '🇮🇳', name: 'India' },
+  { code: '+92',  country: 'PK', flag: '🇵🇰', name: 'Pakistan' },
+  { code: '+63',  country: 'PH', flag: '🇵🇭', name: 'Philippines' },
+  { code: '+44',  country: 'GB', flag: '🇬🇧', name: 'UK' },
+  { code: '+1',   country: 'US', flag: '🇺🇸', name: 'USA' },
+];
 
 // ── Payload type ───────────────────────────────────────────────────────────────
 
@@ -111,14 +131,15 @@ interface Props {
 // ── Component ──────────────────────────────────────────────────────────────────
 
 export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
-  const [firstName, setFirstName] = useState('');
-  const [lastName,  setLastName]  = useState('');
-  const [phone,     setPhone]     = useState('');
-  const [email,     setEmail]     = useState('');
-  const [gender,    setGender]    = useState('');
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState<string | null>(null);
-  const [success,   setSuccess]   = useState(false);
+  const [firstName,   setFirstName]   = useState('');
+  const [lastName,    setLastName]    = useState('');
+  const [countryCode, setCountryCode] = useState('+965');
+  const [phone,       setPhone]       = useState('');
+  const [email,       setEmail]       = useState('');
+  const [gender,      setGender]      = useState('');
+  const [loading,     setLoading]     = useState(false);
+  const [error,       setError]       = useState<string | null>(null);
+  const [success,     setSuccess]     = useState(false);
 
   const firstRef = useRef<HTMLInputElement>(null);
 
@@ -138,8 +159,22 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
     if (!lastName.trim())  { setError('Last name is required.'); return; }
     if (!phone.trim())     { setError('Phone number is required.'); return; }
 
+    const rawPhone = phone.trim();
+    let fullPhoneNumber = rawPhone;
+    if (rawPhone.startsWith('+')) {
+      fullPhoneNumber = rawPhone;
+    } else {
+      const codeDigits = countryCode.replace('+', '');
+      let stripped = rawPhone.replace(/[\s\-()]/g, '');
+      if (stripped.startsWith(codeDigits)) {
+        stripped = stripped.slice(codeDigits.length);
+      }
+      stripped = stripped.replace(/^0+/, '');
+      fullPhoneNumber = `${countryCode}${stripped}`;
+    }
+
     const payload: CreateCustomerPayload = {
-      phone_number:     phone.trim(),
+      phone_number:     fullPhoneNumber,
       first_name:       firstName.trim(),
       last_name:        lastName.trim(),
       send_sqs_message: true,
@@ -213,16 +248,33 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
               <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
                 Phone Number *
               </label>
-              <div className="relative">
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 pointer-events-none" />
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="+96541028983"
-                  required
-                  className="w-full rounded-xl border border-border bg-muted/30 pl-9 pr-3.5 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
-                />
+              <div className="flex gap-2">
+                <div className="relative shrink-0 w-[120px]">
+                  <select
+                    value={countryCode}
+                    onChange={(e) => setCountryCode(e.target.value)}
+                    className="w-full h-10 rounded-xl border border-border bg-muted/30 pl-2.5 pr-7 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer appearance-none"
+                    aria-label="Country Code"
+                  >
+                    {COUNTRY_CODES.map((c) => (
+                      <option key={c.code + c.country} value={c.code} className="bg-card text-foreground py-1">
+                        {c.flag} {c.code}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 pointer-events-none" />
+                </div>
+                <div className="relative flex-1">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 pointer-events-none" />
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="41028983"
+                    required
+                    className="w-full h-10 rounded-xl border border-border bg-muted/30 pl-9 pr-3.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+                  />
+                </div>
               </div>
             </div>
 

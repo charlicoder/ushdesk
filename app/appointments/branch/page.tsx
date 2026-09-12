@@ -46,6 +46,8 @@ interface ApiBooking {
   status: string;
   bookings_id: string;
   service_name?: string;
+  payment_status?: string;
+  paymentStatus?: string;
 }
 
 interface ApiGrid {
@@ -75,6 +77,7 @@ type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_pr
 
 interface Slot {
   status: SlotStatus;
+  payment_status?: string;
   serviceName?: string;
   capacity?: number;
   start?: string;
@@ -171,11 +174,23 @@ interface DetailModalPayload {
   date:        string;
 }
 
-function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; onClose: () => void }) {
+function SlotDetailModal({
+  payload,
+  onClose,
+  onSuccess,
+  token,
+}: {
+  payload: DetailModalPayload;
+  onClose: () => void;
+  onSuccess?: () => void;
+  token?: string;
+}) {
   const { slot, arrangement, timeSlot, branch, date } = payload;
   const cfg = STATUS_CFG[slot.status as ActiveStatus];
   const typeCfg = getArrangementType(arrangement.arrangementType);
   const TypeIcon = typeCfg.Icon;
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -183,7 +198,41 @@ function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; on
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const refNo = slot.bookingsId ?? slot.reference ?? `USH-${arrangement.id.slice(0, 6).toUpperCase()}`;
+  const bookingId = slot.bookingsId ?? slot.reference;
+  const refNo = bookingId ?? `USH-${arrangement.id.slice(0, 6).toUpperCase()}`;
+
+  const handlePaymentDone = async () => {
+    if (!bookingId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          payment_status: 'success',
+          reason:         'Paid on desk',
+          source:         'ushspa app',
+          status:         'confirmed',
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? `Error ${res.status}`;
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+      onSuccess?.();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update payment status');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -225,11 +274,11 @@ function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; on
         <div className="px-6 py-5 space-y-3">
           <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3">
             <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl', cfg.pillCls)}>
-              <Users className="h-4 w-4" />
+              <LayoutGrid className="h-4 w-4" />
             </div>
             <div>
-              <p className="text-[11px] text-muted-foreground font-medium">Capacity</p>
-              <p className="text-sm font-bold">{arrangement.capacity} {arrangement.capacity === 1 ? 'person' : 'people'}</p>
+              <p className="text-[11px] text-muted-foreground font-medium">Service / Arrangement</p>
+              <p className="text-sm font-bold">{slot.serviceName ?? arrangement.name}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -261,7 +310,7 @@ function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; on
               </div>
               <div className="min-w-0">
                 <p className="text-[11px] text-muted-foreground font-medium">Branch</p>
-                <p className="text-sm font-bold truncate">{arrangement.branchName || branch}</p>
+                <p className="text-sm font-bold truncate">{branch}</p>
               </div>
             </div>
             <div className="flex items-center gap-3 rounded-2xl border border-border/50 bg-muted/30 px-4 py-3">
@@ -284,14 +333,56 @@ function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; on
             </div>
           </div>
         </div>
+        {error && (
+          <div className="mx-6 mb-2 flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/40 px-4 py-2 text-xs text-rose-700 dark:text-rose-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
         <div className="flex gap-2 border-t border-border/40 px-6 py-4">
           <button onClick={onClose}
             className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
             Close
           </button>
-          <button className={cn('flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition', cfg.btnCls)}>
-            {cfg.btnLabel}
-          </button>
+          {(() => {
+            const pStatus = (slot.payment_status ?? '').toLowerCase().trim();
+            const isPaid = pStatus === 'success' || pStatus === 'paid' || pStatus === 'completed';
+            const isPending = pStatus === 'pending' || pStatus === 'unpaid';
+
+            if (isPaid) return null;
+            if (isPending) {
+              return (
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={handlePaymentDone}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98]",
+                    loading
+                      ? "bg-emerald-400 cursor-wait opacity-80"
+                      : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                  )}
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Updating…
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" />
+                      Payment done
+                    </>
+                  )}
+                </button>
+              );
+            }
+            return (
+              <button className={cn('flex-1 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition', cfg.btnCls)}>
+                {cfg.btnLabel}
+              </button>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -303,8 +394,8 @@ function SlotDetailModal({ payload, onClose }: { payload: DetailModalPayload; on
 function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   if (slot.status === 'unavailable') {
     return (
-      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-muted/40 transition hover:bg-muted/60">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Unavailable</span>
+      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-muted/40 transition hover:bg-muted/60 px-1 text-center">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 truncate">Unavailable</span>
       </div>
     );
   }
@@ -316,40 +407,83 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
         tabIndex={0}
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
-        className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group"
+        className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group px-1 text-center"
       >
-        <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground/70 group-hover:text-primary transition">
-          <Plus className="h-3.5 w-3.5" /> Available
+        <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground/70 group-hover:text-primary transition truncate">
+          <Plus className="h-3 w-3 shrink-0" /> Available
         </span>
       </div>
     );
   }
 
-  const cfg = STATUS_CFG[slot.status as ActiveStatus];
-  const Icon = cfg.Icon;
+  const cfg = STATUS_CFG[slot.status as ActiveStatus] ?? STATUS_CFG.scheduled;
+  const st = (slot.status as ActiveStatus) in STATUS_CFG ? (slot.status as ActiveStatus) : 'scheduled';
 
-  const accentBar: Record<ActiveStatus, string> = {
-    in_progress: 'bg-emerald-500',
-    booking:     'bg-blue-500',
-    scheduled:   'bg-violet-500',
-  };
-  const iconBg: Record<ActiveStatus, string> = {
-    in_progress: 'bg-emerald-500/15',
-    booking:     'bg-blue-500/15',
-    scheduled:   'bg-violet-500/15',
-  };
-  const durationCls: Record<ActiveStatus, string> = {
-    in_progress: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-    booking:     'bg-blue-500/15 text-blue-700 dark:text-blue-300',
-    scheduled:   'bg-violet-500/15 text-violet-700 dark:text-violet-300',
-  };
-  const borderHover: Record<ActiveStatus, string> = {
-    in_progress: 'border-emerald-300/70 dark:border-emerald-600/50 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/60 dark:to-emerald-900/30 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-400',
-    booking:     'border-blue-300/70 dark:border-blue-600/50 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 shadow-sm shadow-blue-500/10 hover:shadow-blue-500/20 hover:border-blue-400',
-    scheduled:   'border-violet-300/70 dark:border-violet-600/50 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 shadow-sm shadow-violet-500/10 hover:shadow-violet-500/20 hover:border-violet-400',
-  };
+  const pStatus = (slot.payment_status ?? '').toLowerCase().trim();
+  const isPaid = pStatus === 'success' || pStatus === 'paid' || pStatus === 'completed';
+  const isPending = pStatus === 'pending' || pStatus === 'unpaid';
 
-  const st = slot.status as ActiveStatus;
+  // Background and border styling: green if success, red if pending, fallback to status
+  const cardBorderBg = isPaid
+    ? 'border-emerald-400/80 dark:border-emerald-600/70 bg-gradient-to-br from-emerald-50 to-emerald-100/70 dark:from-emerald-950/70 dark:to-emerald-900/40 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-500'
+    : isPending
+    ? 'border-rose-400/80 dark:border-rose-600/70 bg-gradient-to-br from-rose-50 to-rose-100/70 dark:from-rose-950/70 dark:to-rose-900/40 shadow-sm shadow-rose-500/10 hover:shadow-rose-500/20 hover:border-rose-500'
+    : st === 'in_progress'
+    ? 'border-emerald-300/70 dark:border-emerald-600/50 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/60 dark:to-emerald-900/30 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-400'
+    : st === 'booking'
+    ? 'border-blue-300/70 dark:border-blue-600/50 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 shadow-sm shadow-blue-500/10 hover:shadow-blue-500/20 hover:border-blue-400'
+    : 'border-violet-300/70 dark:border-violet-600/50 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 shadow-sm shadow-violet-500/10 hover:shadow-violet-500/20 hover:border-violet-400';
+
+  const accentBarColor = isPaid
+    ? 'bg-emerald-500'
+    : isPending
+    ? 'bg-rose-500'
+    : st === 'in_progress'
+    ? 'bg-emerald-500'
+    : st === 'booking'
+    ? 'bg-blue-500'
+    : 'bg-violet-500';
+
+  const pillCls = isPaid
+    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
+    : isPending
+    ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300'
+    : cfg.pillCls;
+
+  const dotCls = isPaid
+    ? 'bg-emerald-600'
+    : isPending
+    ? 'bg-rose-600'
+    : cfg.dot;
+
+  const iconBgCls = isPaid
+    ? 'bg-emerald-500/15'
+    : isPending
+    ? 'bg-rose-500/15'
+    : st === 'in_progress'
+    ? 'bg-emerald-500/15'
+    : st === 'booking'
+    ? 'bg-blue-500/15'
+    : 'bg-violet-500/15';
+
+  const iconCls = isPaid
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : isPending
+    ? 'text-rose-600 dark:text-rose-400'
+    : cfg.iconCls;
+
+  const durationCls = isPaid
+    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+    : isPending
+    ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+    : st === 'in_progress'
+    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+    : st === 'booking'
+    ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+    : 'bg-violet-500/15 text-violet-700 dark:text-violet-300';
+
+  const badgeLabel = isPaid ? 'PAID' : isPending ? 'PENDING' : cfg.label;
+  const Icon = isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
 
   return (
     <div
@@ -360,47 +494,47 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
       className={cn(
         'group relative h-full min-h-[82px] flex rounded-xl overflow-hidden cursor-pointer select-none',
         'border transition-all duration-200 active:scale-[0.98]',
-        borderHover[st],
+        cardBorderBg,
       )}
     >
       {/* Left accent bar */}
-      <div className={cn('w-[3px] shrink-0', accentBar[st])} />
+      <div className={cn('w-[3px] shrink-0', accentBarColor)} />
 
       {/* Main content */}
-      <div className="flex flex-1 min-w-0 flex-col justify-between px-2.5 py-2 gap-1">
+      <div className="flex flex-1 min-w-0 flex-col justify-between p-2 gap-1">
 
         {/* Row 1: status badge + icon */}
         <div className="flex items-center justify-between gap-1">
           <span className={cn(
-            'inline-flex items-center gap-1 rounded-md px-1.5 py-[3px] text-[8px] font-extrabold uppercase tracking-widest leading-none',
-            cfg.pillCls,
+            'inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[8px] font-extrabold uppercase tracking-wider leading-none truncate max-w-[65px]',
+            pillCls,
           )}>
-            <span className={cn('h-[5px] w-[5px] rounded-full shrink-0', cfg.dot)} />
-            {cfg.label}
+            <span className={cn('h-[4px] w-[4px] rounded-full shrink-0', dotCls)} />
+            <span className="truncate">{badgeLabel}</span>
           </span>
-          <div className={cn('grid h-[18px] w-[18px] shrink-0 place-items-center rounded-md', iconBg[st])}>
-            <Icon className={cn('h-[10px] w-[10px]', cfg.iconCls)} />
+          <div className={cn('grid h-4 w-4 shrink-0 place-items-center rounded-md', iconBgCls)}>
+            <Icon className={cn('h-2.5 w-2.5', iconCls)} />
           </div>
         </div>
 
         {/* Row 2: service name — wraps up to 2 lines */}
-        <p className="text-[11px] font-bold leading-tight text-foreground break-words whitespace-normal line-clamp-2 min-h-[26px]">
+        <p className="text-[11px] font-bold leading-tight text-foreground line-clamp-2 min-h-[24px] truncate" title={slot.serviceName || 'Booked'}>
           {slot.serviceName || 'Booked'}
         </p>
 
         {/* Row 3: duration + time range */}
-        <div className="flex items-center gap-1.5 flex-wrap">
+        <div className="flex items-center justify-between gap-1 pt-1 border-t border-border/20 text-[10px]">
           {slot.duration && (
             <span className={cn(
-              'inline-flex items-center gap-[3px] rounded-md px-1.5 py-[3px] text-[11px] font-bold leading-none',
-              durationCls[st],
+              'inline-flex items-center gap-[2px] rounded-md px-1 py-[2px] text-[9px] font-bold leading-none shrink-0',
+              durationCls,
             )}>
-              <Timer className="h-3 w-3 shrink-0" />
+              <Timer className="h-2.5 w-2.5 shrink-0" />
               {slot.duration}
             </span>
           )}
           {slot.start && slot.end && (
-            <span className="text-[11px] font-semibold text-muted-foreground leading-none tabular-nums">
+            <span className="text-[9px] font-semibold text-muted-foreground leading-none tabular-nums truncate">
               {slot.start}–{slot.end}
             </span>
           )}
@@ -535,6 +669,7 @@ function buildScheduleFromApi(
     duration: string; reference: string;
     bookingsId: string; status: string;
     serviceName: string;
+    payment_status?: string;
   };
 
   const bookingMap: Record<string, BkEntry[]> = {};
@@ -550,6 +685,7 @@ function buildScheduleFromApi(
       return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
     };
     const durationMin = bk.duration_minutes ?? (em - sm);
+    const paymentStatus = (bk.payment_status ?? (bk as any).paymentStatus ?? '').toString().toLowerCase().trim();
     bookingMap[bk.arrangement_id].push({
       startMin:    sm,
       endMin:      em,
@@ -560,6 +696,7 @@ function buildScheduleFromApi(
       bookingsId:  bk.bookings_id,
       status:      bk.status ?? 'confirmed',
       serviceName: bk.service_name ?? '',
+      payment_status: paymentStatus || undefined,
     });
   }
 
@@ -577,15 +714,16 @@ function buildScheduleFromApi(
         if (bk.status === 'in_progress') st = 'in_progress';
         else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
         sched[arr.id][slotLabel] = {
-          status:      st,
-          serviceName: bk.serviceName || arr.name,
-          capacity:    arr.capacity,
-          start:       bk.startLabel,
-          end:         bk.endLabel,
-          duration:    bk.duration,
-          reference:   bk.reference,
-          bookingsId:  bk.bookingsId,
-          branchName:  arr.branch_name,
+          status:         st,
+          serviceName:    bk.serviceName || arr.name,
+          capacity:       arr.capacity,
+          start:          bk.startLabel,
+          end:            bk.endLabel,
+          duration:       bk.duration,
+          reference:      bk.reference,
+          bookingsId:     bk.bookingsId,
+          branchName:     arr.branch_name,
+          payment_status: bk.payment_status,
         };
         continue;
       }
@@ -601,6 +739,11 @@ function formatDateDisplay(isoDate: string): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function formatHeaderDate(isoDate: string): string {
+  const d = new Date(isoDate + 'T00:00:00');
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BranchAppointmentsPage() {
   const token = useAppSelector((s) => s.auth.token) ?? '';
@@ -608,7 +751,9 @@ export default function BranchAppointmentsPage() {
   const today    = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
-  const [selectedBranchId, setSelectedBranchId] = useState<string>('all');
+  // Selected branch — defaults to first available branch once branch list is loaded
+  const [branchList,       setBranchList]        = useState<ApiBranch[]>([]);
+  const [selectedBranchId, setSelectedBranchId]  = useState<string>('');
   const [selectedDate,     setSelectedDate]      = useState<string>(todayStr);
   const [search,           setSearch]            = useState('');
   const [detailModal,      setDetailModal]       = useState<DetailModalPayload | null>(null);
@@ -620,7 +765,7 @@ export default function BranchAppointmentsPage() {
   const [bookingDetailId,  setBookingDetailId]  = useState<string | null>(null);
 
   const [scheduleData, setScheduleData] = useState<ApiScheduleRecord | null>(null);
-  const [loading,      setLoading]      = useState(false);
+  const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState<string | null>(null);
 
   const headerScrollRef = useRef<HTMLDivElement>(null);
@@ -631,8 +776,56 @@ export default function BranchAppointmentsPage() {
     }
   }, []);
 
+  // Load branches list on mount and set first available branch as default
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/branches', {
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          },
+        });
+        if (!res.ok) {
+          if (active) setLoading(false);
+          return;
+        }
+        const json = await res.json().catch(() => ({}));
+        const rawList = Array.isArray(json)
+          ? json
+          : (json?.data ?? json?.results ?? json?.branches ?? []);
+        if (Array.isArray(rawList)) {
+          const list: ApiBranch[] = rawList
+            .map((b: any) => ({
+              branch_id: String(b.id ?? b.branch_id ?? ''),
+              branch_name: String(b.name ?? b.branch_name ?? ''),
+            }))
+            .filter((b: ApiBranch) => Boolean(b.branch_id));
+
+          if (active) {
+            if (list.length > 0) {
+              setBranchList(list);
+              setSelectedBranchId((prev) => (prev && list.some(b => b.branch_id === prev) ? prev : list[0].branch_id));
+            } else {
+              setLoading(false);
+            }
+          }
+        } else if (active) {
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error('Failed to load branches:', err);
+        if (active) setLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [token]);
+
   // Fetch schedule when branch or date changes
   useEffect(() => {
+    if (!selectedBranchId) return;
+
     const controller = new AbortController();
 
     (async () => {
@@ -671,9 +864,9 @@ export default function BranchAppointmentsPage() {
   const timeSlots = generateTimeSlots(grid);
 
   const allArrangements: ApiArrangement[] = scheduleData?.arrangements ?? [];
-  const filteredByBranch = selectedBranchId === 'all'
-    ? allArrangements
-    : allArrangements.filter(a => a.branch_id === selectedBranchId);
+  const filteredByBranch = selectedBranchId
+    ? allArrangements.filter(a => a.branch_id === selectedBranchId)
+    : allArrangements;
 
   const arrangements: Arrangement[] = filteredByBranch.map((a, i) => ({
     id:              a.id,
@@ -702,16 +895,28 @@ export default function BranchAppointmentsPage() {
   const availCount  = allSlots.filter(s => s.status === 'available').length;
   const occupancy   = Math.round((bookedCount / (bookedCount + availCount)) * 100) || 0;
 
-  const apiBranches: ApiBranch[] = scheduleData?.branch?.branches ?? (
-    scheduleData?.branch?.id && scheduleData.branch.id !== 'all'
-      ? [{ branch_id: scheduleData.branch.id, branch_name: scheduleData.branch.name ?? scheduleData.branch.id }]
-      : []
-  );
+  // Branch list combines /api/v1/branches with schedule response
+  const apiBranches: ApiBranch[] = useMemo(() => {
+    const map = new Map<string, string>();
+    branchList.forEach(b => map.set(b.branch_id, b.branch_name));
+    (scheduleData?.branch?.branches ?? []).forEach(b => {
+      if (b.branch_id && !map.has(b.branch_id)) {
+        map.set(b.branch_id, b.branch_name);
+      }
+    });
+    if (scheduleData?.branch?.id && scheduleData.branch.id !== 'all' && !map.has(scheduleData.branch.id)) {
+      map.set(scheduleData.branch.id, scheduleData.branch.name ?? scheduleData.branch.id);
+    }
+    return Array.from(map.entries()).map(([branch_id, branch_name]) => ({ branch_id, branch_name }));
+  }, [branchList, scheduleData]);
 
-  const branchLabel = (() => {
-    if (selectedBranchId === 'all') return 'All Branches';
-    return apiBranches.find(b => b.branch_id === selectedBranchId)?.branch_name ?? 'Select Branch';
-  })();
+  useEffect(() => {
+    if (!selectedBranchId && apiBranches.length > 0) {
+      setSelectedBranchId(apiBranches[0].branch_id);
+    }
+  }, [selectedBranchId, apiBranches]);
+
+  const branchLabel = apiBranches.find(b => b.branch_id === selectedBranchId)?.branch_name ?? 'Select Branch';
 
   const dateDisplay = formatDateDisplay(selectedDate);
 
@@ -731,6 +936,7 @@ export default function BranchAppointmentsPage() {
 
   const handleBookingSuccess = useCallback(() => {
     // Reload schedule
+    if (!selectedBranchId) return;
     setScheduleData(null);
     setLoading(true);
     const url = `/api/v1/service-arrangements/schedule?branch_id=${selectedBranchId}&date=${selectedDate}`;
@@ -748,10 +954,9 @@ export default function BranchAppointmentsPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Branch Appointments</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
           Live arrangement board · <span className="font-semibold text-foreground">{dateDisplay}</span>
-          {selectedBranchId === 'all'
-            ? <> · <span className="font-semibold text-foreground">All Branches</span></>
-            : branchLabel !== 'Select Branch' && <> · <span className="font-semibold text-foreground">{branchLabel}</span></>
-          }
+          {branchLabel && branchLabel !== 'Select Branch' && (
+            <> · <span className="font-semibold text-foreground">{branchLabel}</span></>
+          )}
         </p>
       </div>
 
@@ -772,18 +977,6 @@ export default function BranchAppointmentsPage() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setShowBranchDrop(false)} />
               <div className="absolute top-full left-0 mt-2 z-50 w-64 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
-                <button
-                  onClick={() => { setSelectedBranchId('all'); setShowBranchDrop(false); }}
-                  className={cn(
-                    'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
-                    selectedBranchId === 'all' ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
-                  )}
-                >
-                  All Branches
-                </button>
-                {apiBranches.length > 0 && (
-                  <div className="my-1 border-t border-border/40" />
-                )}
                 {apiBranches.map(b => (
                   <button
                     key={b.branch_id}
@@ -834,9 +1027,6 @@ export default function BranchAppointmentsPage() {
             className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </div>
-        <button className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary text-white shadow-sm hover:bg-primary/90 transition">
-          <Plus className="h-5 w-5" />
-        </button>
       </div>
 
       {/* ── KPI Strip ── */}
@@ -887,11 +1077,10 @@ export default function BranchAppointmentsPage() {
           {/* Legend */}
           <div className="flex flex-wrap items-center justify-end gap-4 border-b border-border/40 px-4 py-3 bg-muted/20 rounded-t-2xl overflow-hidden">
             {[
-              { label: 'In Progress', color: 'bg-emerald-500' },
-              { label: 'Booking',     color: 'bg-blue-500' },
-              { label: 'Scheduled',   color: 'bg-violet-500' },
-              { label: 'Available',   color: 'bg-card border border-dashed border-border' },
-              { label: 'Unavailable', color: 'bg-muted/80' },
+              { label: 'Paid (Success)',  color: 'bg-emerald-500' },
+              { label: 'Pending Payment', color: 'bg-rose-500' },
+              { label: 'Available',       color: 'bg-card border border-dashed border-border' },
+              { label: 'Unavailable',     color: 'bg-muted/80' },
             ].map((l) => (
               <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
                 <span className={cn('h-2.5 w-2.5 rounded-full', l.color)} />
@@ -910,31 +1099,58 @@ export default function BranchAppointmentsPage() {
           ) : (
             <>
               {/* Sticky header */}
-              <div className="sticky top-16 z-20 flex border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
-                <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">
-                  Time
+              <div className="sticky top-16 z-20 flex items-stretch border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
+                <div className="w-24 shrink-0 flex flex-col justify-center items-center py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">
+                  <span>Time</span>
+                  <span className="text-[10px] text-muted-foreground/60 normal-case font-medium mt-0.5">Slots</span>
                 </div>
                 <div ref={headerScrollRef} className="flex-1 overflow-x-hidden">
-                  <div style={{ width: `${filteredArrangements.length * 175}px`, minWidth: '100%' }} className="flex">
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: `repeat(${filteredArrangements.length}, minmax(95px, 1fr))`,
+                      minWidth: `${filteredArrangements.length * 95}px`,
+                      width: '100%',
+                    }}
+                  >
                     {filteredArrangements.map((a, aIdx) => {
                       const typeCfg = getArrangementType(a.arrangementType);
                       const TypeIcon = typeCfg.Icon;
                       return (
-                        <div key={a.id} style={{ width: 175, minWidth: 175 }} className={cn(
-                          'flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2',
-                          COL_TINTS[aIdx % COL_TINTS.length],
-                        )}>
-                          <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
-                            <div className={cn('relative h-10 w-10 rounded-full grid place-items-center ring-2 ring-background shrink-0 bg-gradient-to-br text-white text-xs font-bold', a.color)}>
-                              {a.initials}
+                        <div
+                          key={a.id}
+                          className={cn(
+                            'flex items-center justify-center gap-2 py-3 px-1.5 border-l border-border/30 first:border-l-0 min-w-0 h-[108px]',
+                            COL_TINTS[aIdx % COL_TINTS.length],
+                          )}
+                        >
+                          {/* Left side: Arrangement Name (Vertical) */}
+                          <div className="flex items-center justify-center shrink-0">
+                            <span
+                              className="text-xs font-bold text-foreground select-none tracking-tight [writing-mode:vertical-rl] rotate-180 truncate max-h-[92px] leading-tight"
+                              title={a.name}
+                            >
+                              {a.name}
+                            </span>
+                          </div>
+
+                          {/* Right side: Icon/Initials on top + Date & Type below */}
+                          <div className="flex flex-col items-center justify-center gap-1 shrink-0">
+                            <div className="relative flex items-center justify-center p-0.5 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-sm ring-1 ring-border/50 shrink-0">
+                              <div className={cn('relative h-9 w-9 rounded-full grid place-items-center ring-2 ring-background shrink-0 bg-gradient-to-br text-white text-xs font-bold', a.color)}>
+                                {a.initials}
+                              </div>
                             </div>
+
+                            <div className="flex items-center gap-1">
+                              <TypeIcon className={cn('h-2.5 w-2.5', typeCfg.color)} />
+                              <span className="text-[9px] font-semibold text-muted-foreground">{typeCfg.label}</span>
+                            </div>
+
+                            <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums text-center">
+                              {formatHeaderDate(selectedDate)}
+                            </span>
                           </div>
-                          <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{a.name}</p>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <TypeIcon className={cn('h-3 w-3', typeCfg.color)} />
-                            <p className="text-[10px] font-semibold text-muted-foreground">{typeCfg.label}</p>
-                          </div>
-                          <p className="text-[10px] text-muted-foreground/70 mt-0.5 truncate max-w-[130px]">{a.branchName}</p>
                         </div>
                       );
                     })}
@@ -945,11 +1161,11 @@ export default function BranchAppointmentsPage() {
               {/* Scrollable body */}
               <div className="flex rounded-b-2xl">
                 {/* Time column */}
-                <div className="w-28 shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
+                <div className="w-24 shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
                   {timeSlots.map((time) => (
                     <div
                       key={`tcol-${time}`}
-                      className="flex flex-col justify-center pl-4 py-2.5 border-t border-border/30"
+                      className="flex flex-col justify-center pl-3 py-2.5 border-t border-border/30"
                       style={{ height: 98 }}
                     >
                       <p className="text-xs font-bold text-foreground">{time}</p>
@@ -964,10 +1180,10 @@ export default function BranchAppointmentsPage() {
                 <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto">
                   <div
                     style={{
-                      width: `${filteredArrangements.length * 175}px`,
-                      minWidth: '100%',
                       display: 'grid',
-                      gridTemplateColumns: `repeat(${filteredArrangements.length}, 175px)`,
+                      gridTemplateColumns: `repeat(${filteredArrangements.length}, minmax(95px, 1fr))`,
+                      minWidth: `${filteredArrangements.length * 95}px`,
+                      width: '100%',
                       gridTemplateRows: `repeat(${timeSlots.length}, 98px)`,
                     }}
                   >
@@ -1045,11 +1261,19 @@ export default function BranchAppointmentsPage() {
           bookingId={bookingDetailId}
           token={token}
           onClose={() => setBookingDetailId(null)}
+          onSuccess={handleBookingSuccess}
         />
       )}
 
       {/* ── Detail Modal (fallback for slots without a booknpay ID) ── */}
-      {detailModal && <SlotDetailModal payload={detailModal} onClose={() => setDetailModal(null)} />}
+      {detailModal && (
+        <SlotDetailModal
+          payload={detailModal}
+          token={token}
+          onClose={() => setDetailModal(null)}
+          onSuccess={handleBookingSuccess}
+        />
+      )}
 
       {/* ── New Booking Modal (available slots) ── */}
       {newBookingModal && (

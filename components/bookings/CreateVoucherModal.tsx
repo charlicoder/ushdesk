@@ -146,7 +146,7 @@ function fmtPrice(val: string | number | null | undefined, currency = 'KWD'): st
 }
 
 const GIFT_TEMPLATES = ['Classic Gold', 'Elegant Rose', 'Midnight Blue', 'Floral Bliss', 'Luxury Black', 'Spring Breeze'];
-const EXTRA_TIME_OPTIONS = [0, 15, 30, 45];
+const EXTRA_TIME_OPTIONS = [0, 30, 60] as const;
 
 const ARR_FALLBACKS = [
   'linear-gradient(135deg,#daccc1 0%,#c4a99c 100%)',
@@ -805,19 +805,28 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const arrangPriceRaw = selectedArrangt?.arrangement_price ?? selectedArrangt?.price;
   const arrangPrice    = parseFloat(String(arrangPriceRaw ?? '')) || 0;
 
-  // Extra-time price: use a dedicated per-minute field if available, otherwise
+  // Extra-time price: use dedicated per-minute or unit price if available, otherwise
   // derive a per-minute rate from the arrangement/base price ÷ base duration.
   const extraTimePricePerMin = (() => {
     const arr = selectedArrangt;
-    if (!arr) return 0;
-    // Try dedicated API fields first (various naming conventions)
-    const raw =
-      arr.extra_time_price_per_minute ??
-      arr.price_per_extra_minute ??
-      arr.extra_time_price;
-    if (raw != null) {
-      const parsed = parseFloat(String(raw));
-      if (!isNaN(parsed) && parsed > 0) return parsed;
+    if (arr) {
+      // Try dedicated API fields first (various naming conventions)
+      const raw =
+        arr.extra_time_price_per_minute ??
+        arr.price_per_extra_minute ??
+        arr.extra_time_price;
+      if (raw != null) {
+        const parsed = parseFloat(String(raw));
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+    }
+    const svcExtraUnit = (selectedService as any)?.extra_minutes ?? 0;
+    const svcExtraPrice = parseFloat(String((selectedService as any)?.price_for_extra_minutes ?? '0')) || 0;
+    if (svcExtraPrice > 0 && svcExtraUnit > 0) {
+      return svcExtraPrice / svcExtraUnit;
+    }
+    if (svcExtraPrice > 0) {
+      return svcExtraPrice / 30;
     }
     // Fallback: derive per-minute rate from arrangement/base price and base duration
     const effectivePrice    = arrangPrice || basePrice;
@@ -827,9 +836,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       : 0;
   })();
 
-  const extraTimePrice = extraTime > 0 ? parseFloat((extraTimePricePerMin * extraTime).toFixed(3)) : 0;
+  const calcVoucherExtraPrice = (mins: number) => {
+    return mins > 0 ? parseFloat((extraTimePricePerMin * mins).toFixed(3)) : 0;
+  };
+
+  const extraTimePrice = calcVoucherExtraPrice(extraTime);
   const totalPrice     = (arrangPrice || basePrice) + addonPrice + extraTimePrice;
-  const totalDuration  = baseDuration + addonDur + extraTime;
+  const totalDuration  = (baseDuration || 60) + addonDur + extraTime;
 
   // ── Escape key ──
   useEffect(() => {
@@ -1242,18 +1255,19 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               )}
 
               {/* Extra time */}
-              {selectedArrangt && (
+              {selectedService && (
                 <div>
                   <SectionLabel icon={Timer} label="Extra Time (optional)" />
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     {EXTRA_TIME_OPTIONS.map(t => {
                       const active = extraTime === t;
+                      const optPrice = calcVoucherExtraPrice(t);
                       return (
                         <button
                           key={t}
                           type="button"
                           onClick={() => setExtraTime(t)}
-                          className="flex flex-col items-center justify-center rounded-2xl border py-3 px-2 transition-all"
+                          className="flex flex-col items-center justify-center rounded-2xl border py-3 px-2 transition-all cursor-pointer"
                           style={{
                             borderColor: active ? B.espresso : B.linen,
                             background:  active ? B.espresso : B.cardBg,
@@ -1264,14 +1278,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                             style={{ color: active ? '#fff' : B.espresso }} />
                           <span className="text-sm font-extrabold"
                             style={{ color: active ? '#fff' : B.textMain }}>
-                            {t === 0 ? 'None' : `+${t}`}
+                            {t === 0 ? 'None' : `${t} min`}
                           </span>
-                          {t > 0 && (
-                            <span className="text-[9px] font-semibold mt-0.5"
-                              style={{ color: active ? B.linen : B.textMuted }}>
-                              min
-                            </span>
-                          )}
+                          <span className="text-[10px] font-semibold mt-0.5"
+                            style={{ color: active ? B.linen : B.textMuted }}>
+                            {t === 0 ? '+0 KWD' : `+${fmtPrice(optPrice, currency)}`}
+                          </span>
                         </button>
                       );
                     })}

@@ -9,7 +9,7 @@ import {
   Store, CalendarDays, CheckCircle2, Clock, AlertCircle, X, Layers,
   Timer, Loader2, Crown, Heart, Sparkles, LayoutGrid,
   Scissors, Package, User, Phone, Mail, DollarSign, FileText,
-  ChevronLeft, ChevronRight, UserPlus,
+  ChevronLeft, ChevronRight, UserPlus, CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -260,6 +260,7 @@ export function NewBranchBookingModal({
   }));
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch'>('completed');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [bookingResult,       setBookingResult]       = useState<Record<string, any> | null>(null);
@@ -353,13 +354,27 @@ export function NewBranchBookingModal({
   const addonDuration     = selectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
   const extraMinutesUnit  = selectedService?.extra_minutes ?? 0;
   const extraPricePerUnit = parseFloat(String(selectedService?.price_for_extra_minutes ?? '0')) || 0;
-  const extraSteps        = extraMinutesUnit > 0 ? Math.round(form.extraMinutes / extraMinutesUnit) : 0;
-  const extraMinutesPrice = extraSteps * extraPricePerUnit;
+  const baseDuration      = selectedService?.duration_minutes ?? 60;
+
+  // 3 options for Extra Time: None (0 min), 30 min, 60 min. Price based on service.
+  const calcExtraPrice = (mins: number) => {
+    if (mins <= 0) return 0;
+    if (extraPricePerUnit > 0 && extraMinutesUnit > 0) {
+      return (mins / extraMinutesUnit) * extraPricePerUnit;
+    }
+    if (extraPricePerUnit > 0) {
+      return (mins / 30) * extraPricePerUnit;
+    }
+    const effPrice = servicePrice > 0 ? servicePrice : (parseFloat(String(selectedService?.base_price ?? '0')) || 0);
+    const effDur   = baseDuration > 0 ? baseDuration : 60;
+    return (effPrice / effDur) * mins;
+  };
+
+  const extraMinutesPrice = calcExtraPrice(form.extraMinutes);
   const totalPrice        = servicePrice + addonTotal + extraMinutesPrice;
-  const baseDuration      = selectedService?.duration_minutes ?? 0;
-  const totalDuration     = baseDuration + addonDuration + form.extraMinutes;
-  const hasExtraTime      = !!selectedService && extraMinutesUnit > 0;
-  const extraOptions      = hasExtraTime ? [0, 1, 2, 3, 4].map(n => n * extraMinutesUnit) : [];
+  const totalDuration     = (selectedService ? baseDuration : 0) + addonDuration + form.extraMinutes;
+  const hasExtraTime      = !!selectedService;
+  const extraOptions      = [0, 30, 60] as const;
 
   // Load therapists on step 2 (after service is selected)
   useEffect(() => {
@@ -521,6 +536,9 @@ export function NewBranchBookingModal({
         currency: 'KWD',
       },
       total_price: fmtPriceB(totalPrice), total_duration: totalDuration, currency: 'KWD',
+      status:         paymentMethod === 'on_branch' ? 'payment_pending' : 'confirmed',
+      payment_status: paymentMethod === 'completed' ? 'success' : 'pending',
+      source:         'ushdesk',
     };
 
     try {
@@ -833,27 +851,31 @@ export function NewBranchBookingModal({
                       <Timer className="h-3.5 w-3.5 text-muted-foreground" />
                       <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                         Extra Time
-                        {extraPricePerUnit > 0 && (
-                          <span className="ml-1 font-normal normal-case text-muted-foreground/70">
-                            ({fmtPriceB(extraPricePerUnit)} KWD / {extraMinutesUnit} min)
-                          </span>
-                        )}
                       </p>
                     </div>
-                    <div className="grid grid-cols-5 gap-2">
-                      {extraOptions.map((mins) => (
-                        <button key={mins} type="button"
-                          onClick={() => setForm(p => ({ ...p, extraMinutes: mins }))}
-                          className={cn(
-                            'flex flex-col items-center rounded-xl border py-2.5 text-center transition',
-                            form.extraMinutes === mins
-                              ? 'border-primary/50 bg-primary/10 text-primary shadow-sm'
-                              : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40',
-                          )}>
-                          <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins}`}</p>
-                          {mins > 0 && <p className="text-[10px]">min</p>}
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-3 gap-2">
+                      {extraOptions.map((mins) => {
+                        const active = form.extraMinutes === mins;
+                        const price = calcExtraPrice(mins);
+                        return (
+                          <button
+                            key={mins}
+                            type="button"
+                            onClick={() => setForm(p => ({ ...p, extraMinutes: mins }))}
+                            className={cn(
+                              'flex flex-col items-center justify-center rounded-xl border py-2.5 px-2 text-center transition cursor-pointer',
+                              active
+                                ? 'border-primary/50 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/30'
+                                : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                            )}
+                          >
+                            <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `${mins} min`}</p>
+                            <p className="text-[11px] font-semibold mt-0.5 opacity-80">
+                              {mins === 0 ? '+0 KWD' : `+${fmtPriceB(price)} KWD`}
+                            </p>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1028,6 +1050,59 @@ export function NewBranchBookingModal({
                     placeholder="Any special instructions or notes\u2026" rows={3}
                     className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50 resize-none" />
                 </div>
+
+                {/* Payment Method */}
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <CreditCard className="h-4 w-4 text-primary" />
+                    <p className="text-sm font-extrabold">Payment Method</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { value: 'completed', label: 'Payment Completed', desc: 'Paid now',  color: 'emerald' },
+                      { value: 'on_branch', label: 'Pay on Branch',     desc: 'Pay later', color: 'amber'   },
+                    ].map(({ value, label, desc, color }) => (
+                      <label
+                        key={value}
+                        className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition select-none ${
+                          paymentMethod === value
+                            ? color === 'emerald'
+                              ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30'
+                              : 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/30'
+                            : 'border-border bg-muted/20 hover:bg-muted/40'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="branch-payment-method"
+                          value={value}
+                          checked={paymentMethod === value}
+                          onChange={() => setPaymentMethod(value as 'completed' | 'on_branch')}
+                          className="sr-only"
+                        />
+                        <span className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                          paymentMethod === value
+                            ? color === 'emerald' ? 'border-emerald-500' : 'border-amber-500'
+                            : 'border-muted-foreground/40'
+                        }`}>
+                          {paymentMethod === value && (
+                            <span className={`h-2 w-2 rounded-full block ${
+                              color === 'emerald' ? 'bg-emerald-500' : 'bg-amber-500'
+                            }`} />
+                          )}
+                        </span>
+                        <div className="min-w-0">
+                          <p className={`text-xs font-bold ${
+                            paymentMethod === value
+                              ? color === 'emerald' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
+                              : 'text-foreground'
+                          }`}>{label}</p>
+                          <p className="text-[10px] text-muted-foreground">{desc}</p>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1152,6 +1227,11 @@ export function NewBranchBookingModal({
                 </>)}
                 <div className="w-px self-stretch bg-border/60 mx-3" />
                 <div className="flex flex-col items-end shrink-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Clock className="h-2.5 w-2.5" />Duration</p>
+                  <p className="text-xs font-bold text-foreground">{totalDuration} min</p>
+                </div>
+                <div className="w-px self-stretch bg-border/60 mx-3" />
+                <div className="flex flex-col items-end shrink-0">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
                   <p className="text-lg font-black text-primary leading-none">{fmtPriceB(totalPrice)}</p>
                   <p className="text-[10px] font-semibold text-muted-foreground">KWD</p>
@@ -1179,10 +1259,11 @@ export function NewBranchBookingModal({
                   className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition">
                   <ChevronLeft className="h-4 w-4" /> Back
                 </button>
-                <button type="submit" form="branch-booking-form" disabled={submitting}
+                <button type="submit" form="branch-booking-form"
+                  disabled={submitting || !form.therapistId || !form.customerId || !paymentMethod}
                   className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  {submitting ? 'Creating\u2026' : 'Confirm Booking'}
+                  {submitting ? 'Creating…' : 'Confirm Booking'}
                 </button>
               </>)}
               {step === 3 && (<>

@@ -56,21 +56,24 @@ export interface BookingDetailModalProps {
   /** Bearer token for Authorization header */
   token: string;
   onClose: () => void;
+  onSuccess?: () => void;
 }
 
 // ── component ──────────────────────────────────────────────────────────────────
 
-export function BookingDetailModal({ bookingId, token, onClose }: BookingDetailModalProps) {
+export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: BookingDetailModalProps) {
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
-  const [booking,          setBooking]          = useState<AnyRecord | null>(null);
-  const [loading,          setLoading]          = useState(true);
-  const [error,            setError]            = useState<string | null>(null);
-  const [paymentLoading,   setPaymentLoading]   = useState(false);
-  const [paymentSuccess,   setPaymentSuccess]   = useState(false);
-  const [paymentError,     setPaymentError]     = useState<string | null>(null);
+  const [booking,            setBooking]            = useState<AnyRecord | null>(null);
+  const [loading,            setLoading]            = useState(true);
+  const [error,              setError]              = useState<string | null>(null);
+  const [paymentLoading,     setPaymentLoading]     = useState(false);
+  const [paymentSuccess,     setPaymentSuccess]     = useState(false);
+  const [paymentError,       setPaymentError]       = useState<string | null>(null);
+  const [paymentDoneLoading, setPaymentDoneLoading] = useState(false);
+  const [paymentDoneError,   setPaymentDoneError]   = useState<string | null>(null);
 
   // Close on Escape
   useEffect(() => {
@@ -128,6 +131,39 @@ export function BookingDetailModal({ bookingId, token, onClose }: BookingDetailM
       setPaymentError(err instanceof Error ? err.message : 'Failed to send payment link');
     } finally {
       setPaymentLoading(false);
+    }
+  };
+
+  // Confirm payment done
+  const handlePaymentDone = async () => {
+    setPaymentDoneLoading(true);
+    setPaymentDoneError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
+        method:  'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({
+          payment_status: 'success',
+          reason:         'Paid on desk',
+          source:         'ushspa app',
+          status:         'confirmed',
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? `Error ${res.status}`;
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+      await fetchBooking();
+      onSuccess?.();
+    } catch (err) {
+      setPaymentDoneError(err instanceof Error ? err.message : 'Failed to update payment status');
+    } finally {
+      setPaymentDoneLoading(false);
     }
   };
 
@@ -436,32 +472,73 @@ export function BookingDetailModal({ bookingId, token, onClose }: BookingDetailM
           )}
         </div>
 
-        {/* Footer */}
-        {!loading && bk && (
-          <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
-            <button onClick={onClose}
-              className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
-              Close
-            </button>
-            <button
-              onClick={handlePaymentLink}
-              disabled={paymentLoading || paymentSuccess}
-              className={cn(
-                'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition',
-                paymentSuccess
-                  ? 'bg-emerald-500 cursor-default'
-                  : paymentLoading
-                  ? 'bg-violet-400 cursor-wait'
-                  : 'bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 active:scale-[0.98]',
-              )}>
-              {paymentLoading
-                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />&nbsp;Sending…</>
-                : paymentSuccess
-                ? <><CheckCircle2 className="h-3.5 w-3.5" />&nbsp;Payment Link Sent</>
-                : <><CreditCard className="h-3.5 w-3.5" />&nbsp;Create Payment Link</>}
-            </button>
+        {paymentDoneError && (
+          <div className="shrink-0 mx-6 mb-2 flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/40 px-4 py-2.5 text-xs text-rose-700 dark:text-rose-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{paymentDoneError}</span>
           </div>
         )}
+
+        {/* Footer */}
+        {!loading && bk && (() => {
+          const rawPaymentStatus = (bk?.payment_status ?? bk?.paymentStatus ?? bk?.payment_state ?? '').toString().toLowerCase().trim();
+          const isPaid = rawPaymentStatus === 'success' || rawPaymentStatus === 'paid' || rawPaymentStatus === 'completed';
+          const isPending = rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || paymentSuccess;
+
+          return (
+            <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
+              <button
+                onClick={onClose}
+                className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition"
+              >
+                Close
+              </button>
+              {isPending && (
+                <button
+                  type="button"
+                  disabled={paymentDoneLoading}
+                  onClick={handlePaymentDone}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98]",
+                    paymentDoneLoading
+                      ? "bg-emerald-400 cursor-wait opacity-80"
+                      : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                  )}
+                >
+                  {paymentDoneLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Updating…
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" />
+                      Payment done
+                    </>
+                  )}
+                </button>
+              )}
+              {!isPaid && !isPending && (
+                <button
+                  onClick={handlePaymentLink}
+                  disabled={paymentLoading || paymentSuccess}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition',
+                    paymentLoading
+                      ? 'bg-violet-400 cursor-wait'
+                      : 'bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 active:scale-[0.98]',
+                  )}
+                >
+                  {paymentLoading ? (
+                    <><Loader2 className="h-3.5 w-3.5 animate-spin" />&nbsp;Sending…</>
+                  ) : (
+                    <><CreditCard className="h-3.5 w-3.5" />&nbsp;Create Payment Link</>
+                  )}
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

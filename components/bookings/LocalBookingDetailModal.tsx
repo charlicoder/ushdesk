@@ -112,6 +112,40 @@ export function LocalBookingDetailModal({ appointment, token, onClose, onStatusC
     }
   };
 
+  // Confirm payment done
+  const [paymentDoneLoading, setPaymentDoneLoading] = useState(false);
+  const [paymentDoneError,   setPaymentDoneError]   = useState<string | null>(null);
+
+  const handlePaymentDone = async () => {
+    setPaymentDoneLoading(true);
+    setPaymentDoneError(null);
+    try {
+      const cleanToken = token ? token.replace(/^(Bearer\s+)+/i, '').trim() : '';
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${a.id}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(cleanToken ? { Authorization: `Bearer ${cleanToken}` } : {}),
+        },
+        body: JSON.stringify({
+          payment_status: 'success',
+          reason:         'Paid on desk',
+          source:         'ushspa app',
+          status:         'confirmed',
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? `Error ${res.status}`);
+      onStatusChange?.(a.id, 'confirmed');
+      onClose();
+    } catch (err) {
+      setPaymentDoneError(err instanceof Error ? err.message : 'Failed to update payment status');
+    } finally {
+      setPaymentDoneLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -283,30 +317,68 @@ export function LocalBookingDetailModal({ appointment, token, onClose, onStatusC
           )}
         </div>
 
+        {paymentDoneError && (
+          <div className="shrink-0 mx-6 mb-2 flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/40 px-4 py-2.5 text-xs text-rose-700 dark:text-rose-300">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{paymentDoneError}</span>
+          </div>
+        )}
+
         {/* Footer */}
-        <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
-          <button onClick={onClose}
-            className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
-            Close
-          </button>
-          <button
-            onClick={handlePaymentLink}
-            disabled={paymentLoading || paymentSuccess}
-            className={cn(
-              'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition',
-              paymentSuccess
-                ? 'bg-emerald-500 cursor-default'
-                : paymentLoading
-                ? 'bg-violet-400 cursor-wait'
-                : 'bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 active:scale-[0.98]',
-            )}>
-            {paymentLoading
-              ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />&nbsp;Sending…</>
-              : paymentSuccess
-              ? <><CheckCircle2 className="h-3.5 w-3.5" />&nbsp;Payment Link Sent</>
-              : <><CreditCard className="h-3.5 w-3.5" />&nbsp;Create Payment Link</>}
-          </button>
-        </div>
+        {(() => {
+          const rawPaymentStatus = ((appointment as any)?.payment_status ?? (appointment as any)?.paymentStatus ?? '').toString().toLowerCase().trim();
+          const isPaid = rawPaymentStatus === 'success' || rawPaymentStatus === 'paid' || rawPaymentStatus === 'completed';
+          const isPending = rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || paymentSuccess;
+
+          return (
+            <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
+              <button onClick={onClose}
+                className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
+                Close
+              </button>
+              {isPending && (
+                <button
+                  type="button"
+                  disabled={paymentDoneLoading}
+                  onClick={handlePaymentDone}
+                  className={cn(
+                    "flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98]",
+                    paymentDoneLoading
+                      ? "bg-emerald-400 cursor-wait opacity-80"
+                      : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+                  )}
+                >
+                  {paymentDoneLoading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Updating…
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-4 w-4" />
+                      Payment done
+                    </>
+                  )}
+                </button>
+              )}
+              {!isPaid && !isPending && (
+                <button
+                  onClick={handlePaymentLink}
+                  disabled={paymentLoading || paymentSuccess}
+                  className={cn(
+                    'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition',
+                    paymentLoading
+                      ? 'bg-violet-400 cursor-wait'
+                      : 'bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 active:scale-[0.98]',
+                  )}>
+                  {paymentLoading
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />&nbsp;Sending…</>
+                    : <><CreditCard className="h-3.5 w-3.5" />&nbsp;Create Payment Link</>}
+                </button>
+              )}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );

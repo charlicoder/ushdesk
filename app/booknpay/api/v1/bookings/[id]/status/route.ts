@@ -28,11 +28,16 @@ export async function PATCH(
     upstreamHeaders['Authorization'] = `Bearer ${token}`;
   }
 
+  const payload = {
+    status: body.status ?? 'confirmed',
+    ...body,
+  };
+
   try {
     const upstream = await fetch(url, {
       method: 'PATCH',
       headers: upstreamHeaders,
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
     const text = await upstream.text();
     let data: unknown;
@@ -47,3 +52,6 @@ export async function PATCH(
     return NextResponse.json({ detail: message }, { status: 502 });
   }
 }
+
+export const POST = PATCH;
+
