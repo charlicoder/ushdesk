@@ -1,20 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
-
-function buildHeaders(authHeader: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type':   'application/json',
-    'Accept':         'application/json',
-    'X-USHSPA-TOKEN': APP_TOKEN,
-  };
-  const token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
-  if (token && token !== 'null' && token !== 'undefined') {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  return headers;
-}
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 /**
  * PATCH /booknpay/api/v1/vouchers/[id]/status
@@ -26,7 +13,6 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const authHeader = req.headers.get('authorization') ?? '';
   const body = await req.json().catch(() => ({}));
   const { id } = await params;
 
@@ -38,7 +24,7 @@ export async function PATCH(
   try {
     const upstream = await fetch(upstreamUrl, {
       method: 'PATCH',
-      headers: buildHeaders(authHeader),
+      headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
     const text = await upstream.text();

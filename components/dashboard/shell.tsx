@@ -7,7 +7,8 @@ import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const open = useAppSelector((s) => s.ui.sidebarOpen);
+  const open   = useAppSelector((s) => s.ui.sidebarOpen);
+  const locale = useAppSelector((s) => s.ui.locale);
 
   return (
     <div className="relative min-h-screen">
@@ -20,7 +21,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         )}
       >
         <Topbar />
-        <main className="px-4 py-6 sm:px-6 lg:px-8">
+        {/* key={locale} ensures the active page cleanly remounts and re-fetches with the new Accept-Language header */}
+        <main key={locale} className="px-4 py-6 sm:px-6 lg:px-8">
           <DataLoader>{children}</DataLoader>
         </main>
       </div>

@@ -51,7 +51,8 @@ export default function AppointmentsPage() {
   const [detailBookingId, setDetailBookingId] = useState<string | null>(null);
 
   // Auth token
-  const token = useAppSelector((s) => s.auth.token);
+  const token  = useAppSelector((s) => s.auth.token);
+  const locale = useAppSelector((s) => s.ui.locale);
 
   // ── booknpay booking_id map ────────────────────────────────────────
   // Maps ISO-date+time keys to booknpay booking_id.
@@ -64,7 +65,11 @@ export default function AppointmentsPage() {
     try {
       const qs  = new URLSearchParams({ branch_id: branchId, date });
       const res = await fetch(`/booknpay/api/v1/bookings/?${qs}`, {
-        headers: { Authorization: `Bearer ${tok}`, Accept: 'application/json' },
+        headers: {
+          Authorization: `Bearer ${tok}`,
+          Accept: 'application/json',
+          'Accept-Language': locale,
+        },
       });
       const json = await res.json().catch(() => ({}));
       // Response can be { results: [...] } or [...] or { data: [...] }
@@ -95,11 +100,11 @@ export default function AppointmentsPage() {
     } catch (e) {
       console.warn('[Appointments] could not fetch booknpay bookings:', e);
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     fetchBooknpayBookings(filters.branchId, filters.selectedDate, token);
-  }, [filters.branchId, filters.selectedDate, token, fetchBooknpayBookings]);
+  }, [filters.branchId, filters.selectedDate, token, locale, fetchBooknpayBookings]);
 
   // ── derived data ──────────────────────────────────────────────────
   const filtered = useMemo(() => {

@@ -816,7 +816,8 @@ function formatHeaderDate(isoDate: string): string {
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function TherapistSchedulePage() {
   // Auth token from Redux store
-  const token = useAppSelector((s) => s.auth.token);
+  const token  = useAppSelector((s) => s.auth.token);
+  const locale = useAppSelector((s) => s.ui.locale);
 
   // Today's date as YYYY-MM-DD
   const today    = new Date();
@@ -854,6 +855,7 @@ export default function TherapistSchedulePage() {
         const res = await fetch('/api/v1/branches', {
           headers: {
             'Content-Type': 'application/json',
+            'Accept-Language': locale,
             ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           },
         });
@@ -892,9 +894,9 @@ export default function TherapistSchedulePage() {
       }
     })();
     return () => { active = false; };
-  }, [token]);
+  }, [token, locale]);
 
-  // Fetch schedule when branch or date changes
+  // Fetch schedule when branch, date, or locale changes
   useEffect(() => {
     if (!selectedBranchId) return;
 
@@ -908,8 +910,9 @@ export default function TherapistSchedulePage() {
         const res = await fetch(url, {
           signal:  controller.signal,
           headers: {
-            'Content-Type': 'application/json',
-            'Accept':       'application/json',
+            'Content-Type':    'application/json',
+            'Accept':          'application/json',
+            'Accept-Language': locale,
             ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           },
         });
@@ -932,8 +935,9 @@ export default function TherapistSchedulePage() {
                 : `/booknpay/api/v1/bookings?page_size=100`;
 
               const headers: Record<string, string> = {
-                'Content-Type': 'application/json',
-                'Accept':       'application/json',
+                'Content-Type':    'application/json',
+                'Accept':          'application/json',
+                'Accept-Language': locale,
                 ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
               };
 
@@ -1017,7 +1021,7 @@ export default function TherapistSchedulePage() {
     })();
 
     return () => controller.abort();
-  }, [selectedBranchId, selectedDate, token, scheduleRefreshKey]);
+  }, [selectedBranchId, selectedDate, token, locale, scheduleRefreshKey]);
 
   // Derived data — use branch opening/closing as authoritative grid bounds
   const selectedBranchInfo = useMemo(

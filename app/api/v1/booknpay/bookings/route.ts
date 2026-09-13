@@ -1,28 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 const UPSTREAM_URL = `${BASE_URL}/booknpay/api/v1/bookings/`;
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') ?? '';
   const body = await req.json().catch(() => ({}));
-
-  // Only forward Authorization header when a real token is present
-  const upstreamHeaders: Record<string, string> = {
-    'Content-Type':   'application/json',
-    'Accept':         'application/json',
-    'X-USHSPA-TOKEN': APP_TOKEN,
-  };
-  if (authHeader && authHeader.replace('Bearer ', '').trim()) {
-    upstreamHeaders['Authorization'] = authHeader;
-  }
 
   try {
     const upstream = await fetch(UPSTREAM_URL, {
       method: 'POST',
-      headers: upstreamHeaders,
+      headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
     const data = await upstream.json().catch(() => ({}));

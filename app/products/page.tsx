@@ -7,6 +7,7 @@ import {
   Tag, LayoutGrid, List,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
+import { useI18n } from '@/hooks/use-i18n';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { formatCurrency } from '@/lib/helpers';
@@ -17,6 +18,7 @@ interface Product {
   name: string;
   category: string;
   price: number;
+  currency: string;
   stock: number | null;
   image: string | null;
   description: string | null;
@@ -30,6 +32,7 @@ function normalise(raw: Record<string, unknown>): Product {
     name:        String(raw.name ?? raw.product_name ?? ''),
     category:    String(raw.category ?? raw.product_category ?? raw.type ?? 'General'),
     price:       Number(raw.price ?? raw.base_price ?? raw.selling_price ?? 0),
+    currency:    String(raw.currency ?? raw.price_currency ?? ''),
     stock:       raw.stock != null ? Number(raw.stock) : null,
     image:       (raw.image ?? raw.image1 ?? raw.thumbnail ?? null) as string | null,
     description: (raw.description ?? null) as string | null,
@@ -57,6 +60,7 @@ function SelectFilter({ label, value, options, onChange }: {
 }
 
 export default function ProductsPage() {
+  const { t } = useI18n();
   const [search,      setSearch]      = useState('');
   const [catFilter,   setCatFilter]   = useState('');
   const [viewMode,    setViewMode]    = useState<'grid' | 'list'>('grid');
@@ -67,6 +71,9 @@ export default function ProductsPage() {
   );
 
   const products    = useMemo(() => rawProducts.map(normalise), [rawProducts]);
+  // Use the currency from the first API record; fall back to i18n translation
+  const apiCurrency = useMemo(() => products.find((p) => p.currency)?.currency ?? '', [products]);
+  const currency    = apiCurrency || t('currency');
   const categories  = useMemo(() => products.map((p) => p.category).filter((v, i, a) => a.indexOf(v) === i).sort(), [products]);
 
   const filtered = useMemo(() => {
@@ -196,7 +203,7 @@ export default function ProductsPage() {
                   <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{p.description}</p>
                 )}
                 <div className="mt-3 border-t border-border/50 pt-3">
-                  <p className="text-lg font-bold text-primary">{formatCurrency(p.price, 'AED')}</p>
+                <p className="text-lg font-bold text-primary">{formatCurrency(p.price, p.currency || currency)}</p>
                 </div>
               </div>
             </div>
@@ -251,7 +258,7 @@ export default function ProductsPage() {
                       </span>
                     ) : <span className="text-xs text-muted-foreground">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-right font-bold text-primary">{formatCurrency(p.price, 'AED')}</td>
+                  <td className="px-4 py-3 text-right font-bold text-primary">{formatCurrency(p.price, p.currency || currency)}</td>
                 </tr>
               ))}
             </tbody>

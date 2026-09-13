@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 /**
  * PATCH /booknpay/api/v1/bookings/[id]/status
@@ -13,20 +13,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id }     = await params;
-  const authHeader = req.headers.get('authorization') ?? '';
   const body       = await req.json().catch(() => ({}));
   const url        = `${BASE_URL}/booknpay/api/v1/bookings/${id}/status/`;
-
-  // Only forward Authorization when a real token is present
-  const upstreamHeaders: Record<string, string> = {
-    'Content-Type':   'application/json',
-    'Accept':         'application/json',
-    'X-USHSPA-TOKEN': APP_TOKEN,
-  };
-  const token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
-  if (token && token !== 'null' && token !== 'undefined') {
-    upstreamHeaders['Authorization'] = `Bearer ${token}`;
-  }
 
   const payload = {
     status: body.status ?? 'confirmed',
@@ -36,7 +24,7 @@ export async function PATCH(
   try {
     const upstream = await fetch(url, {
       method: 'PATCH',
-      headers: upstreamHeaders,
+      headers: getProxyHeaders(req),
       body: JSON.stringify(payload),
     });
     const text = await upstream.text();
@@ -54,4 +42,3 @@ export async function PATCH(
 }
 
 export const POST = PATCH;
-

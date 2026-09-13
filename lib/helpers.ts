@@ -8,8 +8,20 @@ export const STATUS_COLORS: Record<AppointmentStatus, { bg: string; text: string
   no_show: { bg: 'bg-slate-500/15', text: 'text-slate-600 dark:text-slate-300', dot: 'bg-slate-500', soft: 'slate' },
 };
 
-export function formatCurrency(value: number, currency = 'AED'): string {
-  return `${value.toLocaleString('en-US', { maximumFractionDigits: 0 })} ${currency}`;
+export function formatCurrency(value: number, currency = 'KWD', locale?: string): string {
+  const isAr = locale === 'ar' || (typeof window !== 'undefined' && localStorage.getItem('ush_locale') === 'ar');
+  let displayCurrency = currency || 'KWD';
+  if (isAr) {
+    const upper = displayCurrency.toUpperCase();
+    if (upper === 'KWD') displayCurrency = 'د.ك';
+    else if (upper === 'SAR') displayCurrency = 'ر.س';
+    else if (upper === 'AED') displayCurrency = 'د.إ';
+  } else {
+    if (displayCurrency === 'د.ك') displayCurrency = 'KWD';
+    else if (displayCurrency === 'ر.س') displayCurrency = 'SAR';
+    else if (displayCurrency === 'د.إ') displayCurrency = 'AED';
+  }
+  return `${Number(value || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })} ${displayCurrency}`;
 }
 
 export function sameDay(a: Date, b: Date): boolean {

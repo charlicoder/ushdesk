@@ -20,6 +20,7 @@
 const TOKEN_KEY   = 'ush_access_token';
 const REFRESH_KEY = 'ush_refresh_token';
 const LOGINAT_KEY = 'ush_login_at';
+const LOCALE_KEY  = 'ush_locale';
 
 // Single in-flight refresh promise to prevent parallel refresh storms
 let refreshPromise: Promise<string | null> | null = null;
@@ -34,6 +35,12 @@ function getStoredToken(): string | null {
 function getStoredRefreshToken(): string | null {
   if (typeof window === 'undefined') return null;
   return localStorage.getItem(REFRESH_KEY) ?? null;
+}
+
+function getStoredLocale(): string {
+  if (typeof window === 'undefined') return 'en';
+  const val = localStorage.getItem(LOCALE_KEY);
+  return val === 'ar' ? 'ar' : 'en';
 }
 
 function saveNewToken(token: string): void {
@@ -118,6 +125,10 @@ export async function authedFetch(
     headers.set('Authorization', `Bearer ${cleanToken}`);
   }
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  // Attach user's language preference so the backend can localise responses
+  if (!headers.has('Accept-Language') || !headers.get('Accept-Language')) {
+    headers.set('Accept-Language', getStoredLocale());
+  }
 
   const res = await fetch(input, { ...init, headers });
 
@@ -152,6 +163,9 @@ export async function authedFetch(
   const cleanNewToken = newToken.replace(/^(Bearer\s+)+/i, '').trim();
   retryHeaders.set('Authorization', `Bearer ${cleanNewToken}`);
   if (!retryHeaders.has('Content-Type')) retryHeaders.set('Content-Type', 'application/json');
+  if (!retryHeaders.has('Accept-Language') || !retryHeaders.get('Accept-Language')) {
+    retryHeaders.set('Accept-Language', getStoredLocale());
+  }
 
   return fetch(input, { ...init, headers: retryHeaders });
 }

@@ -182,7 +182,7 @@ export function BookingFormDialog({
                 placeholder={t('selectService')}
                 options={services.map((s) => ({
                   value: s.id,
-                  label: `${s.name} (${s.duration_min}min · ${s.price} AED)`,
+                  label: `${s.name} (${s.duration_min}min · ${s.price} ${t('currency')})`,
                 }))}
               />
             </Field>

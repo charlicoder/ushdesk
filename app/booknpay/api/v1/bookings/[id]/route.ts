@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 /**
  * GET /booknpay/api/v1/bookings/[id]
@@ -11,22 +11,14 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id }     = await params;
-  const authHeader = req.headers.get('authorization') ?? '';
-  const url        = `${BASE_URL}/booknpay/api/v1/bookings/${id}/`;
-
-  const upstreamHeaders: Record<string, string> = {
-    'Content-Type':   'application/json',
-    'Accept':         'application/json',
-    'X-USHSPA-TOKEN': APP_TOKEN,
-  };
-  const token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
-  if (token && token !== 'null' && token !== 'undefined') {
-    upstreamHeaders['Authorization'] = `Bearer ${token}`;
-  }
+  const { id } = await params;
+  const url    = `${BASE_URL}/booknpay/api/v1/bookings/${id}/`;
 
   try {
-    const upstream = await fetch(url, { headers: upstreamHeaders });
+    const upstream = await fetch(url, {
+      headers: getProxyHeaders(req),
+      cache: 'no-store',
+    });
     const text = await upstream.text();
     let data: unknown;
     try {

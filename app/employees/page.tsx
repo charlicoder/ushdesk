@@ -170,6 +170,7 @@ export default function EmployeesPage() {
   const token       = useAppSelector((s) => s.auth.token);
   const initialized = useAppSelector((s) => s.auth.initialized);
   const reduxBranches = useAppSelector((s) => s.data.branches);
+  const locale        = useAppSelector((s) => s.ui.locale);
 
   // API State
   const [rawEmployees,      setRawEmployees]      = useState<Record<string, unknown>[]>([]);
@@ -196,7 +197,10 @@ export default function EmployeesPage() {
     setLoading(true);
     setError(null);
 
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept-Language': locale,
+    };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     authedFetch('/api/v1/employees', { headers })
@@ -263,7 +267,7 @@ export default function EmployeesPage() {
       });
 
     return () => { cancelled = true; };
-  }, [token, initialized, tick]);
+  }, [token, initialized, locale, tick]);
 
   const employees = useMemo(() => rawEmployees.map(normalise), [rawEmployees]);
 

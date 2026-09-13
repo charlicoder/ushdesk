@@ -1,24 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
+const UAUTH    = process.env.API_UAUTH    ?? '/uauth';
 
 const ADDONS_URL = `${BASE_URL}${UAUTH}/api/v1/addons/`;
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') ?? '';
   const params = req.nextUrl.searchParams.toString();
   const url    = params ? `${ADDONS_URL}?${params}` : ADDONS_URL;
 
   try {
     const upstream = await fetch(url, {
-      headers: {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,
-        'Authorization':  authHeader,
-      },
+      headers: getProxyHeaders(req),
+      cache: 'no-store',
     });
     const data = await upstream.json().catch(() => ({}));
     return NextResponse.json(data, { status: upstream.status });

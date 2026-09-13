@@ -58,7 +58,8 @@ interface Props {
 
 export function ServiceDetailModal({ serviceId, initialService, onClose }: Props) {
   const { t } = useI18n();
-  const token = useAppSelector((s) => s.auth.token);
+  const token  = useAppSelector((s) => s.auth.token);
+  const locale = useAppSelector((s) => s.ui.locale);
 
   const [detail, setDetail]               = useState<ServiceDetailData | null>(null);
   const [loading, setLoading]             = useState(true);
@@ -88,6 +89,7 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Accept':       'application/json',
+      'Accept-Language': locale,
     };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -134,13 +136,29 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
         60
       );
 
+      const rawTypes = raw.service_types;
+      let parsedCat = '';
+      if (Array.isArray(rawTypes) && rawTypes.length > 0) {
+        const first = rawTypes[0];
+        if (typeof first === 'object' && first !== null) {
+          parsedCat = String((first as Record<string, unknown>).name ?? '');
+        } else if (typeof first === 'string') {
+          parsedCat = first;
+        }
+      } else if (raw.service_type && typeof raw.service_type === 'object') {
+        parsedCat = String((raw.service_type as Record<string, unknown>).name ?? '');
+      }
+      if (!parsedCat) {
+        parsedCat = String(raw.category ?? raw.service_category ?? initialService?.category ?? 'General');
+      }
+
       const parsed: ServiceDetailData = {
         id:                  String(raw.id ?? raw.service_id ?? serviceId),
         name:                String(raw.name ?? raw.service_name ?? initialService?.name ?? 'Service Details'),
-        category:            String(raw.category ?? raw.service_category ?? initialService?.category ?? 'General'),
+        category:            parsedCat,
         duration_minutes:    duration,
         price:               Number(raw.price ?? raw.base_price ?? raw.cost ?? initialService?.price ?? 0),
-        currency:            (raw.currency ?? initialService?.currency ?? 'SAR') as string,
+        currency:            (raw.currency ?? initialService?.currency ?? 'KWD') as string,
         description:         (raw.description ?? raw.desc ?? initialService?.description ?? null) as string | null,
         image:               (raw.image ?? raw.image_url ?? raw.image1 ?? raw.photo ?? initialService?.image ?? null) as string | null,
         can_do_home_service: raw.is_home_service_eligible === true || raw.can_do_home_service === true || raw.home_service === true || initialService?.can_do_home_service === true,
@@ -163,7 +181,7 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
   useEffect(() => {
     fetchDetail();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serviceId]);
+  }, [serviceId, locale]);
 
   // Merge initial info with fetched detail for immediate display
   const current = detail ?? (initialService as ServiceDetailData | null);

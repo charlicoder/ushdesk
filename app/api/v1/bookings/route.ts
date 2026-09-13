@@ -1,16 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const BOOKNPAY  = process.env.API_BOOKNPAY  ?? '/booknpay';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
+const BOOKNPAY = process.env.API_BOOKNPAY ?? '/booknpay';
 
 const UPSTREAM_URL = `${BASE_URL}${BOOKNPAY}/api/v1/bookings/`;
 
 const MAX_PAGE_SIZE = 100;
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') ?? '';
-
   // Forward all query params but clamp page_size to the backend maximum
   const params = new URLSearchParams(req.nextUrl.searchParams.toString());
   const rawSize = parseInt(params.get('page_size') ?? '20', 10);
@@ -20,12 +18,8 @@ export async function GET(req: NextRequest) {
 
   try {
     const upstream = await fetch(url, {
-      headers: {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,
-        'Authorization':  authHeader,
-      },
+      headers: getProxyHeaders(req),
+      cache: 'no-store',
     });
     const data = await upstream.json().catch(() => ({}));
     return NextResponse.json(data, { status: upstream.status });
@@ -36,17 +30,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') ?? '';
   try {
     const body = await req.json();
     const upstream = await fetch(UPSTREAM_URL, {
       method: 'POST',
-      headers: {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,
-        'Authorization':  authHeader,
-      },
+      headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
     const data = await upstream.json().catch(() => ({}));
@@ -56,4 +44,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ detail: message }, { status: 502 });
   }
 }
-

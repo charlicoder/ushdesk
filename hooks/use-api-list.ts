@@ -13,11 +13,12 @@ export interface PaginationMeta {
   previous: string | null;
 }
 
-interface UseApiListResult<T> {
+export interface UseApiListResult<T> {
   data: T[];
   loading: boolean;
   error: string | null;
   pagination: PaginationMeta | null;
+  rawResponse: Record<string, unknown> | null;
   refetch: () => void;
 }
 
@@ -35,12 +36,14 @@ export function useApiList<T>(
 ): UseApiListResult<T> {
   const token       = useAppSelector((s) => s.auth.token);
   const initialized = useAppSelector((s) => s.auth.initialized);
+  const locale      = useAppSelector((s) => s.ui.locale);
 
-  const [data, setData]             = useState<T[]>(fallback);
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState<string | null>(null);
-  const [pagination, setPagination] = useState<PaginationMeta | null>(null);
-  const [tick, setTick]             = useState(0);
+  const [data, setData]               = useState<T[]>(fallback);
+  const [rawResponse, setRawResponse] = useState<Record<string, unknown> | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [pagination, setPagination]   = useState<PaginationMeta | null>(null);
+  const [tick, setTick]               = useState(0);
 
   const refetch = useCallback(() => setTick((t) => t + 1), []);
 
@@ -56,6 +59,7 @@ export function useApiList<T>(
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      'Accept-Language': locale,
     };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
@@ -94,6 +98,7 @@ export function useApiList<T>(
           list = json.data as T[];
         }
 
+        setRawResponse(json as Record<string, unknown>);
         setData(list.length > 0 ? list : fallback);
         setPagination(meta);
       })
@@ -102,6 +107,7 @@ export function useApiList<T>(
         console.warn(`[useApiList] ${proxyPath}:`, err.message);
         setError(err.message);
         setData(fallback);
+        setRawResponse(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -109,8 +115,8 @@ export function useApiList<T>(
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proxyPath, token, initialized, tick]);
+  }, [proxyPath, token, initialized, locale, tick]);
 
-  return { data, loading, error, pagination, refetch };
+  return { data, loading, error, pagination, rawResponse, refetch };
 }
 

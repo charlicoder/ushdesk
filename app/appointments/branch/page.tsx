@@ -908,7 +908,8 @@ function formatHeaderDate(isoDate: string): string {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BranchAppointmentsPage() {
-  const token = useAppSelector((s) => s.auth.token) ?? '';
+  const token  = useAppSelector((s) => s.auth.token) ?? '';
+  const locale = useAppSelector((s) => s.ui.locale);
 
   const today    = new Date();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
@@ -946,6 +947,7 @@ export default function BranchAppointmentsPage() {
         const res = await fetch('/api/v1/branches', {
           headers: {
             'Content-Type': 'application/json',
+            'Accept-Language': locale,
             ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           },
         });
@@ -982,9 +984,9 @@ export default function BranchAppointmentsPage() {
       }
     })();
     return () => { active = false; };
-  }, [token]);
+  }, [token, locale]);
 
-  // Fetch schedule when branch or date changes
+  // Fetch schedule when branch, date, or locale changes
   useEffect(() => {
     if (!selectedBranchId) return;
 
@@ -998,8 +1000,9 @@ export default function BranchAppointmentsPage() {
         const res = await fetch(url, {
           signal:  controller.signal,
           headers: {
-            'Content-Type': 'application/json',
-            'Accept':       'application/json',
+            'Content-Type':    'application/json',
+            'Accept':          'application/json',
+            'Accept-Language': locale,
             ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
           },
         });
@@ -1019,7 +1022,7 @@ export default function BranchAppointmentsPage() {
     })();
 
     return () => controller.abort();
-  }, [selectedBranchId, selectedDate, token]);
+  }, [selectedBranchId, selectedDate, token, locale]);
 
   // Derived data
   const grid      = scheduleData?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 as const };

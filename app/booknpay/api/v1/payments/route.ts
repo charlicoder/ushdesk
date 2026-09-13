@@ -1,22 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 const UPSTREAM_URL = `${BASE_URL}/booknpay/api/v1/payments/`;
-
-function buildHeaders(authHeader: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type':   'application/json',
-    'Accept':         'application/json',
-    'X-USHSPA-TOKEN': APP_TOKEN,
-  };
-  const token = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
-  if (token && token !== 'null' && token !== 'undefined') {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  return headers;
-}
 
 /**
  * POST /booknpay/api/v1/payments
@@ -25,7 +12,6 @@ function buildHeaders(authHeader: string): Record<string, string> {
  * Requires employee auth token (Authorization: Bearer <token>).
  */
 export async function POST(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') ?? '';
   const body = await req.json().catch(() => ({}));
 
   // Forward query params (e.g. customer_id required by app-token auth)
@@ -35,7 +21,7 @@ export async function POST(req: NextRequest) {
   try {
     const upstream = await fetch(url, {
       method: 'POST',
-      headers: buildHeaders(authHeader),
+      headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
     const text = await upstream.text();

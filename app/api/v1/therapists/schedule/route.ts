@@ -1,26 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
+const UAUTH    = process.env.API_UAUTH    ?? '/uauth';
 
 const UPSTREAM_URL = `${BASE_URL}${UAUTH}/api/v1/therapists/schedule/`;
 
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization') ?? '';
-
   // Forward all query params (branch_id, date, etc.)
   const params = new URLSearchParams(req.nextUrl.searchParams.toString());
   const url    = `${UPSTREAM_URL}?${params.toString()}`;
+  const headers = getProxyHeaders(req);
 
   try {
     const upstream = await fetch(url, {
-      headers: {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,
-        'Authorization':  authHeader,
-      },
+      headers,
+      cache: 'no-store',
     });
     const data = await upstream.json().catch(() => ({}));
 
@@ -33,13 +28,6 @@ export async function GET(req: NextRequest) {
         const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId);
         const branchParam = isUuid ? `&branch_id=${branchId}` : '';
 
-        const headers: Record<string, string> = {
-          'Content-Type':   'application/json',
-          'Accept':         'application/json',
-          'X-USHSPA-TOKEN': APP_TOKEN,
-          ...(authHeader ? { 'Authorization': authHeader } : {}),
-        };
-
         const payMap = new Map<string, string>();
 
         try {
@@ -51,7 +39,7 @@ export async function GET(req: NextRequest) {
             : `${BASE_URL}/booknpay/api/v1/bookings/?page_size=100`;
 
           fetchPromises.push(
-            fetch(bpUrl, { headers })
+            fetch(bpUrl, { headers, cache: 'no-store' })
               .then(res => (res.ok ? res.json() : null))
               .then(json => {
                 if (!json) return;
@@ -72,7 +60,7 @@ export async function GET(req: NextRequest) {
           if (isUuid && date) {
             const saUrl = `${BASE_URL}${UAUTH}/api/v1/service-arrangements/schedule/?branch_id=${branchId}&date=${date}`;
             fetchPromises.push(
-              fetch(saUrl, { headers })
+              fetch(saUrl, { headers, cache: 'no-store' })
                 .then(res => (res.ok ? res.json() : null))
                 .then(json => {
                   if (!json) return;

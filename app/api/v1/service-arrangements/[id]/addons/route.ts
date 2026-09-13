@@ -1,32 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getProxyHeaders } from '@/lib/proxy';
 
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
+const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
+const UAUTH    = process.env.API_UAUTH    ?? '/uauth';
 
-/**
- * GET /api/v1/service-arrangements/[id]/addons
- *
- * Fetches the single arrangement detail and returns just the `addons` array.
- * The upstream endpoint returns the full arrangement object at top level
- * (no { data } wrapper), so we pluck the addons field.
- */
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const { id }     = await params;
-  const authHeader = req.headers.get('authorization') ?? '';
-  const url        = `${BASE_URL}${UAUTH}/api/v1/service-arrangements/${id}/`;
+  const { id } = await params;
+  const url    = `${BASE_URL}${UAUTH}/api/v1/service-arrangements/${id}/`;
 
   try {
     const upstream = await fetch(url, {
-      headers: {
-        'Content-Type':   'application/json',
-        'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,
-        'Authorization':  authHeader,
-      },
+      headers: getProxyHeaders(req),
+      cache: 'no-store',
     });
     const data = await upstream.json().catch(() => ({}));
 

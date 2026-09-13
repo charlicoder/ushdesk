@@ -8,6 +8,24 @@ import { store } from '@/store';
 import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice';
 import { getSessionRemainingMs, clearToken } from '@/lib/api';
 
+// ── Ensure all client-side fetch requests send Accept-Language header ────────
+if (typeof window !== 'undefined') {
+  const win = window as unknown as { __ush_fetch_patched?: boolean };
+  if (!win.__ush_fetch_patched) {
+    win.__ush_fetch_patched = true;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const stored = localStorage.getItem('ush_locale');
+      const currentLocale = stored === 'ar' ? 'ar' : 'en';
+      const headers = new Headers(init.headers || {});
+      if (!headers.has('Accept-Language') || !headers.get('Accept-Language')) {
+        headers.set('Accept-Language', currentLocale);
+      }
+      return nativeFetch(input, { ...init, headers });
+    };
+  }
+}
+
 // ─── Public routes (no auth required) ───────────────────────────────────────
 const PUBLIC_ROUTES = ['/login'];
 

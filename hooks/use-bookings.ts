@@ -34,6 +34,7 @@ export function useBookings<T>(
   // Read both token AND initialized flag so we don't fire until hydration is done
   const token       = useAppSelector((s) => s.auth.token);
   const initialized = useAppSelector((s) => s.auth.initialized);
+  const locale      = useAppSelector((s) => s.ui.locale);
 
   const [data,       setData]       = useState<T[]>(fallback);
   const [loading,    setLoading]    = useState(true);
@@ -55,7 +56,10 @@ export function useBookings<T>(
 
     // authedFetch reads the token from localStorage itself (source of truth),
     // but we also set it here so the header is consistent with Redux state.
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept-Language': locale,
+    };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
     authedFetch(proxyPath, { headers })
@@ -103,7 +107,7 @@ export function useBookings<T>(
 
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proxyPath, token, initialized, tick]);
+  }, [proxyPath, token, initialized, locale, tick]);
 
   return { data, loading, error, pagination, refetch };
 }
