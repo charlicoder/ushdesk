@@ -485,6 +485,7 @@ export function NewBranchBookingModal({
     const dateObj       = new Date(date + 'T00:00:00');
     const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
+
     const therapistName = selectedTherapist
       ? ((selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist')
       : null;
@@ -589,8 +590,8 @@ export function NewBranchBookingModal({
       setSnapCustomerPhone(cSnap?.phone_number ?? '');
       setBookingResult(raw);
       setBookingId(rid);
-      setStep(3);
       onSuccess();
+      onClose();
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
     } finally {

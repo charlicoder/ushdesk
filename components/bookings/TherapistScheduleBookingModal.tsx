@@ -1249,9 +1249,6 @@ export function TherapistScheduleBookingModal({
                                     style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', backdropFilter: 'blur(4px)' }}>
                                     {cfg.label}
                                   </span>
-                                  {arr.capacity && (
-                                    <span className="text-[10px] text-white/70 font-semibold">Cap {arr.capacity}</span>
-                                  )}
                                 </div>
                                 {price && (
                                   <p className="mt-1 text-[12px] font-bold leading-none"

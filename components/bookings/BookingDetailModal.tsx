@@ -221,9 +221,12 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   // ── date & time ─────────────────────────────────────────────────────
   const isoStart   = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
   const isoDate    = isoStart ? isoStart.split('T')[0] : '';
-  const isoTime    = isoStart ? new Date(isoStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
+  // The system stores local Kuwait time labelled as UTC (timezone-naive by design).
+  // Using timeZone:'UTC' reads the raw stored value without browser-local conversion.
+  const isoTime    = isoStart ? new Date(isoStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) : '';
   const dateRaw    = firstTruthy(bk?.date, bk?.booking_date, bk?.appointment_date, isoDate);
   const rawTimeSlot = firstTruthy(bk?.time_slot, bk?.displayTime, bk?.appointment_time, bk?.time, isoTime);
+
 
   // ── rest ────────────────────────────────────────────────────────────
   const durationVal = String(bk?.total_duration ?? bk?.duration_minutes ?? bk?.duration ?? '');
