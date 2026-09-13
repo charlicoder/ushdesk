@@ -14,6 +14,8 @@ const en = {
   navServices: 'Services',
   navEmployees: 'Employees',
   navProducts: 'Products',
+  navVendors: 'Vendors',
+  navOrders: 'Orders',
   navSettings: 'Settings',
 
   // employee filters
@@ -196,6 +198,8 @@ const ar = {
   navServices: 'الخدمات',
   navEmployees: 'الموظفون',
   navProducts: 'المنتجات',
+  navVendors: 'الموردون',
+  navOrders: 'الطلبات',
   navSettings: 'الإعدادات',
 
   filterByRole: 'كل الأدوار',

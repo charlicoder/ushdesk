@@ -27,6 +27,8 @@ import {
   CreditCard,
   Building2,
   Gift,
+  Truck,
+  ShoppingBag,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -53,6 +55,7 @@ export function Sidebar() {
     employees:    pathname.startsWith('/employees'),
     finance:      pathname.startsWith('/finance'),
     ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services'),
+    vendors:      pathname.startsWith('/vendors'),
   });
 
   const items: NavItem[] = [
@@ -107,6 +110,14 @@ export function Sidebar() {
       children: [
         { href: '/finance/payments', label: 'Payments',         icon: CreditCard },
         { href: '/finance/reports',  label: 'Reports',          icon: BarChart3 },
+      ],
+    },
+    {
+      href: '/vendors',
+      label: t('navVendors'),
+      icon: Truck,
+      children: [
+        { href: '/vendors/orders', label: t('navOrders'), icon: ShoppingBag },
       ],
     },
     { href: '/settings', label: t('navSettings'), icon: Settings },
