@@ -60,154 +60,6 @@ export const DELIVERY_STATUS_CONFIG: Record<
   },
 };
 
-// ── Realistic Demo Orders Matching Upstream Schema ────────────────────────────
-const DEMO_ORDERS: Order[] = [
-  {
-    id: 'ea768dea-ac2b-436b-8731-f2109999071f',
-    order_number: 'ORD-2026-0002',
-    customer_id: '36234c70-d34b-4d60-8a36-2d1dd63d0556',
-    customer_name: 'Amanur Rashid',
-    customer_phone: '+96541028983',
-    contact_number: '96541028983',
-    delivery_address: {
-      area: 'Highlights',
-      block: 'Kjhkjhkj',
-      street: 'Kjhkjh',
-      building_no: 'Kjhkjhk',
-      floor: '6',
-      apartment: '8',
-      city: 'Kljhkjhk',
-      formatted: 'Area: Highlights, Block: Kjhkjhkj, Street: Kjhkjh, Bldg: Kjhkjhk, Floor: 6, Apt: 8, City: Kljhkjhk',
-    },
-    delivery_address_formatted: 'Area: Highlights, Block: Kjhkjhkj, Street: Kjhkjh, Bldg: Kjhkjhk, Floor: 6, Apt: 8, City: Kljhkjhk',
-    total_amount: '22.000',
-    currency: 'KWD',
-    delivery_status: 'ordered',
-    delivery_status_label: 'Ordered',
-    delivery_status_label_ar: 'تم الطلب',
-    payment_status: 'success',
-    items_count: 1,
-    public_token: '6BKtpHZiK8pOkAm4jKrYN2Fw5As9_-LgrxSa8y6tVFE',
-    token_expires_at: '2026-09-20T17:22:19.229755Z',
-    tracking_url: 'http://host.docker.internal:8000/booknpay/api/v1/track/6BKtpHZiK8pOkAm4jKrYN2Fw5As9_-LgrxSa8y6tVFE/',
-    created_at: new Date(Date.now() - 3600000 * 2).toISOString(),
-    updated_at: new Date(Date.now() - 3600000).toISOString(),
-  },
-  {
-    id: 'f8912bca-bb3c-447a-9842-e3208888182a',
-    order_number: 'ORD-2026-0003',
-    customer_id: '47345d81-e45c-5e71-9b47-3e2ee74e1667',
-    customer_name: 'Fatima Al-Sabah',
-    customer_phone: '+96599123456',
-    contact_number: '96599123456',
-    delivery_address: {
-      area: 'Al-Bidaa',
-      block: '3',
-      street: 'Arabian Gulf St',
-      building_no: 'Villa 14',
-      floor: '1',
-      apartment: 'Ground',
-      city: 'Hawalli',
-      formatted: 'Area: Al-Bidaa, Block: 3, Street: Arabian Gulf St, Bldg: Villa 14, City: Hawalli',
-    },
-    delivery_address_formatted: 'Area: Al-Bidaa, Block: 3, Street: Arabian Gulf St, Bldg: Villa 14, City: Hawalli',
-    total_amount: '45.500',
-    currency: 'KWD',
-    delivery_status: 'ready_to_go',
-    delivery_status_label: 'Ready To Go',
-    delivery_status_label_ar: 'جاهز للانطلاق',
-    payment_status: 'success',
-    items_count: 3,
-    public_token: 'Tk92x--pLm91Kx00ZasqWeri819_1209skdjqwe1',
-    token_expires_at: '2026-09-21T10:00:00.000000Z',
-    created_at: new Date(Date.now() - 3600000 * 6).toISOString(),
-  },
-  {
-    id: 'a1234cde-cc4d-558b-0953-f4319999293b',
-    order_number: 'ORD-2026-0004',
-    customer_id: '58456e92-f56d-6f82-0c58-4f3ff85f2778',
-    customer_name: 'Ahmed Al-Mansoor',
-    customer_phone: '+96597881122',
-    contact_number: '96597881122',
-    delivery_address: {
-      area: 'Salmiya',
-      block: '8',
-      street: 'Salem Al-Mubarak St',
-      building_no: 'Complex 8',
-      floor: '4',
-      apartment: '12',
-      city: 'Salmiya',
-      formatted: 'Area: Salmiya, Block: 8, Street: Salem Al-Mubarak St, Bldg: Complex 8, Floor: 4, Apt: 12, City: Salmiya',
-    },
-    delivery_address_formatted: 'Area: Salmiya, Block: 8, Street: Salem Al-Mubarak St, Bldg: Complex 8, Floor: 4, Apt: 12, City: Salmiya',
-    total_amount: '38.000',
-    currency: 'KWD',
-    delivery_status: 'on_the_way',
-    delivery_status_label: 'On The Way',
-    delivery_status_label_ar: 'في الطريق',
-    payment_status: 'success',
-    items_count: 2,
-    public_token: 'Mn48q--vBx82Jw11PlsqPori920_8812lkasjdd3',
-    created_at: new Date(Date.now() - 3600000 * 12).toISOString(),
-  },
-  {
-    id: 'b2345def-dd5e-669c-1064-a5420000304c',
-    order_number: 'ORD-2026-0005',
-    customer_id: '69567f03-a67e-7a93-1d69-5a4aa96a3889',
-    customer_name: 'Noura Al-Mutawa',
-    customer_phone: '+96594556677',
-    contact_number: '96594556677',
-    delivery_address: {
-      area: 'Shuwaikh Residential',
-      block: '2',
-      street: 'Street 21',
-      building_no: 'House 9',
-      floor: 'Ground',
-      apartment: 'Main',
-      city: 'Capital',
-      formatted: 'Area: Shuwaikh Residential, Block: 2, Street: Street 21, Bldg: House 9, City: Capital',
-    },
-    delivery_address_formatted: 'Area: Shuwaikh Residential, Block: 2, Street: Street 21, Bldg: House 9, City: Capital',
-    total_amount: '62.000',
-    currency: 'KWD',
-    delivery_status: 'delivered',
-    delivery_status_label: 'Delivered',
-    delivery_status_label_ar: 'تم التوصيل',
-    payment_status: 'success',
-    items_count: 2,
-    public_token: 'Xp83r--qLw93Mz22QmsqTorj031_9923mlbkjee4',
-    created_at: new Date(Date.now() - 3600000 * 24).toISOString(),
-  },
-  {
-    id: 'c3456ef0-ee6f-770d-2175-b6531111415d',
-    order_number: 'ORD-2026-0006',
-    customer_id: '70678a14-b78f-8b04-2e70-6b5bb07b4990',
-    customer_name: 'Mariam Al-Kandari',
-    customer_phone: '+96591223344',
-    contact_number: '96591223344',
-    delivery_address: {
-      area: 'Jabriya',
-      block: '1A',
-      street: 'Street 105',
-      building_no: 'Bldg 12',
-      floor: '3',
-      apartment: 'Apt 5',
-      city: 'Hawalli',
-      formatted: 'Area: Jabriya, Block: 1A, Street: Street 105, Bldg: Bldg 12, Floor: 3, Apt: 5, City: Hawalli',
-    },
-    delivery_address_formatted: 'Area: Jabriya, Block: 1A, Street: Street 105, Bldg: Bldg 12, Floor: 3, Apt: 5, City: Hawalli',
-    total_amount: '110.000',
-    currency: 'KWD',
-    delivery_status: 'received',
-    delivery_status_label: 'Received',
-    delivery_status_label_ar: 'تم الاستلام',
-    payment_status: 'success',
-    items_count: 1,
-    public_token: 'Yq94s--rMx04Na33RntqUpuk142_0034nmclkff5',
-    created_at: new Date(Date.now() - 3600000 * 48).toISOString(),
-  },
-];
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatAddressPreview(addr: DeliveryAddressObj | string | null | undefined): string {
   if (!addr) return '—';
@@ -597,7 +449,7 @@ export default function OrdersPage() {
   const locale = useAppSelector((s) => s.ui.locale);
 
   // States
-  const [orders, setOrders] = useState<Order[]>(DEMO_ORDERS);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
@@ -623,7 +475,8 @@ export default function OrdersPage() {
 
       if (!res.ok) {
         console.warn('[OrdersPage] Upstream fetch notice:', json);
-        setOrders((prev) => (prev.length > 0 ? prev : DEMO_ORDERS));
+        setError(json?.detail || 'Failed to load orders');
+        setOrders([]);
         return;
       }
 
@@ -641,15 +494,12 @@ export default function OrdersPage() {
         list = json.orders;
       }
 
-      if (list.length > 0) {
-        const parsed = list.map((item, idx) => normaliseOrder(item, idx));
-        setOrders(parsed);
-      } else {
-        setOrders(DEMO_ORDERS);
-      }
+      const parsed = list.map((item, idx) => normaliseOrder(item, idx));
+      setOrders(parsed);
     } catch (err) {
       console.warn('[OrdersPage] Fetch error:', err);
-      setOrders((prev) => (prev.length > 0 ? prev : DEMO_ORDERS));
+      setError('Unable to load orders. Please check your connection.');
+      setOrders([]);
     } finally {
       setLoading(false);
     }
@@ -769,6 +619,22 @@ export default function OrdersPage() {
             Refresh
           </button>
         </PageHeader>
+
+        {/* Error Notification */}
+        {error && (
+          <div className="flex items-center justify-between gap-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-xs text-destructive">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+            <button
+              onClick={fetchOrders}
+              className="font-bold underline hover:opacity-80"
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -908,25 +774,35 @@ export default function OrdersPage() {
         </div>
 
         {/* Orders Table / Cards */}
-        {filteredOrders.length === 0 ? (
+        {loading ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-16 rounded-2xl bg-muted/40 animate-pulse border border-border/40" />
+            ))}
+          </div>
+        ) : filteredOrders.length === 0 ? (
           <div className="rounded-2xl border border-border/60 bg-card p-12 text-center">
             <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-muted/60 text-muted-foreground mb-3">
               <ShoppingBag className="h-8 w-8" />
             </div>
             <h3 className="font-extrabold text-base text-foreground">No orders found</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-              No orders matching the selected delivery status filter or search query.
+              {search || deliveryStatusFilter !== 'all'
+                ? 'No orders matching the selected delivery status filter or search query.'
+                : 'No orders are currently available.'}
             </p>
-            <button
-              onClick={() => {
-                setDeliveryStatusFilter('all');
-                setSearch('');
-              }}
-              className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 transition"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-              Reset Filters
-            </button>
+            {(search || deliveryStatusFilter !== 'all') && (
+              <button
+                onClick={() => {
+                  setDeliveryStatusFilter('all');
+                  setSearch('');
+                }}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 transition"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset Filters
+              </button>
+            )}
           </div>
         ) : view === 'list' ? (
           /* Table / List View: Amount, Tracking, Status removed; Delivery Address and Delivery Status shown */
