@@ -1257,13 +1257,13 @@ export default function TherapistSchedulePage() {
               {/* ── Sticky header — OUTSIDE the scroll container so sticky works ── */}
               <div className="sticky top-16 z-20 flex items-stretch border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
                 {/* Time corner */}
-                <div className="w-[80px] min-w-[80px] max-w-[80px] shrink-0 flex flex-col justify-center items-center py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">
+                <div className="shrink-0 flex flex-col justify-center items-center py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95" style={{ width: 80, minWidth: 80, maxWidth: 80 }}>
                   <span>Time</span>
                   <span className="text-[10px] text-muted-foreground/60 normal-case font-medium mt-0.5">Slots</span>
                 </div>
                 {/* Therapist header columns — overflow-hidden, synced with body scroll */}
                 <div ref={headerScrollRef} className="flex-1 overflow-hidden" style={{ scrollbarGutter: 'stable' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredTherapists.length}, 95px)`, width: '100%' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredTherapists.length}, 80px)`, width: `${filteredTherapists.length * 80}px` }}>
                     {filteredTherapists.map((t, tIdx) => (
                       <div key={t.id} className={cn('flex flex-col items-center justify-center gap-1 py-2 px-1 border-l border-border/30 first:border-l-0 min-w-0 h-[108px]', COL_TINTS[tIdx % COL_TINTS.length])}>
                         <p className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums text-center leading-none">{formatHeaderDate(selectedDate)}</p>
@@ -1286,7 +1286,7 @@ export default function TherapistSchedulePage() {
               {/* ── Scrollable body ── */}
               <div className="flex rounded-b-2xl">
                 {/* Fixed time column */}
-                <div className="w-[80px] min-w-[80px] max-w-[80px] shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
+                <div className="shrink-0 flex flex-col border-r border-border/30 bg-muted/10" style={{ width: 80, minWidth: 80, maxWidth: 80 }}>
                   {timeSlots.map((time) => (
                     <div key={`tcol-${time}`} className="flex flex-col justify-center items-center text-center px-1 py-2.5 border-t border-border/30" style={{ height: 98 }}>
                       <p className="text-xs font-bold text-foreground tabular-nums">{time}</p>
@@ -1300,9 +1300,9 @@ export default function TherapistSchedulePage() {
                   <div
                     style={{
                       display: 'grid',
-                      gridTemplateColumns: `repeat(${filteredTherapists.length}, 95px)`,
+                      gridTemplateColumns: `repeat(${filteredTherapists.length}, 80px)`,
                       gridTemplateRows: `repeat(${timeSlots.length}, 98px)`,
-                      width: '100%',
+                      width: `${filteredTherapists.length * 80}px`,
                     }}
                   >
                     {filteredTherapists.map((t, tIdx) => {
