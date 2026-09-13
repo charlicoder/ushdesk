@@ -86,6 +86,10 @@ interface Slot {
   reference?: string;
   bookingsId?: string;
   branchName?: string;
+  // multi-booking group support
+  groupBookings?: Slot[];  // all bookings when ≥2 overlap (head slot only)
+  groupRowSpan?: number;   // CSS grid row span for merged group
+  isCont?: boolean;        // true = continuation cell, skip in rendering
 }
 
 // Arrangement type imported from @/components/bookings/BranchBookingModal
@@ -391,7 +395,11 @@ function SlotDetailModal({
 
 
 // ── Slot Cell ──────────────────────────────────────────────────────────────────
-function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
+function SlotCell({ slot, onClick, onOpenBooking }: {
+  slot: Slot;
+  onClick?: () => void;
+  onOpenBooking?: (s: Slot) => void;
+}) {
   if (slot.status === 'unavailable') {
     return (
       <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-muted/40 transition hover:bg-muted/60 px-1 text-center">
@@ -412,6 +420,21 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
         <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground/70 group-hover:text-primary transition truncate">
           <Plus className="h-3 w-3 shrink-0" /> Available
         </span>
+      </div>
+    );
+  }
+
+  // Multi-booking merged group — render stacked mini cards
+  if (slot.groupBookings && slot.groupBookings.length > 1) {
+    return (
+      <div className="flex flex-col gap-1 h-full min-h-[82px] overflow-hidden">
+        {slot.groupBookings.map((bk, idx) => (
+          <MiniBookingCard
+            key={bk.reference ?? String(idx)}
+            slot={bk}
+            onClick={() => onOpenBooking?.(bk)}
+          />
+        ))}
       </div>
     );
   }
@@ -535,6 +558,100 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
           )}
           {slot.start && slot.end && (
             <span className="text-[9px] font-semibold text-muted-foreground leading-none tabular-nums truncate">
+              {slot.start}–{slot.end}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Mini Booking Card (compact card for overlapping booking groups) ────────────
+function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
+  const cfg   = STATUS_CFG[slot.status as ActiveStatus] ?? STATUS_CFG.scheduled;
+  const st    = (slot.status as ActiveStatus) in STATUS_CFG ? (slot.status as ActiveStatus) : 'scheduled';
+  const pStat = (slot.payment_status ?? '').toLowerCase().trim();
+  const isPaid    = pStat === 'success' || pStat === 'paid' || pStat === 'completed';
+  const isPending = pStat === 'pending'  || pStat === 'unpaid';
+
+  const cardCls = isPaid
+    ? 'border-emerald-400/80 bg-gradient-to-br from-emerald-50 to-emerald-100/70 dark:from-emerald-950/70 dark:to-emerald-900/40 hover:border-emerald-500 shadow-sm shadow-emerald-500/10'
+    : isPending
+    ? 'border-rose-400/80 bg-gradient-to-br from-rose-50 to-rose-100/70 dark:from-rose-950/70 dark:to-rose-900/40 hover:border-rose-500 shadow-sm shadow-rose-500/10'
+    : st === 'in_progress'
+    ? 'border-emerald-300/70 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-950/60 dark:to-emerald-900/30 hover:border-emerald-400'
+    : st === 'booking'
+    ? 'border-blue-300/70 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 hover:border-blue-400'
+    : 'border-violet-300/70 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 hover:border-violet-400';
+
+  const accentBar = isPaid ? 'bg-emerald-500'
+    : isPending ? 'bg-rose-500'
+    : st === 'in_progress' ? 'bg-emerald-500'
+    : st === 'booking' ? 'bg-blue-500' : 'bg-violet-500';
+
+  const pillCls = isPaid
+    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
+    : isPending
+    ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300'
+    : cfg.pillCls;
+  const dotCls     = isPaid ? 'bg-emerald-600' : isPending ? 'bg-rose-600' : cfg.dot;
+  const badgeLabel = isPaid ? 'PAID'  : isPending ? 'PENDING' : cfg.label;
+  const Icon       = isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
+  const iconCls    = isPaid ? 'text-emerald-600 dark:text-emerald-400'
+    : isPending ? 'text-rose-600 dark:text-rose-400' : cfg.iconCls;
+  const iconBgCls  = isPaid ? 'bg-emerald-500/15'
+    : isPending ? 'bg-rose-500/15'
+    : st === 'in_progress' ? 'bg-emerald-500/15'
+    : st === 'booking' ? 'bg-blue-500/15' : 'bg-violet-500/15';
+  const durCls = isPaid
+    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+    : isPending
+    ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+    : st === 'in_progress' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+    : st === 'booking'     ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
+    : 'bg-violet-500/15 text-violet-700 dark:text-violet-300';
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+      className={cn(
+        'group relative flex flex-1 rounded-lg overflow-hidden cursor-pointer select-none min-h-[60px]',
+        'border transition-all duration-200 active:scale-[0.98]',
+        cardCls,
+      )}
+    >
+      {/* Left accent bar */}
+      <div className={cn('w-[3px] shrink-0', accentBar)} />
+
+      {/* Content */}
+      <div className="flex flex-1 min-w-0 flex-col justify-between p-1.5 gap-0.5">
+        <div className="flex items-center justify-between gap-0.5">
+          <span className={cn(
+            'inline-flex items-center gap-0.5 rounded px-1 py-[1px] text-[7px] font-extrabold uppercase tracking-wider leading-none truncate max-w-[55px]',
+            pillCls,
+          )}>
+            <span className={cn('h-[3px] w-[3px] rounded-full shrink-0', dotCls)} />
+            <span className="truncate">{badgeLabel}</span>
+          </span>
+          <div className={cn('grid h-3.5 w-3.5 shrink-0 place-items-center rounded-sm', iconBgCls)}>
+            <Icon className={cn('h-2 w-2', iconCls)} />
+          </div>
+        </div>
+        <p className="text-[9px] font-bold leading-tight text-foreground truncate" title={slot.serviceName || 'Booked'}>
+          {slot.serviceName || 'Booked'}
+        </p>
+        <div className="flex items-center gap-1 pt-0.5 border-t border-border/20">
+          {slot.duration && (
+            <span className={cn('inline-flex items-center gap-[1px] rounded px-0.5 py-[1px] text-[7px] font-bold leading-none shrink-0', durCls)}>
+              <Timer className="h-2 w-2 shrink-0" />{slot.duration}
+            </span>
+          )}
+          {slot.start && slot.end && (
+            <span className="text-[7px] font-medium text-muted-foreground leading-none tabular-nums truncate">
               {slot.start}–{slot.end}
             </span>
           )}
@@ -704,31 +821,76 @@ function buildScheduleFromApi(
     sched[arr.id] = {};
     const bkSlots = bookingMap[arr.id] ?? [];
 
-    for (const slotLabel of timeSlots) {
-      const slotStart = slotToMinutes(slotLabel);
+    // Sort by start, then merge overlapping/adjacent bookings into groups
+    const sorted = [...bkSlots].sort((a, b) => a.startMin - b.startMin);
+    const groups: { startMin: number; endMin: number; entries: BkEntry[] }[] = [];
+    for (const bk of sorted) {
+      const last = groups[groups.length - 1];
+      if (last && bk.startMin < last.endMin) {
+        // Overlaps with last group — extend it
+        last.endMin = Math.max(last.endMin, bk.endMin);
+        last.entries.push(bk);
+      } else {
+        groups.push({ startMin: bk.startMin, endMin: bk.endMin, entries: [bk] });
+      }
+    }
+
+    const slotMins = timeSlots.map(slotToMinutes);
+
+    // Build a Slot object for a single booking entry
+    const makeSlot = (bk: BkEntry): Slot => {
+      let st: SlotStatus = 'scheduled';
+      if (bk.status === 'in_progress') st = 'in_progress';
+      else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
+      return {
+        status:         st,
+        serviceName:    bk.serviceName || arr.name,
+        capacity:       arr.capacity,
+        start:          bk.startLabel,
+        end:            bk.endLabel,
+        duration:       bk.duration,
+        reference:      bk.reference,
+        bookingsId:     bk.bookingsId,
+        branchName:     arr.branch_name,
+        payment_status: bk.payment_status,
+      };
+    };
+
+    for (let i = 0; i < timeSlots.length; i++) {
+      const slotLabel = timeSlots[i];
+      const slotStart = slotMins[i];
       const slotEnd   = slotStart + slotDurationMinutes;
 
-      const bk = bkSlots.find(b => b.startMin < slotEnd && b.endMin > slotStart);
-      if (bk) {
-        let st: SlotStatus = 'scheduled';
-        if (bk.status === 'in_progress') st = 'in_progress';
-        else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
-        sched[arr.id][slotLabel] = {
-          status:         st,
-          serviceName:    bk.serviceName || arr.name,
-          capacity:       arr.capacity,
-          start:          bk.startLabel,
-          end:            bk.endLabel,
-          duration:       bk.duration,
-          reference:      bk.reference,
-          bookingsId:     bk.bookingsId,
-          branchName:     arr.branch_name,
-          payment_status: bk.payment_status,
-        };
+      const group = groups.find(g => g.startMin < slotEnd && g.endMin > slotStart);
+      if (!group) {
+        sched[arr.id][slotLabel] = { status: 'available' };
         continue;
       }
 
-      sched[arr.id][slotLabel] = { status: 'available' };
+      // Is this the head (first) slot of the group?
+      const prevEnd   = i > 0 ? slotMins[i - 1] + slotDurationMinutes : -1;
+      const prevGroup = i > 0 ? groups.find(g => g.startMin < prevEnd && g.endMin > slotMins[i - 1]) : null;
+      if (prevGroup === group) {
+        // Continuation — will be spanned over by the head cell, skip in rendering
+        sched[arr.id][slotLabel] = { status: 'scheduled', isCont: true };
+        continue;
+      }
+
+      // Head slot — count how many consecutive time slots this group covers
+      let rowSpan = 0;
+      for (let j = i; j < timeSlots.length; j++) {
+        const s = slotMins[j];
+        const e = s + slotDurationMinutes;
+        if (group.startMin < e && group.endMin > s) rowSpan++;
+        else break;
+      }
+
+      const allBookingSlots = group.entries.map(makeSlot);
+      sched[arr.id][slotLabel] = {
+        ...allBookingSlots[0],
+        groupRowSpan: rowSpan,
+        ...(allBookingSlots.length > 1 ? { groupBookings: allBookingSlots } : {}),
+      };
     }
   }
   return sched;
@@ -1137,25 +1299,30 @@ export default function BranchAppointmentsPage() {
                       while (rowIdx < timeSlots.length) {
                         const time = timeSlots[rowIdx];
                         const slot = schedule[a.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
+
+                        // Skip continuation slots — covered by the head cell's grid span
+                        if (slot.isCont) { rowIdx++; continue; }
+
                         const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
-                        let span = 1;
-                        if (isBooked && slot.reference) {
-                          while (rowIdx + span < timeSlots.length) {
-                            const next = schedule[a.id]?.[timeSlots[rowIdx + span]];
-                            if (next && (next.status === 'booking' || next.status === 'scheduled' || next.status === 'in_progress') && next.reference === slot.reference) { span++; } else { break; }
-                          }
-                        } else if (isBooked && slot.start && slot.end) {
-                          while (rowIdx + span < timeSlots.length) {
-                            const next = schedule[a.id]?.[timeSlots[rowIdx + span]];
-                            if (next && (next.status === 'booking' || next.status === 'scheduled' || next.status === 'in_progress') && next.start === slot.start && next.end === slot.end) { span++; } else { break; }
-                          }
-                        }
+                        // Use pre-computed row span from buildScheduleFromApi (handles both single and multi-booking groups)
+                        const span = isBooked ? (slot.groupRowSpan ?? 1) : 1;
+
                         cells.push(
                           <div key={`${a.id}-${time}`}
                             style={{ gridColumn: aIdx + 1, gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1 }}
                             className={cn('p-2 border-t border-l border-border/30 transition-colors first:border-l-0', COL_TINTS[aIdx % COL_TINTS.length])}
                           >
-                            <SlotCell slot={slot} onClick={isBooked ? () => openDetailModal(slot, a, time) : slot.status === 'available' ? () => openNewBooking(a, time) : undefined} />
+                            <SlotCell
+                              slot={slot}
+                              onClick={
+                                isBooked && !slot.groupBookings
+                                  ? () => openDetailModal(slot, a, time)
+                                  : slot.status === 'available'
+                                    ? () => openNewBooking(a, time)
+                                    : undefined
+                              }
+                              onOpenBooking={(bk) => openDetailModal(bk, a, time)}
+                            />
                           </div>,
                         );
                         rowIdx += span;
