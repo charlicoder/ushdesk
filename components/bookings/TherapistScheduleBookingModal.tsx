@@ -526,6 +526,7 @@ export function TherapistScheduleBookingModal({
 
   const goNext = () => {
     if (!form.serviceId) { setSubmitError('Please select a service.'); return; }
+    if (!form.arrangementId) { setSubmitError('Please select an arrangement (room).'); return; }
     setSubmitError(null); setStep(2);
   };
   const goBack = () => { setSubmitError(null); setStep(1); };
@@ -1857,7 +1858,8 @@ export function TherapistScheduleBookingModal({
                   Cancel
                 </button>
                 <button type="button" onClick={goNext}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
+                  disabled={!form.serviceId || !form.arrangementId}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
                   Next: Customer <ChevronRight className="h-4 w-4" />
                 </button>
               </>)}
