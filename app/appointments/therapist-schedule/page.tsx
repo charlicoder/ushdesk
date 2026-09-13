@@ -72,6 +72,8 @@ interface ApiGrid {
 interface ApiBranch {
   branch_id: string;
   branch_name: string;
+  opening_time?: string | null;
+  closing_time?: string | null;
 }
 
 interface ApiScheduleRecord {
@@ -866,8 +868,10 @@ export default function TherapistSchedulePage() {
         if (Array.isArray(rawList)) {
           const list: ApiBranch[] = rawList
             .map((b: any) => ({
-              branch_id: String(b.id ?? b.branch_id ?? ''),
-              branch_name: String(b.name ?? b.branch_name ?? ''),
+              branch_id:    String(b.id ?? b.branch_id ?? ''),
+              branch_name:  String(b.name ?? b.branch_name ?? ''),
+              opening_time: b.opening_time ?? null,
+              closing_time: b.closing_time ?? null,
             }))
             .filter((b: ApiBranch) => Boolean(b.branch_id));
 
@@ -1015,8 +1019,24 @@ export default function TherapistSchedulePage() {
     return () => controller.abort();
   }, [selectedBranchId, selectedDate, token, scheduleRefreshKey]);
 
-  // Derived data
-  const grid      = scheduleData?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 as const };
+  // Derived data — use branch opening/closing as authoritative grid bounds
+  const selectedBranchInfo = useMemo(
+    () => branchList.find(b => b.branch_id === selectedBranchId) ?? null,
+    [branchList, selectedBranchId],
+  );
+  const grid = useMemo((): ApiGrid => {
+    const apiGrid = scheduleData?.grid;
+    // Branch hours take priority over therapist-shift-derived grid
+    const openT  = selectedBranchInfo?.opening_time ?? apiGrid?.start  ?? '09:00';
+    const closeT = selectedBranchInfo?.closing_time ?? apiGrid?.end    ?? '22:00';
+    // Normalise to HH:MM (strip seconds if present)
+    const trim = (t: string) => t.substring(0, 5);
+    return {
+      start:                trim(openT),
+      end:                  trim(closeT),
+      slot_duration_minutes: (apiGrid?.slot_duration_minutes ?? 30) as 30 | 60,
+    };
+  }, [selectedBranchInfo, scheduleData]);
   const timeSlots = generateTimeSlots(grid);
   const therapists: Therapist[] = (scheduleData?.therapists ?? []).map((t, i) => ({
     id:         t.id,
