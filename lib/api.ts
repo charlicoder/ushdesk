@@ -3,7 +3,7 @@
  * All paths are read from NEXT_PUBLIC_* environment variables.
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://apidev.ushspa.co';
 const UAUTH    = process.env.NEXT_PUBLIC_UAUTH    ?? '/uauth';
 const BOOKNPAY = process.env.NEXT_PUBLIC_BOOKNPAY ?? '/booknpay';
 const NOTICE   = process.env.NEXT_PUBLIC_NOTICE   ?? '/unotice';

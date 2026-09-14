@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-  const baseUrl    = (process.env['API_BASE_URL']  ?? 'http://127.0.0.1:8000').replace(/\/+$/, '');
+  const baseUrl    = (process.env['API_BASE_URL']  ?? 'https://apidev.ushspa.co').replace(/\/+$/, '');
   const uauth      = (process.env['API_UAUTH']     ?? '/uauth').replace(/\/+$/, '');
   const appToken   =  process.env['API_APP_TOKEN'] ?? '';
   const refreshUrl = `${baseUrl}${uauth}/api/v1/auth/refresh/`;

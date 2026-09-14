@@ -4,7 +4,7 @@ import { getProxyHeaders } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
 
-const BASE_URL = process.env['API_BASE_URL'] ?? 'http://127.0.0.1:8000';
+const BASE_URL = process.env['API_BASE_URL'] ?? 'https://apidev.ushspa.co';
 const UAUTH    = process.env['API_UAUTH']    ?? '/uauth';
 
 const URL = `${BASE_URL}${UAUTH}/api/v1/products/`;
