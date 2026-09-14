@@ -8,19 +8,27 @@ import type { NextRequest } from 'next/server';
 
 export function getApiBaseUrl(): string {
   return (
+    process.env.API_BASE_URL ||
     process.env['API_BASE_URL'] ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
     process.env['NEXT_PUBLIC_API_BASE_URL'] ||
     'https://apidev.ushspa.co'
   ).replace(/\/+$/, '');
 }
 
 export function getAppToken(): string {
-  return process.env['API_APP_TOKEN'] ?? '';
+  return (
+    process.env.API_APP_TOKEN ||
+    process.env['API_APP_TOKEN'] ||
+    'ushspa'
+  ).trim();
 }
 
 export function getUauthPath(): string {
   return (
+    process.env.API_UAUTH ||
     process.env['API_UAUTH'] ||
+    process.env.NEXT_PUBLIC_UAUTH ||
     process.env['NEXT_PUBLIC_UAUTH'] ||
     '/uauth'
   ).replace(/\/+$/, '');
@@ -28,7 +36,9 @@ export function getUauthPath(): string {
 
 export function getBooknpayPath(): string {
   return (
+    process.env.API_BOOKNPAY ||
     process.env['API_BOOKNPAY'] ||
+    process.env.NEXT_PUBLIC_BOOKNPAY ||
     process.env['NEXT_PUBLIC_BOOKNPAY'] ||
     '/booknpay'
   ).replace(/\/+$/, '');
@@ -36,7 +46,9 @@ export function getBooknpayPath(): string {
 
 export function getNoticePath(): string {
   return (
+    process.env.API_NOTICE ||
     process.env['API_NOTICE'] ||
+    process.env.NEXT_PUBLIC_NOTICE ||
     process.env['NEXT_PUBLIC_NOTICE'] ||
     '/unotice'
   ).replace(/\/+$/, '');

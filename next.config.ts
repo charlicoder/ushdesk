@@ -2,6 +2,13 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: { unoptimized: true },
+  env: {
+    API_BASE_URL: process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://apidev.ushspa.co',
+    API_APP_TOKEN: process.env.API_APP_TOKEN || 'ushspa',
+    API_UAUTH: process.env.API_UAUTH || '/uauth',
+    API_BOOKNPAY: process.env.API_BOOKNPAY || '/booknpay',
+    API_NOTICE: process.env.API_NOTICE || '/unotice',
+  },
 
   async rewrites() {
     // Reads from Amplify environment variables.

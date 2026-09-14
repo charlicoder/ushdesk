@@ -8,6 +8,8 @@ frontend:
         - npm ci || npm install
     build:
       commands:
+        - env | grep -E '^(API_|NEXT_PUBLIC_)' > .env.production || true
+        - env | grep -E '^(API_|NEXT_PUBLIC_)' > .env.local || true
         - npm run build
   artifacts:
     baseDirectory: .next

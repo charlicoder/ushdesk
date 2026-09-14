@@ -8,9 +8,9 @@ export const dynamic = 'force-dynamic';
 // true runtime lookup in the Lambda, picking up Amplify's injected env vars.
 
 export async function POST(req: NextRequest) {
-  const baseUrl  = (process.env['API_BASE_URL']  ?? 'https://apidev.ushspa.co').replace(/\/+$/, '');
-  const uauth    = (process.env['API_UAUTH']     ?? '/uauth').replace(/\/+$/, '');
-  const appToken =  process.env['API_APP_TOKEN'] ?? '';
+  const baseUrl  = (process.env.API_BASE_URL  || process.env['API_BASE_URL']  || 'https://apidev.ushspa.co').replace(/\/+$/, '');
+  const uauth    = (process.env.API_UAUTH     || process.env['API_UAUTH']     || '/uauth').replace(/\/+$/, '');
+  const appToken = (process.env.API_APP_TOKEN || process.env['API_APP_TOKEN'] || 'ushspa').trim();
   const loginUrl = `${baseUrl}${uauth}/api/v1/auth/login/`;
 
   console.log('[AUTH PROXY] baseUrl:', baseUrl);
