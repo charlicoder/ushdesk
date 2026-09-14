@@ -1,25 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-// Server-only env vars — always available in Next.js Route Handlers
-const BASE_URL  = process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000';
-const UAUTH     = process.env.API_UAUTH     ?? '/uauth';
-const APP_TOKEN = process.env.API_APP_TOKEN ?? '';
-
-// Full backend login URL: http://127.0.0.1:8000/uauth/api/v1/auth/login/
-const LOGIN_URL = `${BASE_URL}${UAUTH}/api/v1/auth/login/`;
-
 export async function POST(req: NextRequest) {
-  console.log('[AUTH PROXY] →', LOGIN_URL);
+  // Read env vars inside the handler — guarantees Amplify runtime values
+  // are used, not stale module-level constants baked at cold-start.
+  const baseUrl  = (process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000').replace(/\/+$/, '');
+  const uauth    = (process.env.API_UAUTH     ?? '/uauth').replace(/\/+$/, '');
+  const appToken =  process.env.API_APP_TOKEN ?? '';
+  const loginUrl = `${baseUrl}${uauth}/api/v1/auth/login/`;
+
+  console.log('[AUTH PROXY] →', loginUrl);
 
   try {
     const body = await req.json();
 
-    const upstream = await fetch(LOGIN_URL, {
+    const upstream = await fetch(loginUrl, {
       method: 'POST',
       headers: {
         'Content-Type':   'application/json',
         'Accept':         'application/json',
-        'X-USHSPA-TOKEN': APP_TOKEN,   // Kong gateway app token
+        ...(appToken ? { 'X-USHSPA-TOKEN': appToken } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -36,10 +35,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(data, { status: 200 });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';
-    console.error('[AUTH PROXY] fetch failed:', message);
+    console.error(`[AUTH PROXY] fetch failed (${loginUrl}):`, message);
     return NextResponse.json(
-      { detail: `Cannot reach auth server: ${message}` },
+      { detail: `Cannot reach auth server at ${loginUrl}: ${message}` },
       { status: 502 },
     );
   }
 }
+

@@ -1,17 +1,30 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  images: { unoptimized: true },
+
   async rewrites() {
+    // Reads from Amplify environment variables.
+    // Fallback to localhost only for local development.
     const baseUrl = (
-      process.env.BASE_TRACE_API_URL ||
-      process.env.NEXT_PUBLIC_BASE_TRACE_API_URL ||
+      process.env.API_BASE_URL ||
+      process.env.NEXT_PUBLIC_API_BASE_URL ||
       'http://127.0.0.1:8000'
     ).replace(/\/+$/, '');
 
+    const uauth    = (process.env.API_UAUTH    || '/uauth').replace(/\/+$/, '');
+    const booknpay = (process.env.API_BOOKNPAY || '/booknpay').replace(/\/+$/, '');
+
     return [
+      // Auth service proxy  →  https://apidev.ushspa.co/uauth/api/v1/auth/:path*
+      {
+        source: '/api/v1/auth/:path*',
+        destination: `${baseUrl}${uauth}/api/v1/auth/:path*`,
+      },
+      // Booking & payment proxy  →  https://apidev.ushspa.co/booknpay/api/:path*
       {
         source: '/booknpay/api/:path*',
-        destination: `${baseUrl}/booknpay/api/:path*`,
+        destination: `${baseUrl}${booknpay}/api/:path*`,
       },
     ];
   },
@@ -19,32 +32,36 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        // Apply CORS headers to the Next.js API proxy routes so that browsers
-        // don't block responses when the front-end is served from a different
-        // origin (e.g. during staging or behind a CDN in production).
+        // Allow browsers to call /api/* proxy routes from any origin.
         source: '/api/:path*',
         headers: [
-          { key: 'Access-Control-Allow-Origin', value: 'https://apidev.ushspa.co' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, OPTIONS' },
+          { key: 'Access-Control-Allow-Origin',  value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
+        ],
+      },
+      {
+        source: '/booknpay/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin',  value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, PATCH, DELETE, OPTIONS' },
           { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization' },
         ],
       },
     ];
   },
 
-  // Prevent Next.js CSRF check from rejecting server-side requests that
-  // originate from the production API domain or a CDN / reverse proxy.
-  // See: https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions#allowedorigins
+  // Prevent Next.js CSRF check from blocking server-side requests from these origins.
   experimental: {
     serverActions: {
       allowedOrigins: [
-        "api.ushspa.co",
-        "apidev.ushspa.co",
-        "main.d1w1ttnk2s5c9c.amplifyapp.com",
+        'localhost:3000',
+        'api.ushspa.co',
+        'apidev.ushspa.co',
+        'main.d1w1ttnk2s5c9c.amplifyapp.com',
       ],
     },
   },
 };
 
 export default nextConfig;
-
