@@ -2,18 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-// Force dynamic rendering — prevents Next.js from inlining process.env values
-// at build time. Without this, Amplify Lambda gets the build-time fallback
-// (127.0.0.1:8000) instead of the runtime env var.
+// IMPORTANT: Use bracket notation process.env['VAR'] instead of process.env['VAR']
+// Next.js bundler statically replaces dot-notation process.env['X'] at build time
+// with the literal build-time value (or undefined). Bracket notation forces a
+// true runtime lookup in the Lambda, picking up Amplify's injected env vars.
 
 export async function POST(req: NextRequest) {
-  // Read env vars inside the handler — guarantees Amplify runtime values
-  // are used, not stale module-level constants baked at cold-start.
-  const baseUrl  = (process.env.API_BASE_URL  ?? 'http://127.0.0.1:8000').replace(/\/+$/, '');
-  const uauth    = (process.env.API_UAUTH     ?? '/uauth').replace(/\/+$/, '');
-  const appToken =  process.env.API_APP_TOKEN ?? '';
+  const baseUrl  = (process.env['API_BASE_URL']  ?? 'http://127.0.0.1:8000').replace(/\/+$/, '');
+  const uauth    = (process.env['API_UAUTH']     ?? '/uauth').replace(/\/+$/, '');
+  const appToken =  process.env['API_APP_TOKEN'] ?? '';
   const loginUrl = `${baseUrl}${uauth}/api/v1/auth/login/`;
 
+  console.log('[AUTH PROXY] baseUrl:', baseUrl);
   console.log('[AUTH PROXY] →', loginUrl);
 
   try {

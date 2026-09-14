@@ -4,7 +4,7 @@ import { getProxyHeaders } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
 
-const BASE_URL = process.env.API_BASE_URL ?? 'http://127.0.0.1:8000';
+const BASE_URL = process.env['API_BASE_URL'] ?? 'http://127.0.0.1:8000';
 
 /**
  * GET /booknpay/api/v1/bookings/[id]
