@@ -59,6 +59,7 @@ const nextConfig: NextConfig = {
         'api.ushspa.co',
         'apidev.ushspa.co',
         'main.d1w1ttnk2s5c9c.amplifyapp.com',
+        'main.doxmqd7pfk2wp.amplifyapp.com'
       ],
     },
   },
