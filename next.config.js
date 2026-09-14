@@ -1,10 +1,12 @@
 /** @type {import('next').NextConfig} */
-import type { NextConfig } from "next";
+const nextConfig = {
+  images: { unoptimized: true },
 
-const nextConfig: NextConfig = {
   async rewrites() {
     const baseUrl = (
+      process.env.API_BASE_URL ||
       process.env.BASE_TRACE_API_URL ||
+      process.env.NEXT_PUBLIC_API_BASE_URL ||
       process.env.NEXT_PUBLIC_BASE_TRACE_API_URL ||
       "http://127.0.0.1:8000"
     ).replace(/\/+$/, "");
@@ -53,6 +55,7 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+module.exports = nextConfig;
+
 
 
