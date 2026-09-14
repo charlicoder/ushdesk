@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
+// Force dynamic rendering — prevents Next.js from inlining process.env values
+// at build time. Without this, Amplify Lambda gets the build-time fallback
+// (127.0.0.1:8000) instead of the runtime env var.
+
 export async function POST(req: NextRequest) {
   // Read env vars inside the handler — guarantees Amplify runtime values
   // are used, not stale module-level constants baked at cold-start.
@@ -42,4 +48,3 @@ export async function POST(req: NextRequest) {
     );
   }
 }
-
