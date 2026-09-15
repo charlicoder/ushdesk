@@ -424,44 +424,95 @@ function CustomerAvatar({ customer, size = 32 }: { customer: Customer; size?: nu
 }
 
 // ── Customer Picker ─────────────────────────────────────────────────────────────
+// Self-contained: owns debounced server-side search so all DB customers are reachable.
 
 function CustomerPicker({
   label,
   value,
   onSelect,
-  customers,
-  loading,
   excludeId,
   onCreateNew,
+  authHeader,
+  injectedCustomer,
 }: {
   label: string;
   value: Customer | null;
   onSelect: (c: Customer) => void;
-  customers: Customer[];
-  loading: boolean;
   excludeId?: string;
   onCreateNew?: () => void;
+  /** Bearer token string passed from parent */
+  authHeader: string;
+  /** A freshly-created customer to merge into the list immediately */
+  injectedCustomer?: Customer | null;
 }) {
-  const [open,   setOpen]   = useState(false);
-  const [search, setSearch] = useState('');
+  const [open,             setOpen]             = useState(false);
+  const [search,           setSearch]           = useState('');
+  const [customers,        setCustomers]        = useState<Customer[]>([]);
+  const [searching,        setSearching]        = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Close on outside click
   useEffect(() => {
     const h = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
 
-  const items = (excludeId ? customers.filter(c => c.id !== excludeId) : customers)
-    .filter(c => {
-      if (!search) return true;
-      const q = search.toLowerCase();
-      return (
-        customerLabel(c).toLowerCase().includes(q) ||
-        (c.phone_number ?? c.phone ?? '').includes(q) ||
-        (c.email ?? '').toLowerCase().includes(q)
-      );
+  // Debounced server-side search — fires on every keystroke after 300ms
+  useEffect(() => {
+    if (!open) return; // only fetch while dropdown is open
+    setSearching(true);
+    const t = setTimeout(async () => {
+      try {
+        const qs = search.trim() ? `?search=${encodeURIComponent(search.trim())}` : '';
+        const res = await authedFetch(`/api/v1/customers${qs}`, {
+          headers: { Authorization: authHeader, Accept: 'application/json' },
+        });
+        const data = await res.json().catch(() => ({}));
+        const rawList = Array.isArray(data) ? data : (data.results ?? data.data ?? []);
+        // Normalise IDs to strings
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const list: Customer[] = rawList.map((item: any, idx: number) => ({
+          ...item,
+          id: String(item.id ?? item.customer_id ?? item.pk ?? item.uuid ?? `cust-${idx}`),
+        }));
+        setCustomers(prev => {
+          // Always keep currently-selected customer in the list even if server didn't return it
+          if (value && !list.some(c => c.id === value.id)) {
+            return [value, ...list];
+          }
+          // Also keep the previously-selected (but de-selected) customer if still stored
+          const prevSelected = prev.find(c => c.id === value?.id);
+          if (prevSelected && !list.some(c => c.id === prevSelected.id)) {
+            return [prevSelected, ...list];
+          }
+          return list;
+        });
+      } catch {
+        // keep previous list on error
+      } finally {
+        setSearching(false);
+      }
+    }, search.trim() ? 300 : 0); // no delay for initial load
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, open, authHeader]);
+
+  // When the dropdown opens, trigger initial fetch
+  const handleOpen = () => {
+    setOpen(o => {
+      if (!o) setSearch(''); // reset search on open so fresh list loads
+      return !o;
     });
+  };
+
+  // Merge a newly-created customer injected from outside
+  useEffect(() => {
+    if (!injectedCustomer) return;
+    setCustomers(prev => [injectedCustomer, ...prev.filter(c => c.id !== injectedCustomer.id)]);
+  }, [injectedCustomer]);
+
+  const items = (excludeId ? customers.filter(c => c.id !== excludeId) : customers);
 
   return (
     <div ref={ref} className="relative">
@@ -484,15 +535,13 @@ function CustomerPicker({
 
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
-        disabled={loading}
+        onClick={handleOpen}
         className="w-full flex items-center gap-2.5 rounded-xl border px-3 py-2 text-sm transition focus:outline-none"
         style={{
           borderColor: open ? B.espresso : B.linen,
           background: B.cardBg,
           boxShadow: open ? `0 0 0 3px ${B.blush}` : undefined,
-          opacity: loading ? 0.5 : 1,
-          cursor: loading ? 'not-allowed' : 'pointer',
+          cursor: 'pointer',
         }}
       >
         {value ? (
@@ -516,13 +565,11 @@ function CustomerPicker({
               <User className="h-3.5 w-3.5" style={{ color: B.textMuted }} />
             </div>
             <span className="flex-1 text-left text-sm" style={{ color: B.textMuted }}>
-              {loading ? 'Loading customers…' : `Select ${label}`}
+              {`Select ${label}`}
             </span>
           </>
         )}
-        {loading
-          ? <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: B.textMuted }} />
-          : <ChevronDown className="h-4 w-4 shrink-0" style={{ color: B.textMuted }} />}
+        <ChevronDown className="h-4 w-4 shrink-0" style={{ color: B.textMuted }} />
       </button>
 
       {open && (
@@ -530,23 +577,44 @@ function CustomerPicker({
           className="absolute top-full left-0 right-0 mt-1.5 z-50 rounded-2xl border shadow-2xl overflow-hidden"
           style={{ borderColor: B.linen, background: B.cardBg }}
         >
+          {/* Search input */}
           <div className="p-2 border-b" style={{ borderColor: B.lineMuted }}>
             <div className="flex items-center gap-2 rounded-lg px-2.5 py-1.5" style={{ background: B.bg }}>
-              <Search className="h-3.5 w-3.5 shrink-0" style={{ color: B.textMuted }} />
+              {searching
+                ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" style={{ color: B.textMuted }} />
+                : <Search className="h-3.5 w-3.5 shrink-0" style={{ color: B.textMuted }} />}
               <input
                 autoFocus
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Search by name or phone…"
+                placeholder="Search by name, phone or email…"
                 className="flex-1 bg-transparent text-sm outline-none"
                 style={{ color: B.textMain }}
               />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="shrink-0 rounded-full p-0.5 transition hover:opacity-70"
+                  style={{ color: B.textMuted }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
             </div>
           </div>
 
+          {/* Results */}
           <ul className="max-h-64 overflow-y-auto py-1">
-            {items.length === 0 ? (
-              <li className="px-4 py-3 text-sm text-center" style={{ color: B.textMuted }}>No results</li>
+            {searching && items.length === 0 ? (
+              <li className="flex items-center gap-2 justify-center px-4 py-3 text-sm" style={{ color: B.textMuted }}>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Searching…
+              </li>
+            ) : items.length === 0 ? (
+              <li className="px-4 py-3 text-sm text-center" style={{ color: B.textMuted }}>
+                No customers found
+              </li>
             ) : (
               items.map(c => {
                 const active = value?.id === c.id;
@@ -768,8 +836,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [extraTime,       setExtraTime]       = useState<number>(0);
 
   // ── Step 2 state ──
-  const [customers,        setCustomers]        = useState<Customer[]>([]);
-  const [customersLoading, setCustomersLoading] = useState(false);
+  // injectedCustomer: a freshly-created customer broadcast to both pickers
+  const [injectedCustomer, setInjectedCustomer] = useState<Customer | null>(null);
   const [sender,           setSender]           = useState<Customer | null>(null);
   const [recipient,        setRecipient]        = useState<Customer | null>(null);
   const [giftMessage,      setGiftMessage]      = useState('');
@@ -895,22 +963,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     fetchFullDetail(svc);
   }, [fetchFullDetail]);
 
-  // ── Fetch customers ──
-  const fetchCustomers = useCallback(async () => {
-    if (customers.length > 0) return;
-    setCustomersLoading(true);
-    try {
-      const res  = await authedFetch('/api/v1/customers/', {
-        headers: { Authorization: authHeader, Accept: 'application/json' },
-      });
-      const data = await res.json().catch(() => ({}));
-      setCustomers(Array.isArray(data) ? data : (data.results ?? data.data ?? []));
-    } finally {
-      setCustomersLoading(false);
-    }
-  }, [authHeader, customers.length]);
-
-  const goToStep2 = () => { setStep(2); fetchCustomers(); };
+  const goToStep2 = () => { setStep(2); };
 
   // ── Derived ──
   const branches: Branch[] = fullDetail?.branches ?? [];
@@ -1296,13 +1349,25 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
           {/* ══ STEP 2 ══ */}
           {step === 2 && (
             <>
-              <CustomerPicker label="Sender (From)" value={sender} onSelect={setSender}
-                customers={customers} loading={customersLoading} excludeId={recipient?.id}
-                onCreateNew={() => { setCreateForRole('sender'); setShowCreateCustomer(true); }} />
+              <CustomerPicker
+                label="Sender (From)"
+                value={sender}
+                onSelect={setSender}
+                excludeId={recipient?.id}
+                authHeader={authHeader}
+                injectedCustomer={injectedCustomer}
+                onCreateNew={() => { setCreateForRole('sender'); setShowCreateCustomer(true); }}
+              />
 
-              <CustomerPicker label="Recipient (To)" value={recipient} onSelect={setRecipient}
-                customers={customers} loading={customersLoading} excludeId={sender?.id}
-                onCreateNew={() => { setCreateForRole('recipient'); setShowCreateCustomer(true); }} />
+              <CustomerPicker
+                label="Recipient (To)"
+                value={recipient}
+                onSelect={setRecipient}
+                excludeId={sender?.id}
+                authHeader={authHeader}
+                injectedCustomer={injectedCustomer}
+                onCreateNew={() => { setCreateForRole('recipient'); setShowCreateCustomer(true); }}
+              />
 
               {/* Gift message */}
               <div>
@@ -1584,7 +1649,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
             email:         created.email,
             avatar:        created.avatar as string | undefined,
           };
-          setCustomers(prev => [asCustomer, ...prev.filter(c => String(c.id) !== id)]);
+          // Broadcast the new customer to both pickers so it appears in their lists
+          setInjectedCustomer(asCustomer);
           if (createForRole === 'sender')    setSender(asCustomer);
           if (createForRole === 'recipient') setRecipient(asCustomer);
         }}
