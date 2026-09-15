@@ -661,6 +661,53 @@ function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }
   );
 }
 
+// ── Capacity Slot Cell ───────────────────────────────────────────────────────────────
+// Renders a mix of booked mini-cards + a single "+Available" button when
+// the arrangement still has capacity remaining for this time slot.
+function CapacitySlotCell({
+  bookings,
+  capacity,
+  onOpenBooking,
+  onAddBooking,
+}: {
+  bookings: Slot[];
+  capacity: number;
+  onOpenBooking?: (s: Slot) => void;
+  onAddBooking?: () => void;
+}) {
+  const bookedCount  = bookings.length;
+  const hasRoom      = bookedCount < capacity;
+
+  return (
+    <div className="flex flex-col gap-1 h-full min-h-[82px] overflow-hidden">
+      {/* Booked mini-cards */}
+      {bookings.map((bk, idx) => (
+        <MiniBookingCard
+          key={bk.reference ?? String(idx)}
+          slot={bk}
+          onClick={() => onOpenBooking?.(bk)}
+        />
+      ))}
+
+      {/* Single +Available button — only when there is still room */}
+      {hasRoom && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={onAddBooking}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAddBooking?.(); }}
+          className="flex flex-1 min-h-[28px] items-center justify-center rounded-lg border border-dashed border-border/80 dark:border-white/15 bg-card/60 transition hover:border-primary hover:bg-primary/5 cursor-pointer group"
+        >
+          <span className="flex items-center gap-1 text-[9px] font-bold text-muted-foreground/70 group-hover:text-primary transition">
+            <Plus className="h-2.5 w-2.5 shrink-0" />
+            Available
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Mini Calendar Picker ───────────────────────────────────────────────────────
 function CalendarPicker({ value, onChange, onClose }: {
   value: string;
@@ -1270,7 +1317,7 @@ export default function BranchAppointmentsPage() {
                   <span className="text-[10px] text-muted-foreground/60 normal-case font-medium mt-0.5">Slots</span>
                 </div>
                 <div ref={headerScrollRef} className="flex-1 overflow-hidden" style={{ scrollbarGutter: 'stable' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredArrangements.length}, 80px)`, width: `${filteredArrangements.length * 80}px` }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredArrangements.length}, minmax(70px, 200px))` }}>
                     {filteredArrangements.map((a, aIdx) => (
                       <div key={a.id} className={cn('flex flex-col items-center justify-center gap-1 py-2 px-1 border-l border-border/30 first:border-l-0 min-w-0 h-[108px]', COL_TINTS[aIdx % COL_TINTS.length])}>
                         <p className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums text-center leading-none">{formatHeaderDate(selectedDate)}</p>
@@ -1295,7 +1342,7 @@ export default function BranchAppointmentsPage() {
                   ))}
                 </div>
                 <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto" style={{ scrollbarGutter: 'stable' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredArrangements.length}, 80px)`, gridTemplateRows: `repeat(${timeSlots.length}, 98px)`, width: `${filteredArrangements.length * 80}px` }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredArrangements.length}, minmax(70px, 200px))`, gridTemplateRows: `repeat(${timeSlots.length}, 98px)` }}>
                     {filteredArrangements.map((a, aIdx) => {
                       const cells: React.ReactNode[] = [];
                       let rowIdx = 0;
@@ -1307,7 +1354,12 @@ export default function BranchAppointmentsPage() {
                         if (slot.isCont) { rowIdx++; continue; }
 
                         const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
-                        // Use pre-computed row span from buildScheduleFromApi (handles both single and multi-booking groups)
+                        // Determine if this slot has bookings with remaining capacity
+                        const slotBookings: Slot[] = slot.groupBookings ?? (isBooked ? [slot] : []);
+                        const bookedHere = slotBookings.length;
+                        const capacity   = a.capacity ?? 1;
+                        const hasRoom    = isBooked && bookedHere < capacity;
+                        // Row span: how many time-slot rows this booking spans
                         const span = isBooked ? (slot.groupRowSpan ?? 1) : 1;
 
                         cells.push(
@@ -1315,17 +1367,27 @@ export default function BranchAppointmentsPage() {
                             style={{ gridColumn: aIdx + 1, gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1 }}
                             className={cn('p-2 border-t border-l border-border/30 transition-colors first:border-l-0', COL_TINTS[aIdx % COL_TINTS.length])}
                           >
-                            <SlotCell
-                              slot={slot}
-                              onClick={
-                                isBooked && !slot.groupBookings
-                                  ? () => openDetailModal(slot, a, time)
-                                  : slot.status === 'available'
-                                    ? () => openNewBooking(a, time)
-                                    : undefined
-                              }
-                              onOpenBooking={(bk) => openDetailModal(bk, a, time)}
-                            />
+                            {/* Use CapacitySlotCell when there are multiple bookings or room remains */}
+                            {isBooked && (hasRoom || (slot.groupBookings && slot.groupBookings.length > 1)) ? (
+                              <CapacitySlotCell
+                                bookings={slotBookings}
+                                capacity={capacity}
+                                onOpenBooking={(bk) => openDetailModal(bk, a, time)}
+                                onAddBooking={hasRoom ? () => openNewBooking(a, time) : undefined}
+                              />
+                            ) : (
+                              <SlotCell
+                                slot={slot}
+                                onClick={
+                                  isBooked && !slot.groupBookings
+                                    ? () => openDetailModal(slot, a, time)
+                                    : slot.status === 'available'
+                                      ? () => openNewBooking(a, time)
+                                      : undefined
+                                }
+                                onOpenBooking={(bk) => openDetailModal(bk, a, time)}
+                              />
+                            )}
                           </div>,
                         );
                         rowIdx += span;
