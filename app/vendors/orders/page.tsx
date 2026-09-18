@@ -6,7 +6,7 @@ import {
   ChevronDown, CheckCircle2, Clock, User, Phone,
   Calendar, Hash, ArrowRight, Filter, ShoppingBag, Truck,
   Package, MapPin, Copy, Check, Eye, RotateCcw,
-  ShieldCheck, KeyRound, Building, Navigation, Send,
+  ShieldCheck, KeyRound, Building, Navigation, Send, Edit3,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -306,18 +306,31 @@ function ReceivedConfirmationModal({ order, isOpen, onClose, onConfirmed }: Rece
     setError(null);
 
     const payload = {
-      delivery_status: 'received',
       status: 'received',
+      delivery_status: 'received',
       tracking_code: code,
+      note: `Customer confirmed receipt with tracking code: ${code}`,
     };
 
     try {
       // 1. Send status update to order status endpoint
-      let res = await authedFetch(`/booknpay/api/v1/orders/${order.id}/status`, {
+      const res = await authedFetch(`/booknpay/api/v1/orders/${order.id}/status/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || json?.success === false) {
+        const msg =
+          json?.error?.message ||
+          json?.detail ||
+          json?.message ||
+          `Failed to update status (${res.status})`;
+        setError(msg);
+        return;
+      }
 
       // 2. If public token exists, also notify tracking received endpoint
       if (order.public_token) {
@@ -332,8 +345,10 @@ function ReceivedConfirmationModal({ order, isOpen, onClose, onConfirmed }: Rece
         }
       }
 
+      const data = json?.data && typeof json.data === 'object' ? json.data : json;
       const updated: Order = {
         ...order,
+        ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
         delivery_status: 'received',
         delivery_status_label: 'Received',
         delivery_status_label_ar: 'تم الاستلام',
@@ -344,17 +359,7 @@ function ReceivedConfirmationModal({ order, isOpen, onClose, onConfirmed }: Rece
       onConfirmed(updated);
       onClose();
     } catch (err) {
-      console.warn('Backend update notice (applying locally):', err);
-      const updated: Order = {
-        ...order,
-        delivery_status: 'received',
-        delivery_status_label: 'Received',
-        delivery_status_label_ar: 'تم الاستلام',
-        tracking_code: code,
-        updated_at: new Date().toISOString(),
-      };
-      onConfirmed(updated);
-      onClose();
+      setError(err instanceof Error ? err.message : 'Network error while confirming receipt.');
     } finally {
       setSubmitting(false);
     }
@@ -443,6 +448,216 @@ function ReceivedConfirmationModal({ order, isOpen, onClose, onConfirmed }: Rece
   );
 }
 
+// ── Update Order Status Modal (with custom status & note) ────────────────────
+interface StatusModalProps {
+  order: Order | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onUpdated: (order: Order) => void;
+}
+
+function UpdateStatusModal({ order, isOpen, onClose, onUpdated }: StatusModalProps) {
+  const [status, setStatus] = useState<string>('ordered');
+  const [note, setNote] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && order) {
+      setStatus(order.delivery_status || 'ordered');
+      setNote('');
+      setError(null);
+    }
+  }, [isOpen, order]);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  if (!isOpen || !order) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+
+    const cfg = DELIVERY_STATUS_CONFIG[status];
+    const defaultNote = `Status updated to ${cfg?.label || status}`;
+    const payload = {
+      status,
+      note: note.trim() || defaultNote,
+    };
+
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/orders/${order.id}/status/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || json?.success === false) {
+        const msg =
+          json?.error?.message ||
+          json?.detail ||
+          json?.message ||
+          `Failed to update order status (${res.status})`;
+        setError(msg);
+        return;
+      }
+
+      const data = json?.data && typeof json.data === 'object' ? json.data : json;
+      const updated: Order = {
+        ...order,
+        ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
+        delivery_status: status,
+        delivery_status_label: cfg?.label || status,
+        delivery_status_label_ar: cfg?.labelAr || status,
+        updated_at: new Date().toISOString(),
+      };
+
+      onUpdated(updated);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Network error while updating status.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const statusOptions = [
+    { key: 'ordered', label: 'Ordered', desc: 'Newly placed order' },
+    { key: 'ready_to_go', label: 'Ready To Go', desc: 'Packed & ready to dispatch' },
+    { key: 'on_the_way', label: 'On The Way', desc: 'Out for delivery' },
+    { key: 'delivered', label: 'Delivered', desc: 'Delivered to recipient address' },
+    { key: 'received', label: 'Received', desc: 'Customer receipt confirmed' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-fade-in-up">
+        <form onSubmit={handleSubmit}>
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-border/50 bg-muted/40 px-6 py-4">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
+                <RotateCcw className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="font-extrabold text-base text-foreground">Update Order Status</h3>
+                <p className="text-xs text-muted-foreground">{order.order_number} · {order.customer_name}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="p-6 space-y-4">
+            {/* Status Selection */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-foreground mb-2">
+                Select Status <span className="text-destructive">*</span>
+              </label>
+              <div className="space-y-2">
+                {statusOptions.map((opt) => {
+                  const cfg = DELIVERY_STATUS_CONFIG[opt.key];
+                  const isSelected = status === opt.key;
+                  return (
+                    <div
+                      key={opt.key}
+                      onClick={() => setStatus(opt.key)}
+                      className={cn(
+                        'flex items-center justify-between p-3 rounded-2xl border cursor-pointer transition text-xs',
+                        isSelected
+                          ? 'border-primary bg-primary/5 shadow-sm'
+                          : 'border-border/60 hover:bg-muted/40'
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={cn(
+                            'h-4 w-4 rounded-full border flex items-center justify-center transition',
+                            isSelected
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-muted-foreground/40'
+                          )}
+                        >
+                          {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                        </div>
+                        <div>
+                          <p className="font-bold text-foreground flex items-center gap-1.5">
+                            <span>{opt.label}</span>
+                            <span className={cn('inline-block h-1.5 w-1.5 rounded-full', cfg?.dotClass)} />
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">{opt.desc}</p>
+                        </div>
+                      </div>
+                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-semibold', cfg?.badgeClass)}>
+                        {cfg?.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Note input */}
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-foreground mb-1.5">
+                Note <span className="text-muted-foreground text-[10px] font-normal normal-case">(optional)</span>
+              </label>
+              <textarea
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Enter a status update note..."
+                rows={3}
+                className="w-full rounded-xl border border-border/80 bg-background px-3.5 py-2.5 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed"
+              />
+            </div>
+
+            {/* Error Message */}
+            {error && (
+              <div className="flex items-center gap-2 rounded-xl bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 border-t border-border/50 bg-muted/20 px-6 py-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-border/80 px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow-sm hover:opacity-90 disabled:opacity-50 transition"
+            >
+              {submitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+              Save Status
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Orders Page Component ────────────────────────────────────────────────
 export default function OrdersPage() {
   const initialized = useAppSelector((s) => s.auth.initialized);
@@ -451,15 +666,24 @@ export default function OrdersPage() {
   // States
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<'list' | 'grid'>('list');
   const [search, setSearch] = useState('');
   const [deliveryStatusFilter, setDeliveryStatusFilter] = useState<string>('all');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Modals
   const [addressModalOrder, setAddressModalOrder] = useState<Order | null>(null);
   const [receivedModalOrder, setReceivedModalOrder] = useState<Order | null>(null);
+  const [statusModalOrder, setStatusModalOrder] = useState<Order | null>(null);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   // Fetch orders from /booknpay/api/v1/orders/
   const fetchOrders = useCallback(async () => {
@@ -518,39 +742,75 @@ export default function OrdersPage() {
       return;
     }
 
+    setUpdatingOrderId(order.id);
+
+    const cfg = DELIVERY_STATUS_CONFIG[nextStatus];
+    const defaultNote = `Status updated to ${cfg?.label || nextStatus}`;
     const payload = {
-      delivery_status: nextStatus,
       status: nextStatus,
+      note: defaultNote,
     };
 
     try {
-      await authedFetch(`/booknpay/api/v1/orders/${order.id}/status`, {
+      const res = await authedFetch(`/booknpay/api/v1/orders/${order.id}/status/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+
+      const json = await res.json().catch(() => null);
+
+      if (!res.ok || json?.success === false) {
+        const msg =
+          json?.error?.message ||
+          json?.detail ||
+          json?.message ||
+          `Failed to update status (${res.status})`;
+        setToast({ type: 'error', message: msg });
+        return;
+      }
+
+      // Success: update frontend UI accordingly
+      const data = json?.data && typeof json.data === 'object' ? json.data : json;
+      const updated: Order = {
+        ...order,
+        ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
+        delivery_status: nextStatus,
+        delivery_status_label: cfg?.label || nextStatus,
+        delivery_status_label_ar: cfg?.labelAr || nextStatus,
+        updated_at: new Date().toISOString(),
+      };
+
+      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+      setToast({
+        type: 'success',
+        message: `Order ${order.order_number} status updated to "${cfg?.label || nextStatus}".`,
+      });
     } catch (e) {
-      console.warn('Backend update error (applying locally):', e);
+      console.error('Order status update error:', e);
+      setToast({
+        type: 'error',
+        message: e instanceof Error ? e.message : 'Network error while updating status.',
+      });
+    } finally {
+      setUpdatingOrderId(null);
     }
+  };
 
-    const cfg = DELIVERY_STATUS_CONFIG[nextStatus];
-    const updated: Order = {
-      ...order,
-      delivery_status: nextStatus,
-      delivery_status_label: cfg?.label || nextStatus,
-      delivery_status_label_ar: cfg?.labelAr || nextStatus,
-      updated_at: new Date().toISOString(),
-    };
-
-    setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
-    setToastMessage(`Order ${order.order_number} delivery status updated to "${cfg?.label || nextStatus}".`);
-    setTimeout(() => setToastMessage(null), 4000);
+  const handleStatusModalUpdated = (updated: Order) => {
+    setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+    setToast({
+      type: 'success',
+      message: `Order ${updated.order_number} status updated to "${updated.delivery_status_label || updated.delivery_status}".`,
+    });
   };
 
   const handleReceivedConfirmed = (updated: Order) => {
     setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
-    setToastMessage(`Order ${updated.order_number} confirmed as Received.`);
-    setTimeout(() => setToastMessage(null), 4000);
+    setToast({
+      type: 'success',
+      message: `Order ${updated.order_number} confirmed as Received.`,
+    });
   };
 
   // Filtered orders
@@ -593,13 +853,24 @@ export default function OrdersPage() {
     <DashboardShell>
       <div className="space-y-6">
         {/* Toast feedback */}
-        {toastMessage && (
-          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-card p-4 shadow-2xl animate-fade-in-up">
-            <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
-            <span className="text-xs font-bold text-foreground">{toastMessage}</span>
+        {toast && (
+          <div
+            className={cn(
+              'fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-2xl border p-4 shadow-2xl animate-fade-in-up max-w-md',
+              toast.type === 'error'
+                ? 'border-destructive/40 bg-card text-destructive shadow-destructive/10'
+                : 'border-emerald-500/30 bg-card text-foreground shadow-emerald-500/10'
+            )}
+          >
+            {toast.type === 'error' ? (
+              <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
+            ) : (
+              <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+            )}
+            <span className="text-xs font-bold text-foreground">{toast.message}</span>
             <button
-              onClick={() => setToastMessage(null)}
-              className="text-muted-foreground hover:text-foreground ml-2"
+              onClick={() => setToast(null)}
+              className="text-muted-foreground hover:text-foreground ml-2 p-1"
             >
               <X className="h-4 w-4" />
             </button>
@@ -882,58 +1153,91 @@ export default function OrdersPage() {
 
                         {/* Transition Actions following the order */}
                         <td className="py-3 px-4 align-top text-right">
-                          {/* ORDERED -> READY_TO_GO */}
-                          {order.delivery_status === 'ordered' && (
-                            <button
-                              onClick={() => handleTransit(order, 'ready_to_go')}
-                              className="inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-blue-700 transition"
-                            >
-                              <Package className="h-3.5 w-3.5" />
-                              Ready To Go
-                            </button>
-                          )}
+                          <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {/* ORDERED -> READY_TO_GO */}
+                            {order.delivery_status === 'ordered' && (
+                              <button
+                                onClick={() => handleTransit(order, 'ready_to_go')}
+                                disabled={updatingOrderId === order.id}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition"
+                              >
+                                {updatingOrderId === order.id ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Package className="h-3.5 w-3.5" />
+                                )}
+                                Ready To Go
+                              </button>
+                            )}
 
-                          {/* READY_TO_GO -> ON_THE_WAY */}
-                          {order.delivery_status === 'ready_to_go' && (
-                            <button
-                              onClick={() => handleTransit(order, 'on_the_way')}
-                              className="inline-flex items-center gap-1 rounded-xl bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 transition"
-                            >
-                              <Truck className="h-3.5 w-3.5" />
-                              On The Way
-                            </button>
-                          )}
+                            {/* READY_TO_GO -> ON_THE_WAY */}
+                            {order.delivery_status === 'ready_to_go' && (
+                              <button
+                                onClick={() => handleTransit(order, 'on_the_way')}
+                                disabled={updatingOrderId === order.id}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:opacity-50 transition"
+                              >
+                                {updatingOrderId === order.id ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Truck className="h-3.5 w-3.5" />
+                                )}
+                                On The Way
+                              </button>
+                            )}
 
-                          {/* ON_THE_WAY -> DELIVERED */}
-                          {order.delivery_status === 'on_the_way' && (
-                            <button
-                              onClick={() => handleTransit(order, 'delivered')}
-                              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition"
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" />
-                              Mark Delivered
-                            </button>
-                          )}
+                            {/* ON_THE_WAY -> DELIVERED */}
+                            {order.delivery_status === 'on_the_way' && (
+                              <button
+                                onClick={() => handleTransit(order, 'delivered')}
+                                disabled={updatingOrderId === order.id}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition"
+                              >
+                                {updatingOrderId === order.id ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
+                                )}
+                                Mark Delivered
+                              </button>
+                            )}
 
-                          {/* DELIVERED -> RECEIVED (Customer verification with tracking code) */}
-                          {order.delivery_status === 'delivered' && (
-                            <button
-                              onClick={() => handleTransit(order, 'received')}
-                              className="inline-flex items-center gap-1 rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-purple-700 transition"
-                              title="Customer received confirmation"
-                            >
-                              <KeyRound className="h-3.5 w-3.5" />
-                              Confirm Received
-                            </button>
-                          )}
+                            {/* DELIVERED -> RECEIVED (Customer verification with tracking code) */}
+                            {order.delivery_status === 'delivered' && (
+                              <button
+                                onClick={() => handleTransit(order, 'received')}
+                                disabled={updatingOrderId === order.id}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition"
+                                title="Customer received confirmation"
+                              >
+                                {updatingOrderId === order.id ? (
+                                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <KeyRound className="h-3.5 w-3.5" />
+                                )}
+                                Confirm Received
+                              </button>
+                            )}
 
-                          {/* RECEIVED: Completed milestone */}
-                          {order.delivery_status === 'received' && (
-                            <span className="inline-flex items-center gap-1 rounded-xl bg-purple-100 dark:bg-purple-950/40 px-3 py-1 text-xs font-bold text-purple-700 dark:text-purple-300">
-                              <Check className="h-3.5 w-3.5 text-purple-600" />
-                              Received
-                            </span>
-                          )}
+                            {/* RECEIVED: Completed milestone */}
+                            {order.delivery_status === 'received' && (
+                              <span className="inline-flex items-center gap-1 rounded-xl bg-purple-100 dark:bg-purple-950/40 px-2.5 py-1 text-xs font-bold text-purple-700 dark:text-purple-300">
+                                <Check className="h-3.5 w-3.5 text-purple-600" />
+                                Received
+                              </span>
+                            )}
+
+                            {/* Change status & add note modal button */}
+                            <button
+                              onClick={() => setStatusModalOrder(order)}
+                              disabled={updatingOrderId === order.id}
+                              className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50 transition"
+                              title="Update status & add note"
+                            >
+                              <Edit3 className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span>Update</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1008,49 +1312,79 @@ export default function OrdersPage() {
                   </div>
 
                   {/* Footer Action following transition order */}
-                  <div className="border-t border-border/40 pt-3 flex items-center justify-end">
+                  <div className="border-t border-border/40 pt-3 flex items-center gap-2">
                     {order.delivery_status === 'ordered' && (
                       <button
                         onClick={() => handleTransit(order, 'ready_to_go')}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 transition w-full justify-center"
+                        disabled={updatingOrderId === order.id}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition flex-1"
                       >
-                        <Package className="h-4 w-4" />
+                        {updatingOrderId === order.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Package className="h-3.5 w-3.5" />
+                        )}
                         Ready To Go
                       </button>
                     )}
                     {order.delivery_status === 'ready_to_go' && (
                       <button
                         onClick={() => handleTransit(order, 'on_the_way')}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-sky-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-700 transition w-full justify-center"
+                        disabled={updatingOrderId === order.id}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:opacity-50 transition flex-1"
                       >
-                        <Truck className="h-4 w-4" />
+                        {updatingOrderId === order.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Truck className="h-3.5 w-3.5" />
+                        )}
                         On The Way
                       </button>
                     )}
                     {order.delivery_status === 'on_the_way' && (
                       <button
                         onClick={() => handleTransit(order, 'delivered')}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition w-full justify-center"
+                        disabled={updatingOrderId === order.id}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition flex-1"
                       >
-                        <CheckCircle2 className="h-4 w-4" />
+                        {updatingOrderId === order.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                        )}
                         Mark Delivered
                       </button>
                     )}
                     {order.delivery_status === 'delivered' && (
                       <button
                         onClick={() => handleTransit(order, 'received')}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 transition w-full justify-center"
+                        disabled={updatingOrderId === order.id}
+                        className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition flex-1"
                       >
-                        <KeyRound className="h-4 w-4" />
+                        {updatingOrderId === order.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <KeyRound className="h-3.5 w-3.5" />
+                        )}
                         Confirm Received
                       </button>
                     )}
                     {order.delivery_status === 'received' && (
-                      <div className="flex items-center justify-center gap-1 text-xs font-bold text-purple-700 dark:text-purple-300 w-full py-1">
-                        <Check className="h-4 w-4" />
+                      <div className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-purple-100 dark:bg-purple-950/40 px-3 py-2 text-xs font-bold text-purple-700 dark:text-purple-300">
+                        <Check className="h-3.5 w-3.5 text-purple-600" />
                         Customer Received
                       </div>
                     )}
+                    {/* Change status & add note modal button */}
+                    <button
+                      onClick={() => setStatusModalOrder(order)}
+                      disabled={updatingOrderId === order.id}
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-border/80 bg-background px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50 transition shrink-0"
+                      title="Update status & add note"
+                    >
+                      <Edit3 className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>Update</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -1071,6 +1405,14 @@ export default function OrdersPage() {
           isOpen={Boolean(receivedModalOrder)}
           onClose={() => setReceivedModalOrder(null)}
           onConfirmed={handleReceivedConfirmed}
+        />
+
+        {/* Update Status Modal (status & note) */}
+        <UpdateStatusModal
+          order={statusModalOrder}
+          isOpen={Boolean(statusModalOrder)}
+          onClose={() => setStatusModalOrder(null)}
+          onUpdated={handleStatusModalUpdated}
         />
       </div>
     </DashboardShell>

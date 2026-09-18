@@ -87,7 +87,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     if (!bookingId) return;
     setLoading(true); setError(null);
     try {
-      const res  = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}`, {
+      const res  = await authedFetch(`/api/v1/booknpay/bookings/${bookingId}`, {
         headers: authHeader ? { Authorization: authHeader, Accept: 'application/json' } : { Accept: 'application/json' },
       });
       const json = await res.json().catch(() => ({}));
@@ -111,7 +111,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const handlePaymentLink = async () => {
     setPaymentLoading(true); setPaymentError(null);
     try {
-      const res  = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status`, {
+      const res  = await authedFetch(`/api/v1/booknpay/bookings/${bookingId}/status`, {
         method:  'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -139,7 +139,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     setPaymentDoneLoading(true);
     setPaymentDoneError(null);
     try {
-      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
+      const res = await authedFetch(`/api/v1/booknpay/bookings/${bookingId}/status/`, {
         method:  'PATCH',
         headers: {
           'Content-Type': 'application/json',

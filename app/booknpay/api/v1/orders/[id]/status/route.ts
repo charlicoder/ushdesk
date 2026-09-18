@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-import { getProxyHeaders } from '@/lib/proxy';
+import { getApiBaseUrl, getBooknpayPath, getProxyHeaders } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
-
-const BASE_URL = process.env['API_BASE_URL'] ?? 'https://apidev.ushspa.co';
 
 /**
  * PATCH /booknpay/api/v1/orders/[id]/status/
  * Proxies order status transitions to upstream booknpay service.
- * Expected payload: { status, delivery_status?, tracking_code?, courier?, notes?, reason? }
+ * Expected payload: { status, note?, delivery_status?, tracking_code?, courier?, reason? }
  */
 export async function PATCH(
   req: NextRequest,
@@ -17,7 +14,9 @@ export async function PATCH(
 ) {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
-  const url = `${BASE_URL}/booknpay/api/v1/orders/${id}/status/`;
+  const baseUrl = getApiBaseUrl();
+  const booknpay = getBooknpayPath();
+  const url = `${baseUrl}${booknpay}/api/v1/orders/${id}/status/`;
 
   try {
     const upstream = await fetch(url, {
