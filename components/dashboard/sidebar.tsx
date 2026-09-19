@@ -117,7 +117,8 @@ export function Sidebar() {
       label: t('navVendors'),
       icon: Truck,
       children: [
-        { href: '/vendors/orders', label: t('navOrders'), icon: ShoppingBag },
+        { href: '/vendors/orders',      label: t('navOrders'),  icon: ShoppingBag },
+        { href: '/vendors/gift-orders', label: 'Gift Orders',   icon: Gift },
       ],
     },
     { href: '/settings', label: t('navSettings'), icon: Settings },
