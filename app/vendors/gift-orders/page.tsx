@@ -7,7 +7,7 @@ import {
   ArrowRight, Gift, Truck,
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   KeyRound, Edit3, Sparkles, Star,
-  Building, MessageSquare, Pencil,
+  Building, MessageSquare, Pencil, Smartphone,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -87,9 +87,21 @@ interface Addon {
   duration_minutes?: number;
 }
 
+interface DigitalProductData {
+  id?: string;
+  title?: string;
+  name?: string;
+  image?: string | null;
+  video_url?: string | null;
+  price?: string | number | null;
+  currency?: string;
+  category_code?: string;
+}
+
 interface GiftOrder {
   id: string;
-  gift_category: 'physical' | 'service' | string;
+  gift_category: 'physical' | 'digital' | 'service' | string;
+  digital_product_data?: DigitalProductData | null;
   ordered_items: OrderedItem[] | null;
   delivery_status: string | null;
   delivery_status_label: string | null;
@@ -170,8 +182,20 @@ const DELIVERY_STATUS_CONFIG: Record<
 
 const GIFT_CATEGORY_CONFIG: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   physical: { label: 'Physical Gift', color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200 dark:border-rose-800', icon: Package },
+  digital:  { label: 'Digital Gift',  color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300 border-blue-200 dark:border-blue-800', icon: Smartphone },
   service:  { label: 'Service Gift',  color: 'text-violet-600 bg-violet-50 dark:bg-violet-950/40 dark:text-violet-300 border-violet-200 dark:border-violet-800', icon: Sparkles },
 };
+
+function getCategoryConfig(category?: string | null, order?: GiftOrder) {
+  const cat = (category || '').toLowerCase();
+  if (cat === 'digital' || (order as any)?.digital_product_data || (order as any)?.gift_type === 'digital' || (order as any)?.gift_type === 'digital_service') {
+    return GIFT_CATEGORY_CONFIG.digital;
+  }
+  if (cat && GIFT_CATEGORY_CONFIG[cat]) {
+    return GIFT_CATEGORY_CONFIG[cat];
+  }
+  return GIFT_CATEGORY_CONFIG.physical;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function formatAddressPreview(addr: DeliveryAddress | null | undefined): string {
@@ -297,9 +321,10 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
 
   if (!isOpen || !order) return null;
 
-  const isPhysical = order.gift_category === 'physical';
-  const catCfg = GIFT_CATEGORY_CONFIG[order.gift_category] ?? GIFT_CATEGORY_CONFIG.physical;
+  const catCfg = getCategoryConfig(order.gift_category, order);
   const CatIcon = catCfg.icon;
+  const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
+  const isDigital = (order.gift_category || '').toLowerCase() === 'digital' || Boolean(order.digital_product_data);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -379,8 +404,27 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
           )}
 
+          {/* Digital: Product Data */}
+          {isDigital && (order.digital_product_data || !isPhysical) && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
+                <Smartphone className="h-3.5 w-3.5 text-blue-500" />Digital Gift Details
+              </p>
+              <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
+                {order.digital_product_data?.image && (
+                  <img src={order.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                )}
+                <p className="font-bold text-sm text-foreground">{order.digital_product_data?.title || order.digital_product_data?.name || 'Digital Gift Item'}</p>
+                {order.digital_product_data?.price && (
+                  <p className="text-xs text-muted-foreground">{formatAmount(order.digital_product_data.price, order.digital_product_data.currency || order.currency)}</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Service: Service Data */}
-          {!isPhysical && order.service_data?.name && (
+          {!isPhysical && !isDigital && order.service_data?.name && (
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
                 <Sparkles className="h-3.5 w-3.5 text-violet-500" />Service Details
@@ -822,7 +866,7 @@ export default function GiftOrdersPage() {
     setLoading(true);
     setError(null);
     try {
-      const res  = await authedFetch('/booknpay/api/v1/vouchers/', { headers: { Accept: 'application/json' } });
+      const res  = await authedFetch('/booknpay/api/v1/vouchers/?gift_category=physical', { headers: { Accept: 'application/json' } });
       const json = await res.json().catch(() => null);
       if (!res.ok) { setError(json?.detail || 'Failed to load gift orders'); setOrders([]); return; }
       let list: GiftOrder[] = [];
@@ -1060,9 +1104,10 @@ export default function GiftOrdersPage() {
                   {filteredOrders.map((order) => {
                     const cfg = statusCfgFor(order);
                     const label = statusLabelFor(order);
-                    const catCfg = GIFT_CATEGORY_CONFIG[order.gift_category] ?? GIFT_CATEGORY_CONFIG.physical;
+                    const catCfg = getCategoryConfig(order.gift_category, order);
                     const CatIcon = catCfg.icon;
-                    const isPhysical = order.gift_category === 'physical';
+                    const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
+                    const isDigital = (order.gift_category || '').toLowerCase() === 'digital' || Boolean(order.digital_product_data);
                     const itemCount = isPhysical ? (order.ordered_items?.length ?? 0) : 1;
 
                     return (
@@ -1091,7 +1136,11 @@ export default function GiftOrdersPage() {
                             <CatIcon className="h-3 w-3" />{catCfg.label}
                           </span>
                           <p className="text-[11px] text-muted-foreground mt-1">
-                            {isPhysical ? `${itemCount} item${itemCount !== 1 ? 's' : ''}` : (order.service_data?.name || 'Service gift')}
+                            {isDigital
+                              ? (order.digital_product_data?.title || order.digital_product_data?.name || 'Digital gift')
+                              : isPhysical
+                              ? `${itemCount} item${itemCount !== 1 ? 's' : ''}`
+                              : (order.service_data?.name || 'Service gift')}
                           </p>
                         </td>
                         <td className="py-3 px-4 align-top max-w-[200px]">
@@ -1185,9 +1234,10 @@ export default function GiftOrdersPage() {
             {filteredOrders.map((order) => {
               const cfg = statusCfgFor(order);
               const label = statusLabelFor(order);
-              const catCfg = GIFT_CATEGORY_CONFIG[order.gift_category] ?? GIFT_CATEGORY_CONFIG.physical;
+              const catCfg = getCategoryConfig(order.gift_category, order);
               const CatIcon = catCfg.icon;
-              const isPhysical = order.gift_category === 'physical';
+              const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
+              const isDigital = (order.gift_category || '').toLowerCase() === 'digital' || Boolean(order.digital_product_data);
 
               return (
                 <div key={order.id} className="flex flex-col justify-between rounded-2xl border border-border/60 bg-card p-5 shadow-sm hover:shadow-md transition-all duration-200">
@@ -1253,7 +1303,13 @@ export default function GiftOrdersPage() {
                           </p>
                         </div>
                       )}
-                      {!isPhysical && order.service_data?.name && (
+                      {isDigital && (
+                        <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-background p-2.5">
+                          <Smartphone className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                          <p className="text-foreground font-semibold truncate">{order.digital_product_data?.title || order.digital_product_data?.name || 'Digital Gift'}</p>
+                        </div>
+                      )}
+                      {!isPhysical && !isDigital && order.service_data?.name && (
                         <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-background p-2.5">
                           <Sparkles className="h-3.5 w-3.5 text-violet-500 shrink-0" />
                           <p className="text-foreground font-semibold truncate">{order.service_data.name}</p>
