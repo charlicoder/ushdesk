@@ -7,7 +7,7 @@ import {
   ArrowRight, Gift, Truck,
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   KeyRound, Edit3, Sparkles, Star,
-  Building, MessageSquare, Pencil, Smartphone,
+  Building, MessageSquare, Pencil, Smartphone, Ticket,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -100,6 +100,8 @@ interface DigitalProductData {
 
 interface GiftOrder {
   id: string;
+  voucher_number?: string | null;
+  voucher_no?: string | null;
   gift_category: 'physical' | 'digital' | 'service' | string;
   digital_product_data?: DigitalProductData | null;
   ordered_items: OrderedItem[] | null;
@@ -179,6 +181,55 @@ const DELIVERY_STATUS_CONFIG: Record<
     dotClass: 'bg-purple-500',
   },
 };
+
+const ORDER_STATUS_CONFIG: Record<
+  string,
+  { label: string; badgeClass: string; dotClass: string }
+> = {
+  active: {
+    label: 'Active',
+    badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300',
+    dotClass: 'bg-emerald-500',
+  },
+  redeemed: {
+    label: 'Redeemed',
+    badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
+    dotClass: 'bg-purple-500',
+  },
+  expired: {
+    label: 'Expired',
+    badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300',
+    dotClass: 'bg-rose-500',
+  },
+  pending: {
+    label: 'Pending',
+    badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+    dotClass: 'bg-amber-500 animate-pulse',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    badgeClass: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300',
+    dotClass: 'bg-zinc-500',
+  },
+};
+
+function getOrderStatusConfig(status?: string | null) {
+  const s = (status || '').toLowerCase();
+  if (ORDER_STATUS_CONFIG[s]) {
+    return ORDER_STATUS_CONFIG[s];
+  }
+  const label = status ? status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, ' ') : '—';
+  return {
+    label,
+    badgeClass: 'bg-muted text-muted-foreground',
+    dotClass: 'bg-muted-foreground',
+  };
+}
+
+function getOrderVoucherNumber(order?: GiftOrder | null): string | null {
+  if (!order) return null;
+  return order.voucher_number || (order as any).voucher_no || null;
+}
 
 const GIFT_CATEGORY_CONFIG: Record<string, { label: string; color: string; icon: React.ElementType }> = {
   physical: { label: 'Physical Gift', color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200 dark:border-rose-800', icon: Package },
@@ -337,7 +388,9 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
             <div>
               <h3 className="font-extrabold text-base text-foreground">Gift Order Details</h3>
-              <p className="text-xs text-muted-foreground">#{order.id.slice(0, 8).toUpperCase()} · {formatDate(order.created_at)}</p>
+              <p className="text-xs text-muted-foreground">
+                {getOrderVoucherNumber(order) ? `${getOrderVoucherNumber(order)} · ` : ''}#{order.id.slice(0, 8).toUpperCase()} · {formatDate(order.created_at)}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition">
@@ -346,7 +399,7 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
         </div>
 
         <div className="overflow-y-auto flex-1 p-6 space-y-4">
-          {/* Category */}
+          {/* Category & Status */}
           <div className="flex items-center gap-2 flex-wrap">
             <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold', catCfg.color)}>
               <CatIcon className="h-3.5 w-3.5" />{catCfg.label}
@@ -354,6 +407,12 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
               <Star className="h-3 w-3" />{order.gift_template || 'Standard'}
             </span>
+            {order.status && (
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', getOrderStatusConfig(order.status).badgeClass)}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', getOrderStatusConfig(order.status).dotClass)} />
+                {getOrderStatusConfig(order.status).label}
+              </span>
+            )}
           </div>
 
           {/* Sender → Recipient */}
@@ -497,11 +556,16 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
           )}
 
-          {/* Total */}
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4 flex items-center justify-between">
-            <p className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Total Amount</p>
-            <p className="text-xl font-black tracking-tight text-emerald-900 dark:text-emerald-200">{formatAmount(order.total_amount, order.currency)}</p>
-          </div>
+          {/* Voucher Number */}
+          {getOrderVoucherNumber(order) && (
+            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+              <Ticket className="h-4 w-4 text-primary shrink-0" />
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Number</p>
+                <p className="font-mono font-extrabold text-base text-foreground tracking-wide">{getOrderVoucherNumber(order)}</p>
+              </div>
+            </div>
+          )}
 
           {/* Secret code */}
           <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
@@ -925,14 +989,17 @@ export default function GiftOrdersPage() {
     if (statusFilter !== 'all' && (o.delivery_status || '') !== statusFilter) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
+      const vNum = (o.voucher_number || (o as any).voucher_no || '').toLowerCase();
       return (
+        vNum.includes(q) ||
         o.id.toLowerCase().includes(q) ||
         (o.sender_data?.name || '').toLowerCase().includes(q) ||
         (o.recipient_data?.name || '').toLowerCase().includes(q) ||
         (o.recipient_phone || '').includes(q) ||
         (o.sender_data?.phone_number || '').includes(q) ||
         (o.gift_message || '').toLowerCase().includes(q) ||
-        (o.secret_code || '').includes(q)
+        (o.secret_code || '').toLowerCase().includes(q) ||
+        (o.status || '').toLowerCase().includes(q)
       );
     }
     return true;
@@ -1017,7 +1084,7 @@ export default function GiftOrdersPage() {
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search sender, recipient, code..."
+                placeholder="Search voucher #, sender, recipient, code..."
                 className="w-full rounded-xl border border-border/80 bg-background pl-10 pr-10 py-2 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -1095,8 +1162,8 @@ export default function GiftOrdersPage() {
                     <th className="py-3 px-4">Sender → Recipient</th>
                     <th className="py-3 px-4">Category / Items</th>
                     <th className="py-3 px-4">Delivery Address</th>
-                    <th className="py-3 px-4">Amount</th>
                     <th className="py-3 px-4">Delivery Status</th>
+                    <th className="py-3 px-4">Status</th>
                     <th className="py-3 px-4 text-right">Action</th>
                   </tr>
                 </thead>
@@ -1104,6 +1171,8 @@ export default function GiftOrdersPage() {
                   {filteredOrders.map((order) => {
                     const cfg = statusCfgFor(order);
                     const label = statusLabelFor(order);
+                    const orderStatusCfg = getOrderStatusConfig(order.status);
+                    const voucherNum = getOrderVoucherNumber(order);
                     const catCfg = getCategoryConfig(order.gift_category, order);
                     const CatIcon = catCfg.icon;
                     const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
@@ -1113,7 +1182,14 @@ export default function GiftOrdersPage() {
                     return (
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors">
                         <td className="py-3 px-4 align-top">
-                          <p className="font-bold text-foreground font-mono text-[11px]">#{order.id.slice(0, 8).toUpperCase()}</p>
+                          {voucherNum ? (
+                            <>
+                              <p className="font-bold text-foreground font-mono text-[11px]">{voucherNum}</p>
+                              <p className="text-[10px] text-muted-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
+                            </>
+                          ) : (
+                            <p className="font-bold text-foreground font-mono text-[11px]">#{order.id.slice(0, 8).toUpperCase()}</p>
+                          )}
                           <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
                           <span className="inline-flex items-center gap-0.5 mt-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
                             <KeyRound className="h-2.5 w-2.5" />{order.secret_code}
@@ -1161,15 +1237,22 @@ export default function GiftOrdersPage() {
                           )}
                         </td>
                         <td className="py-3 px-4 align-top">
-                          <p className="font-bold text-foreground">{formatAmount(order.total_amount, order.currency)}</p>
-                        </td>
-                        <td className="py-3 px-4 align-top">
                           {isPhysical ? (
                             <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold', cfg.badgeClass)}>
                               <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dotClass)} />{label}
                             </span>
                           ) : (
                             <span className="text-[11px] text-muted-foreground italic">N/A (Service)</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 align-top">
+                          {order.status ? (
+                            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold capitalize', orderStatusCfg.badgeClass)}>
+                              <span className={cn('h-1.5 w-1.5 rounded-full', orderStatusCfg.dotClass)} />
+                              {orderStatusCfg.label}
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-muted-foreground italic">—</span>
                           )}
                         </td>
                         <td className="py-3 px-4 align-top text-right">
@@ -1234,6 +1317,8 @@ export default function GiftOrdersPage() {
             {filteredOrders.map((order) => {
               const cfg = statusCfgFor(order);
               const label = statusLabelFor(order);
+              const orderStatusCfg = getOrderStatusConfig(order.status);
+              const voucherNum = getOrderVoucherNumber(order);
               const catCfg = getCategoryConfig(order.gift_category, order);
               const CatIcon = catCfg.icon;
               const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
@@ -1244,7 +1329,14 @@ export default function GiftOrdersPage() {
                   <div>
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div>
-                        <p className="font-extrabold text-sm text-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
+                        {voucherNum ? (
+                          <>
+                            <p className="font-extrabold text-sm text-foreground font-mono">{voucherNum}</p>
+                            <p className="text-[10px] text-muted-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
+                          </>
+                        ) : (
+                          <p className="font-extrabold text-sm text-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
+                        )}
                         <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
                       </div>
                       <div className="flex flex-col items-end gap-1">
@@ -1254,6 +1346,11 @@ export default function GiftOrdersPage() {
                         {isPhysical && (
                           <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold shrink-0', cfg.badgeClass)}>
                             <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dotClass)} />{label}
+                          </span>
+                        )}
+                        {order.status && (
+                          <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-semibold shrink-0 capitalize', orderStatusCfg.badgeClass)}>
+                            <span className={cn('h-1.5 w-1.5 rounded-full', orderStatusCfg.dotClass)} />{orderStatusCfg.label}
                           </span>
                         )}
                       </div>
