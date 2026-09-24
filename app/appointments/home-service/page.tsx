@@ -625,7 +625,7 @@ function BookingFormModal({
   // Format price safely to 3 decimal string
   const fmtPrice = (n: number) => n.toFixed(3);
 
-  // ── Submit (POST to /api/v1/booknpay/bookings) ────────────────────────────
+  // ── Submit (POST to /booknpay/api/v1/bookings) ────────────────────────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customerId)  { setSubmitError('Please select a customer.'); return; }
@@ -703,7 +703,7 @@ function BookingFormModal({
 
     const reqHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
       if (token) reqHeaders['Authorization'] = `Bearer ${token}`;
-    const res = await fetch('/api/v1/booknpay/bookings', {
+    const res = await fetch('/booknpay/api/v1/bookings', {
         method: 'POST',
         headers: reqHeaders,
         body: JSON.stringify(body),
@@ -731,7 +731,7 @@ function BookingFormModal({
     try {
       const plHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
       if (token) plHeaders['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(`/api/v1/booknpay/bookings/${bookingId}/status`, {
+      const res = await fetch(`/booknpay/api/v1/bookings/${bookingId}/status`, {
         method: 'PATCH',
         headers: plHeaders,
         body: JSON.stringify({
