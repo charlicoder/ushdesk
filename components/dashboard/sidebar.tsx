@@ -58,9 +58,8 @@ export function Sidebar() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     bookings:     pathname.startsWith('/bookings'),
     appointments: pathname.startsWith('/appointments'),
-    employees:    pathname.startsWith('/employees'),
     finance:      pathname.startsWith('/finance'),
-    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services'),
+    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services') || pathname.startsWith('/employees'),
     vendors:      pathname.startsWith('/vendors'),
   });
 
@@ -83,20 +82,13 @@ export function Sidebar() {
       label: 'UshSpa',
       icon: Building2,
       children: [
-        { href: '/branches',  label: t('navBranches'),  icon: Store },
-        { href: '/customers', label: t('navCustomers'), icon: Users },
-        { href: '/products',  label: t('navProducts'),  icon: Package },
-        { href: '/services',  label: t('navServices'),  icon: Sparkles },
-      ],
-    },
-    {
-      href: '/employees',
-      label: t('navEmployees'),
-      icon: UserCheck,
-      children: [
+        { href: '/branches',                label: t('navBranches'),    icon: Store },
+        { href: '/customers',               label: t('navCustomers'),   icon: Users },
         { href: '/employees',               label: t('navEmployees'),   icon: UserCheck },
         { href: '/employees/leaves',        label: 'Leave Management',  icon: CalendarOff },
         { href: '/employees/working-hours', label: 'Working Hours',     icon: Clock },
+        { href: '/products',                label: t('navProducts'),    icon: Package },
+        { href: '/services',                label: t('navServices'),    icon: Sparkles },
       ],
     },
 
