@@ -52,7 +52,8 @@ export default function JournalEntriesAndItemsPage() {
     error: itemsError,
     refetch: refetchItems,
     setPage: setItemsPage,
-  } = useAnrList<JournalItemRecord>('journal-items', {
+    meta: itemsMeta,
+  } = useAnrList<JournalItemRecord>('journal-entries/items', {
     pageSize: 50,
     params: {
       search: search || undefined,
@@ -132,7 +133,7 @@ export default function JournalEntriesAndItemsPage() {
           },
           {
             label: 'Total Ledger Volume',
-            val: '2,863,318.892 KWD',
+            val: itemsMeta?.total_debit ? formatKwd(itemsMeta.total_debit) : '2,863,318.892 KWD',
             sub: 'Cumulative transactions',
             color: 'from-emerald-500/20 to-emerald-500/5 text-emerald-600 dark:text-emerald-400',
             icon: Scale,
@@ -516,7 +517,7 @@ function JournalEntryDetailModal({ entryId, onClose }: { entryId: string; onClos
     setLoading(true);
     setError(null);
 
-    authedFetch(`/api/v1/uanr/journal-entries/${entryId}/`)
+    authedFetch(`/api/v1/uanr/journal-entries/${entryId}`)
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
         if (cancelled) return;

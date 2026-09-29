@@ -463,6 +463,7 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
   const [total, setTotal]         = useState(0);
   const [page, setPage]           = useState(1);
   const [pages, setPages]         = useState(1);
+  const [meta, setMeta]           = useState<Record<string, any>>({});
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
   const [tick, setTick]           = useState(0);
@@ -490,7 +491,8 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
     }
 
     const cleanEndpoint = endpoint.replace(/^\/+|\/+$/g, '');
-    const url = `/api/v1/uanr/${cleanEndpoint}/?${query.toString()}`;
+    const queryString = query.toString();
+    const url = `/api/v1/uanr/${cleanEndpoint}${queryString ? `?${queryString}` : ''}`;
 
     authedFetch(url)
       .then(async (res) => {
@@ -512,6 +514,7 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
           : [];
 
         setItems(list);
+        setMeta(payload ?? json ?? {});
         setTotal(payload?.total ?? json?.total ?? list.length);
         setPages(payload?.pages ?? json?.pages ?? Math.max(1, Math.ceil((payload?.total ?? list.length) / pageSize)));
       })
@@ -519,6 +522,7 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
         if (cancelled) return;
         setError(err.message);
         setItems([]);
+        setMeta({});
         setTotal(0);
       })
       .finally(() => {
@@ -541,6 +545,7 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
     error,
     refetch,
     setPage,
+    meta,
   };
 }
 
@@ -570,7 +575,8 @@ export function useAnrReport<T>(reportPath: string, params?: Record<string, stri
     }
 
     const cleanPath = reportPath.replace(/^\/+|\/+$/g, '');
-    const url = `/api/v1/uanr/reports/${cleanPath}/?${query.toString()}`;
+    const queryString = query.toString();
+    const url = `/api/v1/uanr/reports/${cleanPath}${queryString ? `?${queryString}` : ''}`;
 
     authedFetch(url)
       .then(async (res) => {

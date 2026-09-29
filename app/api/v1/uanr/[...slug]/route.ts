@@ -1,26 +1,85 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getApiBaseUrl, getProxyHeaders, getUanrPath } from '@/lib/proxy';
+import { getApiBaseUrl, getProxyHeaders, getUanrPath, getDefaultCompanyId } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
 
-const DEFAULT_COMPANY_ID = '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68';
 const LOCAL_DIRECT_URL = 'http://127.0.0.1:8007/api/v1';
+
+let cachedCompanyId: string | null = null;
+
+async function resolveCompanyId(
+  req: NextRequest,
+  baseUrl: string,
+  uanr: string,
+  headers: Record<string, string>,
+): Promise<string> {
+  // 1. Explicit query param, header, or cookie
+  const queryId = req.nextUrl.searchParams.get('company_id');
+  if (queryId && queryId.trim()) return queryId.trim();
+
+  const headerId = req.headers.get('x-company-id');
+  if (headerId && headerId.trim()) return headerId.trim();
+
+  const cookieId = req.cookies.get('company_id')?.value;
+  if (cookieId && cookieId.trim()) return cookieId.trim();
+
+  // 2. In-memory cached company ID
+  if (cachedCompanyId) return cachedCompanyId;
+
+  // 3. Fallback configured in environment variables / helper
+  const defaultEnvId = getDefaultCompanyId();
+  if (defaultEnvId && defaultEnvId !== 'f70caa2a-a435-4928-b7b1-7cb016619848') {
+    cachedCompanyId = defaultEnvId;
+    return cachedCompanyId;
+  }
+
+  // 4. Dynamic discovery from backend /companies/
+  const candidateUrls = [
+    `${baseUrl}${uanr}/api/v1/companies/`,
+    `${LOCAL_DIRECT_URL}/companies/`,
+  ];
+
+  for (const url of candidateUrls) {
+    try {
+      const res = await fetch(url, { headers, cache: 'no-store' });
+      if (res.ok) {
+        const json = await res.json().catch(() => ({}));
+        const items = json?.data?.items ?? json?.items ?? (Array.isArray(json?.data) ? json.data : []);
+        const active = items.find((c: any) => c.is_active) || items[0];
+        if (active?.id) {
+          cachedCompanyId = active.id;
+          return active.id;
+        }
+      }
+    } catch {
+      // Ignore and try next
+    }
+  }
+
+  cachedCompanyId = defaultEnvId || 'f70caa2a-a435-4928-b7b1-7cb016619848';
+  return cachedCompanyId;
+}
 
 async function proxyRequest(req: NextRequest, slug: string[], method: string) {
   const path = slug.join('/') + (slug[slug.length - 1]?.includes('.') ? '' : '/');
-  
-  const searchParams = new URLSearchParams(req.nextUrl.searchParams.toString());
-  if (!searchParams.has('company_id')) {
-    searchParams.set('company_id', DEFAULT_COMPANY_ID);
-  }
-  const search = `?${searchParams.toString()}`;
-
   const baseUrl = getApiBaseUrl();
   const uanr = getUanrPath();
+  const headers = getProxyHeaders(req);
+
+  const searchParams = new URLSearchParams(req.nextUrl.searchParams.toString());
+  const isCompaniesEndpoint = slug.length > 0 && slug[0] === 'companies';
+
+  if (!isCompaniesEndpoint) {
+    const companyId = await resolveCompanyId(req, baseUrl, uanr, headers);
+    if (companyId && !searchParams.has('company_id')) {
+      searchParams.set('company_id', companyId);
+    }
+  }
+
+  const search = searchParams.toString() ? `?${searchParams.toString()}` : '';
   const gatewayUrl = `${baseUrl}${uanr}/api/v1/${path}${search}`;
   const directUrl = `${LOCAL_DIRECT_URL}/${path}${search}`;
 
-  const headers = getProxyHeaders(req);
   let body: string | undefined;
   if (['POST', 'PUT', 'PATCH'].includes(method)) {
     try {

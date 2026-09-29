@@ -308,7 +308,7 @@ function AccountBalanceModal({ account, onClose }: { account: Account; onClose: 
     setLoading(true);
     setError(null);
 
-    authedFetch(`/api/v1/uanr/accounts/${account.id}/balance/`)
+    authedFetch(`/api/v1/uanr/accounts/${account.id}/balance`)
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
         if (cancelled) return;

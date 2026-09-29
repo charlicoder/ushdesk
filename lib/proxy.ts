@@ -64,6 +64,18 @@ export function getUanrPath(): string {
   ).replace(/\/+$/, '');
 }
 
+export function getDefaultCompanyId(): string {
+  return (
+    process.env.DEFAULT_COMPANY_ID ||
+    process.env['DEFAULT_COMPANY_ID'] ||
+    process.env.NEXT_PUBLIC_DEFAULT_COMPANY_ID ||
+    process.env['NEXT_PUBLIC_DEFAULT_COMPANY_ID'] ||
+    process.env.COMPANY_ID ||
+    process.env['COMPANY_ID'] ||
+    'f70caa2a-a435-4928-b7b1-7cb016619848'
+  ).trim();
+}
+
 /**
  * Builds standard upstream proxy headers with authentication and language forwarding.
  * Standardizes Accept-Language to 'ar' or 'en'.
