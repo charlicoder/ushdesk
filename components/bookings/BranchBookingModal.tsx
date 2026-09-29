@@ -539,6 +539,7 @@ export function NewBranchBookingModal({
       total_price: fmtPriceB(totalPrice), total_duration: totalDuration, currency: 'KWD',
       status:         paymentMethod === 'on_branch' ? 'payment_pending' : 'confirmed',
       payment_status: paymentMethod === 'completed' ? 'success' : 'pending',
+      payment_through: 'ushdesk',
       source:         'ushdesk',
     };
 

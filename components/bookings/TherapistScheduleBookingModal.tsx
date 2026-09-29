@@ -9,11 +9,28 @@ import {
   Timer, Loader2, Scissors, Package, User, Phone, Mail,
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
-  CreditCard, Hash, Fingerprint, Calendar,
+  CreditCard, Hash, Fingerprint, Calendar, Building2, Wallet,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 import { authedFetch } from '@/lib/authedFetch';
+
+export type PaymentProviderOption = 'MyFatoorah' | 'PaymentLink' | 'Deema' | 'KNET Card' | 'Other';
+
+export interface PaymentProviderConfig {
+  id: PaymentProviderOption;
+  label: string;
+  badge: string;
+  desc: string;
+}
+
+export const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
+  { id: 'MyFatoorah',  label: 'MyFatoorah',  badge: 'Gateway',        desc: 'KNET / Visa / Master' },
+  { id: 'PaymentLink', label: 'PaymentLink', badge: 'Direct Link',    desc: 'SMS / WhatsApp link' },
+  { id: 'Deema',       label: 'Deema',       badge: 'Installments',   desc: 'BNPL payment split' },
+  { id: 'KNET Card',   label: 'KNET Card',   badge: 'POS Terminal',   desc: 'In-branch card machine' },
+  { id: 'Other',       label: 'Other',       badge: 'Alternative',    desc: 'Cash or other method' },
+];
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -273,7 +290,8 @@ export function TherapistScheduleBookingModal({
   });
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch'>('completed');
+  const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch'>('on_branch');
+  const [paymentProvider, setPaymentProvider] = useState<PaymentProviderOption>('MyFatoorah');
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [bookingResult,          setBookingResult]          = useState<Record<string, any> | null>(null);
@@ -285,6 +303,11 @@ export function TherapistScheduleBookingModal({
     invoice_id: '', transaction_date: '', total_amount: '',
     trace_id: '', reference_id: '', received_by: '',
   });
+
+  // Cancel booking state
+  const [cancellingBooking,  setCancellingBooking]  = useState(false);
+  const [cancelBookingError, setCancelBookingError] = useState<string | null>(null);
+  const [cancelBookingDone,  setCancelBookingDone]  = useState(false);
 
   const [snapTherapistName, setSnapTherapistName] = useState('');
   const [snapTherapistImg,  setSnapTherapistImg]  = useState('');
@@ -648,9 +671,13 @@ export function TherapistScheduleBookingModal({
       total_price:    fmt(totalPrice),
       total_duration: totalDuration,
       currency: 'KWD',
-      status:         paymentMethod === 'on_branch' ? 'payment_pending' : 'confirmed',
-      payment_status: paymentMethod === 'completed' ? 'success' : 'pending',
-      source:         'ushdesk',
+      status:           paymentMethod === 'on_branch' ? 'payment_pending' : 'confirmed',
+      payment_status:   paymentMethod === 'completed' ? 'success' : 'pending',
+      payment_through:  'ushdesk',
+      payment_provider: paymentMethod === 'completed' ? paymentProvider : null,
+      payment_gateway:  paymentMethod === 'completed' ? (paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider) : null,
+      payment_method:   paymentMethod === 'completed' ? paymentProvider : 'on_branch',
+      source:           'ushdesk',
     };
 
     try {
@@ -702,13 +729,58 @@ export function TherapistScheduleBookingModal({
       setSnapCustomerPhone(cSnap?.phone_number ?? '');
       setBookingResult(raw);
       setBookingId(rid);
-      // Close modal and trigger schedule reload immediately after booking success
+
+      // Note: Payment record is automatically created by backend event consumer (ushnotice)
+      // from BookingConfirmedEvent when booking is confirmed upfront with payment_status='success'.
+      // Creating another payment here causes duplicate payment records for the same booking.
+
+      // Show confirmation screen (step 3) so the user can see booking_number and cancel if needed.
+      // onSuccess fires so the schedule grid refreshes, but we keep the modal open at step 3.
       onSuccess?.();
-      onClose();
+      setStep(3);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // ── Cancel booking ─────────────────────────────────────────────────────────
+  const handleCancelBooking = async () => {
+    const id = bookingId;
+    if (!id) { setCancelBookingError('Booking ID not found.'); return; }
+    if (!window.confirm('Are you sure you want to cancel this booking? This action cannot be undone.')) return;
+    setCancellingBooking(true); setCancelBookingError(null);
+    try {
+      // Use /status/ endpoint (staff-accessible) rather than /cancel/ (customer-only)
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${id}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({
+          status:         'cancelled',
+          payment_status: 'refunded',
+          reason:         'Cancelled from ushdesk',
+          source:         'ushdesk',
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = (json as Record<string, unknown>).detail ??
+          (json as Record<string, unknown>).message ??
+          `Error ${res.status}`;
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+      setCancelBookingDone(true);
+      // Trigger a schedule refresh so the cancelled slot becomes free
+      onSuccess?.();
+    } catch (err) {
+      setCancelBookingError(err instanceof Error ? err.message : 'Failed to cancel booking');
+    } finally {
+      setCancellingBooking(false);
     }
   };
 
@@ -724,6 +796,8 @@ export function TherapistScheduleBookingModal({
       const statusPayload = {
         status:         'confirmed',
         payment_status: 'success',
+        payment_through:  'ushdesk',
+        payment_provider: paymentProvider,
         reason:         'Payment Success',
         source:         'ushdesk',
         payments_data: {
@@ -733,7 +807,9 @@ export function TherapistScheduleBookingModal({
           reference_id:     paymentForm.reference_id,
           invoice_value:    paymentForm.total_amount,
           transaction_date: paymentForm.transaction_date,
-          payment_gateway:  'KNET',
+          payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
+          payment_provider: paymentProvider,
+          payment_through:  'ushdesk',
           trace_id:         paymentForm.trace_id,
           received_by:      paymentForm.received_by,
         },
@@ -784,7 +860,7 @@ export function TherapistScheduleBookingModal({
         booking_type: 'branch_service',
         source:       'ushdesk',
 
-        // ── KNET transaction (from payment form) ──────────────────────────────
+        // ── Transaction details (from payment form) ───────────────────────────
         invoice_id:       paymentForm.invoice_id,
         reference_id:     paymentForm.reference_id,
         trace_id:         paymentForm.trace_id,
@@ -792,12 +868,13 @@ export function TherapistScheduleBookingModal({
         total_amount:     parseFloat(paymentForm.total_amount) || totalPrice,
         invoice_value:    paymentForm.total_amount,
         received_by:      paymentForm.received_by,
-        payment_gateway:  'KNET',
+        payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
         payment_status:   'success',
         is_paid:          true,
         status:           'Paid',
-        payment_through:  'desk',
-        provider:         'directlink',
+        payment_through:  'ushdesk',
+        payment_provider: paymentProvider,
+        provider:         paymentProvider,
         currency:         'KWD',
 
         // ── Service ────────────────────────────────────────────────────────────
@@ -1475,8 +1552,8 @@ export function TherapistScheduleBookingModal({
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     {[
-                      { value: 'completed', label: 'Payment Completed', desc: 'Paid now', color: 'emerald' },
-                      { value: 'on_branch', label: 'Pay on Branch',     desc: 'Pay later',  color: 'amber'   },
+                      { value: 'on_branch', label: 'Pay on Branch',     desc: 'Pay later at reception',  color: 'amber'   },
+                      { value: 'completed', label: 'Payment Completed', desc: 'Paid now',                color: 'emerald' },
                     ].map(({ value, label, desc, color }) => (
                       <label
                         key={value}
@@ -1518,30 +1595,98 @@ export function TherapistScheduleBookingModal({
                       </label>
                     ))}
                   </div>
+
+                  {/* Payment Provider Options (Shown when "Payment Completed" is selected) */}
+                  {paymentMethod === 'completed' && (
+                    <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                          <p className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                            Select Payment Provider <span className="text-destructive">*</span>
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                          {paymentProvider}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        {PAYMENT_PROVIDERS.map((p) => {
+                          const isSel = paymentProvider === p.id;
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setPaymentProvider(p.id)}
+                              className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer select-none ${
+                                isSel
+                                  ? 'border-emerald-500 bg-white dark:bg-card shadow-sm ring-2 ring-emerald-500/20'
+                                  : 'border-border/70 bg-card/60 hover:bg-muted/40'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between w-full mb-1">
+                                <span className={`text-xs font-extrabold ${isSel ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
+                                  {p.label}
+                                </span>
+                                {isSel && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                              </div>
+                              <span className="text-[10px] text-muted-foreground leading-tight">{p.desc}</span>
+                              <span className={`mt-1.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                                isSel ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'
+                              }`}>
+                                {p.badge}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             {/* ── STEP 3: Confirmation ── */}
             {step === 3 && bookingResult && (() => {
-              const r     = bookingResult as Record<string, unknown>;
-              const ref   = String(r.bookings_id ?? r.reference_number ?? r.booking_number ?? r.id ?? r.booking_id ?? r.pk ?? '—')
+              const r            = bookingResult as Record<string, unknown>;
+              const bookingNum   = String(r.booking_number ?? '').replace('undefined', '').replace('null', '');
+              const ref          = String(r.bookings_id ?? r.reference_number ?? r.booking_number ?? r.id ?? r.booking_id ?? r.pk ?? '—')
                 .replace('undefined', '—').replace('null', '—');
               const sName = (r.service_name ?? selectedService?.name ?? '—') as string;
               const tName = snapTherapistName || 'Not assigned';
               const cName = snapCustomerName  || '—';
               return (
                 <div className="px-6 py-5 space-y-4">
-                  {/* ── Booking created banner ── */}
-                  <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-500/10 to-emerald-400/5 border border-emerald-300/40 dark:border-emerald-700/30 px-4 py-3">
-                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15">
-                      <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                  {/* ── Booking created / cancelled banner ── */}
+                  {cancelBookingDone ? (
+                    <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-rose-500/10 to-rose-400/5 border border-rose-300/40 dark:border-rose-700/30 px-4 py-3">
+                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-rose-500/15">
+                        <X className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-extrabold text-rose-700 dark:text-rose-300">Booking Cancelled</p>
+                        <p className="text-[11px] text-rose-600/70 dark:text-rose-400/70 font-mono truncate">Ref: {ref}</p>
+                      </div>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">Booking Created Successfully</p>
-                      <p className="text-[11px] text-emerald-600/70 dark:text-emerald-400/70 font-mono truncate">Ref: {ref}</p>
+                  ) : (
+                    <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-500/10 to-emerald-400/5 border border-emerald-300/40 dark:border-emerald-700/30 px-4 py-3">
+                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15">
+                        <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">Booking Created Successfully</p>
+                        <div className="flex items-center gap-3 flex-wrap mt-0.5">
+                          <p className="text-[11px] text-emerald-600/70 dark:text-emerald-400/70 font-mono">Ref: {ref}</p>
+                          {bookingNum && (
+                            <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-800 dark:text-emerald-300 border border-emerald-300/40">
+                              <Hash className="h-2.5 w-2.5" />
+                              {bookingNum}
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* ── Service & Arrangement ── */}
                   <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
@@ -1635,6 +1780,14 @@ export function TherapistScheduleBookingModal({
                       </p>
                     </div>
                   </div>
+
+                  {/* ── Cancel error feedback ── */}
+                  {cancelBookingError && (
+                    <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5">
+                      <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
+                      <p className="text-xs text-destructive">{cancelBookingError}</p>
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -1880,11 +2033,29 @@ export function TherapistScheduleBookingModal({
                   className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">
                   Close
                 </button>
-                <button type="button" onClick={() => setStep(4)}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
-                  <CreditCard className="h-4 w-4" />
-                  Next: Confirm Payment
-                </button>
+                {!cancelBookingDone && (
+                  <button
+                    type="button"
+                    onClick={handleCancelBooking}
+                    disabled={cancellingBooking}
+                    className={cn(
+                      'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-sm transition',
+                      cancellingBooking
+                        ? 'bg-rose-400 cursor-wait opacity-80'
+                        : 'bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 active:scale-[0.98]'
+                    )}
+                  >
+                    {cancellingBooking ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                    {cancellingBooking ? 'Cancelling…' : 'Cancel Booking'}
+                  </button>
+                )}
+                {!cancelBookingDone && (
+                  <button type="button" onClick={() => setStep(4)}
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
+                    <CreditCard className="h-4 w-4" />
+                    Confirm Payment
+                  </button>
+                )}
               </>)}
               {step === 4 && (<>
                 <button type="button" onClick={() => { setStep(3); setConfirmPaymentError(null); }}

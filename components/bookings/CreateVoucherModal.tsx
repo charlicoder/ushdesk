@@ -1039,7 +1039,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       payment_url:       '',
       payment_id:        '',
       payment_provider:  'directlink',
-      payment_through:   'desk',
+      payment_through:   'ushdesk',
       payment_data:      {},
     };
   };

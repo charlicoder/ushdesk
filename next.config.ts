@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
     API_UAUTH: process.env.API_UAUTH || '/uauth',
     API_BOOKNPAY: process.env.API_BOOKNPAY || '/booknpay',
     API_NOTICE: process.env.API_NOTICE || '/unotice',
+    API_UANR: process.env.API_UANR || '/uanr',
   },
 
   async rewrites() {
@@ -22,6 +23,7 @@ const nextConfig: NextConfig = {
 
     const uauth    = (process.env.API_UAUTH    || '/uauth').replace(/\/+$/, '');
     const booknpay = (process.env.API_BOOKNPAY || '/booknpay').replace(/\/+$/, '');
+    const uanr     = (process.env.API_UANR     || '/uanr').replace(/\/+$/, '');
 
     return {
       fallback: [
@@ -34,6 +36,11 @@ const nextConfig: NextConfig = {
         {
           source: '/booknpay/api/:path*',
           destination: `${baseUrl}${booknpay}/api/:path*`,
+        },
+        // Accounting & reporting proxy → https://apidev.ushspa.co/uanr/api/:path*
+        {
+          source: '/uanr/api/:path*',
+          destination: `${baseUrl}${uanr}/api/:path*`,
         },
       ],
     };

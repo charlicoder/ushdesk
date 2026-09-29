@@ -54,6 +54,16 @@ export function getNoticePath(): string {
   ).replace(/\/+$/, '');
 }
 
+export function getUanrPath(): string {
+  return (
+    process.env.API_UANR ||
+    process.env['API_UANR'] ||
+    process.env.NEXT_PUBLIC_UANR ||
+    process.env['NEXT_PUBLIC_UANR'] ||
+    '/uanr'
+  ).replace(/\/+$/, '');
+}
+
 /**
  * Builds standard upstream proxy headers with authentication and language forwarding.
  * Standardizes Accept-Language to 'ar' or 'en'.

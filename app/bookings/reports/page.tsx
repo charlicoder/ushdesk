@@ -189,7 +189,7 @@ export default function BookingReportsPage() {
     return Array.from(map.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, v]) => ({
-        date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
         revenue: Math.round(v.revenue * 1000) / 1000,
         bookings: v.bookings,
       }));

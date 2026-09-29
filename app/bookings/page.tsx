@@ -1,20 +1,23 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle,
   ChevronDown, Calendar, Clock, MapPin, User, Scissors,
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
+  History, Info, UserCheck, Copy, Check, Plus,
 } from 'lucide-react';
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Booking {
   id: string;
+  booking_number: string | null;
   customer_name: string;
   customer_phone: string | null;
   customer_email: string | null;
@@ -27,15 +30,27 @@ interface Booking {
   appointment_start: string;
   appointment_end: string;
   duration_minutes: number;
+  addons_duration: number;
+  extra_minutes: number;
+  total_duration: number;
+  price_for_extra_minutes: string;
   booking_type: string;
   status: string;
   payment_status: string;
   payment_gateway: string | null;
+  payment_provider: string | null;
+  payment_method: string | null;
   payment_url: string | null;
+  payment_data: Record<string, unknown> | null;
   is_paid: boolean;
   total_amount: string;
   currency: string;
   created_at: string;
+  created_by_user: string | null;
+  created_by_user_data: Record<string, unknown> | null;
+  addons: Array<Record<string, unknown>>;
+  pricing: Record<string, unknown> | null;
+  raw: Record<string, unknown>;
 }
 
 // ── Normalise ──────────────────────────────────────────────────────────────────
@@ -49,44 +64,126 @@ function normalise(raw: Record<string, unknown>): Booking {
   const pd  = (raw.payment_data             ?? {}) as Record<string, unknown>;
   const firstName = String(cd.first_name ?? '');
   const lastName  = String(cd.last_name  ?? '');
+
+  const durSvc    = Number(raw.duration_minutes ?? sd.duration_minutes ?? sd.base_duration ?? 0);
+  const durAddons = Number(raw.addons_duration ?? 0);
+  const durExtra  = Number(raw.extra_minutes ?? 0);
+  const totalDur  = Number(raw.total_duration ?? (durSvc + durAddons + durExtra)) || (durSvc + durAddons + durExtra);
+
+  const rawAddons = (Array.isArray(raw.addons) ? raw.addons : Array.isArray(raw.selected_addons) ? raw.selected_addons : []) as Array<Record<string, unknown>>;
+
   return {
     id:                String(raw.id ?? ''),
+    booking_number:    raw.booking_number ? String(raw.booking_number) : null,
     customer_name:     [firstName, lastName].filter(Boolean).join(' ') || 'Unknown Customer',
     customer_phone:    (cd.phone_number ?? null) as string | null,
     customer_email:    (cd.email        ?? null) as string | null,
     branch_name:       String(bd.branch_name ?? bd.name ?? raw.branch_id ?? ''),
-    service_name:      String(sd.name ?? ''),
-    service_category:  String(sd.category ?? ''),
-    service_price:     String(sd.base_price ?? '0'),
+    service_name:      String(sd.name ?? sd.service_name ?? ''),
+    service_category:  String(sd.category ?? sd.service_category ?? ''),
+    service_price:     String(sd.base_price ?? sd.arrangement_price ?? raw.base_price ?? '0'),
     arrangement_name:  (sad.arrangement_name ?? sad.room_name ?? null) as string | null,
     therapist_name:    String(td.therapist_name ?? td.name ?? '—'),
     appointment_start: String(raw.appointment_start ?? ''),
     appointment_end:   String(raw.appointment_end   ?? ''),
-    duration_minutes:  Number(raw.duration_minutes  ?? 0),
+    duration_minutes:  durSvc,
+    addons_duration:   durAddons,
+    extra_minutes:     durExtra,
+    total_duration:    totalDur,
+    price_for_extra_minutes: String(raw.price_for_extra_minutes ?? raw.extra_price ?? '0'),
     booking_type:      String(raw.booking_type      ?? 'branch'),
     status:            String(raw.status            ?? 'pending').toLowerCase(),
     payment_status:    String(raw.payment_status    ?? '').toLowerCase(),
-    payment_gateway:   (pm.payment_gateway ?? pd.payment_gateway ?? null) as string | null,
-    payment_url:       (pd.payment_url     ?? pm.payment_url     ?? null) as string | null,
-    is_paid:           pm.is_paid === true || pd.is_paid === true,
+    payment_gateway:   (pm.payment_gateway ?? pd.payment_gateway ?? raw.payment_gateway ?? null) as string | null,
+    payment_provider:  (raw.payment_provider ?? pd.payment_provider ?? null) as string | null,
+    payment_method:    (raw.payment_method ?? null) as string | null,
+    payment_url:       (pd.payment_url     ?? pm.payment_url     ?? raw.payment_url ?? null) as string | null,
+    payment_data:      (raw.payment_data ?? null) as Record<string, unknown> | null,
+    is_paid:           pm.is_paid === true || pd.is_paid === true || pd.status === 'success' || raw.payment_status === 'success',
     total_amount:      String(raw.total_amount ?? '0'),
     currency:          String(raw.currency     ?? 'KWD'),
     created_at:        String(raw.created_at   ?? ''),
+    created_by_user:   raw.created_by_user ? String(raw.created_by_user) : (raw.created_by ? String(raw.created_by) : null),
+    created_by_user_data: (raw.created_by_user_data ?? null) as Record<string, unknown> | null,
+    addons:            rawAddons,
+    pricing:           (raw.pricing ?? raw.pricing_details ?? null) as Record<string, unknown> | null,
+    raw,
   };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+// Backend stores local Kuwait time labelled as UTC (timezone-naive by design).
+// Format functions must use timeZone: 'UTC' to display exact database values
+// without browser local-timezone offset (which shifts +3h in Kuwait).
 function formatDateTime(iso: string) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+  const s = iso.trim();
+  let dateStr = s;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
+    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'UTC',
+  });
 }
+
 function formatDate(iso: string) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const s = iso.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+  }
+  let dateStr = s;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
+    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
+
 function formatTime(iso: string) {
   if (!iso) return '';
-  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const s = iso.trim();
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
+    const parts = s.split(':');
+    let h = parseInt(parts[0], 10);
+    const m = parts[1];
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return `${h}:${m} ${ampm}`;
+  }
+  let dateStr = s;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
+    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'UTC',
+  });
 }
 function initials(name: string) {
   return name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
@@ -154,7 +251,22 @@ function DRow({ icon: Icon, label, children }: { icon: React.ElementType; label:
 }
 
 // ── Booking Detail Modal ───────────────────────────────────────────────────────
-function BookingDetailModal({ booking, onClose }: { booking: Booking | null; onClose: () => void }) {
+function BookingDetailModal({
+  booking,
+  onClose,
+  onSuccess,
+}: {
+  booking: Booking | null;
+  onClose: () => void;
+  onSuccess?: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
+  const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!booking) return;
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -162,17 +274,108 @@ function BookingDetailModal({ booking, onClose }: { booking: Booking | null; onC
     return () => window.removeEventListener('keydown', handler);
   }, [booking, onClose]);
 
+  // Fetch full booking detail (addons, status_history, pricing breakdown) from backend
+  useEffect(() => {
+    if (!booking?.id) {
+      setDetail(null);
+      return;
+    }
+    let active = true;
+    setLoadingDetail(true);
+    authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (!active) return;
+        if (res?.success && res?.data) {
+          setDetail(res.data as Record<string, unknown>);
+        } else if (res?.data) {
+          setDetail(res.data as Record<string, unknown>);
+        }
+      })
+      .catch((err) => console.warn('[BookingDetailModal] fetch error:', err))
+      .finally(() => {
+        if (active) setLoadingDetail(false);
+      });
+    return () => { active = false; };
+  }, [booking?.id]);
+
   if (!booking) return null;
   const accentBar = STATUS_BAR[booking.status] ?? 'bg-slate-400';
+
+  // ── Compute durations & amounts adding service + addons + extra minutes ─────
+  const addons = (detail?.addons && Array.isArray(detail.addons) && detail.addons.length > 0)
+    ? (detail.addons as Array<Record<string, unknown>>)
+    : (booking.addons && booking.addons.length > 0)
+    ? booking.addons
+    : ((booking.raw?.selected_addons as Array<Record<string, unknown>>) ?? []);
+
+  const serviceDuration = Number(detail?.duration_minutes ?? booking.duration_minutes ?? 0);
+  const addonsDuration  = Number(detail?.addons_duration  ?? booking.addons_duration  ?? 0);
+  const extraMinutes    = Number(detail?.extra_minutes    ?? booking.extra_minutes    ?? 0);
+  const totalDuration   = (serviceDuration + addonsDuration + extraMinutes) || Number(detail?.total_duration ?? booking.total_duration ?? serviceDuration);
+
+  const pricingObj = (detail?.pricing ?? booking.pricing ?? booking.raw?.pricing_details) as Record<string, unknown> | undefined;
+
+  const servicePrice = parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0;
+
+  const addonsPriceFromList = addons.reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? '0')) || 0), 0);
+  const addonsPrice = parseFloat(String(pricingObj?.addon_price ?? pricingObj?.addons_price ?? detail?.addons_price ?? (addonsPriceFromList > 0 ? addonsPriceFromList : '0'))) || 0;
+
+  const extraPrice = parseFloat(String(pricingObj?.price_for_extra_minutes ?? pricingObj?.extra_price ?? detail?.price_for_extra_minutes ?? booking.price_for_extra_minutes ?? '0')) || 0;
+
+  const totalCalculated = servicePrice + addonsPrice + extraPrice;
+  const rawTotal = parseFloat(String(pricingObj?.total ?? detail?.total_amount ?? booking.total_amount ?? '0')) || 0;
+  const computedTotal = (totalCalculated > 0) ? totalCalculated : rawTotal;
+  const currency = booking.currency || 'KWD';
+
+  // ── History & Creator & Payment references ──────────────────────────
+  const historyList = (detail?.status_history && Array.isArray(detail.status_history))
+    ? (detail.status_history as Array<Record<string, unknown>>)
+    : [];
+
+  const createdByUserObj = (detail?.created_by_user_data ?? booking.created_by_user_data) as Record<string, unknown> | null;
+  const paymentDataObj   = (detail?.payment_data ?? booking.payment_data) as Record<string, unknown> | null;
+  const effectivePaymentUrl = String(detail?.payment_url ?? booking.payment_url ?? paymentDataObj?.payment_url ?? '');
+
+  const handleCancel = async () => {
+    if (!booking) return;
+    if (!confirm('Are you sure you want to cancel this booking? This will refund any payment and release the appointment slot.')) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          status: 'cancelled',
+          payment_status: 'refunded',
+          source: 'ushdesk',
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.detail || `Failed to cancel (${res.status})`);
+      }
+      onSuccess?.();
+      onClose();
+    } catch (err: unknown) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel booking');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-3xl border border-border/60 bg-card shadow-2xl">
-        <div className={cn('h-1.5 w-full rounded-t-3xl', accentBar)} />
+      <div className="relative z-10 w-full max-w-xl max-h-[92vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+        <div className={cn('h-1.5 w-full shrink-0', accentBar)} />
 
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
+        <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
           <div className="flex items-center gap-3">
             <CustomerAvatar name={booking.customer_name} size="lg" />
             <div>
@@ -187,84 +390,421 @@ function BookingDetailModal({ booking, onClose }: { booking: Booking | null; onC
               {booking.status === 'confirmed' || booking.status === 'completed' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
               {booking.status}
             </span>
-            <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition" aria-label="Close">
+            <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition cursor-pointer" aria-label="Close">
               <X className="h-4 w-4" />
             </button>
           </div>
         </div>
 
-        {/* Body */}
-        <div className="px-6 py-5 space-y-3">
-          <DRow icon={Hash} label="Booking ID"><span className="font-mono tracking-wide">{booking.id}</span></DRow>
-          <DRow icon={Scissors} label="Service">
-            {booking.service_name}
-            {booking.service_category && <span className="ml-2 text-[11px] font-normal text-muted-foreground">({booking.service_category})</span>}
-          </DRow>
-          {booking.arrangement_name && <DRow icon={Home} label="Arrangement / Room">{booking.arrangement_name}</DRow>}
-          <div className="grid grid-cols-2 gap-3">
-            <DRow icon={Calendar} label="Date">{formatDate(booking.appointment_start)}</DRow>
-            <DRow icon={Clock} label="Time">
-              {formatTime(booking.appointment_start)} – {formatTime(booking.appointment_end)}
-              <span className="block text-[11px] font-normal text-muted-foreground">{booking.duration_minutes} min</span>
-            </DRow>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <DRow icon={MapPin} label="Branch">{booking.branch_name || '—'}</DRow>
-            <DRow icon={User} label="Therapist">{booking.therapist_name}</DRow>
-          </div>
-          <DRow icon={BookOpen} label="Booking Type"><span className="capitalize">{booking.booking_type}</span></DRow>
-          <DRow icon={Calendar} label="Booked On">{formatDateTime(booking.created_at)}</DRow>
+        {/* Tabs */}
+        <div className="shrink-0 flex border-b border-border/40 px-6 bg-muted/20">
+          <button
+            type="button"
+            onClick={() => setActiveTab('details')}
+            className={cn(
+              'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
+              activeTab === 'details'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Info className="h-3.5 w-3.5" />
+            Booking Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('history')}
+            className={cn(
+              'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
+              activeTab === 'history'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <History className="h-3.5 w-3.5" />
+            Audit &amp; Payment Info
+            {historyList.length > 0 && (
+              <span className="rounded-full bg-primary/10 text-primary px-1.5 py-0.2 text-[10px] font-bold">
+                {historyList.length}
+              </span>
+            )}
+          </button>
+        </div>
 
-          {/* Payment block */}
-          <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/20 to-muted/5 p-4 space-y-3">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <CreditCard className="h-3.5 w-3.5" /> Payment Details
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-xl bg-card border border-border/50 px-3 py-2.5">
-                <p className="text-[10px] text-muted-foreground font-medium mb-1">Status</p>
-                <span className={cn('inline-block rounded-full px-2 py-0.5 text-[11px] font-bold capitalize', paymentStyle(booking.payment_status))}>
-                  {booking.payment_status || '—'}
-                </span>
+        {/* Scrollable Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {activeTab === 'details' ? (
+            <>
+              {/* Row 1: Booking Number and Booked On in one row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <DRow icon={Hash} label="Booking Number">
+                  <span className="font-mono tracking-wide font-bold text-primary text-sm">{booking.booking_number || '—'}</span>
+                </DRow>
+                <DRow icon={Calendar} label="Booked On">
+                  {formatDateTime(booking.created_at)}
+                </DRow>
               </div>
-              <div className="rounded-xl bg-card border border-border/50 px-3 py-2.5">
-                <p className="text-[10px] text-muted-foreground font-medium mb-1">Amount</p>
-                <p className="text-base font-extrabold text-primary leading-tight">
-                  {parseFloat(booking.total_amount).toFixed(3)}{' '}
-                  <span className="text-[11px] font-normal text-muted-foreground">{booking.currency}</span>
+
+              {/* Row 2: Service */}
+              <DRow icon={Scissors} label="Service">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold">{booking.service_name}</span>
+                    {booking.service_category && (
+                      <span className="ml-2 text-[11px] font-normal text-muted-foreground">({booking.service_category})</span>
+                    )}
+                  </div>
+                  <span className="text-xs font-mono font-bold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
+                </div>
+              </DRow>
+
+              {/* Row 3 & 4: Addons and Extra Minutes just after the service section */}
+              {addons.length > 0 ? (
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Plus className="h-3.5 w-3.5 text-primary" /> Addons ({addons.length})
+                    </p>
+                    {addonsDuration > 0 && (
+                      <span className="text-[11px] font-semibold text-muted-foreground">+{addonsDuration} min duration</span>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {addons.map((addon, idx) => {
+                      const aName = String(addon.name ?? addon.addon_name ?? `Addon #${idx + 1}`);
+                      const aPrice = parseFloat(String(addon.price ?? addon.base_price ?? '0')) || 0;
+                      return (
+                        <div key={idx} className="flex items-center justify-between text-xs rounded-xl bg-card border border-border/40 px-3 py-2">
+                          <span className="font-medium text-foreground">{aName}</span>
+                          <span className="font-mono font-bold text-primary">+{aPrice.toFixed(3)} {currency}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-between pt-1 text-xs border-t border-border/40 font-semibold text-muted-foreground">
+                    <span>Addons Subtotal:</span>
+                    <span className="font-mono text-foreground font-bold">{addonsPrice.toFixed(3)} {currency}</span>
+                  </div>
+                </div>
+              ) : addonsDuration > 0 ? (
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-3 flex items-center justify-between text-xs">
+                  <span className="font-medium text-muted-foreground">Addons Duration</span>
+                  <span className="font-bold text-primary">+{addonsDuration} min</span>
+                </div>
+              ) : null}
+
+              {extraMinutes > 0 && (
+                <div className="rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-3.5 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <div>
+                      <p className="font-bold text-foreground">Extra Minutes Included</p>
+                      <p className="text-[11px] text-muted-foreground">+{extraMinutes} minutes added to appointment</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className="font-mono font-bold text-amber-700 dark:text-amber-300">
+                      +{extraPrice.toFixed(3)} {currency}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Date & Time + Duration Breakdown (Service + Addons + Extra) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <DRow icon={Calendar} label="Date">{formatDate(booking.appointment_start)}</DRow>
+                <DRow icon={Clock} label="Time & Duration">
+                  <p>{formatTime(booking.appointment_start)} – {formatTime(booking.appointment_end)}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <span className="inline-flex items-center rounded-lg bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+                      Total: {totalDuration} min
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ({serviceDuration}m{addonsDuration > 0 ? ` + ${addonsDuration}m addons` : ''}{extraMinutes > 0 ? ` + ${extraMinutes}m extra` : ''})
+                    </span>
+                  </div>
+                </DRow>
+              </div>
+
+              {/* Branch and Arrangement / Room in one row */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <DRow icon={MapPin} label="Branch">{booking.branch_name || '—'}</DRow>
+                <DRow icon={Home} label="Arrangement / Room">{booking.arrangement_name || '—'}</DRow>
+              </div>
+
+              {/* Therapist */}
+              <DRow icon={User} label="Therapist">{booking.therapist_name || '—'}</DRow>
+
+              {/* Pricing Summary (Sum of all items: Service + Addons + Extra Minutes) */}
+              <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/30 to-muted/10 p-4 space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <CreditCard className="h-3.5 w-3.5 text-primary" /> Pricing &amp; Total Amount
                 </p>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Base Service:</span>
+                    <span className="font-mono font-semibold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
+                  </div>
+                  {addonsPrice > 0 && (
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Addons ({addons.length}):</span>
+                      <span className="font-mono font-semibold text-foreground">+{addonsPrice.toFixed(3)} {currency}</span>
+                    </div>
+                  )}
+                  {extraMinutes > 0 && (
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Extra Minutes (+{extraMinutes} min):</span>
+                      <span className="font-mono font-semibold text-foreground">+{extraPrice.toFixed(3)} {currency}</span>
+                    </div>
+                  )}
+                  <div className="border-t border-border/50 pt-2 flex justify-between items-baseline">
+                    <span className="font-bold text-foreground">Total Amount:</span>
+                    <span className="text-base font-extrabold text-primary font-mono">
+                      {computedTotal.toFixed(3)} <span className="text-xs font-normal text-muted-foreground">{currency}</span>
+                    </span>
+                  </div>
+                </div>
               </div>
+            </>
+          ) : (
+            <>
+              {/* ── TAB 2: AUDIT & PAYMENT INFO ── */}
+
+              {/* Created By User Info (Requirement 4) */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <UserCheck className="h-3.5 w-3.5 text-primary" /> Created By User
+                </p>
+                {createdByUserObj ? (
+                  <div className="rounded-xl bg-card border border-border/50 p-3 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-foreground text-sm">
+                        {[createdByUserObj.first_name, createdByUserObj.last_name].filter(Boolean).join(' ') || String(createdByUserObj.name ?? 'Staff User')}
+                      </span>
+                      {Boolean(createdByUserObj.role) && (
+                        <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold capitalize">
+                          {String(createdByUserObj.role)}
+                        </span>
+                      )}
+                    </div>
+                    {Boolean(createdByUserObj.email) && (
+                      <p className="text-muted-foreground flex items-center gap-1.5">
+                        <span className="font-medium text-foreground">Email:</span> {String(createdByUserObj.email)}
+                      </p>
+                    )}
+                    {Boolean(createdByUserObj.phone_number) && (
+                      <p className="text-muted-foreground flex items-center gap-1.5">
+                        <span className="font-medium text-foreground">Phone:</span> {String(createdByUserObj.phone_number)}
+                      </p>
+                    )}
+                    {Boolean(createdByUserObj.id) && (
+                      <p className="text-muted-foreground font-mono text-[11px] truncate">
+                        <span className="font-sans font-medium text-foreground">User ID:</span> {String(createdByUserObj.id)}
+                      </p>
+                    )}
+                  </div>
+                ) : booking.created_by_user ? (
+                  <div className="rounded-xl bg-card border border-border/50 p-3 text-xs">
+                    <span className="font-medium text-muted-foreground">User ID: </span>
+                    <span className="font-mono text-foreground font-semibold">{booking.created_by_user}</span>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">No creator user information available.</p>
+                )}
+              </div>
+
+              {/* Payment Details & Payment Link (Requirement 4) */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <CreditCard className="h-3.5 w-3.5 text-primary" /> Payment Details
+                  </p>
+                  <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize', paymentStyle(booking.payment_status))}>
+                    {booking.payment_status || 'unpaid'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Provider / Gateway</p>
+                    <p className="font-semibold text-foreground mt-0.5">{booking.payment_provider || booking.payment_gateway || '—'}</p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
+                    <p className="font-semibold text-foreground mt-0.5 capitalize">{booking.payment_method || '—'}</p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
+                    <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? 'ushdesk')}</p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Amount</p>
+                    <p className="font-bold text-primary mt-0.5 font-mono">{computedTotal.toFixed(3)} {currency}</p>
+                  </div>
+                </div>
+
+                {paymentDataObj && (
+                  <div className="rounded-xl bg-card border border-border/40 p-3 space-y-1.5 text-xs">
+                    {Boolean(paymentDataObj.paid_at) && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Paid At:</span>
+                        <span className="font-medium text-foreground">{formatDateTime(String(paymentDataObj.paid_at))}</span>
+                      </div>
+                    )}
+                    {Boolean(paymentDataObj.invoice_id) && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Invoice ID:</span>
+                        <span className="font-mono text-foreground font-semibold">{String(paymentDataObj.invoice_id)}</span>
+                      </div>
+                    )}
+                    {Boolean(paymentDataObj.payment_id) && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Payment ID:</span>
+                        <span className="font-mono text-foreground font-semibold truncate max-w-[200px]" title={String(paymentDataObj.payment_id)}>{String(paymentDataObj.payment_id)}</span>
+                      </div>
+                    )}
+                    {Boolean(paymentDataObj.transaction_id) && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Transaction ID:</span>
+                        <span className="font-mono text-foreground font-semibold">{String(paymentDataObj.transaction_id)}</span>
+                      </div>
+                    )}
+                    {Boolean(paymentDataObj.reference_id) && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Reference ID:</span>
+                        <span className="font-mono text-foreground font-semibold">{String(paymentDataObj.reference_id)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {effectivePaymentUrl ? (
+                  <div className="rounded-xl bg-card border border-primary/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
+                        <ExternalLink className="h-3.5 w-3.5" /> Payment Link
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(effectivePaymentUrl);
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2000);
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                      >
+                        {copiedLink ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                        {copiedLink ? 'Copied' : 'Copy Link'}
+                      </button>
+                    </div>
+                    <p className="font-mono text-xs text-muted-foreground break-all bg-muted/40 p-2 rounded-lg border border-border/40 select-all">
+                      {effectivePaymentUrl}
+                    </p>
+                    <a
+                      href={effectivePaymentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg bg-primary py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open Payment Link
+                    </a>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">No external payment link generated for this booking.</p>
+                )}
+              </div>
+
+              {/* Status History (Requirement 4) */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <History className="h-3.5 w-3.5 text-primary" /> Status History
+                  </p>
+                  {loadingDetail && <span className="text-[10px] text-muted-foreground animate-pulse">Updating...</span>}
+                </div>
+                {historyList.length > 0 ? (
+                  <div className="relative pl-4 space-y-3 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/60">
+                    {historyList.map((item, idx) => {
+                      const changeByData = item.change_by_user_data as Record<string, unknown> | undefined;
+                      const changer = changeByData
+                        ? [changeByData.first_name, changeByData.last_name].filter(Boolean).join(' ') || changeByData.name
+                        : item.change_by_user || item.source || 'system';
+                      return (
+                        <div key={idx} className="relative text-xs space-y-1">
+                          <div className="absolute -left-[19px] top-1 h-2 w-2 rounded-full bg-primary ring-4 ring-card" />
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-bold text-foreground">
+                              {item.old_status ? `${String(item.old_status)} → ` : ''}
+                              <span className="capitalize">{String(item.new_status)}</span>
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">· {formatDateTime(String(item.created_at))}</span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Changed by: <span className="font-medium text-foreground">{String(changer)}</span>
+                            {Boolean(item.source) && <span className="ml-1 text-[10px] text-muted-foreground/80">({String(item.source)})</span>}
+                          </p>
+                          {Boolean(item.reason) && (
+                            <p className="text-[11px] text-muted-foreground bg-card p-1.5 rounded-lg border border-border/40 italic">
+                              &ldquo;{String(item.reason)}&rdquo;
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-card border border-border/40 p-3 text-xs space-y-1">
+                    <p className="font-medium text-foreground">Initial status: <span className="capitalize font-bold">{booking.status}</span></p>
+                    <p className="text-[11px] text-muted-foreground">Recorded at: {formatDateTime(booking.created_at)}</p>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {cancelError && (
+            <div className="rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400">
+              {cancelError}
             </div>
-            {booking.payment_gateway && (
-              <div className="rounded-xl bg-card border border-border/50 px-3 py-2.5">
-                <p className="text-[10px] text-muted-foreground font-medium mb-0.5">Gateway</p>
-                <p className="text-sm font-semibold capitalize">{booking.payment_gateway}</p>
-              </div>
-            )}
-            {booking.payment_url && (
-              <div className="rounded-xl bg-card border border-border/50 px-3 py-2.5">
-                <p className="text-[10px] text-muted-foreground font-medium mb-1">Payment Link</p>
-                <a href={booking.payment_url} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline break-all">
-                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                  {booking.payment_url}
-                </a>
-              </div>
-            )}
-          </div>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="flex gap-2 border-t border-border/40 px-6 py-4">
-          <button onClick={onClose} className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
-            Close
-          </button>
-          {booking.payment_url && (
-            <a href={booking.payment_url} target="_blank" rel="noopener noreferrer"
-              className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
-              <ExternalLink className="h-4 w-4" /> Open Payment
-            </a>
-          )}
+        <div className="shrink-0 flex flex-wrap gap-2 border-t border-border/40 px-6 py-4 items-center justify-between">
+          <div className="flex items-center gap-2">
+            {booking.status !== 'cancelled' && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 px-3.5 py-2.5 text-xs font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition disabled:opacity-50 cursor-pointer"
+                >
+                  {cancelling ? 'Cancelling...' : 'Cancel Booking'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    alert('Reschedule functionality will be added soon.');
+                  }}
+                  className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition cursor-pointer"
+                >
+                  Reschedule Booking
+                </button>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition cursor-pointer">
+              Close
+            </button>
+            {booking.payment_url && (
+              <a href={booking.payment_url} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer">
+                <ExternalLink className="h-4 w-4" /> Open Payment
+              </a>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -381,13 +921,21 @@ export default function BookingListPage() {
                 <CustomerAvatar name={b.customer_name} />
                 <div className="min-w-0 flex-1">
                   <p className="font-bold text-sm truncate">{b.customer_name}</p>
+                  {b.booking_number && <p className="text-[11px] font-mono font-bold text-primary">{b.booking_number}</p>}
                   {b.customer_phone && <p className="text-xs text-muted-foreground">{b.customer_phone}</p>}
                 </div>
                 <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize shrink-0', statusStyle(b.status))}>{b.status}</span>
               </div>
               <div className="mb-2 rounded-xl bg-muted/40 px-3 py-2">
                 <p className="text-xs font-semibold text-foreground truncate">{b.service_name}</p>
-                <p className="text-[11px] text-muted-foreground">{b.service_category} · {b.duration_minutes} min</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {b.service_category ? `${b.service_category} · ` : ''}{b.total_duration || b.duration_minutes} min
+                  {(b.addons_duration > 0 || b.extra_minutes > 0) && (
+                    <span className="ml-1 text-[10px] text-primary font-medium">
+                      ({b.duration_minutes}m{b.addons_duration > 0 ? `+${b.addons_duration}m` : ''}{b.extra_minutes > 0 ? `+${b.extra_minutes}m` : ''})
+                    </span>
+                  )}
+                </p>
               </div>
               <div className="space-y-1 text-xs text-muted-foreground">
                 <p className="flex items-center gap-1.5"><Calendar className="h-3 w-3 shrink-0" />{formatDate(b.appointment_start)}<span className="ml-1">{formatTime(b.appointment_start)} – {formatTime(b.appointment_end)}</span></p>
@@ -434,13 +982,21 @@ export default function BookingListPage() {
                       <CustomerAvatar name={b.customer_name} size="sm" />
                       <div>
                         <p className="font-semibold text-sm leading-tight">{b.customer_name}</p>
+                        {b.booking_number && <p className="text-[11px] font-mono font-bold text-primary">{b.booking_number}</p>}
                         {b.customer_phone && <p className="text-[11px] text-muted-foreground">{b.customer_phone}</p>}
                       </div>
                     </div>
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell">
                     <p className="text-xs font-semibold text-foreground max-w-[160px] truncate">{b.service_name}</p>
-                    <p className="text-[11px] text-muted-foreground">{b.duration_minutes} min</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {b.total_duration || b.duration_minutes} min
+                      {(b.addons_duration > 0 || b.extra_minutes > 0) && (
+                        <span className="ml-1 text-[10px] text-primary font-medium">
+                          ({b.duration_minutes}m{b.addons_duration > 0 ? `+${b.addons_duration}m` : ''}{b.extra_minutes > 0 ? `+${b.extra_minutes}m` : ''})
+                        </span>
+                      )}
+                    </p>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -499,7 +1055,7 @@ export default function BookingListPage() {
       )}
 
       {/* ── Detail Modal ── */}
-      <BookingDetailModal booking={selectedBooking} onClose={() => setSelectedBooking(null)} />
+      <BookingDetailModal booking={selectedBooking} onClose={() => setSelectedBooking(null)} onSuccess={refetch} />
     </DashboardShell>
   );
 }

@@ -11,7 +11,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   X, Loader2, AlertCircle, CheckCircle2, User, Scissors, MapPin,
   CalendarDays, Clock, Timer, Package, DollarSign, StickyNote,
-  Hash, RefreshCw, CreditCard, Building2,
+  Hash, RefreshCw, CreditCard, Building2, Ban,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -25,9 +25,30 @@ function fmt(val: unknown): string {
 
 function fmtDate(raw: string | undefined | null): string {
   if (!raw) return '—';
-  const d = new Date(raw);
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: 'UTC',
+    });
+  }
+  let dateStr = s;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
+    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(dateStr);
   if (isNaN(d.getTime())) return raw;
-  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  return d.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
 }
 
 const STATUS_STYLES: Record<string, { bar: string; pill: string; dot: string }> = {
@@ -74,6 +95,9 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const [paymentError,       setPaymentError]       = useState<string | null>(null);
   const [paymentDoneLoading, setPaymentDoneLoading] = useState(false);
   const [paymentDoneError,   setPaymentDoneError]   = useState<string | null>(null);
+  const [cancelLoading,      setCancelLoading]      = useState(false);
+  const [cancelError,        setCancelError]        = useState<string | null>(null);
+  const [cancelDone,         setCancelDone]         = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -87,7 +111,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     if (!bookingId) return;
     setLoading(true); setError(null);
     try {
-      const res  = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}`, {
+      const res  = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
         headers: authHeader ? { Authorization: authHeader, Accept: 'application/json' } : { Accept: 'application/json' },
       });
       const json = await res.json().catch(() => ({}));
@@ -167,6 +191,42 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     }
   };
 
+  // Cancel booking — uses PATCH /status/ with status=cancelled so staff (non-customer) can cancel
+  const handleCancelBooking = async () => {
+    if (!window.confirm('Are you sure you want to cancel this booking? This action cannot be undone.')) return;
+    setCancelLoading(true); setCancelError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({
+          status:         'cancelled',
+          payment_status: 'refunded',
+          reason:         'Cancelled from ushdesk',
+          source:         'ushdesk',
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = (json as Record<string, unknown>).detail ??
+          (json as Record<string, unknown>).message ??
+          `Error ${res.status}`;
+        throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      }
+      setCancelDone(true);
+      await fetchBooking(); // Refresh to reflect cancelled status
+      onSuccess?.();
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel booking');
+    } finally {
+      setCancelLoading(false);
+    }
+  };
+
   // ── derived values ──────────────────────────────────────────────────────────
 
   const bk        = booking;
@@ -176,9 +236,11 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
 
   const status    = String(bk?.status ?? bk?.booking_status ?? 'scheduled').toLowerCase();
   const ss        = statusStyle(status);
+  const bookingNum = String(bk?.booking_number ?? '').replace('undefined', '').replace('null', '');
   const ref       = String(
-    bk?.bookings_id ?? bk?.booking_id ?? bk?.reference_number ??
-    bk?.booking_number ?? bk?.reference ?? bk?.id ?? bookingId
+    bk?.booking_number ?? bk?.reference_number ??
+    bk?.bookings_id ?? bk?.booking_id ??
+    bk?.reference ?? bk?.id ?? bookingId
   );
 
   // ── nested objects ────────────────────────────────────────────────
@@ -220,12 +282,40 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
 
   // ── date & time ─────────────────────────────────────────────────────
   const isoStart   = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
+  const isoEnd     = bk?.appointment_end ?? '';
   const isoDate    = isoStart ? isoStart.split('T')[0] : '';
   // The system stores local Kuwait time labelled as UTC (timezone-naive by design).
   // Using timeZone:'UTC' reads the raw stored value without browser-local conversion.
-  const isoTime    = isoStart ? new Date(isoStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) : '';
+  const formatTimeSlot = (str: string) => {
+    if (!str) return '';
+    const s = str.trim();
+    if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(s)) {
+      const parts = s.split(':');
+      let h = parseInt(parts[0], 10);
+      const m = parts[1];
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${m} ${ampm}`;
+    }
+    let dateStr = s;
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
+      dateStr = dateStr.replace(' ', 'T') + 'Z';
+    }
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return str;
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' });
+  };
+  const isoTime    = isoStart ? formatTimeSlot(isoStart) : '';
+  const isoEndTime = isoEnd ? formatTimeSlot(isoEnd) : '';
   const dateRaw    = firstTruthy(bk?.date, bk?.booking_date, bk?.appointment_date, isoDate);
-  const rawTimeSlot = firstTruthy(bk?.time_slot, bk?.displayTime, bk?.appointment_time, bk?.time, isoTime);
+  const rawTimeSlot = firstTruthy(
+    (isoTime && isoEndTime) ? `${isoTime} – ${isoEndTime}` : null,
+    bk?.time_slot,
+    bk?.displayTime,
+    bk?.appointment_time,
+    bk?.time,
+    isoTime
+  );
 
 
   // ── rest ────────────────────────────────────────────────────────────
@@ -262,6 +352,12 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
                   <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-muted text-muted-foreground">
                     <CreditCard className="h-2.5 w-2.5" />
                     {String(bk.payment_status).replace(/_/g, ' ')}
+                  </span>
+                )}
+                {bookingNum && (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300">
+                    <Hash className="h-2.5 w-2.5" />
+                    {bookingNum}
                   </span>
                 )}
               </div>
@@ -475,16 +571,17 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
           )}
         </div>
 
-        {paymentDoneError && (
+        {(paymentDoneError || cancelError) && (
           <div className="shrink-0 mx-6 mb-2 flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/40 px-4 py-2.5 text-xs text-rose-700 dark:text-rose-300">
             <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{paymentDoneError}</span>
+            <span>{paymentDoneError || cancelError}</span>
           </div>
         )}
 
         {/* Footer */}
         {!loading && bk && (() => {
           const rawPaymentStatus = (bk?.payment_status ?? bk?.paymentStatus ?? bk?.payment_state ?? '').toString().toLowerCase().trim();
+          const isCancelled = status === 'cancelled';
           const isPaid = rawPaymentStatus === 'success' || rawPaymentStatus === 'paid' || rawPaymentStatus === 'completed';
           const isPending = rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || paymentSuccess;
 
@@ -496,7 +593,34 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
               >
                 Close
               </button>
-              {isPending && (
+              {!isCancelled && !cancelDone && (
+                <>
+                  <button
+                    type="button"
+                    disabled={cancelLoading}
+                    onClick={handleCancelBooking}
+                    className={cn(
+                      'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-sm transition',
+                      cancelLoading
+                        ? 'bg-rose-400 cursor-wait opacity-80'
+                        : 'bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 active:scale-[0.98]'
+                    )}
+                  >
+                    {cancelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                    {cancelLoading ? 'Cancelling…' : 'Cancel Booking'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      alert('Reschedule functionality will be added soon.');
+                    }}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition active:scale-[0.98]"
+                  >
+                    Reschedule Booking
+                  </button>
+                </>
+              )}
+              {!isCancelled && !cancelDone && isPending && (
                 <button
                   type="button"
                   disabled={paymentDoneLoading}
@@ -509,19 +633,13 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
                   )}
                 >
                   {paymentDoneLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Updating…
-                    </>
+                    <><Loader2 className="h-4 w-4 animate-spin" />Updating…</>
                   ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      Payment done
-                    </>
+                    <><CheckCircle2 className="h-4 w-4" />Payment done</>
                   )}
                 </button>
               )}
-              {!isPaid && !isPending && (
+              {!isCancelled && !cancelDone && !isPaid && !isPending && (
                 <button
                   onClick={handlePaymentLink}
                   disabled={paymentLoading || paymentSuccess}

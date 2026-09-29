@@ -29,6 +29,12 @@ import {
   Gift,
   Truck,
   ShoppingBag,
+  Receipt,
+  FileText,
+  Layers,
+  PiggyBank,
+  Percent,
+  Handshake,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -99,8 +105,9 @@ export function Sidebar() {
       label: 'Bookings',
       icon: BookOpen,
       children: [
-        { href: '/bookings',         label: 'Booking List',    icon: List },
-        { href: '/bookings/reports', label: 'Booking Reports', icon: PieChart },
+        { href: '/bookings',          label: 'Booking List',    icon: List },
+        { href: '/bookings/payments', label: 'Payments',        icon: CreditCard },
+        { href: '/bookings/reports',  label: 'Booking Reports', icon: PieChart },
       ],
     },
     {
@@ -108,8 +115,15 @@ export function Sidebar() {
       label: 'Finance',
       icon: Landmark,
       children: [
-        { href: '/finance/payments', label: 'Payments',         icon: CreditCard },
-        { href: '/finance/reports',  label: 'Reports',          icon: BarChart3 },
+        { href: '/finance',                 label: 'Overview',           icon: LayoutDashboard },
+        { href: '/finance/invoices',        label: 'Invoices & Bills',   icon: Receipt },
+        { href: '/finance/journal-entries', label: 'Journal Entries',    icon: FileText },
+        { href: '/finance/accounts',        label: 'Chart of Accounts',  icon: Layers },
+        { href: '/finance/banking',         label: 'Banking & Cash',     icon: Building2 },
+        { href: '/finance/budgets',         label: 'Budgets & Planning', icon: PiggyBank },
+        { href: '/finance/reports',         label: 'Financial Reports',  icon: BarChart3 },
+        { href: '/finance/partners',        label: 'Partners',           icon: Handshake },
+        { href: '/finance/taxes',           label: 'Taxes & Fiscal',     icon: Percent },
       ],
     },
     {

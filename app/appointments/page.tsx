@@ -321,8 +321,8 @@ export default function AppointmentsPage() {
                       <td className="px-3 py-3 text-muted-foreground">{a.service?.name ?? '—'}</td>
                       <td className="px-3 py-3 text-muted-foreground">{a.branch?.name ?? '—'}</td>
                       <td className="px-3 py-3 text-muted-foreground">{a.staff?.name ?? '—'}</td>
-                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
-                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}</td>
                       <td className="px-3 py-3 font-semibold">{formatCurrency(Number(a.price), t('currency'))}</td>
                       <td className="px-3 py-3"><StatusBadge status={a.status} /></td>
                     </tr>
