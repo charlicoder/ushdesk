@@ -68,12 +68,30 @@ export function useBookings<T>(
         if (cancelled) return;
 
         if (!res.ok) {
-          const detail = (json as Record<string, unknown>)?.error;
-          throw new Error(
-            typeof detail === 'object'
-              ? (detail as Record<string, string>).message ?? `Request failed (${res.status})`
-              : String(detail ?? (json as Record<string, string>).message ?? `Request failed (${res.status})`),
-          );
+          const errObj = (json as Record<string, unknown>)?.error;
+          let errMsg = '';
+          if (errObj && typeof errObj === 'object') {
+            const nestedDetail = (errObj as Record<string, unknown>).detail;
+            if (nestedDetail && typeof nestedDetail === 'object') {
+              errMsg = String((nestedDetail as Record<string, unknown>).message || (nestedDetail as Record<string, unknown>).detail || '');
+            } else if (typeof nestedDetail === 'string') {
+              errMsg = nestedDetail;
+            }
+            if (!errMsg) {
+              errMsg = String((errObj as Record<string, unknown>).message || '');
+            }
+          } else if (typeof errObj === 'string') {
+            errMsg = errObj;
+          }
+          if (!errMsg) {
+            const rootDetail = (json as Record<string, unknown>)?.detail;
+            if (typeof rootDetail === 'string') {
+              errMsg = rootDetail;
+            } else if (typeof (json as Record<string, unknown>)?.message === 'string') {
+              errMsg = String((json as Record<string, unknown>)?.message);
+            }
+          }
+          throw new Error(errMsg || `Request failed (${res.status})`);
         }
 
         // Unwrap { success, data: [...], meta: { pagination: {...} } }

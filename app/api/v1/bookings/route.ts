@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getProxyHeaders } from '@/lib/proxy';
+import { getProxyHeaders, getApiBaseUrl, getBooknpayPath } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
-
-const BASE_URL = process.env['API_BASE_URL'] ?? 'https://apidev.ushspa.co';
-const BOOKNPAY = process.env['API_BOOKNPAY'] ?? '/booknpay';
-
-const UPSTREAM_URL = `${BASE_URL}${BOOKNPAY}/api/v1/bookings/`;
 
 const MAX_PAGE_SIZE = 100;
 
@@ -17,14 +12,22 @@ export async function GET(req: NextRequest) {
   const rawSize = parseInt(params.get('page_size') ?? '20', 10);
   params.set('page_size', String(Math.min(rawSize, MAX_PAGE_SIZE)));
 
-  const url = `${UPSTREAM_URL}?${params.toString()}`;
+  const baseUrl = getApiBaseUrl();
+  const booknpay = getBooknpayPath();
+  const url = `${baseUrl}${booknpay}/api/v1/bookings/?${params.toString()}`;
 
   try {
     const upstream = await fetch(url, {
       headers: getProxyHeaders(req),
       cache: 'no-store',
     });
-    const data = await upstream.json().catch(() => ({}));
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+    }
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';
@@ -33,14 +36,24 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const baseUrl = getApiBaseUrl();
+  const booknpay = getBooknpayPath();
+  const url = `${baseUrl}${booknpay}/api/v1/bookings/`;
+
   try {
-    const body = await req.json();
-    const upstream = await fetch(UPSTREAM_URL, {
+    const body = await req.json().catch(() => ({}));
+    const upstream = await fetch(url, {
       method: 'POST',
       headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
-    const data = await upstream.json().catch(() => ({}));
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+    }
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';
