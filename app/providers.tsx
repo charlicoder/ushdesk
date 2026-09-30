@@ -7,6 +7,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { store } from '@/store';
 import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice';
 import { getSessionRemainingMs, clearToken } from '@/lib/api';
+import { hasAnyPermission, isAdmin } from '@/lib/permissions';
 
 // ── Ensure all client-side fetch requests send Accept-Language header ────────
 if (typeof window !== 'undefined') {
@@ -28,6 +29,12 @@ if (typeof window !== 'undefined') {
 
 // ─── Public routes (no auth required) ───────────────────────────────────────
 const PUBLIC_ROUTES = ['/login'];
+
+/**
+ * Routes accessible to authenticated users that don't require permissions.
+ * e.g. the no-permission landing page itself.
+ */
+const NO_PERM_ROUTES = ['/no-permission'];
 
 // ─── Theme / locale sync ─────────────────────────────────────────────────────
 function DirSync() {
@@ -80,12 +87,22 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!initialized) return;
 
-    const isPublic = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
+    const isPublic   = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
+    const isNoPermPage = NO_PERM_ROUTES.some((r) => pathname.startsWith(r));
 
     if (!user && !isPublic) {
       router.replace('/login');
     } else if (user && isPublic) {
       router.replace('/');
+    } else if (user && !isNoPermPage) {
+      // If user is logged in but has NO permissions (and is not an admin/superuser),
+      // redirect to the no-permission page
+      const authState = store.getState().auth as { permissions: string[]; roleInfo: { is_superuser?: boolean } | null };
+      const userPerms  = authState.permissions;
+      const isSuperuser = authState.roleInfo?.is_superuser === true;
+      if (!isAdmin(user.user_type) && !isSuperuser && !hasAnyPermission(user.user_type, userPerms)) {
+        router.replace('/no-permission');
+      }
     }
   }, [initialized, user, pathname, router]);
 

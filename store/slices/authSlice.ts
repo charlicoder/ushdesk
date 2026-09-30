@@ -6,6 +6,7 @@ import {
   getToken,
   loadUser,
 } from '@/lib/api';
+import { isCustomerType, ALLOWED_USER_TYPES } from '@/lib/permissions';
 
 /** Proxy URL — Next.js API route avoids browser CORS issues */
 const PROXY_LOGIN = '/api/v1/auth/login';
@@ -23,9 +24,23 @@ export interface AuthUser {
   branch_name?: string | null;
 }
 
+/** Role/permission metadata returned by the API under data.permissions */
+export interface AuthRoleInfo {
+  role_id?: string | null;
+  role_name?: string | null;
+  role_description?: string | null;
+  is_superuser: boolean;
+  is_branch_manager: boolean;
+  is_therapist_role: boolean;
+}
+
 export interface AuthState {
   user: AuthUser | null;
   token: string | null;
+  /** Permission codenames, e.g. ["deskmenu.appointments", "appointments.view"] */
+  permissions: string[];
+  /** Role metadata from data.permissions */
+  roleInfo: AuthRoleInfo | null;
   status: 'idle' | 'loading' | 'succeeded' | 'failed';
   error: string | null;
   initialized: boolean;
@@ -34,6 +49,8 @@ export interface AuthState {
 const initialState: AuthState = {
   user: null,
   token: null,
+  permissions: [],
+  roleInfo: null,
   status: 'idle',
   error: null,
   initialized: false,
@@ -111,10 +128,47 @@ export const loginThunk = createAsyncThunk(
       const userType: string =
         ((rawUser.user_type ?? rawUser.type ?? rawUser.role) as string) ?? '';
 
-      // Only allow employees
-      if (userType && !['employee', 'staff', 'manager', 'admin', 'branch_manager'].includes(userType.toLowerCase())) {
-        return rejectWithValue('Access denied. Only employees can log in here.');
+      // Block customer-type users with a friendly warning
+      if (userType && isCustomerType(userType)) {
+        return rejectWithValue(
+          'Access denied. Customer accounts cannot log in to the USH Desk portal. This system is for employees and administrators only.',
+        );
       }
+
+      // Block any other non-allowed user type
+      if (userType && !ALLOWED_USER_TYPES.includes(userType.toLowerCase() as typeof ALLOWED_USER_TYPES[number])) {
+        return rejectWithValue('Access denied. Only USH Spa employees can log in here.');
+      }
+
+      // ─────────────────────────────────────────────────────────────────────
+      // Parse permissions from the API response.
+      //
+      // Actual API structure:
+      //   response.data.permissions.codenames  ← array of permission strings
+      //   response.data.permissions.role_name  ← role metadata
+      //   response.data.permissions.is_superuser
+      // ─────────────────────────────────────────────────────────────────────
+      const rawPermBlock = payload_data.permissions as Record<string, unknown> | undefined;
+
+      // codenames is the canonical source; fall back to legacy locations just in case
+      const codenamesRaw =
+        (rawPermBlock?.codenames as string[] | undefined) ??
+        (rawUser.permissions as string[] | undefined) ??
+        (rawUser.user_permissions as string[] | undefined) ??
+        [];
+
+      const permissions: string[] = Array.isArray(codenamesRaw)
+        ? codenamesRaw.filter((p) => typeof p === 'string')
+        : [];
+
+      const roleInfo: AuthRoleInfo = {
+        role_id:          (rawPermBlock?.role_id          as string  | undefined) ?? null,
+        role_name:        (rawPermBlock?.role_name        as string  | undefined) ?? null,
+        role_description: (rawPermBlock?.role_description as string  | undefined) ?? null,
+        is_superuser:     (rawPermBlock?.is_superuser     as boolean | undefined) ?? false,
+        is_branch_manager:(rawPermBlock?.is_branch_manager as boolean | undefined) ?? false,
+        is_therapist_role:(rawPermBlock?.is_therapist_role as boolean | undefined) ?? false,
+      };
 
       const user: AuthUser = {
         id: (rawUser.id ?? rawUser.pk ?? '') as string,
@@ -128,9 +182,9 @@ export const loginThunk = createAsyncThunk(
       };
 
       saveToken(token);
-      saveUser(user as unknown as Record<string, unknown>);
+      saveUser({ ...user as unknown as Record<string, unknown>, permissions, roleInfo });
 
-      return { user, token };
+      return { user, token, permissions, roleInfo };
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Login failed';
       return rejectWithValue(msg);
@@ -144,8 +198,13 @@ export const initAuthFromStorage = createAsyncThunk(
   'auth/initFromStorage',
   async () => {
     const token = getToken();
-    const user  = loadUser() as AuthUser | null;
-    return { token, user };
+    const raw   = loadUser() as (AuthUser & { permissions?: string[]; roleInfo?: AuthRoleInfo }) | null;
+    // Extract permissions and roleInfo separately from the stored user blob
+    const { permissions: storedPerms, roleInfo: storedRole, ...userFields } = raw ?? {};
+    const user        = raw ? (userFields as AuthUser) : null;
+    const permissions = Array.isArray(storedPerms) ? storedPerms : [];
+    const roleInfo    = storedRole ?? null;
+    return { token, user, permissions, roleInfo };
   },
 );
 
@@ -156,10 +215,12 @@ const authSlice = createSlice({
   initialState,
   reducers: {
     logout(state) {
-      state.user  = null;
-      state.token = null;
-      state.status = 'idle';
-      state.error  = null;
+      state.user        = null;
+      state.token       = null;
+      state.permissions = [];
+      state.roleInfo    = null;
+      state.status      = 'idle';
+      state.error       = null;
       clearToken();
     },
     clearError(state) {
@@ -178,9 +239,11 @@ const authSlice = createSlice({
         state.error  = null;
       })
       .addCase(loginThunk.fulfilled, (state, action) => {
-        state.status = 'succeeded';
-        state.user   = action.payload.user;
-        state.token  = action.payload.token;
+        state.status      = 'succeeded';
+        state.user        = action.payload.user;
+        state.token       = action.payload.token;
+        state.permissions = action.payload.permissions;
+        state.roleInfo    = action.payload.roleInfo;
       })
       .addCase(loginThunk.rejected, (state, action) => {
         state.status = 'failed';
@@ -191,9 +254,11 @@ const authSlice = createSlice({
       .addCase(initAuthFromStorage.fulfilled, (state, action) => {
         state.initialized = true;
         if (action.payload.token && action.payload.user) {
-          state.token  = action.payload.token;
-          state.user   = action.payload.user;
-          state.status = 'succeeded';
+          state.token       = action.payload.token;
+          state.user        = action.payload.user;
+          state.permissions = action.payload.permissions;
+          state.roleInfo    = action.payload.roleInfo;
+          state.status      = 'succeeded';
         }
       });
   },

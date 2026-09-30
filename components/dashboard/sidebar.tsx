@@ -40,12 +40,23 @@ import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSidebarOpen } from '@/store/slices/uiSlice';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/use-permissions';
+import { PERMISSIONS } from '@/lib/permissions';
 
 interface NavItem {
   href: string;
   label: string;
   icon: React.ElementType;
-  children?: { href: string; label: string; icon: React.ElementType; disabled?: boolean }[];
+  /** Required permission to show this top-level item. Admins bypass this. */
+  permission?: string;
+  children?: {
+    href: string;
+    label: string;
+    icon: React.ElementType;
+    disabled?: boolean;
+    /** Required permission to show this child item. Admins bypass this. */
+    permission?: string;
+  }[];
 }
 
 export function Sidebar() {
@@ -53,6 +64,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const dispatch = useAppDispatch();
   const open = useAppSelector((s) => s.ui.sidebarOpen);
+  const { can, isAdmin } = usePermissions();
 
   // Track which collapsible groups are expanded
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -64,71 +76,92 @@ export function Sidebar() {
   });
 
   const items: NavItem[] = [
-    { href: '/',        label: t('navOverview'), icon: LayoutDashboard },
+    { href: '/',        label: t('navOverview'), icon: LayoutDashboard, permission: PERMISSIONS.OVERVIEW },
     {
       href: '/appointments',
       label: t('navAppointments'),
       icon: CalendarDays,
+      permission: PERMISSIONS.APPOINTMENTS,
       children: [
-        { href: '/appointments/therapist-schedule', label: 'Therapist Schedule',   icon: Clock },
-        { href: '/appointments/branch',             label: 'Branch Appointments',  icon: LayoutGrid },
-        { href: '/appointments/home-service',       label: 'Home Service',         icon: HomeIcon, disabled: true },
-        { href: '/appointments/gift-vouchers',      label: 'Gift Vouchers',        icon: Gift },
+        { href: '/appointments/therapist-schedule', label: 'Therapist Schedule',  icon: Clock,      permission: PERMISSIONS.APPOINTMENTS_THERAPIST_SCHEDULE },
+        { href: '/appointments/branch',             label: 'Branch Appointments', icon: LayoutGrid, permission: PERMISSIONS.APPOINTMENTS_BRANCH_APPOINTMENTS },
+        { href: '/appointments/home-service',       label: 'Home Service',        icon: HomeIcon,   permission: PERMISSIONS.APPOINTMENTS_HOME_SERVICE, disabled: true },
+        { href: '/appointments/gift-vouchers',      label: 'Gift Vouchers',       icon: Gift,       permission: PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER },
       ],
     },
-    { href: '/reports',   label: t('navReports'),   icon: BarChart3 },
+    { href: '/reports', label: t('navReports'), icon: BarChart3 },
     {
       href: '/ushspa',
       label: 'UshSpa',
       icon: Building2,
+      permission: PERMISSIONS.USHSPA,
       children: [
-        { href: '/branches',                label: t('navBranches'),    icon: Store },
-        { href: '/customers',               label: t('navCustomers'),   icon: Users },
-        { href: '/employees',               label: t('navEmployees'),   icon: UserCheck },
-        { href: '/employees/leaves',        label: 'Leave Management',  icon: CalendarOff },
-        { href: '/employees/working-hours', label: 'Working Hours',     icon: Clock },
-        { href: '/products',                label: t('navProducts'),    icon: Package },
-        { href: '/services',                label: t('navServices'),    icon: Sparkles },
+        { href: '/branches',                label: t('navBranches'),   icon: Store,       permission: PERMISSIONS.USHSPA_BRANCHES },
+        { href: '/customers',               label: t('navCustomers'),  icon: Users,       permission: PERMISSIONS.USHSPA_CUSTOMERS },
+        { href: '/employees',               label: t('navEmployees'),  icon: UserCheck,   permission: PERMISSIONS.USHSPA_EMPLOYEES },
+        { href: '/employees/leaves',        label: 'Leave Management', icon: CalendarOff, permission: PERMISSIONS.USHSPA_LEAVE_MANAGEMENT },
+        { href: '/employees/working-hours', label: 'Working Hours',    icon: Clock,       permission: PERMISSIONS.USHSPA_WORKING_HOURS },
+        { href: '/products',                label: t('navProducts'),   icon: Package,     permission: PERMISSIONS.USHSPA_PRODUCTS },
+        { href: '/services',                label: t('navServices'),   icon: Sparkles,    permission: PERMISSIONS.USHSPA_SERVICES },
       ],
     },
-
     {
       href: '/bookings',
       label: 'Bookings',
       icon: BookOpen,
+      permission: PERMISSIONS.BOOKINGS,
       children: [
-        { href: '/bookings',          label: 'Booking List',    icon: List },
-        { href: '/bookings/payments', label: 'Payments',        icon: CreditCard },
-        { href: '/bookings/reports',  label: 'Booking Reports', icon: PieChart },
+        { href: '/bookings',          label: 'Booking List',    icon: List,       permission: PERMISSIONS.BOOKINGS_BOOKING_LIST },
+        { href: '/bookings/payments', label: 'Payments',        icon: CreditCard, permission: PERMISSIONS.BOOKINGS_PAYMENTS },
+        { href: '/bookings/reports',  label: 'Booking Reports', icon: PieChart,   permission: PERMISSIONS.BOOKINGS_BOOKING_REPORT },
       ],
     },
     {
       href: '/finance',
       label: 'Finance',
       icon: Landmark,
+      permission: PERMISSIONS.FINANCE,
       children: [
-        { href: '/finance',                 label: 'Overview',           icon: LayoutDashboard },
-        { href: '/finance/invoices',        label: 'Invoices & Bills',   icon: Receipt },
-        { href: '/finance/journal-entries', label: 'Journal Entries',    icon: FileText },
-        { href: '/finance/accounts',        label: 'Chart of Accounts',  icon: Layers },
-        { href: '/finance/banking',         label: 'Banking & Cash',     icon: Building2 },
-        { href: '/finance/budgets',         label: 'Budgets & Planning', icon: PiggyBank },
-        { href: '/finance/reports',         label: 'Financial Reports',  icon: BarChart3 },
-        { href: '/finance/partners',        label: 'Partners',           icon: Handshake },
-        { href: '/finance/taxes',           label: 'Taxes & Fiscal',     icon: Percent },
+        { href: '/finance',                 label: 'Overview',           icon: LayoutDashboard, permission: PERMISSIONS.FINANCE_OVERVIEW },
+        { href: '/finance/invoices',        label: 'Invoices & Bills',   icon: Receipt,         permission: PERMISSIONS.FINANCE_INVOICES_AND_BILLS },
+        { href: '/finance/journal-entries', label: 'Journal Entries',    icon: FileText,        permission: PERMISSIONS.FINANCE_JOURNAL_ENTRIES },
+        { href: '/finance/accounts',        label: 'Chart of Accounts',  icon: Layers,          permission: PERMISSIONS.FINANCE_CHART_OF_ACCOUNTS },
+        { href: '/finance/banking',         label: 'Banking & Cash',     icon: Building2,       permission: PERMISSIONS.FINANCE_BANKING_AND_CASH },
+        { href: '/finance/budgets',         label: 'Budgets & Planning', icon: PiggyBank,       permission: PERMISSIONS.FINANCE_BUDGETS_AND_PLANNING },
+        { href: '/finance/reports',         label: 'Financial Reports',  icon: BarChart3,       permission: PERMISSIONS.FINANCE_FINANCIAL_REPORTS },
+        { href: '/finance/partners',        label: 'Partners',           icon: Handshake,       permission: PERMISSIONS.FINANCE_PARTNERS },
+        { href: '/finance/taxes',           label: 'Taxes & Fiscal',     icon: Percent,         permission: PERMISSIONS.FINANCE_TAXES_AND_FISCAL },
       ],
     },
     {
       href: '/vendors',
       label: t('navVendors'),
       icon: Truck,
+      permission: PERMISSIONS.VENDORS,
       children: [
-        { href: '/vendors/orders',      label: t('navOrders'),  icon: ShoppingBag },
-        { href: '/vendors/gift-orders', label: 'Gift Orders',   icon: Gift },
+        { href: '/vendors/orders',      label: t('navOrders'), icon: ShoppingBag, permission: PERMISSIONS.VENDORS_ORDERS },
+        { href: '/vendors/gift-orders', label: 'Gift Orders',  icon: Gift,        permission: PERMISSIONS.VENDORS_GIFT_ORDERS },
       ],
     },
-    { href: '/settings', label: t('navSettings'), icon: Settings },
+    { href: '/settings', label: t('navSettings'), icon: Settings, permission: PERMISSIONS.SETTINGS },
   ];
+
+  /**
+   * Filter the nav items based on the current user's permissions.
+   * Admins see everything. Employees only see items they have permission for.
+   */
+  const visibleItems = items.map((item) => {
+    // Filter children first
+    const filteredChildren = item.children?.filter((child) => {
+      if (!child.permission) return true; // no permission required — always show
+      return can(child.permission);
+    });
+
+    return { ...item, children: filteredChildren };
+  }).filter((item) => {
+    if (!item.permission) return true; // no permission required — always show
+    return can(item.permission);
+  });
 
   /** Close the drawer only when the user is on a small screen (mobile/tablet) */
   const handleNavClick = () => {
@@ -189,7 +222,7 @@ export function Sidebar() {
           <p className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40">
             Menu
           </p>
-          {items.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon;
 
             // ── Collapsible group (has children) ──────────────────────────────

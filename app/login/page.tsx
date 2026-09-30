@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { loginThunk, clearError } from '@/store/slices/authSlice';
-import { Eye, EyeOff, Phone, Lock, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Phone, Lock, Loader2, ShieldAlert } from 'lucide-react';
 
 export default function LoginPage() {
   const dispatch = useAppDispatch();
@@ -200,12 +200,28 @@ export default function LoginPage() {
                 </div>
               </div>
 
-              {/* Error banner */}
-              {error && (
-                <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  {error}
-                </div>
-              )}
+              {/* Error / warning banner */}
+              {error && (() => {
+                const isCustomerError = error.toLowerCase().includes('customer');
+                return isCustomerError ? (
+                  <div className="rounded-xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-3.5 text-sm text-amber-800 dark:text-amber-300">
+                    <div className="flex items-start gap-2.5">
+                      <ShieldAlert className="h-5 w-5 mt-0.5 shrink-0 text-amber-500" />
+                      <div>
+                        <p className="font-semibold mb-0.5">Customer Account Detected</p>
+                        <p className="leading-snug opacity-90">
+                          This portal is reserved for <strong>USH Spa employees and administrators</strong> only.
+                          Customer accounts cannot access USH Desk. Please use the USH Spa customer app instead.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                    {error}
+                  </div>
+                );
+              })()}
 
               {/* Submit */}
               <button
