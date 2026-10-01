@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
+import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Booking {
@@ -456,6 +457,7 @@ function BookingDetailModal({
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
@@ -1028,7 +1030,7 @@ function BookingDetailModal({
                     </button>
                     <button
                       type="button"
-                      onClick={() => { alert('Reschedule functionality will be added soon.'); }}
+                      onClick={() => setShowRescheduleModal(true)}
                       className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition cursor-pointer whitespace-nowrap"
                     >
                       Reschedule
@@ -1064,6 +1066,19 @@ function BookingDetailModal({
           </div>
         </div>
       </div>
+
+      {/* Reschedule Booking Modal */}
+      {showRescheduleModal && booking && (
+        <RescheduleBookingModal
+          bookingId={booking.id}
+          initialBooking={(detail || booking) as unknown as Record<string, any>}
+          onClose={() => setShowRescheduleModal(false)}
+          onSuccess={() => {
+            onSuccess?.();
+            onClose();
+          }}
+        />
+      )}
     </>
   );
 }

@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
+import { RescheduleBookingModal } from './RescheduleBookingModal';
 
 export interface PaymentProviderConfig {
   id: string;
@@ -165,6 +166,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const [selectedProvider,   setSelectedProvider]   = useState<string>('MyFatoorah');
   const [paymentSubmitLoading, setPaymentSubmitLoading] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState<string | null>(null);
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -716,9 +718,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        alert('Reschedule functionality will be added soon.');
-                      }}
+                      onClick={() => setShowRescheduleModal(true)}
                       className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-2.5 text-sm font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition active:scale-[0.98] whitespace-nowrap cursor-pointer"
                     >
                       Reschedule Booking
@@ -875,6 +875,20 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
             </div>
           </div>
         </div>
+      )}
+
+      {/* Reschedule Booking Modal */}
+      {showRescheduleModal && (
+        <RescheduleBookingModal
+          bookingId={bookingId}
+          initialBooking={booking}
+          token={cleanToken}
+          onClose={() => setShowRescheduleModal(false)}
+          onSuccess={() => {
+            fetchBooking();
+            onSuccess?.();
+          }}
+        />
       )}
     </div>
   );
