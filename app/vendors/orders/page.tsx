@@ -699,7 +699,13 @@ export default function OrdersPage() {
 
       if (!res.ok) {
         console.warn('[OrdersPage] Upstream fetch notice:', json);
-        setError(json?.detail || 'Failed to load orders');
+        const msg =
+          json?.error?.message ||
+          json?.detail ||
+          json?.message ||
+          (typeof json?.error === 'string' ? json.error : null) ||
+          'Failed to load orders';
+        setError(msg);
         setOrders([]);
         return;
       }
