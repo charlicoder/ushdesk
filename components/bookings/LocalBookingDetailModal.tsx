@@ -131,7 +131,7 @@ export function LocalBookingDetailModal({ appointment, token, onClose, onStatusC
         body: JSON.stringify({
           payment_status: 'success',
           reason:         'Paid on desk',
-          source:         'ushspa app',
+          source:         'ushdesk',
           status:         'confirmed',
         }),
       });

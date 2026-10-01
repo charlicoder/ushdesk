@@ -14,6 +14,8 @@ import {
 import { cn } from '@/lib/utils';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 import { authedFetch } from '@/lib/authedFetch';
+import { useAppSelector } from '@/store/hooks';
+import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 
 export type PaymentProviderOption = 'MyFatoorah' | 'PaymentLink' | 'Deema' | 'KNET Card' | 'Other';
 
@@ -308,6 +310,15 @@ export function TherapistScheduleBookingModal({
   const [cancellingBooking,  setCancellingBooking]  = useState(false);
   const [cancelBookingError, setCancelBookingError] = useState<string | null>(null);
   const [cancelBookingDone,  setCancelBookingDone]  = useState(false);
+
+  const user = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
+  const cancellationEligibility = checkBookingCancellationEligibility(
+    bookingResult || { appointment_date: date, appointment_time: timeSlot },
+    roleInfo,
+    user
+  );
+  const canCancel = cancellationEligibility.canCancel;
 
   const [snapTherapistName, setSnapTherapistName] = useState('');
   const [snapTherapistImg,  setSnapTherapistImg]  = useState('');
@@ -749,10 +760,23 @@ export function TherapistScheduleBookingModal({
   const handleCancelBooking = async () => {
     const id = bookingId;
     if (!id) { setCancelBookingError('Booking ID not found.'); return; }
+    if (!canCancel) {
+      setCancelBookingError(cancellationEligibility.reason || 'Cancellations within 12 hours of appointment time require Administrator, Branch Manager, Finance Manager, or Customer Support Manager privileges.');
+      return;
+    }
     if (!window.confirm('Are you sure you want to cancel this booking? This action cannot be undone.')) return;
     setCancellingBooking(true); setCancelBookingError(null);
     try {
       // Use /status/ endpoint (staff-accessible) rather than /cancel/ (customer-only)
+      const curPaymentStatus = (bookingResult?.payment_status ?? bookingResult?.paymentStatus ?? '').toString().toLowerCase().trim();
+      const curStatus = (bookingResult?.status ?? bookingResult?.booking_status ?? '').toString().toLowerCase().trim();
+      const isPaid = (
+        curPaymentStatus === 'success' ||
+        curPaymentStatus === 'paid' ||
+        curPaymentStatus === 'completed' ||
+        Boolean(bookingResult?.is_paid)
+      ) && curStatus !== 'payment_pending' && curPaymentStatus !== 'pending';
+
       const res = await authedFetch(`/booknpay/api/v1/bookings/${id}/status/`, {
         method: 'PATCH',
         headers: {
@@ -762,7 +786,7 @@ export function TherapistScheduleBookingModal({
         },
         body: JSON.stringify({
           status:         'cancelled',
-          payment_status: 'refunded',
+          payment_status: isPaid ? 'refunded' : 'cancelled',
           reason:         'Cancelled from ushdesk',
           source:         'ushdesk',
         }),
@@ -2037,12 +2061,15 @@ export function TherapistScheduleBookingModal({
                   <button
                     type="button"
                     onClick={handleCancelBooking}
-                    disabled={cancellingBooking}
+                    disabled={cancellingBooking || !canCancel}
+                    title={!canCancel ? (cancellationEligibility.reason || undefined) : undefined}
                     className={cn(
-                      'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-sm transition',
-                      cancellingBooking
-                        ? 'bg-rose-400 cursor-wait opacity-80'
-                        : 'bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 active:scale-[0.98]'
+                      'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition',
+                      !canCancel
+                        ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                        : cancellingBooking
+                          ? 'bg-rose-400 cursor-wait opacity-80 text-white'
+                          : 'bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 active:scale-[0.98] text-white cursor-pointer'
                     )}
                   >
                     {cancellingBooking ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}

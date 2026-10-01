@@ -114,3 +114,10 @@ export function hasAnyPermission(
   if (isAdmin(userType)) return true;
   return permissions.length > 0;
 }
+
+export {
+  canCancelBookingAnytime,
+  checkBookingCancellationEligibility,
+  getBookingAppointmentDateTime,
+  MIN_HOURS_BEFORE_CANCELLATION,
+} from './cancellation-policy';

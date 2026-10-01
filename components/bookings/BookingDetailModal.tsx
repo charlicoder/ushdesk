@@ -11,10 +11,70 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   X, Loader2, AlertCircle, CheckCircle2, User, Scissors, MapPin,
   CalendarDays, Clock, Timer, Package, DollarSign, StickyNote,
-  Hash, RefreshCw, CreditCard, Building2, Ban,
+  Hash, RefreshCw, CreditCard, Building2, Ban, Banknote,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { useAppSelector } from '@/store/hooks';
+import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
+
+export interface PaymentProviderConfig {
+  id: string;
+  name: string;
+  description: string;
+  tag: string;
+  tagColor: string;
+  borderColor: string;
+  checkColor: string;
+}
+
+export const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
+  {
+    id: 'MyFatoorah',
+    name: 'MyFatoorah',
+    description: 'KNET / Visa / Master',
+    tag: 'Gateway',
+    tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    borderColor: 'border-emerald-500 ring-2 ring-emerald-500/20',
+    checkColor: 'text-emerald-500',
+  },
+  {
+    id: 'PaymentLink',
+    name: 'PaymentLink',
+    description: 'SMS / WhatsApp link',
+    tag: 'Direct Link',
+    tagColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+    borderColor: 'border-blue-500 ring-2 ring-blue-500/20',
+    checkColor: 'text-blue-500',
+  },
+  {
+    id: 'Deema',
+    name: 'Deema',
+    description: 'BNPL payment split',
+    tag: 'Installments',
+    tagColor: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    borderColor: 'border-amber-500 ring-2 ring-amber-500/20',
+    checkColor: 'text-amber-500',
+  },
+  {
+    id: 'KNET Card',
+    name: 'KNET Card',
+    description: 'In-branch card machine',
+    tag: 'POS Terminal',
+    tagColor: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
+    borderColor: 'border-violet-500 ring-2 ring-violet-500/20',
+    checkColor: 'text-violet-500',
+  },
+  {
+    id: 'Other',
+    name: 'Other',
+    description: 'Cash or other method',
+    tag: 'Alternative',
+    tagColor: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+    borderColor: 'border-slate-500 ring-2 ring-slate-500/20',
+    checkColor: 'text-slate-500',
+  },
+];
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -87,6 +147,9 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
+  const user = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
+
   const [booking,            setBooking]            = useState<AnyRecord | null>(null);
   const [loading,            setLoading]            = useState(true);
   const [error,              setError]              = useState<string | null>(null);
@@ -98,6 +161,10 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const [cancelLoading,      setCancelLoading]      = useState(false);
   const [cancelError,        setCancelError]        = useState<string | null>(null);
   const [cancelDone,         setCancelDone]         = useState(false);
+  const [showPaymentModal,   setShowPaymentModal]   = useState(false);
+  const [selectedProvider,   setSelectedProvider]   = useState<string>('MyFatoorah');
+  const [paymentSubmitLoading, setPaymentSubmitLoading] = useState(false);
+  const [paymentSubmitError, setPaymentSubmitError] = useState<string | null>(null);
 
   // Close on Escape
   useEffect(() => {
@@ -158,10 +225,10 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     }
   };
 
-  // Confirm payment done
-  const handlePaymentDone = async () => {
-    setPaymentDoneLoading(true);
-    setPaymentDoneError(null);
+  // Confirm payment done with selected provider
+  const handleConfirmPayment = async () => {
+    setPaymentSubmitLoading(true);
+    setPaymentSubmitError(null);
     try {
       const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
         method:  'PATCH',
@@ -171,10 +238,12 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
           ...(authHeader ? { Authorization: authHeader } : {}),
         },
         body: JSON.stringify({
-          payment_status: 'success',
-          reason:         'Paid on desk',
-          source:         'ushspa app',
-          status:         'confirmed',
+          status:           'confirmed',
+          payment_status:   'success',
+          payment_provider: selectedProvider,
+          payment_method:   selectedProvider,
+          reason:           'Paid on desk',
+          source:           'ushdesk',
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -182,20 +251,38 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
         const msg = json.detail ?? json.message ?? (json.error as Record<string, unknown>)?.message ?? `Error ${res.status}`;
         throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
       }
+      setShowPaymentModal(false);
       await fetchBooking();
       onSuccess?.();
     } catch (err) {
-      setPaymentDoneError(err instanceof Error ? err.message : 'Failed to update payment status');
+      setPaymentSubmitError(err instanceof Error ? err.message : 'Failed to update payment status');
     } finally {
-      setPaymentDoneLoading(false);
+      setPaymentSubmitLoading(false);
     }
   };
 
+  // Validate cancellation policy (Administrator, Branch Manager, Finance Manager, Customer Support Manager can cancel anytime; others require >= 12h)
+  const cancellationEligibility = checkBookingCancellationEligibility(booking, roleInfo, user);
+  const canCancel = cancellationEligibility.canCancel;
+
   // Cancel booking — uses PATCH /status/ with status=cancelled so staff (non-customer) can cancel
   const handleCancelBooking = async () => {
+    if (!canCancel) {
+      setCancelError(cancellationEligibility.reason || 'Cancellations within 12 hours of appointment time require Administrator, Branch Manager, Finance Manager, or Customer Support Manager privileges.');
+      return;
+    }
     if (!window.confirm('Are you sure you want to cancel this booking? This action cannot be undone.')) return;
     setCancelLoading(true); setCancelError(null);
     try {
+      const curPaymentStatus = (booking?.payment_status ?? booking?.paymentStatus ?? booking?.payment_state ?? '').toString().toLowerCase().trim();
+      const curStatus = (booking?.status ?? booking?.booking_status ?? '').toString().toLowerCase().trim();
+      const isPaid = (
+        curPaymentStatus === 'success' ||
+        curPaymentStatus === 'paid' ||
+        curPaymentStatus === 'completed' ||
+        Boolean(booking?.is_paid)
+      ) && curStatus !== 'payment_pending' && curPaymentStatus !== 'pending';
+
       const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
         method: 'PATCH',
         headers: {
@@ -205,7 +292,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
         },
         body: JSON.stringify({
           status:         'cancelled',
-          payment_status: 'refunded',
+          payment_status: isPaid ? 'refunded' : 'cancelled',
           reason:         'Cancelled from ushdesk',
           source:         'ushdesk',
         }),
@@ -324,12 +411,19 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const totalPrice  = pricing?.total_price ?? pricing?.total ?? bk?.total_price ?? bk?.price ?? '';
   const currency    = firstTruthy(bk?.currency, 'KWD');
   const notes       = firstTruthy(bk?.customer_notes, bk?.notes, bk?.customerMessage);
+  const rawPaymentStatus = (bk?.payment_status ?? bk?.paymentStatus ?? bk?.payment_state ?? '').toString().toLowerCase().trim();
+  const isCancelled = status === 'cancelled';
+  const isPaid = rawPaymentStatus === 'success' || rawPaymentStatus === 'paid' || rawPaymentStatus === 'completed';
+  const isPending = (rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || paymentSuccess) && !isCancelled && !cancelDone;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative z-10 w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+      <div className={cn(
+        'relative z-10 w-full max-h-[90vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden transition-all duration-200',
+        isPending ? 'max-w-2xl sm:max-w-[760px]' : 'max-w-lg'
+      )}>
 
         {/* Status accent bar */}
         <div className={cn('h-1.5 w-full bg-gradient-to-r shrink-0', ss.bar)} />
@@ -398,51 +492,49 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
           {/* Booking content */}
           {!loading && bk && (
             <>
-              {/* ── Service & Arrangement ── */}
-              <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-                {/* Service row */}
-                <div className="flex items-start gap-3 px-4 py-3">
-                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-500/10">
-                    <Scissors className="h-4 w-4 text-violet-500" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
-                    <p className="text-sm font-bold truncate">{svcName}</p>
-                    {svcCategory && <p className="text-[11px] text-muted-foreground">{svcCategory}</p>}
-                  </div>
-                  {totalPrice && (
-                    <p className="shrink-0 text-sm font-extrabold text-violet-600 dark:text-violet-400">
-                      {fmt(totalPrice)} <span className="text-[10px] font-semibold">{currency}</span>
-                    </p>
-                  )}
+              {/* ── Service ── */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3 flex items-start gap-3">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-500/10">
+                  <Scissors className="h-4 w-4 text-violet-500" />
                 </div>
-
-                {/* Arrangement row */}
-                {arrName && (
-                  <div className="flex items-start gap-3 px-4 py-3">
-                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl" style={{ background: '#c9a96e18' }}>
-                      <Building2 className="h-4 w-4" style={{ color: '#c9a96e' }} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Room / Arrangement</p>
-                      <p className="text-sm font-semibold truncate">{arrName}</p>
-                      {arrType && (
-                        <span className="inline-flex items-center rounded-full px-2 py-0.5 mt-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">
-                          {arrType.replace(/_/g, ' ')}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
+                  <p className="text-sm font-bold truncate">{svcName}</p>
+                  {svcCategory && <p className="text-[11px] text-muted-foreground">{svcCategory}</p>}
+                </div>
+                {totalPrice && (
+                  <p className="shrink-0 text-sm font-extrabold text-violet-600 dark:text-violet-400">
+                    {fmt(totalPrice)} <span className="text-[10px] font-semibold">{currency}</span>
+                  </p>
                 )}
+              </div>
 
-                {/* Branch row */}
-                <div className="flex items-center gap-3 px-4 py-3">
+              {/* ── Branch & Room / Arrangement in one row ── */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Branch */}
+                <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
                   <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-500/10">
                     <MapPin className="h-4 w-4 text-sky-500" />
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Branch</p>
-                    <p className="text-sm font-semibold truncate">{branchName}</p>
+                    <p className="text-xs font-semibold truncate">{branchName}</p>
+                  </div>
+                </div>
+
+                {/* Room / Arrangement */}
+                <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl" style={{ background: '#c9a96e18' }}>
+                    <Building2 className="h-4 w-4" style={{ color: '#c9a96e' }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Room / Arrangement</p>
+                    <p className="text-xs font-semibold truncate">{arrName}</p>
+                    {arrType && (
+                      <span className="inline-flex items-center rounded-full px-2 py-0.5 mt-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">
+                        {arrType.replace(/_/g, ' ')}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -586,81 +678,204 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
           const isPending = rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || paymentSuccess;
 
           return (
-            <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
-              <button
-                onClick={onClose}
-                className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition"
-              >
-                Close
-              </button>
-              {!isCancelled && !cancelDone && (
-                <>
-                  <button
-                    type="button"
-                    disabled={cancelLoading}
-                    onClick={handleCancelBooking}
-                    className={cn(
-                      'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-sm transition',
-                      cancelLoading
-                        ? 'bg-rose-400 cursor-wait opacity-80'
-                        : 'bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 active:scale-[0.98]'
-                    )}
-                  >
-                    {cancelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
-                    {cancelLoading ? 'Cancelling…' : 'Cancel Booking'}
-                  </button>
+            <div className="shrink-0 flex flex-col border-t border-border/40 px-6 py-4 gap-2.5">
+              {!isCancelled && !cancelDone && !canCancel && cancellationEligibility.reason && (
+                <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                  <span>{cancellationEligibility.reason}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-2.5 sm:gap-3">
+                <button
+                  onClick={onClose}
+                  className={cn(
+                    'rounded-xl border border-border/60 bg-muted/40 py-2.5 px-4 text-sm font-semibold hover:bg-muted transition whitespace-nowrap cursor-pointer',
+                    !isPending && 'flex-1'
+                  )}
+                >
+                  Close
+                </button>
+                {!isCancelled && !cancelDone && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={cancelLoading || !canCancel}
+                      onClick={handleCancelBooking}
+                      title={!canCancel ? (cancellationEligibility.reason || undefined) : undefined}
+                      className={cn(
+                        'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition whitespace-nowrap',
+                        !canCancel
+                          ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                          : cancelLoading
+                            ? 'bg-rose-400 cursor-wait opacity-80 text-white'
+                            : 'bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 active:scale-[0.98] text-white cursor-pointer'
+                      )}
+                    >
+                      {cancelLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Ban className="h-4 w-4" />}
+                      {cancelLoading ? 'Cancelling…' : 'Cancel Booking'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        alert('Reschedule functionality will be added soon.');
+                      }}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-2.5 text-sm font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition active:scale-[0.98] whitespace-nowrap cursor-pointer"
+                    >
+                      Reschedule Booking
+                    </button>
+                  </>
+                )}
+                {!isCancelled && !cancelDone && isPending && (
                   <button
                     type="button"
                     onClick={() => {
-                      alert('Reschedule functionality will be added soon.');
+                      setPaymentSubmitError(null);
+                      setShowPaymentModal(true);
                     }}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition active:scale-[0.98]"
+                    className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl py-2.5 px-4 text-sm font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98] whitespace-nowrap bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
                   >
-                    Reschedule Booking
+                    <CreditCard className="h-4 w-4" />
+                    Make Payment
                   </button>
-                </>
-              )}
-              {!isCancelled && !cancelDone && isPending && (
-                <button
-                  type="button"
-                  disabled={paymentDoneLoading}
-                  onClick={handlePaymentDone}
-                  className={cn(
-                    "flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98]",
-                    paymentDoneLoading
-                      ? "bg-emerald-400 cursor-wait opacity-80"
-                      : "bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
-                  )}
-                >
-                  {paymentDoneLoading ? (
-                    <><Loader2 className="h-4 w-4 animate-spin" />Updating…</>
-                  ) : (
-                    <><CheckCircle2 className="h-4 w-4" />Payment done</>
-                  )}
-                </button>
-              )}
-              {!isCancelled && !cancelDone && !isPaid && !isPending && (
-                <button
-                  onClick={handlePaymentLink}
-                  disabled={paymentLoading || paymentSuccess}
-                  className={cn(
-                    'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition',
-                    paymentLoading
-                      ? 'bg-violet-400 cursor-wait'
-                      : 'bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 active:scale-[0.98]',
-                  )}
-                >
-                  {paymentLoading ? (
-                    <><Loader2 className="h-3.5 w-3.5 animate-spin" />&nbsp;Sending…</>
-                  ) : (
-                    <><CreditCard className="h-3.5 w-3.5" />&nbsp;Create Payment Link</>
-                  )}
-                </button>
-              )}
+                )}
+                {!isCancelled && !cancelDone && !isPaid && !isPending && (
+                  <button
+                    onClick={handlePaymentLink}
+                    disabled={paymentLoading || paymentSuccess}
+                    className={cn(
+                      'flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white shadow-sm transition',
+                      paymentLoading
+                        ? 'bg-violet-400 cursor-wait'
+                        : 'bg-gradient-to-r from-violet-500 to-indigo-600 hover:from-violet-600 hover:to-indigo-700 active:scale-[0.98]',
+                    )}
+                  >
+                    {paymentLoading ? (
+                      <><Loader2 className="h-3.5 w-3.5 animate-spin" />&nbsp;Sending…</>
+                    ) : (
+                      <><CreditCard className="h-3.5 w-3.5" />&nbsp;Create Payment Link</>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           );
         })()}
       </div>
+
+      {/* ── Payment Provider Selection Popup Modal (nested, z-[60]) ── */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => !paymentSubmitLoading && setShowPaymentModal(false)}
+          />
+          <div className="relative z-10 w-full max-w-lg rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border/40">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <CreditCard className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Select Payment Method</p>
+                  <p className="text-sm font-bold text-foreground">
+                    {customerName} {totalPrice ? `— ${currency} ${fmt(totalPrice)}` : ''}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="hidden sm:inline-flex items-center rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                  {selectedProvider}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(false)}
+                  disabled={paymentSubmitLoading}
+                  className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition cursor-pointer disabled:opacity-50"
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Provider Grid */}
+            <div className="p-6">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {PAYMENT_PROVIDERS.map((provider) => {
+                  const isSelected = selectedProvider === provider.id;
+                  return (
+                    <button
+                      key={provider.id}
+                      type="button"
+                      onClick={() => setSelectedProvider(provider.id)}
+                      className={cn(
+                        'relative flex flex-col items-start p-3.5 rounded-2xl border-2 text-left transition cursor-pointer select-none',
+                        isSelected
+                          ? `${provider.borderColor} bg-white dark:bg-card shadow-sm`
+                          : 'border-border/50 bg-card/60 hover:border-border hover:bg-muted/30'
+                      )}
+                    >
+                      <div className="flex items-center justify-between w-full mb-1">
+                        <span className={cn('text-xs font-extrabold', isSelected ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground')}>
+                          {provider.name}
+                        </span>
+                        {isSelected && (
+                          <span className={provider.checkColor}>
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-muted-foreground leading-tight line-clamp-2">
+                        {provider.description}
+                      </span>
+                      <span className={cn('mt-2 inline-flex items-center rounded-lg px-2 py-0.5 text-[9px] font-bold', provider.tagColor)}>
+                        {provider.tag}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {paymentSubmitError && (
+                <div className="mt-4 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  <span>{paymentSubmitError}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between gap-3 border-t border-border/40 px-6 py-4 bg-muted/10">
+              <p className="text-xs text-muted-foreground">
+                This will mark the booking as <span className="font-bold text-emerald-600 dark:text-emerald-400">paid</span> and confirmed.
+              </p>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowPaymentModal(false)}
+                  disabled={paymentSubmitLoading}
+                  className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmPayment}
+                  disabled={paymentSubmitLoading}
+                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition cursor-pointer disabled:opacity-50 active:scale-[0.98]"
+                >
+                  {paymentSubmitLoading ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />Processing…</>
+                  ) : (
+                    <><Banknote className="h-4 w-4" />Confirm Payment</>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

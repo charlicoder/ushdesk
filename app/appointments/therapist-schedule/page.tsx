@@ -236,7 +236,7 @@ function SlotDetailModal({
         body: JSON.stringify({
           payment_status: 'success',
           reason:         'Paid on desk',
-          source:         'ushspa app',
+          source:         'ushdesk',
           status:         'confirmed',
         }),
       });
