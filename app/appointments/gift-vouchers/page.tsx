@@ -1,12 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Gift, Loader2, AlertCircle, RefreshCw, ExternalLink, Eye,
   X, CheckCircle2, Clock, XCircle, ChevronDown,
   User, Scissors, MapPin, Timer, Package, CreditCard,
   MessageSquare, Hash, Building2, Phone, Mail, Calendar,
-  Lock, Sparkles, Star,
+  Sparkles, Star, Search,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
@@ -84,6 +84,7 @@ interface PaymentData {
 
 interface Voucher {
   id: string;
+  voucher_number?: string | null;
   service_id: string;
   service_data: ServiceData;
   branch_id: string;
@@ -178,6 +179,11 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
             <div className="flex items-center gap-2 mb-1">
               <Gift className="h-4 w-4 text-primary shrink-0" />
               <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Gift Voucher</p>
+              {voucher.voucher_number && (
+                <span className="font-mono text-[11px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
+                  {voucher.voucher_number}
+                </span>
+              )}
             </div>
             <h2 className="text-base font-extrabold leading-tight">{voucher.service_data?.name ?? 'Voucher Details'}</h2>
             <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -207,22 +213,24 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4" style={{ scrollbarWidth: 'none' }}>
 
-          {/* Secret Code + Template */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5 rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Lock className="h-3 w-3 text-primary" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
+          {/* Voucher Number Card */}
+          <div className="flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/5 px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                <Hash className="h-5 w-5" />
               </div>
-              <p className="text-lg font-black tracking-[0.3em] text-primary font-mono">{voucher.secret_code ?? '—'}</p>
-            </div>
-            <div className="flex flex-col gap-1.5 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3 text-amber-500" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Template</p>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Number</p>
+                <p className="text-lg font-black tracking-wider font-mono text-primary">
+                  {voucher.voucher_number || voucher.id.slice(0, 8).toUpperCase()}
+                </p>
               </div>
-              <p className="text-sm font-bold text-foreground">{voucher.gift_template ?? '—'}</p>
             </div>
+            {voucher.public_token && (
+              <span className="text-xs font-mono font-medium text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-lg">
+                Ref: #{voucher.public_token.slice(0, 8)}
+              </span>
+            )}
           </div>
 
           {/* Service + Branch + Arrangement */}
@@ -499,6 +507,8 @@ export default function GiftVouchersPage() {
   const [statusFilter,    setStatusFilter]    = useState<string>('all');
   const [showCreate,      setShowCreate]      = useState(false);
 
+  const [searchQuery,     setSearchQuery]     = useState<string>('');
+
   const fetchVouchers = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -528,9 +538,41 @@ export default function GiftVouchersPage() {
   useEffect(() => { fetchVouchers(); }, [fetchVouchers]);
 
   // ── Derived / filtered ──────────────────────────────────────────────────────
-  const filtered = statusFilter === 'all'
-    ? vouchers
-    : vouchers.filter(v => v.status?.toLowerCase() === statusFilter);
+  const filtered = useMemo(() => {
+    return vouchers.filter((v) => {
+      // 1. Status filter
+      if (statusFilter !== 'all' && v.status?.toLowerCase() !== statusFilter) {
+        return false;
+      }
+
+      // 2. Search box filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const vNum = (v.voucher_number ?? '').toLowerCase();
+        const vId = (v.id ?? '').toLowerCase();
+        const recName = (v.recipient_data?.name ?? v.recipient_details?.name ?? '').toLowerCase();
+        const recPhone = (v.recipient_data?.phone_number ?? v.recipient_details?.phone_number ?? v.recipient_phone ?? '').toLowerCase();
+        const recEmail = (v.recipient_data?.email ?? v.recipient_details?.email ?? '').toLowerCase();
+        const sndName = (v.sender_data?.name ?? v.sender_details?.name ?? '').toLowerCase();
+        const srvName = (v.service_data?.name ?? '').toLowerCase();
+        const brName = (v.branch_data?.name ?? '').toLowerCase();
+
+        const match =
+          vNum.includes(q) ||
+          vId.includes(q) ||
+          recName.includes(q) ||
+          recPhone.includes(q) ||
+          recEmail.includes(q) ||
+          sndName.includes(q) ||
+          srvName.includes(q) ||
+          brName.includes(q);
+
+        if (!match) return false;
+      }
+
+      return true;
+    });
+  }, [vouchers, statusFilter, searchQuery]);
 
   const stats = {
     total:    vouchers.length,
@@ -575,12 +617,32 @@ export default function GiftVouchersPage() {
 
       {/* ── Controls ── */}
       <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-[280px]">
+          {/* Search box */}
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search voucher #, recipient, sender…"
+              className="w-full h-10 pl-9 pr-8 rounded-xl border border-border bg-card text-sm font-medium outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 h-5 w-5 grid place-items-center text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
           <StatusFilter value={statusFilter} onChange={setStatusFilter} />
           <button
             onClick={fetchVouchers}
             disabled={loading}
-            className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition disabled:opacity-60"
+            className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition disabled:opacity-60 shrink-0"
           >
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             Refresh
@@ -588,7 +650,7 @@ export default function GiftVouchersPage() {
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex h-10 items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 px-5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98]"
+          className="flex h-10 items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 px-5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98] shrink-0"
         >
           <Gift className="h-4 w-4" />
           New Voucher
@@ -622,8 +684,20 @@ export default function GiftVouchersPage() {
         <div className="flex flex-col items-center justify-center rounded-2xl border border-border/60 bg-card py-20 text-center">
           <Gift className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <p className="text-sm font-semibold text-muted-foreground">
-            {vouchers.length === 0 ? 'No vouchers found' : 'No vouchers match the selected filter'}
+            {vouchers.length === 0
+              ? 'No vouchers found'
+              : searchQuery.trim()
+              ? `No vouchers match "${searchQuery}"`
+              : 'No vouchers match the selected filter'}
           </p>
+          {searchQuery.trim() && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="mt-3 text-xs font-bold text-primary hover:underline"
+            >
+              Clear search
+            </button>
+          )}
         </div>
       )}
 
@@ -631,13 +705,12 @@ export default function GiftVouchersPage() {
       {!loading && !error && filtered.length > 0 && (
         <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] border-collapse text-sm">
+            <table className="w-full min-w-[760px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border/60 bg-muted/30">
                   {[
-                    'Sender', 'Recipient', 'Service', 'Branch',
+                    'Voucher #', 'Sender', 'Recipient', 'Service',
                     'Duration', 'Total Price', 'Expires', 'Status',
-                    'Payment', 'Actions',
                   ].map(col => (
                     <th
                       key={col}
@@ -655,8 +728,19 @@ export default function GiftVouchersPage() {
                   return (
                     <tr
                       key={v.id}
-                      className="group transition hover:bg-muted/30"
+                      onClick={() => setSelectedVoucher(v)}
+                      className="group transition hover:bg-muted/40 cursor-pointer"
                     >
+                      {/* Voucher Number */}
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <Hash className="h-3.5 w-3.5 text-primary/70 shrink-0" />
+                          <span className="font-mono text-[12px] font-bold text-primary group-hover:underline">
+                            {v.voucher_number || v.id.slice(0, 8).toUpperCase()}
+                          </span>
+                        </div>
+                      </td>
+
                       {/* Sender */}
                       <td className="px-4 py-3">
                         {(() => {
@@ -703,13 +787,8 @@ export default function GiftVouchersPage() {
                         )}
                       </td>
 
-                      {/* Branch */}
-                      <td className="px-4 py-3 min-w-[140px]">
-                        <p className="text-[13px] font-medium line-clamp-1">{v.branch_data?.name ?? '—'}</p>
-                      </td>
-
                       {/* Duration */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-[11px] font-bold">
                           <Timer className="h-3 w-3 text-muted-foreground" />
                           {v.total_duration} min
@@ -717,55 +796,25 @@ export default function GiftVouchersPage() {
                       </td>
 
                       {/* Total Price */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <p className="text-[13px] font-extrabold text-primary tabular-nums">
                           {fmtMoney(v.total_amount, v.currency)}
                         </p>
                       </td>
 
                       {/* Expires */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
                           {fmtDate(v.expire_date)}
                         </p>
                       </td>
 
                       {/* Status */}
-                      <td className="px-4 py-3">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap', cfg.pill)}>
                           <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
                           {cfg.label}
                         </span>
-                      </td>
-
-                      {/* Payment */}
-                      <td className="px-4 py-3">
-                        {v.payment_data?.isPaid ? (
-                          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                            <CheckCircle2 className="h-2.5 w-2.5" /> Paid
-                          </span>
-                        ) : v.payment_url ? (
-                          <a
-                            href={v.payment_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300 hover:bg-amber-200 transition"
-                          >
-                            <ExternalLink className="h-2.5 w-2.5" /> Pay Now
-                          </a>
-                        ) : (
-                          <span className="text-[11px] text-muted-foreground">—</span>
-                        )}
-                      </td>
-
-                      {/* Actions */}
-                      <td className="px-4 py-3">
-                        <button
-                          onClick={() => setSelectedVoucher(v)}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] font-bold text-primary hover:bg-primary/10 transition"
-                        >
-                          <Eye className="h-3 w-3" /> View
-                        </button>
                       </td>
                     </tr>
                   );

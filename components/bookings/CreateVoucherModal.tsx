@@ -1260,8 +1260,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       payment_method: selectedProvider === 'PaymentLink' ? 'DirectLink' : selectedProvider,
       payment_through: 'desk',
       source: 'desk',
-      payment_status: selectedProvider === 'PaymentLink' || selectedProvider === 'Deema' ? 'pending' : 'success',
-      status: selectedProvider === 'PaymentLink' || selectedProvider === 'Deema' ? 'payment_pending' : 'active',
+      payment_status: 'success',
+      status: 'active',
     };
 
     try {
@@ -1682,25 +1682,65 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 {/* Extra time */}
                 {selectedArrangt && (
                   <div>
-                    <SectionLabel icon={Timer} label="Extra Time (optional)" />
-                    <div className="flex flex-wrap gap-2">
-                      {[0, 15, 30, 45, 60].map((mins) => {
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
+                      <span className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        EXTRA TIME
+                      </span>
+                      {(() => {
+                        const ratePrice = calcExtraPrice(15) || (extraTimePricePerMin > 0 ? parseFloat((extraTimePricePerMin * 15).toFixed(3)) : 5.0);
+                        return (
+                          <span className="text-[11px] sm:text-xs font-normal normal-case text-muted-foreground/75">
+                            ({ratePrice.toFixed(3)} {currency} / 15 min)
+                          </span>
+                        );
+                      })()}
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      {[0, 30, 60].map((mins) => {
                         const active = extraTime === mins;
-                        const price = calcExtraPrice(mins);
                         return (
                           <button
                             key={mins}
                             type="button"
                             onClick={() => setExtraTime(mins)}
-                            className="rounded-xl border px-3 py-2 text-xs font-bold transition cursor-pointer"
-                            style={{
-                              borderColor: active ? B.espresso : B.lineMuted,
-                              background: active ? B.espresso : B.cardBg,
-                              color: active ? '#fff' : B.textMain,
-                            }}
+                            className={cn(
+                              'flex flex-col items-center justify-center rounded-2xl border py-3 px-3 transition cursor-pointer text-center min-h-[66px]',
+                              active
+                                ? 'border-[#7C3AED] bg-[#F5F3FF] dark:bg-[#7C3AED]/15 ring-1 ring-[#7C3AED]/25 shadow-sm'
+                                : 'border-border/80 bg-card hover:bg-muted/30 hover:border-border text-foreground',
+                            )}
                           >
-                            {mins === 0 ? 'No extra time' : `+${mins} mins`}
-                            {price > 0 && ` (${fmtPrice(price, currency)})`}
+                            {mins === 0 ? (
+                              <span
+                                className={cn(
+                                  'text-base font-extrabold',
+                                  active ? 'text-[#7C3AED] dark:text-purple-300' : 'text-foreground',
+                                )}
+                              >
+                                None
+                              </span>
+                            ) : (
+                              <>
+                                <span
+                                  className={cn(
+                                    'text-base font-extrabold leading-none',
+                                    active ? 'text-[#7C3AED] dark:text-purple-300' : 'text-foreground',
+                                  )}
+                                >
+                                  +{mins}
+                                </span>
+                                <span
+                                  className={cn(
+                                    'text-[11px] font-medium mt-1 leading-none',
+                                    active ? 'text-[#7C3AED]/80 dark:text-purple-300/80' : 'text-muted-foreground',
+                                  )}
+                                >
+                                  min
+                                </span>
+                              </>
+                            )}
                           </button>
                         );
                       })}
@@ -1792,31 +1832,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     className="w-full rounded-2xl border p-3.5 text-sm outline-none transition focus:border-primary"
                     style={{ borderColor: B.linen, background: B.cardBg, color: B.textMain }}
                   />
-                </div>
-
-                {/* Gift Template */}
-                <div>
-                  <SectionLabel icon={Sparkles} label="Voucher Design Theme" />
-                  <div className="flex flex-wrap gap-2">
-                    {GIFT_TEMPLATES.map((tmpl) => {
-                      const active = giftTemplate === tmpl;
-                      return (
-                        <button
-                          key={tmpl}
-                          type="button"
-                          onClick={() => setGiftTemplate(tmpl)}
-                          className="rounded-xl border px-3 py-1.5 text-xs font-bold transition cursor-pointer"
-                          style={{
-                            borderColor: active ? B.espresso : B.lineMuted,
-                            background: active ? B.blush : B.cardBg,
-                            color: active ? B.espresso : B.textMuted,
-                          }}
-                        >
-                          {tmpl}
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
 
                 {/* Order Summary Review Card */}
