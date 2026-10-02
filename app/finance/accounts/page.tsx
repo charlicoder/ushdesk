@@ -18,6 +18,9 @@ import {
   Tag,
   Scale,
   Landmark,
+  Plus,
+  Save,
+  Loader2,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -33,6 +36,7 @@ export default function ChartOfAccountsPage() {
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [search, setSearch]         = useState<string>('');
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
+  const [showNewAccount, setShowNewAccount] = useState(false);
 
   const {
     items: rawAccounts,
@@ -79,10 +83,19 @@ export default function ChartOfAccountsPage() {
 
   return (
     <DashboardShell>
-      <PageHeader
-        title="Chart of Accounts"
-        subtitle="Manage accounting ledgers, assets, liabilities, equity, revenues, and operating expenses"
-      />
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Chart of Accounts"
+          subtitle="Manage accounting ledgers, assets, liabilities, equity, revenues, and operating expenses"
+        />
+        <button
+          onClick={() => setShowNewAccount(true)}
+          className="mt-1 flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:opacity-90 active:scale-95 transition"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Account
+        </button>
+      </div>
 
       {/* ── Summary Stats ── */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -293,6 +306,14 @@ export default function ChartOfAccountsPage() {
 
       {/* ── Account Balance & Details Modal ── */}
       {selectedAccount && <AccountBalanceModal account={selectedAccount} onClose={() => setSelectedAccount(null)} />}
+
+      {/* ── New Account Form Modal ── */}
+      {showNewAccount && (
+        <AccountFormModal
+          onClose={() => setShowNewAccount(false)}
+          onCreated={() => { setShowNewAccount(false); refetch(); }}
+        />
+      )}
     </DashboardShell>
   );
 }
@@ -412,6 +433,147 @@ function AccountBalanceModal({ account, onClose }: { account: Account; onClose: 
               <span className="text-muted-foreground text-[10px] uppercase font-bold">Reconcilable</span>
               <p className="font-semibold text-foreground mt-0.5">{account.is_reconcilable ? 'Yes' : 'No'}</p>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── New Account Form Modal ─────────────────────────────────────────────────────
+function AccountFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [accountType, setAccountType] = useState('asset');
+  const [accountNature, setAccountNature] = useState('debit');
+  const [currency, setCurrency] = useState('KWD');
+  const [isReconcilable, setIsReconcilable] = useState(false);
+  const [isBankAccount, setIsBankAccount] = useState(false);
+  const [description, setDescription] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Auto-suggest account nature based on type
+  useEffect(() => {
+    if (['asset', 'expense'].includes(accountType)) setAccountNature('debit');
+    else setAccountNature('credit');
+  }, [accountType]);
+
+  const handleSubmit = async () => {
+    setFormError(null);
+    if (!code.trim()) { setFormError('Account code is required.'); return; }
+    if (!name.trim()) { setFormError('Account name is required.'); return; }
+    setSubmitting(true);
+    try {
+      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cj = await cRes.json().catch(() => ({}));
+      const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
+      const payload = {
+        company_id: companyId,
+        code: code.trim(),
+        name: name.trim(),
+        account_type: accountType,
+        account_nature: accountNature,
+        currency_code: currency,
+        is_reconcilable: isReconcilable,
+        is_bank_account: isBankAccount,
+        description: description || undefined,
+      };
+      const res = await authedFetch('/api/v1/uanr/accounts/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
+      onCreated();
+    } catch (e: any) { setFormError(e.message); } finally { setSubmitting(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputCls = 'h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30';
+  const labelCls = 'block text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-lg rounded-3xl border border-border/60 bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <Landmark className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-foreground">New Account</h3>
+              <p className="text-[11px] text-muted-foreground">Add to chart of accounts</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>Account Code *</label>
+              <input type="text" placeholder="e.g. 1010" value={code} onChange={(e) => setCode(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Account Type *</label>
+              <select value={accountType} onChange={(e) => setAccountType(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="asset">Asset</option>
+                <option value="liability">Liability</option>
+                <option value="equity">Equity</option>
+                <option value="revenue">Revenue</option>
+                <option value="expense">Expense</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Account Name *</label>
+            <input type="text" placeholder="e.g. Cash at Bank" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>Normal Balance Nature</label>
+              <select value={accountNature} onChange={(e) => setAccountNature(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="debit">Debit (Assets/Expenses)</option>
+                <option value="credit">Credit (Liabilities/Revenue/Equity)</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Currency</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={cn(inputCls, 'h-8')}>
+                {['KWD','USD','EUR','GBP','AED','SAR'].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Description</label>
+            <input type="text" placeholder="Optional description" value={description} onChange={(e) => setDescription(e.target.value)} className={inputCls} />
+          </div>
+          <div className="flex items-center gap-6 text-xs">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={isReconcilable} onChange={(e) => setIsReconcilable(e.target.checked)} className="rounded" />
+              <span>Reconcilable</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={isBankAccount} onChange={(e) => setIsBankAccount(e.target.checked)} className="rounded" />
+              <span>Bank Account</span>
+            </label>
+          </div>
+          {formError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-600">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-3 border-t border-border/60 pt-4">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition">Cancel</button>
+            <button onClick={handleSubmit} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Create Account
+            </button>
           </div>
         </div>
       </div>

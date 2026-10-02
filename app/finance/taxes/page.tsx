@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Percent,
   Search,
@@ -18,6 +18,9 @@ import {
   Shield,
   Mail,
   Phone,
+  Plus,
+  Save,
+  Loader2,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -29,10 +32,12 @@ import {
   Tax,
   FiscalYear,
 } from '@/hooks/use-accounting';
+import { authedFetch } from '@/lib/authedFetch';
 
 export default function TaxesAndFiscalPage() {
   const [activeTab, setActiveTab] = useState<'partners' | 'taxes' | 'fiscal'>('partners');
   const [search, setSearch]       = useState<string>('');
+  const [showNewTax, setShowNewTax] = useState(false);
 
   // Partners list
   const {
@@ -80,10 +85,21 @@ export default function TaxesAndFiscalPage() {
 
   return (
     <DashboardShell>
-      <PageHeader
-        title="Taxes, Fiscal & Business Partners"
-        subtitle="Manage tax rates, fiscal years, compliance periods, and verified business partner directories"
-      />
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Taxes, Fiscal & Business Partners"
+          subtitle="Manage tax rates, fiscal years, compliance periods, and verified business partner directories"
+        />
+        {activeTab === 'taxes' && (
+          <button
+            onClick={() => setShowNewTax(true)}
+            className="mt-1 flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:opacity-90 active:scale-95 transition"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Tax
+          </button>
+        )}
+      </div>
 
       {/* ── Summary Stats ── */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -372,6 +388,129 @@ export default function TaxesAndFiscalPage() {
           </div>
         </div>
       )}
+      {/* ── New Tax Form Modal ── */}
+      {showNewTax && (
+        <TaxFormModal
+          onClose={() => setShowNewTax(false)}
+          onCreated={() => { setShowNewTax(false); refetchTaxes(); }}
+        />
+      )}
     </DashboardShell>
+  );
+}
+
+// ── Tax Form Modal ─────────────────────────────────────────────────────────────
+function TaxFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState('');
+  const [taxType, setTaxType] = useState('sales');
+  const [computation, setComputation] = useState('percent');
+  const [amount, setAmount] = useState('5');
+  const [description, setDescription] = useState('');
+  const [includeInPrice, setIncludeInPrice] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setFormError(null);
+    if (!name.trim()) { setFormError('Tax name is required.'); return; }
+    setSubmitting(true);
+    try {
+      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cj = await cRes.json().catch(() => ({}));
+      const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
+      const payload = {
+        company_id: companyId,
+        name: name.trim(),
+        tax_type: taxType,
+        computation,
+        amount: parseFloat(amount) || 0,
+        description: description || undefined,
+        include_in_price: includeInPrice,
+        is_active: true,
+      };
+      const res = await authedFetch('/api/v1/uanr/taxes/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
+      onCreated();
+    } catch (e: any) { setFormError(e.message); } finally { setSubmitting(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputCls = 'h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30';
+  const labelCls = 'block text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1';
+  const cn = (...cls: (string | undefined | false)[]) => cls.filter(Boolean).join(' ');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-border/60 bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/60 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-2xl bg-amber-500/10 text-amber-600">
+              <Percent className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-foreground">New Tax Rate</h3>
+              <p className="text-[11px] text-muted-foreground">Sales, purchase, or withholding tax</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className={labelCls}>Tax Name *</label>
+            <input type="text" placeholder="e.g. VAT 5%, GST 10%" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelCls}>Tax Type</label>
+              <select value={taxType} onChange={(e) => setTaxType(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="sales">Sales Tax</option>
+                <option value="purchase">Purchase Tax</option>
+                <option value="none">None / Withholding</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Computation</label>
+              <select value={computation} onChange={(e) => setComputation(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="percent">Percentage (%)</option>
+                <option value="fixed">Fixed Amount</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>Amount {computation === 'percent' ? '(%)' : '(fixed)'} *</label>
+            <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} />
+          </div>
+          <div>
+            <label className={labelCls}>Description</label>
+            <input type="text" placeholder="Optional description" value={description} onChange={(e) => setDescription(e.target.value)} className={inputCls} />
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <input type="checkbox" id="includeInPrice" checked={includeInPrice} onChange={(e) => setIncludeInPrice(e.target.checked)} className="rounded" />
+            <label htmlFor="includeInPrice">Included in price (tax-inclusive)</label>
+          </div>
+          {formError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-600">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-3 border-t border-border/60 pt-4">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition">Cancel</button>
+            <button onClick={handleSubmit} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Create Tax
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

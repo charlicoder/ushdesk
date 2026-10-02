@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   Receipt,
   Search,
@@ -21,6 +21,12 @@ import {
   Shield,
   Tag,
   AlertCircle,
+  Plus,
+  Trash2,
+  Save,
+  Send,
+  Loader2,
+  FileText,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -32,6 +38,7 @@ import {
   getStateBadge,
   Invoice,
 } from '@/hooks/use-accounting';
+import { authedFetch } from '@/lib/authedFetch';
 
 export default function InvoicesPage() {
   const [typeFilter, setTypeFilter]   = useState<'all' | 'invoice' | 'bill'>('all');
@@ -39,6 +46,7 @@ export default function InvoicesPage() {
   const [search, setSearch]           = useState<string>('');
   const [view, setView]               = useState<'list' | 'grid'>('list');
   const [selected, setSelected]       = useState<Invoice | null>(null);
+  const [showNewForm, setShowNewForm] = useState(false);
 
   const {
     items: rawInvoices,
@@ -79,10 +87,19 @@ export default function InvoicesPage() {
 
   return (
     <DashboardShell>
-      <PageHeader
-        title="Invoices & Vendor Bills"
-        subtitle="Manage customer invoices, vendor bills, tax calculations, and payments tracking"
-      />
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Invoices & Vendor Bills"
+          subtitle="Manage customer invoices, vendor bills, tax calculations, and payments tracking"
+        />
+        <button
+          onClick={() => setShowNewForm(true)}
+          className="mt-1 flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:opacity-90 active:scale-95 transition"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Invoice / Bill
+        </button>
+      </div>
 
       {/* ── Summary Stats ── */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -405,14 +422,43 @@ export default function InvoicesPage() {
       )}
 
       {/* ── Invoice Detail Modal ── */}
-      {selected && <InvoiceModal invoice={selected} onClose={() => setSelected(null)} />}
+      {selected && <InvoiceModal invoice={selected} onClose={() => setSelected(null)} onRefresh={refetch} />}
+
+      {/* ── New Invoice Form Modal ── */}
+      {showNewForm && (
+        <InvoiceFormModal
+          onClose={() => setShowNewForm(false)}
+          onCreated={() => { setShowNewForm(false); refetch(); }}
+        />
+      )}
     </DashboardShell>
   );
 }
 
 // ── Invoice Detail Modal ────────────────────────────────────────────────────────
-function InvoiceModal({ invoice, onClose }: { invoice: Invoice; onClose: () => void }) {
+function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClose: () => void; onRefresh?: () => void }) {
   const [copied, setCopied] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const handlePost = async () => {
+    setPosting(true); setActionError(null);
+    try {
+      const res = await authedFetch(`/api/v1/uanr/invoices/${invoice.id}/post/`, { method: 'POST' });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.detail ?? `HTTP ${res.status}`); }
+      onRefresh?.(); onClose();
+    } catch (e: any) { setActionError(e.message); } finally { setPosting(false); }
+  };
+
+  const handleCancel = async () => {
+    setCancelling(true); setActionError(null);
+    try {
+      const res = await authedFetch(`/api/v1/uanr/invoices/${invoice.id}/cancel/`, { method: 'POST' });
+      if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.detail ?? `HTTP ${res.status}`); }
+      onRefresh?.(); onClose();
+    } catch (e: any) { setActionError(e.message); } finally { setCancelling(false); }
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -463,11 +509,31 @@ function InvoiceModal({ invoice, onClose }: { invoice: Invoice; onClose: () => v
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 flex-wrap justify-end">
             <span className={cn('inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-bold', badge.bg)}>
               <span className={cn('h-2 w-2 rounded-full', badge.dot)} />
               {badge.label}
             </span>
+            {invoice.state === 'draft' && (
+              <>
+                <button
+                  onClick={handlePost}
+                  disabled={posting}
+                  className="flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600 disabled:opacity-60 transition"
+                >
+                  {posting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                  Post
+                </button>
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="flex items-center gap-1.5 rounded-xl bg-rose-500/10 border border-rose-500/30 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-500/20 disabled:opacity-60 transition"
+                >
+                  {cancelling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                  Cancel
+                </button>
+              </>
+            )}
             <button
               onClick={onClose}
               className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition"
@@ -476,6 +542,11 @@ function InvoiceModal({ invoice, onClose }: { invoice: Invoice; onClose: () => v
             </button>
           </div>
         </div>
+        {actionError && (
+          <div className="px-6 pb-2 flex items-center gap-2 text-xs text-rose-600">
+            <AlertCircle className="h-3.5 w-3.5" /> {actionError}
+          </div>
+        )}
 
         {/* Body */}
         <div className="p-6 space-y-6">
@@ -575,6 +646,338 @@ function InvoiceModal({ invoice, onClose }: { invoice: Invoice; onClose: () => v
               <p className="text-muted-foreground">{invoice.notes}</p>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Invoice / Bill Creation Form Modal ──────────────────────────────────────────
+interface LineItem {
+  account_id: string;
+  name: string;
+  description: string;
+  quantity: string;
+  unit_price: string;
+  discount: string;
+  tax_rate: string;
+}
+
+const emptyLine = (): LineItem => ({
+  account_id: '',
+  name: '',
+  description: '',
+  quantity: '1',
+  unit_price: '0',
+  discount: '0',
+  tax_rate: '0',
+});
+
+function calcLine(l: LineItem) {
+  const qty = parseFloat(l.quantity) || 0;
+  const price = parseFloat(l.unit_price) || 0;
+  const discount = parseFloat(l.discount) || 0;
+  const taxRate = parseFloat(l.tax_rate) || 0;
+  const subtotal = qty * price * (1 - discount / 100);
+  const taxAmount = subtotal * (taxRate / 100);
+  return { subtotal, taxAmount, total: subtotal + taxAmount };
+}
+
+function InvoiceFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [invoiceType, setInvoiceType] = useState<'invoice' | 'bill'>('invoice');
+  const [partnerId, setPartnerId] = useState('');
+  const [journalId, setJournalId] = useState('');
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [dueDate, setDueDate] = useState('');
+  const [paymentTerms, setPaymentTerms] = useState('immediate');
+  const [currency, setCurrency] = useState('KWD');
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
+  const [lines, setLines] = useState<LineItem[]>([emptyLine()]);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [partners, setPartners] = useState<any[]>([]);
+  const [journals, setJournals] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const [pRes, jRes, aRes] = await Promise.all([
+        authedFetch('/api/v1/uanr/partners/?page_size=200'),
+        authedFetch('/api/v1/uanr/journals/?page_size=50'),
+        authedFetch('/api/v1/uanr/accounts/?page_size=200'),
+      ]);
+      if (pRes.ok) { const d = await pRes.json(); setPartners(d?.data?.items ?? d?.items ?? []); }
+      if (jRes.ok) { const d = await jRes.json(); setJournals(d?.data?.items ?? d?.items ?? []); }
+      if (aRes.ok) { const d = await aRes.json(); setAccounts(d?.data?.items ?? d?.items ?? []); }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    const typeMap = invoiceType === 'invoice' ? 'sale' : 'purchase';
+    const j = journals.find((j: any) => j.journal_type === typeMap);
+    if (j) setJournalId(j.id);
+  }, [invoiceType, journals]);
+
+  const updateLine = (idx: number, field: keyof LineItem, val: string) =>
+    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [field]: val } : l)));
+  const addLine = () => setLines((prev) => [...prev, emptyLine()]);
+  const removeLine = (idx: number) => setLines((prev) => prev.filter((_, i) => i !== idx));
+
+  const totals = useMemo(() => lines.reduce(
+    (acc, l) => { const { subtotal, taxAmount, total } = calcLine(l); return { subtotal: acc.subtotal + subtotal, tax: acc.tax + taxAmount, total: acc.total + total }; },
+    { subtotal: 0, tax: 0, total: 0 },
+  ), [lines]);
+
+  const handleSubmit = async (andPost = false) => {
+    setFormError(null);
+    if (!partnerId) { setFormError('Please select a partner.'); return; }
+    if (!journalId) { setFormError('Please select a journal.'); return; }
+    if (lines.some((l) => !l.account_id || !l.name)) { setFormError('All lines must have an account and description.'); return; }
+    setSubmitting(true);
+    try {
+      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cj = await cRes.json().catch(() => ({}));
+      const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
+      const payload = {
+        company_id: companyId,
+        invoice_type: invoiceType,
+        partner_id: partnerId,
+        journal_id: journalId,
+        invoice_date: invoiceDate,
+        due_date: dueDate || undefined,
+        payment_terms: paymentTerms,
+        currency_code: currency,
+        reference: reference || undefined,
+        notes: notes || undefined,
+        lines: lines.map((l) => ({
+          account_id: l.account_id,
+          name: l.name,
+          description: l.description || undefined,
+          quantity: parseFloat(l.quantity) || 1,
+          unit_price: parseFloat(l.unit_price) || 0,
+          discount: parseFloat(l.discount) || 0,
+          tax_rate: parseFloat(l.tax_rate) || 0,
+        })),
+      };
+      const res = await authedFetch('/api/v1/uanr/invoices/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
+      const invoiceId = json?.data?.id;
+      if (andPost && invoiceId) {
+        const postRes = await authedFetch(`/api/v1/uanr/invoices/${invoiceId}/post/`, { method: 'POST' });
+        if (!postRes.ok) { const pj = await postRes.json().catch(() => ({})); throw new Error(pj?.detail ?? 'Post failed'); }
+      }
+      onCreated();
+    } catch (e: any) { setFormError(e.message); } finally { setSubmitting(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputCls = 'h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30';
+  const labelCls = 'block text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-3xl border border-border/60 bg-card shadow-2xl">
+        {/* Header */}
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-border/60 bg-card/95 backdrop-blur px-6 py-4 rounded-t-3xl">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <FileText className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-black tracking-tight text-foreground">
+                New {invoiceType === 'invoice' ? 'Customer Invoice' : 'Vendor Bill'}
+              </h3>
+              <p className="text-[11px] text-muted-foreground">Fill in the details and add line items</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          {/* Type Toggle */}
+          <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 p-1 w-fit">
+            {(['invoice', 'bill'] as const).map((t) => (
+              <button key={t} onClick={() => setInvoiceType(t)}
+                className={cn('rounded-lg px-4 py-1.5 text-xs font-bold transition', invoiceType === t ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground')}
+              >
+                {t === 'invoice' ? '🧾 Customer Invoice' : '📄 Vendor Bill'}
+              </button>
+            ))}
+          </div>
+
+          {/* Fields */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className={labelCls}>Partner *</label>
+              <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="">— Select partner —</option>
+                {partners.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Journal *</label>
+              <select value={journalId} onChange={(e) => setJournalId(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="">— Select journal —</option>
+                {journals.map((j: any) => <option key={j.id} value={j.id}>{j.name} ({j.code})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Currency</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={cn(inputCls, 'h-8')}>
+                {['KWD','USD','EUR','GBP','AED','SAR'].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Invoice Date *</label>
+              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Due Date</label>
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Payment Terms</label>
+              <select value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="immediate">Immediate</option>
+                <option value="net_30">Net 30</option>
+                <option value="net_60">Net 60</option>
+                <option value="net_90">Net 90</option>
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className={labelCls}>Reference / PO</label>
+              <input type="text" placeholder="External reference" value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} />
+            </div>
+          </div>
+
+          {/* Line Items */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-black uppercase tracking-wider text-muted-foreground">Line Items</h4>
+              <button onClick={addLine} className="flex items-center gap-1.5 rounded-lg border border-primary/40 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/10 transition">
+                <Plus className="h-3 w-3" /> Add Line
+              </button>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-border/60">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="border-b border-border/60 bg-muted/30 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 min-w-[160px]">Account *</th>
+                      <th className="px-3 py-2 min-w-[160px]">Description *</th>
+                      <th className="px-3 py-2 w-18 text-center">Qty</th>
+                      <th className="px-3 py-2 w-24 text-right">Unit Price</th>
+                      <th className="px-3 py-2 w-18 text-center">Disc %</th>
+                      <th className="px-3 py-2 w-18 text-center">Tax %</th>
+                      <th className="px-3 py-2 w-28 text-right">Line Total</th>
+                      <th className="w-8" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {lines.map((line, idx) => {
+                      const { total } = calcLine(line);
+                      return (
+                        <tr key={idx} className="group">
+                          <td className="px-2 py-1.5">
+                            <select value={line.account_id} onChange={(e) => updateLine(idx, 'account_id', e.target.value)}
+                              className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40">
+                              <option value="">— Account —</option>
+                              {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.code} – {a.name}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input type="text" placeholder="Description" value={line.name} onChange={(e) => updateLine(idx, 'name', e.target.value)}
+                              className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input type="number" min="0" step="any" value={line.quantity} onChange={(e) => updateLine(idx, 'quantity', e.target.value)}
+                              className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input type="number" min="0" step="any" value={line.unit_price} onChange={(e) => updateLine(idx, 'unit_price', e.target.value)}
+                              className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] text-right focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input type="number" min="0" max="100" step="any" value={line.discount} onChange={(e) => updateLine(idx, 'discount', e.target.value)}
+                              className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input type="number" min="0" step="any" value={line.tax_rate} onChange={(e) => updateLine(idx, 'tax_rate', e.target.value)}
+                              className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] text-center focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                          </td>
+                          <td className="px-2 py-1.5 text-right font-bold text-foreground tabular-nums">
+                            {total.toLocaleString('en-US', { minimumFractionDigits: 3 })}
+                          </td>
+                          <td className="px-2 py-1.5 text-center">
+                            {lines.length > 1 && (
+                              <button onClick={() => removeLine(idx)} className="text-rose-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot className="border-t border-border/60 bg-muted/20 text-xs font-bold">
+                    <tr>
+                      <td colSpan={6} className="px-3 py-2 text-right text-muted-foreground">Subtotal:</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{totals.subtotal.toLocaleString('en-US', { minimumFractionDigits: 3 })} {currency}</td>
+                      <td />
+                    </tr>
+                    <tr>
+                      <td colSpan={6} className="px-3 py-2 text-right text-muted-foreground">Tax:</td>
+                      <td className="px-3 py-2 text-right text-amber-600 tabular-nums">{totals.tax.toLocaleString('en-US', { minimumFractionDigits: 3 })} {currency}</td>
+                      <td />
+                    </tr>
+                    <tr className="border-t border-border/60">
+                      <td colSpan={6} className="px-3 py-2 text-right font-black text-foreground">Total:</td>
+                      <td className="px-3 py-2 text-right font-black text-primary tabular-nums">{totals.total.toLocaleString('en-US', { minimumFractionDigits: 3 })} {currency}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className={labelCls}>Notes</label>
+            <textarea rows={2} placeholder="Internal notes..." value={notes} onChange={(e) => setNotes(e.target.value)}
+              className="w-full rounded-xl border border-border/60 bg-background px-3 py-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          </div>
+
+          {formError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-600">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex items-center justify-end gap-3 border-t border-border/60 pt-4">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition">Discard</button>
+            <button onClick={() => handleSubmit(false)} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl border border-border/60 bg-card px-4 py-2 text-xs font-bold hover:bg-muted/60 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save as Draft
+            </button>
+            <button onClick={() => handleSubmit(true)} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              Save & Post
+            </button>
+          </div>
         </div>
       </div>
     </div>

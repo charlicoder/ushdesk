@@ -26,7 +26,7 @@ async function resolveCompanyId(
   // 2. In-memory cached company ID
   if (cachedCompanyId) return cachedCompanyId;
 
-  // 3. Fallback configured in environment variables / helper
+  // 3. Configured in environment variables / helper
   const defaultEnvId = getDefaultCompanyId();
   if (defaultEnvId && defaultEnvId !== 'f70caa2a-a435-4928-b7b1-7cb016619848') {
     cachedCompanyId = defaultEnvId;
@@ -56,7 +56,7 @@ async function resolveCompanyId(
     }
   }
 
-  cachedCompanyId = defaultEnvId || 'f70caa2a-a435-4928-b7b1-7cb016619848';
+  cachedCompanyId = '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68';
   return cachedCompanyId;
 }
 

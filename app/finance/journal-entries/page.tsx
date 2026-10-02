@@ -21,6 +21,11 @@ import {
   Info,
   ListFilter,
   BookOpen,
+  Plus,
+  Save,
+  Trash2,
+  Loader2,
+  Send,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -41,6 +46,7 @@ export default function JournalEntriesAndItemsPage() {
   const [itemType, setItemType]       = useState<'all' | 'debit' | 'credit' | 'reconciled'>('all');
   const [search, setSearch]           = useState<string>('');
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
+  const [showNewEntry, setShowNewEntry] = useState(false);
 
   // 1. Journal Items (all 3,115 individual debit & credit lines)
   const {
@@ -96,10 +102,19 @@ export default function JournalEntriesAndItemsPage() {
 
   return (
     <DashboardShell>
-      <PageHeader
-        title="Journal Entries & Line Items"
-        subtitle="Complete double-entry accounting records: inspect individual debit/credit items or grouped voucher entries"
-      />
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Journal Entries & Line Items"
+          subtitle="Complete double-entry accounting records: inspect individual debit/credit items or grouped voucher entries"
+        />
+        <button
+          onClick={() => setShowNewEntry(true)}
+          className="mt-1 flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:opacity-90 active:scale-95 transition"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Journal Entry
+        </button>
+      </div>
 
       {/* ── Context & Clarification Alert ── */}
       <div className="mt-5 flex items-start gap-3 rounded-2xl border border-blue-500/30 bg-blue-500/10 p-4 text-xs text-blue-900 dark:text-blue-200">
@@ -502,6 +517,14 @@ export default function JournalEntriesAndItemsPage() {
       {selectedEntryId && (
         <JournalEntryDetailModal entryId={selectedEntryId} onClose={() => setSelectedEntryId(null)} />
       )}
+
+      {/* ── New Journal Entry Form Modal ── */}
+      {showNewEntry && (
+        <JournalEntryFormModal
+          onClose={() => setShowNewEntry(false)}
+          onCreated={() => { setShowNewEntry(false); handleRefresh(); }}
+        />
+      )}
     </DashboardShell>
   );
 }
@@ -665,6 +688,235 @@ function JournalEntryDetailModal({ entryId, onClose }: { entryId: string; onClos
               </div>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Journal Entry Creation Form Modal ─────────────────────────────────────────
+interface JELine { account_id: string; name: string; debit: string; credit: string; partner_id: string; }
+const emptyJELine = (): JELine => ({ account_id: '', name: '', debit: '', credit: '', partner_id: '' });
+
+function JournalEntryFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [journalId, setJournalId] = useState('');
+  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [narration, setNarration] = useState('');
+  const [reference, setReference] = useState('');
+  const [lines, setLines] = useState<JELine[]>([emptyJELine(), emptyJELine()]);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [journals, setJournals] = useState<any[]>([]);
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [partners, setPartners] = useState<any[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const [jRes, aRes, pRes] = await Promise.all([
+        authedFetch('/api/v1/uanr/journals/?page_size=50'),
+        authedFetch('/api/v1/uanr/accounts/?page_size=200'),
+        authedFetch('/api/v1/uanr/partners/?page_size=200'),
+      ]);
+      if (jRes.ok) { const d = await jRes.json(); setJournals(d?.data?.items ?? d?.items ?? []); }
+      if (aRes.ok) { const d = await aRes.json(); setAccounts(d?.data?.items ?? d?.items ?? []); }
+      if (pRes.ok) { const d = await pRes.json(); setPartners(d?.data?.items ?? d?.items ?? []); }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    const j = journals.find((j: any) => j.journal_type === 'general');
+    if (j && !journalId) setJournalId(j.id);
+  }, [journals]);
+
+  const updateLine = (idx: number, field: keyof JELine, val: string) =>
+    setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, [field]: val } : l)));
+  const addLine = () => setLines((prev) => [...prev, emptyJELine()]);
+  const removeLine = (idx: number) => setLines((prev) => prev.filter((_, i) => i !== idx));
+
+  const totalDebit = lines.reduce((s, l) => s + (parseFloat(l.debit) || 0), 0);
+  const totalCredit = lines.reduce((s, l) => s + (parseFloat(l.credit) || 0), 0);
+  const isBalanced = Math.abs(totalDebit - totalCredit) < 0.0001;
+
+  const handleSubmit = async (andPost = false) => {
+    setFormError(null);
+    if (!journalId) { setFormError('Please select a journal.'); return; }
+    if (lines.some((l) => !l.account_id)) { setFormError('All lines must have an account.'); return; }
+    if (!isBalanced) { setFormError(`Entry is not balanced: Debit ${totalDebit.toFixed(3)} ≠ Credit ${totalCredit.toFixed(3)}`); return; }
+    if (totalDebit === 0) { setFormError('Entry amounts cannot be zero.'); return; }
+    setSubmitting(true);
+    try {
+      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cj = await cRes.json().catch(() => ({}));
+      const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
+      const payload = {
+        company_id: companyId,
+        journal_id: journalId,
+        entry_date: entryDate,
+        reference: reference || undefined,
+        narration: narration || undefined,
+        items: lines.filter((l) => l.account_id).map((l) => ({
+          account_id: l.account_id,
+          name: l.name || undefined,
+          debit: parseFloat(l.debit) || 0,
+          credit: parseFloat(l.credit) || 0,
+          partner_id: l.partner_id || undefined,
+        })),
+      };
+      const res = await authedFetch('/api/v1/uanr/journal-entries/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
+      const entryId = json?.data?.id;
+      if (andPost && entryId) {
+        const postRes = await authedFetch(`/api/v1/uanr/journal-entries/${entryId}/post/`, { method: 'POST' });
+        if (!postRes.ok) { const pj = await postRes.json().catch(() => ({})); throw new Error(pj?.detail ?? 'Post failed'); }
+      }
+      onCreated();
+    } catch (e: any) { setFormError(e.message); } finally { setSubmitting(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputCls = 'h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30';
+  const labelCls = 'block text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-3xl border border-border/60 bg-card shadow-2xl">
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-border/60 bg-card/95 backdrop-blur px-6 py-4 rounded-t-3xl">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-purple-500/10 text-purple-600">
+              <FileText className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-foreground">New Journal Entry</h3>
+              <p className="text-[11px] text-muted-foreground">Double-entry: debits must equal credits</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className={labelCls}>Journal *</label>
+              <select value={journalId} onChange={(e) => setJournalId(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="">— Select journal —</option>
+                {journals.map((j: any) => <option key={j.id} value={j.id}>{j.name} ({j.code})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Entry Date *</label>
+              <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Reference</label>
+              <input type="text" placeholder="Optional reference" value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} />
+            </div>
+            <div className="sm:col-span-3">
+              <label className={labelCls}>Narration / Memo</label>
+              <input type="text" placeholder="Describe this journal entry..." value={narration} onChange={(e) => setNarration(e.target.value)} className={inputCls} />
+            </div>
+          </div>
+
+          {/* Balance indicator */}
+          <div className={cn('flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-bold', isBalanced && totalDebit > 0 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-400')}>
+            <Scale className="h-4 w-4" />
+            Debit: {totalDebit.toLocaleString('en-US', { minimumFractionDigits: 3 })} KWD &nbsp;|&nbsp;
+            Credit: {totalCredit.toLocaleString('en-US', { minimumFractionDigits: 3 })} KWD &nbsp;|&nbsp;
+            {isBalanced && totalDebit > 0 ? '✓ Balanced' : `Difference: ${Math.abs(totalDebit - totalCredit).toFixed(3)} KWD`}
+          </div>
+
+          {/* Lines table */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-black uppercase tracking-wider text-muted-foreground">Journal Lines</h4>
+              <button onClick={addLine} className="flex items-center gap-1.5 rounded-lg border border-primary/40 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/10 transition">
+                <Plus className="h-3 w-3" /> Add Line
+              </button>
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-border/60">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[11px]">
+                  <thead className="border-b border-border/60 bg-muted/30 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <tr>
+                      <th className="px-3 py-2 min-w-[180px]">Account *</th>
+                      <th className="px-3 py-2 min-w-[140px]">Label / Description</th>
+                      <th className="px-3 py-2 min-w-[120px]">Partner</th>
+                      <th className="px-3 py-2 w-28 text-right">Debit</th>
+                      <th className="px-3 py-2 w-28 text-right">Credit</th>
+                      <th className="w-8" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40">
+                    {lines.map((line, idx) => (
+                      <tr key={idx} className="group">
+                        <td className="px-2 py-1.5">
+                          <select value={line.account_id} onChange={(e) => updateLine(idx, 'account_id', e.target.value)}
+                            className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40">
+                            <option value="">— Account —</option>
+                            {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.code} – {a.name}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input type="text" placeholder="Label" value={line.name} onChange={(e) => updateLine(idx, 'name', e.target.value)}
+                            className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <select value={line.partner_id} onChange={(e) => updateLine(idx, 'partner_id', e.target.value)}
+                            className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary/40">
+                            <option value="">— Optional —</option>
+                            {partners.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input type="number" min="0" step="any" placeholder="0.000" value={line.debit} onChange={(e) => updateLine(idx, 'debit', e.target.value)}
+                            className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] text-right focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <input type="number" min="0" step="any" placeholder="0.000" value={line.credit} onChange={(e) => updateLine(idx, 'credit', e.target.value)}
+                            className="h-7 w-full rounded-lg border border-border/60 bg-background px-2 text-[11px] text-right focus:outline-none focus:ring-1 focus:ring-primary/40" />
+                        </td>
+                        <td className="px-2 py-1.5 text-center">
+                          {lines.length > 2 && (
+                            <button onClick={() => removeLine(idx)} className="text-rose-400 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {formError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-600">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-3 border-t border-border/60 pt-4">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition">Discard</button>
+            <button onClick={() => handleSubmit(false)} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl border border-border/60 bg-card px-4 py-2 text-xs font-bold hover:bg-muted/60 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save Draft
+            </button>
+            <button onClick={() => handleSubmit(true)} disabled={submitting || !isBalanced}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+              Save & Post
+            </button>
+          </div>
         </div>
       </div>
     </div>

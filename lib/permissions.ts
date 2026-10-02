@@ -60,13 +60,13 @@ export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 // ─── User type constants ──────────────────────────────────────────────────────
 
 /** User types that are allowed to log in to the desk portal */
-export const ALLOWED_USER_TYPES = ['employee', 'staff', 'manager', 'admin', 'branch_manager'] as const;
+export const ALLOWED_USER_TYPES = ['employee', 'staff', 'manager', 'admin', 'administrator', 'superuser', 'branch_manager'] as const;
 
 /** User types considered "customer" — blocked from login */
 export const CUSTOMER_USER_TYPES = ['customer', 'client', 'user'] as const;
 
 /** Admin user types — bypass all permission checks */
-export const ADMIN_USER_TYPES = ['admin'] as const;
+export const ADMIN_USER_TYPES = ['admin', 'administrator', 'superuser'] as const;
 
 export type AllowedUserType = (typeof ALLOWED_USER_TYPES)[number];
 
@@ -75,10 +75,11 @@ export type AllowedUserType = (typeof ALLOWED_USER_TYPES)[number];
 /**
  * Returns true if the user_type is an admin.
  * Admins have full access to everything without needing explicit permissions.
+ * Recognised admin types: 'admin', 'administrator', 'superuser'.
  */
 export function isAdmin(userType: string | undefined | null): boolean {
   if (!userType) return false;
-  return ADMIN_USER_TYPES.includes(userType.toLowerCase() as 'admin');
+  return ADMIN_USER_TYPES.includes(userType.toLowerCase() as typeof ADMIN_USER_TYPES[number]);
 }
 
 /**

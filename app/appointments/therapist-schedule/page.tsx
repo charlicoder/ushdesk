@@ -92,10 +92,11 @@ interface ApiScheduleRecord {
 
 // ── Slot model ─────────────────────────────────────────────────────────────────
 
-type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress';
+type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress' | 'completed';
 
 interface Slot {
   status: SlotStatus;
+  booking_status?: string;
   payment_status?: string;
   client?: string;
   service?: string;
@@ -171,6 +172,18 @@ const STATUS_CFG = {
     btnCls:   'bg-blue-500 hover:bg-blue-600',
     btnLabel: 'Confirm Booking',
     Icon:     CalendarDays,
+  },
+  completed: {
+    label:    'Completed',
+    badge:    'COMPLETED',
+    dot:      'bg-[#2D241E]',
+    cardCls:  'border-2 border-[#B8A394] bg-[#D3C0B2] text-[#2D241E] shadow-sm hover:shadow-md hover:border-[#9E8776]',
+    badgeCls: 'text-[#2D241E] font-extrabold',
+    pillCls:  'bg-[#2D241E]/15 text-[#2D241E] border border-[#2D241E]/20',
+    iconCls:  'text-[#2D241E]',
+    btnCls:   'bg-[#7D6453] hover:bg-[#685243]',
+    btnLabel: 'Completed',
+    Icon:     CheckCircle2,
   },
   scheduled: {
     label:    'Scheduled',
@@ -448,12 +461,16 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   const cfg  = STATUS_CFG[slot.status as ActiveStatus] ?? STATUS_CFG.scheduled;
   const st   = (slot.status as ActiveStatus) in STATUS_CFG ? (slot.status as ActiveStatus) : 'scheduled';
 
+  const bookingStatus = ((slot as any).booking_status ?? slot.status ?? '').toLowerCase().trim();
+  const isCompleted = slot.status === 'completed' || bookingStatus === 'completed';
   const pStatus = (slot.payment_status ?? '').toLowerCase().trim();
-  const isPaid = pStatus === 'success' || pStatus === 'paid' || pStatus === 'completed';
-  const isPending = pStatus === 'pending' || pStatus === 'unpaid';
+  const isPaid = (pStatus === 'success' || pStatus === 'paid' || pStatus === 'completed') && !isCompleted;
+  const isPending = (pStatus === 'pending' || pStatus === 'unpaid') && !isCompleted;
 
-  // Background and border styling: green if success, red if pending, fallback to status
-  const cardBorderBg = isPaid
+  // Background and border styling: #D3C0B2 if completed, green if success, red if pending, fallback to status
+  const cardBorderBg = isCompleted
+    ? 'border-[#B8A394] bg-[#D3C0B2] text-[#2D241E] shadow-sm hover:shadow-md hover:border-[#9E8776]'
+    : isPaid
     ? 'border-emerald-400/80 dark:border-emerald-600/70 bg-gradient-to-br from-emerald-50 to-emerald-100/70 dark:from-emerald-950/70 dark:to-emerald-900/40 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-500'
     : isPending
     ? 'border-rose-400/80 dark:border-rose-600/70 bg-gradient-to-br from-rose-50 to-rose-100/70 dark:from-rose-950/70 dark:to-rose-900/40 shadow-sm shadow-rose-500/10 hover:shadow-rose-500/20 hover:border-rose-500'
@@ -463,7 +480,9 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     ? 'border-blue-300/70 dark:border-blue-600/50 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 shadow-sm shadow-blue-500/10 hover:shadow-blue-500/20 hover:border-blue-400'
     : 'border-violet-300/70 dark:border-violet-600/50 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 shadow-sm shadow-violet-500/10 hover:shadow-violet-500/20 hover:border-violet-400';
 
-  const accentBarColor = isPaid
+  const accentBarColor = isCompleted
+    ? 'bg-[#7D6453]'
+    : isPaid
     ? 'bg-emerald-500'
     : isPending
     ? 'bg-rose-500'
@@ -473,19 +492,25 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     ? 'bg-blue-500'
     : 'bg-violet-500';
 
-  const pillCls = isPaid
+  const pillCls = isCompleted
+    ? 'bg-[#2D241E]/15 text-[#2D241E] font-extrabold border border-[#2D241E]/20'
+    : isPaid
     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
     : isPending
     ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300'
     : cfg.pillCls;
 
-  const dotCls = isPaid
+  const dotCls = isCompleted
+    ? 'bg-[#2D241E]'
+    : isPaid
     ? 'bg-emerald-600'
     : isPending
     ? 'bg-rose-600'
     : cfg.dot;
 
-  const iconBgCls = isPaid
+  const iconBgCls = isCompleted
+    ? 'bg-[#2D241E]/15'
+    : isPaid
     ? 'bg-emerald-500/15'
     : isPending
     ? 'bg-rose-500/15'
@@ -495,13 +520,17 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     ? 'bg-blue-500/15'
     : 'bg-violet-500/15';
 
-  const iconCls = isPaid
+  const iconCls = isCompleted
+    ? 'text-[#2D241E]'
+    : isPaid
     ? 'text-emerald-600 dark:text-emerald-400'
     : isPending
     ? 'text-rose-600 dark:text-rose-400'
     : cfg.iconCls;
 
-  const durationCls = isPaid
+  const durationCls = isCompleted
+    ? 'bg-[#2D241E]/15 text-[#2D241E]'
+    : isPaid
     ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
     : isPending
     ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
@@ -511,8 +540,8 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
     : 'bg-violet-500/15 text-violet-700 dark:text-violet-300';
 
-  const badgeLabel = isPaid ? 'PAID' : isPending ? 'PENDING' : cfg.label;
-  const Icon = isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
+  const badgeLabel = isCompleted ? 'COMPLETED' : isPaid ? 'PAID' : isPending ? 'PENDING' : cfg.label;
+  const Icon = isCompleted ? CheckCircle2 : isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
 
   return (
     <div
@@ -520,6 +549,7 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+      style={isCompleted ? { backgroundColor: '#D3C0B2', borderColor: '#B8A394', color: '#2D241E' } : undefined}
       className={cn(
         'group relative h-full min-h-[82px] w-full flex rounded-xl overflow-hidden cursor-pointer select-none',
         'border transition-all duration-200 active:scale-[0.98]',
@@ -549,24 +579,24 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
         {/* Row 2: Customer full name and Service full name */}
         <div className="flex flex-col gap-0.5 min-w-0">
           {slot.client && (
-            <p className="text-xs font-bold leading-tight text-foreground truncate" title={slot.client}>
+            <p className={cn("text-xs font-bold leading-tight truncate", isCompleted ? "text-[#2D241E]" : "text-foreground")} title={slot.client}>
               {slot.client}
             </p>
           )}
           {slot.service && (
-            <p className="text-[10px] font-semibold leading-tight text-muted-foreground truncate" title={slot.service}>
+            <p className={cn("text-[10px] font-semibold leading-tight truncate", isCompleted ? "text-[#5C4A3E]" : "text-muted-foreground")} title={slot.service}>
               {slot.service}
             </p>
           )}
           {!slot.client && !slot.service && (
-            <p className="text-xs font-bold leading-tight text-foreground">
+            <p className={cn("text-xs font-bold leading-tight", isCompleted ? "text-[#2D241E]" : "text-foreground")}>
               Booked
             </p>
           )}
         </div>
 
         {/* Row 3: duration pill + time range */}
-        <div className="flex items-center justify-between gap-1 pt-1 border-t border-border/20 text-[10px]">
+        <div className={cn("flex items-center justify-between gap-1 pt-1 border-t text-[10px]", isCompleted ? "border-[#B8A394]/50" : "border-border/20")}>
           {slot.duration && (
             <span className={cn(
               'inline-flex items-center gap-[2px] rounded-md px-1 py-[2px] text-[9px] font-bold leading-none shrink-0',
@@ -577,7 +607,7 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
             </span>
           )}
           {slot.start && slot.end && (
-            <span className="text-[9px] font-semibold text-muted-foreground leading-none tabular-nums truncate">
+            <span className={cn("text-[9px] font-semibold leading-none tabular-nums truncate", isCompleted ? "text-[#5C4A3E]" : "text-muted-foreground")}>
               {slot.start}–{slot.end}
             </span>
           )}
@@ -762,7 +792,7 @@ function buildScheduleFromApi(
       endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
       duration:   `${durationMin}m`,
       reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
-      status:     bk.status ?? 'scheduled',
+      status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
       payment_status: paymentStatus || undefined,
     });
   }
@@ -779,12 +809,15 @@ function buildScheduleFromApi(
       const bk = bkSlots.find(b => b.startMin < slotEnd && b.endMin > slotStart);
       if (bk) {
         let st: SlotStatus = 'scheduled';
-        if (bk.status === 'in_progress') st = 'in_progress';
-        else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
+        const bkStatusLower = (bk.status ?? '').toLowerCase();
+        if (bkStatusLower === 'completed') st = 'completed';
+        else if (bkStatusLower === 'in_progress') st = 'in_progress';
+        else if (bkStatusLower === 'booking' || bkStatusLower === 'pending') st = 'booking';
         // Store full booking info on every overlapping slot.
         // The render layer handles span merging via look-ahead.
         sched[therapist.id][slotLabel] = {
           status: st,
+          booking_status: bk.status,
           client:    bk.client,
           service:   bk.service,
           start:     bk.startLabel,
@@ -923,90 +956,94 @@ export default function TherapistSchedulePage() {
         const data: ApiScheduleRecord[] = await res.json();
         const record = data?.[0] ?? null;
 
-        // ── Secondary fetch: enrich bookings with payment_status from booknpay / service-arrangements ──
+        // ── Secondary fetch: enrich bookings with status and payment_status from booknpay ──
         if (record?.bookings?.length) {
-          const needsEnrichment = record.bookings.some(bk => !bk.payment_status);
-          if (needsEnrichment) {
-            try {
-              const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedBranchId);
-              const branchParam = isUuid ? `&branch_id=${selectedBranchId}` : '';
-              const bpUrl = selectedDate
-                ? `/booknpay/api/v1/bookings?date=${selectedDate}${branchParam}&page_size=100`
-                : `/booknpay/api/v1/bookings?page_size=100`;
+          try {
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedBranchId);
+            const branchParam = isUuid ? `&branch_id=${selectedBranchId}` : '';
+            const bpUrl = selectedDate
+              ? `/booknpay/api/v1/bookings?date=${selectedDate}${branchParam}&page_size=100`
+              : `/booknpay/api/v1/bookings?page_size=100`;
 
-              const headers: Record<string, string> = {
-                'Content-Type':    'application/json',
-                'Accept':          'application/json',
-                'Accept-Language': locale,
-                ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-              };
+            const headers: Record<string, string> = {
+              'Content-Type':    'application/json',
+              'Accept':          'application/json',
+              'Accept-Language': locale,
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            };
 
-              const fetchTasks: Promise<any>[] = [
-                fetch(bpUrl, { signal: controller.signal, headers })
+            const fetchTasks: Promise<any>[] = [
+              fetch(bpUrl, { signal: controller.signal, headers })
+                .then(res => (res.ok ? res.json() : null))
+                .catch(() => null),
+            ];
+
+            if (isUuid && selectedDate) {
+              fetchTasks.push(
+                fetch(`/api/v1/service-arrangements/schedule/?branch_id=${selectedBranchId}&date=${selectedDate}`, {
+                  signal: controller.signal,
+                  headers,
+                })
                   .then(res => (res.ok ? res.json() : null))
-                  .catch(() => null),
-              ];
-
-              if (isUuid && selectedDate) {
-                fetchTasks.push(
-                  fetch(`/api/v1/service-arrangements/schedule/?branch_id=${selectedBranchId}&date=${selectedDate}`, {
-                    signal: controller.signal,
-                    headers,
-                  })
-                    .then(res => (res.ok ? res.json() : null))
-                    .catch(() => null)
-                );
-              }
-
-              const [bpResult, saResult] = await Promise.all(fetchTasks);
-
-              const payMap: Record<string, string> = {};
-
-              // Process booknpay bookings
-              if (bpResult) {
-                const bkList: Record<string, unknown>[] = Array.isArray(bpResult)
-                  ? bpResult
-                  : (bpResult?.data ?? bpResult?.results ?? []);
-                for (const bk of bkList) {
-                  const ps = String(bk.payment_status ?? (bk.payment_data as any)?.status ?? '').toLowerCase().trim();
-                  if (ps) {
-                    if (bk.id) payMap[String(bk.id)] = ps;
-                    if (bk.booking_id) payMap[String(bk.booking_id)] = ps;
-                    if (bk.bookings_id) payMap[String(bk.bookings_id)] = ps;
-                  }
-                }
-              }
-
-              // Process service-arrangements schedule
-              if (saResult) {
-                const records = Array.isArray(saResult) ? saResult : [saResult];
-                for (const rec of records) {
-                  const bks = Array.isArray(rec?.bookings) ? rec.bookings : [];
-                  for (const bk of bks) {
-                    const ps = String(bk?.payment_status ?? '').toLowerCase().trim();
-                    if (ps) {
-                      if (bk.id) payMap[String(bk.id)] = ps;
-                      if (bk.booking_id) payMap[String(bk.booking_id)] = ps;
-                      if (bk.bookings_id) payMap[String(bk.bookings_id)] = ps;
-                    }
-                  }
-                }
-              }
-
-              if (Object.keys(payMap).length > 0) {
-                record.bookings = record.bookings.map(bk => {
-                  if (bk.payment_status) return bk;
-                  const matchId = [
-                    String(bk.booking_id ?? ''),
-                    String(bk.bookings_id ?? ''),
-                    String(bk.id ?? ''),
-                  ].find(id => id && payMap[id]);
-                  return matchId ? { ...bk, payment_status: payMap[matchId] } : bk;
-                });
-              }
-            } catch {
-              // Secondary fetch failure is non-fatal — schedule still shows
+                  .catch(() => null)
+              );
             }
+
+            const [bpResult, saResult] = await Promise.all(fetchTasks);
+
+            const payMap: Record<string, string> = {};
+            const statusMap: Record<string, string> = {};
+
+            // Process booknpay bookings
+            if (bpResult) {
+              const bkList: Record<string, unknown>[] = Array.isArray(bpResult)
+                ? bpResult
+                : (bpResult?.data ?? bpResult?.results ?? []);
+              for (const bk of bkList) {
+                const ps = String(bk.payment_status ?? (bk.payment_data as any)?.status ?? '').toLowerCase().trim();
+                const st = String(bk.status ?? (bk as any).booking_status ?? '').toLowerCase().trim();
+                const ids = [bk.id, bk.booking_id, bk.bookings_id].filter(Boolean).map(String);
+                for (const id of ids) {
+                  if (ps) payMap[id] = ps;
+                  if (st) statusMap[id] = st;
+                }
+              }
+            }
+
+            // Process service-arrangements schedule
+            if (saResult) {
+              const records = Array.isArray(saResult) ? saResult : [saResult];
+              for (const rec of records) {
+                const bks = Array.isArray(rec?.bookings) ? rec.bookings : [];
+                for (const bk of bks) {
+                  const ps = String(bk?.payment_status ?? '').toLowerCase().trim();
+                  const st = String(bk?.status ?? (bk as any)?.booking_status ?? '').toLowerCase().trim();
+                  const ids = [bk.id, bk.booking_id, bk.bookings_id].filter(Boolean).map(String);
+                  for (const id of ids) {
+                    if (ps) payMap[id] = ps;
+                    if (st) statusMap[id] = st;
+                  }
+                }
+              }
+            }
+
+            if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0) {
+              record.bookings = record.bookings.map(bk => {
+                const matchId = [
+                  String(bk.booking_id ?? ''),
+                  String(bk.bookings_id ?? ''),
+                  String(bk.id ?? ''),
+                ].find(id => id && (payMap[id] || statusMap[id]));
+                if (!matchId) return bk;
+                return {
+                  ...bk,
+                  ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
+                  ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
+                };
+              });
+            }
+          } catch {
+            // Secondary fetch failure is non-fatal — schedule still shows
           }
         }
 
@@ -1311,17 +1348,17 @@ export default function TherapistSchedulePage() {
                       while (rowIdx < timeSlots.length) {
                         const time = timeSlots[rowIdx];
                         const slot = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
-                        const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
+                        const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress' || slot.status === 'completed';
                         let span = 1;
                         if (isBooked && slot.reference) {
                           while (rowIdx + span < timeSlots.length) {
                             const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
-                            if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') && nextSlot.reference === slot.reference) { span++; } else { break; }
+                            if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress' || nextSlot.status === 'completed') && nextSlot.reference === slot.reference) { span++; } else { break; }
                           }
                         } else if (isBooked && slot.start && slot.end) {
                           while (rowIdx + span < timeSlots.length) {
                             const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
-                            if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress') && nextSlot.start === slot.start && nextSlot.end === slot.end) { span++; } else { break; }
+                            if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress' || nextSlot.status === 'completed') && nextSlot.start === slot.start && nextSlot.end === slot.end) { span++; } else { break; }
                           }
                         }
                         cells.push(

@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
         const branchParam = isUuid ? `&branch_id=${branchId}` : '';
 
         const payMap = new Map<string, string>();
+        const statusMap = new Map<string, string>();
 
         try {
           const fetchPromises: Promise<any>[] = [];
@@ -49,10 +50,11 @@ export async function GET(req: NextRequest) {
                 const list = Array.isArray(json) ? json : (json?.data ?? json?.results ?? []);
                 for (const item of list) {
                   const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
-                  if (ps) {
-                    if (item.id) payMap.set(String(item.id), ps);
-                    if (item.booking_id) payMap.set(String(item.booking_id), ps);
-                    if (item.bookings_id) payMap.set(String(item.bookings_id), ps);
+                  const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+                  const ids = [item.id, item.booking_id, item.bookings_id].filter(Boolean).map(String);
+                  for (const id of ids) {
+                    if (ps) payMap.set(id, ps);
+                    if (st) statusMap.set(id, st);
                   }
                 }
               })
@@ -72,10 +74,11 @@ export async function GET(req: NextRequest) {
                     const bks = Array.isArray(rec?.bookings) ? rec.bookings : [];
                     for (const item of bks) {
                       const ps = String(item?.payment_status ?? '').toLowerCase().trim();
-                      if (ps) {
-                        if (item.id) payMap.set(String(item.id), ps);
-                        if (item.booking_id) payMap.set(String(item.booking_id), ps);
-                        if (item.bookings_id) payMap.set(String(item.bookings_id), ps);
+                      const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+                      const ids = [item.id, item.booking_id, item.bookings_id].filter(Boolean).map(String);
+                      for (const id of ids) {
+                        if (ps) payMap.set(id, ps);
+                        if (st) statusMap.set(id, st);
                       }
                     }
                   }
@@ -86,17 +89,22 @@ export async function GET(req: NextRequest) {
 
           await Promise.allSettled(fetchPromises);
 
-          if (payMap.size > 0) {
+          if (payMap.size > 0 || statusMap.size > 0) {
             for (const record of data) {
               if (!Array.isArray(record?.bookings)) continue;
               for (const bk of record.bookings) {
-                if (!bk.payment_status) {
-                  const matchedStatus =
-                    payMap.get(String(bk.booking_id ?? '')) ||
-                    payMap.get(String(bk.bookings_id ?? '')) ||
-                    payMap.get(String(bk.id ?? ''));
-                  if (matchedStatus) {
-                    bk.payment_status = matchedStatus;
+                const matchId = [
+                  String(bk.booking_id ?? ''),
+                  String(bk.bookings_id ?? ''),
+                  String(bk.id ?? ''),
+                ].find(id => id && (payMap.has(id) || statusMap.has(id)));
+
+                if (matchId) {
+                  if (payMap.has(matchId)) {
+                    bk.payment_status = payMap.get(matchId);
+                  }
+                  if (statusMap.has(matchId)) {
+                    bk.status = statusMap.get(matchId);
                   }
                 }
               }

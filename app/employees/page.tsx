@@ -19,6 +19,14 @@ import {
 } from '@/components/employees/EmployeeDetailModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+interface RoleItem {
+  id: string;
+  name: string;
+  department?: string | null;
+  description?: string;
+  is_active?: boolean;
+}
+
 interface Employee {
   id: string;
   employee_code: string;
@@ -27,6 +35,7 @@ interface Employee {
   last_name?: string;
   phone: string | null;
   email: string | null;
+  role_id?: string;
   role_name: string;
   department_name: string;
   is_therapist: boolean;
@@ -90,7 +99,13 @@ function normalise(raw: Record<string, unknown>): Employee {
     last_name:           last  || undefined,
     phone:               (raw.phone_number ?? raw.phone ?? raw.mobile ?? null) as string | null,
     email:               (raw.email ?? null) as string | null,
-    role_name:           String(raw.role_name ?? raw.role ?? raw.position ?? 'Staff'),
+    role_id:             String(raw.role_id ?? (typeof raw.role === 'object' && raw.role !== null ? (raw.role as Record<string, unknown>).id : '') ?? ''),
+    role_name:           String(
+      raw.role_name ??
+      (typeof raw.role === 'object' && raw.role !== null ? (raw.role as Record<string, unknown>).name : raw.role) ??
+      raw.position ??
+      'Staff'
+    ),
     department_name:     String(raw.department_name ?? raw.department ?? 'General'),
     is_therapist:        raw.is_therapist === true,
     can_do_home_service: raw.can_do_home_service === true,
@@ -108,8 +123,10 @@ const ROLE_COLORS: Record<string, string> = {
   'branch manager':   'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
   'manager':          'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
   'therapist':        'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  'senior therapist': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   'receptionist':     'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300',
   'admin':            'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+  'administrator':    'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
   'staff':            'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
 };
 
@@ -175,6 +192,7 @@ export default function EmployeesPage() {
   // API State
   const [rawEmployees,      setRawEmployees]      = useState<Record<string, unknown>[]>([]);
   const [responseBranches,  setResponseBranches]  = useState<BranchInfo[]>([]);
+  const [apiRoles,          setApiRoles]          = useState<RoleItem[]>([]);
   const [loading,           setLoading]           = useState(true);
   const [error,             setError]             = useState<string | null>(null);
   const [tick,              setTick]              = useState(0);
@@ -183,7 +201,6 @@ export default function EmployeesPage() {
   const [search,           setSearch]           = useState('');
   const [roleFilter,       setRoleFilter]       = useState('');
   const [branchFilter,     setBranchFilter]     = useState('');
-  const [homeOnly,         setHomeOnly]         = useState(false);
   const [viewMode,         setViewMode]         = useState<'grid' | 'list'>('grid');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
@@ -269,6 +286,48 @@ export default function EmployeesPage() {
     return () => { cancelled = true; };
   }, [token, initialized, locale, tick]);
 
+  // Fetch /uauth/api/v1/rbac/roles/ and populate role filter options
+  useEffect(() => {
+    if (!initialized) return;
+
+    let cancelled = false;
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept-Language': locale,
+    };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    authedFetch('/uauth/api/v1/rbac/roles/', { headers })
+      .then(async (res) => {
+        const json = await res.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (!res.ok) {
+          console.warn('[EmployeesPage] roles fetch failed:', res.status, json);
+          return;
+        }
+
+        let list: RoleItem[] = [];
+        if (Array.isArray(json)) {
+          list = json;
+        } else if (Array.isArray(json?.data)) {
+          list = json.data;
+        } else if (Array.isArray(json?.results)) {
+          list = json.results;
+        } else if (json?.data && Array.isArray(json.data.results)) {
+          list = json.data.results;
+        }
+
+        setApiRoles(list);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        console.warn('[EmployeesPage] roles fetch error:', err.message);
+      });
+
+    return () => { cancelled = true; };
+  }, [token, initialized, locale, tick]);
+
   const employees = useMemo(() => rawEmployees.map(normalise), [rawEmployees]);
 
   // Unified list of branches from response key `branches` + each employee item's branches
@@ -305,14 +364,20 @@ export default function EmployeesPage() {
     allBranches.map((b) => ({ value: b.id, label: b.name })),
   [allBranches]);
 
-  // Unique roles from real API keys
+  // Roles fetched from /uauth/api/v1/rbac/roles/ with fallback to distinct employee roles
   const roleOptions = useMemo(() => {
+    if (apiRoles.length > 0) {
+      return apiRoles
+        .filter((r) => r.is_active !== false && Boolean(r.name))
+        .map((r) => ({ value: r.name, label: r.name }));
+    }
+
     const set = new Set<string>();
     employees.forEach((e) => {
       if (e.role_name) set.add(e.role_name);
     });
     return Array.from(set).sort().map((r) => ({ value: r, label: r }));
-  }, [employees]);
+  }, [apiRoles, employees]);
 
   // Branch summary helper for card/table
   const getBranchSummary = (emp: Employee) => {
@@ -338,21 +403,21 @@ export default function EmployeesPage() {
         e.phone?.includes(q) ||
         e.employee_code.toLowerCase().includes(q) ||
         branchNames.includes(q);
-      const matchRole   = !roleFilter   || e.role_name === roleFilter;
+      const matchRole   = !roleFilter   ||
+        e.role_name.trim().toLowerCase() === roleFilter.trim().toLowerCase() ||
+        (Boolean(e.role_id) && e.role_id === roleFilter);
       const matchBranch = !branchFilter || e.branch_ids.length === 0 || e.branch_ids.includes(branchFilter);
-      const matchHome   = !homeOnly     || e.can_do_home_service;
-      return matchSearch && matchRole && matchBranch && matchHome;
+      return matchSearch && matchRole && matchBranch;
     });
-  }, [employees, search, roleFilter, branchFilter, homeOnly, branchMap]);
+  }, [employees, search, roleFilter, branchFilter, branchMap]);
 
   const active   = employees.filter((e) => e.status === 'active').length;
-  const hasFilter = Boolean(search || roleFilter || branchFilter || homeOnly);
+  const hasFilter = Boolean(search || roleFilter || branchFilter);
 
   const clearFilters = () => {
     setSearch('');
     setRoleFilter('');
     setBranchFilter('');
-    setHomeOnly(false);
   };
 
   return (
@@ -406,26 +471,12 @@ export default function EmployeesPage() {
 
         {/* Role filter */}
         <SelectFilter
+          icon={Briefcase}
           label="All Roles"
           value={roleFilter}
           options={roleOptions}
           onChange={setRoleFilter}
         />
-
-        {/* Home service toggle */}
-        <button
-          onClick={() => setHomeOnly((v) => !v)}
-          className={cn(
-            'flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-semibold transition cursor-pointer',
-            homeOnly
-              ? 'border-sky-400/60 bg-sky-500/10 text-sky-700 dark:text-sky-300 shadow-sm'
-              : 'border-border bg-card text-muted-foreground hover:border-sky-400/40 hover:text-sky-600',
-          )}
-        >
-          <Home className="h-4 w-4" />
-          Home Service
-          {homeOnly && <X className="h-3 w-3 ml-0.5 opacity-70" />}
-        </button>
 
         {hasFilter && (
           <button

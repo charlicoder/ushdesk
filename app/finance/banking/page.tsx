@@ -19,6 +19,9 @@ import {
   FileSpreadsheet,
   Wallet,
   ShieldCheck,
+  Plus,
+  Save,
+  Loader2,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -32,12 +35,14 @@ import {
   BankAccount,
   BankStatement,
 } from '@/hooks/use-accounting';
+import { authedFetch } from '@/lib/authedFetch';
 
 export default function BankingPage() {
   const [activeTab, setActiveTab]     = useState<'payments' | 'accounts' | 'statements'>('payments');
   const [paymentType, setPaymentType] = useState<'all' | 'inbound' | 'outbound'>('all');
   const [search, setSearch]           = useState<string>('');
   const [selectedPayment, setSelectedPayment] = useState<AccountingPayment | null>(null);
+  const [showNewPayment, setShowNewPayment] = useState(false);
 
   // Accounting Payments
   const {
@@ -97,10 +102,21 @@ export default function BankingPage() {
 
   return (
     <DashboardShell>
-      <PageHeader
-        title="Banking, Cash & Payments Ledger"
-        subtitle="Manage bank accounts, electronic disbursements, collections, and statement reconciliations"
-      />
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Banking, Cash & Payments Ledger"
+          subtitle="Manage bank accounts, electronic disbursements, collections, and statement reconciliations"
+        />
+        {activeTab === 'payments' && (
+          <button
+            onClick={() => setShowNewPayment(true)}
+            className="mt-1 flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:opacity-90 active:scale-95 transition"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Register Payment
+          </button>
+        )}
+      </div>
 
       {/* ── Summary Stats ── */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -461,6 +477,14 @@ export default function BankingPage() {
       {selectedPayment && (
         <PaymentDetailModal payment={selectedPayment} onClose={() => setSelectedPayment(null)} />
       )}
+
+      {/* ── New Payment Form Modal ── */}
+      {showNewPayment && (
+        <PaymentFormModal
+          onClose={() => setShowNewPayment(false)}
+          onCreated={() => { setShowNewPayment(false); refetchPayments(); }}
+        />
+      )}
     </DashboardShell>
   );
 }
@@ -534,6 +558,159 @@ function PaymentDetailModal({ payment, onClose }: { payment: AccountingPayment; 
               <span className="text-muted-foreground text-[10px] uppercase font-bold">Currency</span>
               <p className="font-semibold text-foreground mt-0.5">{payment.currency_code || 'KWD'}</p>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Register Payment Form Modal ─────────────────────────────────────────────────
+function PaymentFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [paymentType, setPaymentType] = useState<'inbound' | 'outbound'>('inbound');
+  const [partnerId, setPartnerId] = useState('');
+  const [journalId, setJournalId] = useState('');
+  const [amount, setAmount] = useState('0');
+  const [currency, setCurrency] = useState('KWD');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reference, setReference] = useState('');
+  const [memo, setMemo] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [partners, setPartners] = useState<any[]>([]);
+  const [journals, setJournals] = useState<any[]>([]);
+
+  useEffect(() => {
+    const load = async () => {
+      const [pRes, jRes] = await Promise.all([
+        authedFetch('/api/v1/uanr/partners/?page_size=200'),
+        authedFetch('/api/v1/uanr/journals/?page_size=50'),
+      ]);
+      if (pRes.ok) { const d = await pRes.json(); setPartners(d?.data?.items ?? d?.items ?? []); }
+      if (jRes.ok) { const d = await jRes.json(); setJournals(d?.data?.items ?? d?.items ?? []); }
+    };
+    load();
+  }, []);
+
+  useEffect(() => {
+    const j = journals.find((j: any) => j.journal_type === 'bank');
+    if (j && !journalId) setJournalId(j.id);
+  }, [journals]);
+
+  const handleSubmit = async () => {
+    setFormError(null);
+    if (!partnerId) { setFormError('Please select a partner.'); return; }
+    if (!journalId) { setFormError('Please select a journal.'); return; }
+    if (parseFloat(amount) <= 0) { setFormError('Amount must be greater than zero.'); return; }
+    setSubmitting(true);
+    try {
+      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cj = await cRes.json().catch(() => ({}));
+      const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
+      const payload = {
+        company_id: companyId,
+        payment_type: paymentType,
+        partner_id: partnerId,
+        journal_id: journalId,
+        amount: parseFloat(amount),
+        currency_code: currency,
+        payment_date: paymentDate,
+        reference: reference || undefined,
+        memo: memo || undefined,
+      };
+      const res = await authedFetch('/api/v1/uanr/payments/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
+      onCreated();
+    } catch (e: any) { setFormError(e.message); } finally { setSubmitting(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputCls = 'h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30';
+  const labelCls = 'block text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-lg rounded-3xl border border-border/60 bg-card shadow-2xl">
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-border/60 bg-card/95 backdrop-blur px-6 py-4 rounded-t-3xl">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-2xl bg-blue-500/10 text-blue-600">
+              <Wallet className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-foreground">Register Payment</h3>
+              <p className="text-[11px] text-muted-foreground">Inbound collection or outbound disbursement</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          {/* Type Toggle */}
+          <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 p-1 w-fit">
+            {(['inbound', 'outbound'] as const).map((t) => (
+              <button key={t} onClick={() => setPaymentType(t)}
+                className={cn('rounded-lg px-4 py-1.5 text-xs font-bold transition capitalize', paymentType === t ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground')}>
+                {t === 'inbound' ? '↓ Receive' : '↑ Send'}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className={labelCls}>Partner *</label>
+              <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="">— Select partner —</option>
+                {partners.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Journal / Bank Account *</label>
+              <select value={journalId} onChange={(e) => setJournalId(e.target.value)} className={cn(inputCls, 'h-8')}>
+                <option value="">— Select journal —</option>
+                {journals.map((j: any) => <option key={j.id} value={j.id}>{j.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Currency</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={cn(inputCls, 'h-8')}>
+                {['KWD','USD','EUR','GBP','AED','SAR'].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Amount *</label>
+              <input type="number" min="0" step="0.001" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Payment Date *</label>
+              <input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Reference</label>
+              <input type="text" placeholder="Check no., wire ref..." value={reference} onChange={(e) => setReference(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Memo</label>
+              <input type="text" placeholder="Internal memo" value={memo} onChange={(e) => setMemo(e.target.value)} className={inputCls} />
+            </div>
+          </div>
+          {formError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-600">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-3 border-t border-border/60 pt-4">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition">Cancel</button>
+            <button onClick={handleSubmit} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Register Payment
+            </button>
           </div>
         </div>
       </div>

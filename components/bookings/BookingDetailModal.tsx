@@ -11,13 +11,14 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   X, Loader2, AlertCircle, CheckCircle2, User, Scissors, MapPin,
   CalendarDays, Clock, Timer, Package, DollarSign, StickyNote,
-  Hash, RefreshCw, CreditCard, Building2, Ban, Banknote,
+  Hash, RefreshCw, CreditCard, Building2, Ban, Banknote, Printer,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from './RescheduleBookingModal';
+import { BookingReceiptModal } from './BookingReceiptModal';
 
 export interface PaymentProviderConfig {
   id: string;
@@ -167,6 +168,8 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   const [paymentSubmitLoading, setPaymentSubmitLoading] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState<string | null>(null);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [printUpdating, setPrintUpdating] = useState(false);
 
   // Close on Escape
   useEffect(() => {
@@ -263,6 +266,40 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     }
   };
 
+  // Print receipt — updates status to completed if not yet completed, then opens receipt modal
+  const handlePrintReceipt = async () => {
+    setPrintUpdating(true);
+    try {
+      if (status !== 'completed') {
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+          body: JSON.stringify({
+            status: 'completed',
+            reason: 'Receipt Printed / Service Completed',
+            source: 'ushdesk',
+          }),
+        });
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          console.warn('[BookingDetailModal] Status update error:', json);
+        }
+        await fetchBooking();
+        onSuccess?.();
+      }
+      setShowReceiptModal(true);
+    } catch (err) {
+      console.error('[BookingDetailModal] Error updating status:', err);
+      setShowReceiptModal(true);
+    } finally {
+      setPrintUpdating(false);
+    }
+  };
+
   // Validate cancellation policy (Administrator, Branch Manager, Finance Manager, Customer Support Manager can cancel anytime; others require >= 12h)
   const cancellationEligibility = checkBookingCancellationEligibility(booking, roleInfo, user);
   const canCancel = cancellationEligibility.canCancel;
@@ -324,6 +361,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
   if (bk) console.log('[BookingDetailModal] raw booking:', JSON.stringify(bk, null, 2));
 
   const status    = String(bk?.status ?? bk?.booking_status ?? 'scheduled').toLowerCase();
+  const isCompleted = status === 'completed';
   const ss        = statusStyle(status);
   const bookingNum = String(bk?.booking_number ?? '').replace('undefined', '').replace('null', '');
   const ref       = String(
@@ -422,36 +460,91 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      <div className={cn(
-        'relative z-10 w-full max-h-[90vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden transition-all duration-200',
-        isPending ? 'max-w-2xl sm:max-w-[760px]' : 'max-w-lg'
-      )}>
+      <div
+        className={cn(
+          'relative z-10 w-full max-h-[90vh] flex flex-col rounded-3xl border shadow-2xl overflow-hidden transition-all duration-200',
+          'max-w-3xl sm:max-w-4xl lg:max-w-[880px]',
+          isCompleted
+            ? 'booking-completed-modal border-[#B8A394] text-[#2D241E]'
+            : 'border-border/60 bg-card text-foreground'
+        )}
+        style={isCompleted ? { backgroundColor: '#D3C0B2', color: '#2D241E' } : undefined}
+      >
+        {isCompleted && (
+          <style>{`
+            .booking-completed-modal {
+              background-color: #D3C0B2 !important;
+              color: #2D241E !important;
+            }
+            .booking-completed-modal h2,
+            .booking-completed-modal h3,
+            .booking-completed-modal p,
+            .booking-completed-modal span:not([class*="bg-"]):not([class*="text-violet"]):not([class*="text-emerald"]):not([class*="text-rose"]) {
+              color: #2D241E;
+            }
+            .booking-completed-modal .text-foreground {
+              color: #2D241E !important;
+            }
+            .booking-completed-modal .text-muted-foreground {
+              color: #69584D !important;
+            }
+            .booking-completed-modal .border-border\/40,
+            .booking-completed-modal .border-border\/50,
+            .booking-completed-modal .border-border\/60,
+            .booking-completed-modal .border-border {
+              border-color: rgba(105, 88, 77, 0.25) !important;
+            }
+            .booking-completed-modal .bg-muted\/20,
+            .booking-completed-modal .bg-muted\/30,
+            .booking-completed-modal .bg-muted\/40,
+            .booking-completed-modal .bg-muted\/50,
+            .booking-completed-modal .bg-muted\/60,
+            .booking-completed-modal .bg-muted {
+              background-color: rgba(255, 255, 255, 0.45) !important;
+            }
+            .booking-completed-modal .bg-card {
+              background-color: rgba(255, 255, 255, 0.6) !important;
+            }
+          `}</style>
+        )}
 
         {/* Status accent bar */}
-        <div className={cn('h-1.5 w-full bg-gradient-to-r shrink-0', ss.bar)} />
+        <div className={cn('h-1.5 w-full bg-gradient-to-r shrink-0', isCompleted ? 'bg-[#7D6453]' : ss.bar)} />
 
         {/* Header */}
-        <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
+        <div className={cn(
+          'shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b',
+          isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
+        )}>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <p className="text-[11px] font-mono font-semibold text-muted-foreground truncate">{ref}</p>
+              <Hash className={cn('h-3.5 w-3.5 shrink-0', isCompleted ? 'text-[#69584D]' : 'text-muted-foreground')} />
+              <p className={cn('text-[11px] font-mono font-semibold truncate', isCompleted ? 'text-[#69584D]' : 'text-muted-foreground')}>{ref}</p>
             </div>
-            <h2 className="text-base font-extrabold leading-tight">Booking Details</h2>
+            <h2 className={cn('text-base font-extrabold leading-tight', isCompleted ? 'text-[#2D241E]' : 'text-foreground')}>Booking Details</h2>
             {!loading && bk && (
               <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-                <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold', ss.pill)}>
-                  <span className={cn('h-1.5 w-1.5 rounded-full', ss.dot)} />
+                <span className={cn(
+                  'inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
+                  isCompleted ? 'bg-[#5C7359]/20 text-[#244221] border border-[#5C7359]/40' : ss.pill
+                )}>
+                  <span className={cn('h-1.5 w-1.5 rounded-full', isCompleted ? 'bg-[#244221]' : ss.dot)} />
                   {status.replace(/_/g, ' ')}
                 </span>
                 {bk?.payment_status && (
-                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-muted text-muted-foreground">
+                  <span className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
+                    isCompleted ? 'bg-[#3D5A6C]/15 text-[#1B3A4B] border border-[#3D5A6C]/30' : 'bg-muted text-muted-foreground'
+                  )}>
                     <CreditCard className="h-2.5 w-2.5" />
                     {String(bk.payment_status).replace(/_/g, ' ')}
                   </span>
                 )}
                 {bookingNum && (
-                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300">
+                  <span className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
+                    isCompleted ? 'bg-[#7A5C43]/15 text-[#4A3221] border border-[#7A5C43]/30' : 'bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300'
+                  )}>
                     <Hash className="h-2.5 w-2.5" />
                     {bookingNum}
                   </span>
@@ -460,7 +553,10 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
             )}
           </div>
           <button onClick={onClose}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition"
+            className={cn(
+              'grid h-8 w-8 shrink-0 place-items-center rounded-xl transition cursor-pointer',
+              isCompleted ? 'bg-black/10 hover:bg-black/20 text-[#2D241E]' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground'
+            )}
             aria-label="Close">
             <X className="h-4 w-4" />
           </button>
@@ -678,26 +774,51 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
           const isCancelled = status === 'cancelled';
           const isPaid = rawPaymentStatus === 'success' || rawPaymentStatus === 'paid' || rawPaymentStatus === 'completed';
           const isPending = rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || paymentSuccess;
+          const isConfirmedAndPaid = status === 'confirmed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
+          const isCompletedAndPaid = status === 'completed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
+          const showPrintReceiptBtn = isConfirmedAndPaid || isCompletedAndPaid;
 
           return (
-            <div className="shrink-0 flex flex-col border-t border-border/40 px-6 py-4 gap-2.5">
-              {!isCancelled && !cancelDone && !canCancel && cancellationEligibility.reason && (
+            <div className={cn(
+              'shrink-0 flex flex-col border-t px-6 py-4 gap-2.5',
+              isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
+            )}>
+              {!isCancelled && !cancelDone && !isCompleted && !canCancel && cancellationEligibility.reason && (
                 <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                   <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                   <span>{cancellationEligibility.reason}</span>
                 </div>
               )}
-              <div className="flex items-center gap-2.5 sm:gap-3">
+              <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
                 <button
                   onClick={onClose}
                   className={cn(
-                    'rounded-xl border border-border/60 bg-muted/40 py-2.5 px-4 text-sm font-semibold hover:bg-muted transition whitespace-nowrap cursor-pointer',
-                    !isPending && 'flex-1'
+                    'rounded-xl py-2.5 px-4 text-sm font-semibold transition whitespace-nowrap cursor-pointer',
+                    isCompleted
+                      ? 'border border-[#B8A394] bg-white/40 hover:bg-white/60 text-[#2D241E]'
+                      : 'border border-border/60 bg-muted/40 hover:bg-muted text-foreground',
+                    !isPending && !showPrintReceiptBtn && !(!isCancelled && !cancelDone && !isCompleted) && 'flex-1'
                   )}
                 >
                   Close
                 </button>
-                {!isCancelled && !cancelDone && (
+                {showPrintReceiptBtn && (
+                  <button
+                    type="button"
+                    onClick={handlePrintReceipt}
+                    disabled={printUpdating}
+                    className={cn(
+                      'inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition active:scale-[0.98] whitespace-nowrap cursor-pointer disabled:opacity-60',
+                      isCompleted
+                        ? 'bg-[#3D2F27] hover:bg-[#281E18] text-white'
+                        : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white'
+                    )}
+                  >
+                    {printUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                    {printUpdating ? 'Completing…' : 'Print Receipt'}
+                  </button>
+                )}
+                {!isCancelled && !cancelDone && !isCompleted && (
                   <>
                     <button
                       type="button"
@@ -888,6 +1009,46 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
             fetchBooking();
             onSuccess?.();
           }}
+        />
+      )}
+
+      {/* ── Booking Receipt Modal Preview & Print ── */}
+      {showReceiptModal && (
+        <BookingReceiptModal
+          data={{
+            bookingNumber: bk?.booking_number,
+            reference: ref,
+            customerName: customerName !== '\u2014' ? customerName : null,
+            customerPhone: customerPhone !== '\u2014' ? customerPhone : null,
+            customerEmail: customerEmail !== '\u2014' ? customerEmail : null,
+            branchName: branchName !== '\u2014' ? branchName : null,
+            arrangementName: arrName !== '\u2014' ? arrName : null,
+            therapistName: therapistName !== '\u2014' ? therapistName : null,
+            serviceName: svcName !== '\u2014' ? svcName : null,
+            serviceCategory: svcCategory !== '\u2014' ? svcCategory : null,
+            servicePrice: pricing?.service_price ?? svcObj?.price ?? bk?.service_price ?? totalPrice,
+            appointmentStart: isoStart,
+            appointmentEnd: isoEnd,
+            timeSlot: rawTimeSlot !== '\u2014' ? rawTimeSlot : null,
+            appointmentDate: dateRaw !== '\u2014' ? dateRaw : null,
+            totalDuration: duration,
+            serviceDuration: svcObj?.duration_minutes ?? svcObj?.base_duration,
+            addons: addons.map((a) => ({
+              name: a.name || a.addon_name,
+              price: a.price || a.base_price,
+              duration: a.duration_minutes || a.duration,
+            })),
+            currency,
+            totalAmount: totalPrice,
+            status: 'completed',
+            paymentStatus: rawPaymentStatus || 'success',
+            paymentMethod: bk?.payment_method || bk?.payment_provider || 'Desk Payment',
+            paymentProvider: bk?.payment_provider || bk?.payment_gateway,
+            transactionId: bk?.transaction_id || bk?.payment_data?.transaction_id,
+            referenceId: bk?.reference_id || bk?.payment_data?.reference_id,
+            paidAt: bk?.paid_at || bk?.payment_data?.paid_at,
+          }}
+          onClose={() => setShowReceiptModal(false)}
         />
       )}
     </div>

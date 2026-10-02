@@ -6,7 +6,7 @@ import {
   ChevronDown, Calendar, Clock, MapPin, User, Scissors,
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
-  History, Info, UserCheck, Copy, Check, Plus, Banknote,
+  History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
 } from 'lucide-react';
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -16,6 +16,7 @@ import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
+import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Booking {
@@ -458,6 +459,8 @@ function BookingDetailModal({
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [printUpdating, setPrintUpdating] = useState(false);
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
@@ -497,7 +500,9 @@ function BookingDetailModal({
   }, [booking?.id]);
 
   if (!booking) return null;
-  const accentBar = STATUS_BAR[booking.status] ?? 'bg-slate-400';
+  const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
+  const isCompleted = curStatus === 'completed';
+  const accentBar = isCompleted ? 'bg-[#7D6453]' : (STATUS_BAR[booking.status] ?? 'bg-slate-400');
 
   // Whether payment is pending (not paid yet)
   const isPaymentPending = !booking.is_paid && booking.payment_status !== 'success' && booking.status !== 'cancelled' && booking.status !== 'completed';
@@ -579,6 +584,40 @@ function BookingDetailModal({
     }
   };
 
+  const handlePrintReceipt = async () => {
+    if (!booking) return;
+    setPrintUpdating(true);
+    try {
+      const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
+      if (curStatus !== 'completed') {
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            status: 'completed',
+            reason: 'Receipt Printed / Service Completed',
+            source: 'ushdesk',
+          }),
+        });
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          console.warn('[BookingDetailModal] Status update warning:', json);
+        }
+        setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
+        onSuccess?.();
+      }
+      setShowReceiptModal(true);
+    } catch (err) {
+      console.error('[BookingDetailModal] Error updating status:', err);
+      setShowReceiptModal(true);
+    } finally {
+      setPrintUpdating(false);
+    }
+  };
+
   return (
     <>
       {/* Payment Provider Modal (nested, z-60) */}
@@ -593,51 +632,116 @@ function BookingDetailModal({
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
         {/* Widened when payment pending to fit buttons nicely */}
-        <div className={cn(
-          'relative z-10 w-full max-h-[92vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden transition-all duration-200',
-          isPaymentPending ? 'max-w-3xl sm:max-w-[760px]' : 'max-w-2xl'
-        )}>
+        <div
+          className={cn(
+            'relative z-10 w-full max-h-[92vh] flex flex-col rounded-3xl border shadow-2xl overflow-hidden transition-all duration-200',
+            'max-w-3xl sm:max-w-4xl lg:max-w-[880px]',
+            isCompleted
+              ? 'booking-completed-modal border-[#B8A394] text-[#2D241E]'
+              : 'border-border/60 bg-card text-foreground'
+          )}
+          style={isCompleted ? { backgroundColor: '#D3C0B2', color: '#2D241E' } : undefined}
+        >
+          {isCompleted && (
+            <style>{`
+              .booking-completed-modal {
+                background-color: #D3C0B2 !important;
+                color: #2D241E !important;
+              }
+              .booking-completed-modal h2,
+              .booking-completed-modal h3,
+              .booking-completed-modal p,
+              .booking-completed-modal span:not([class*="bg-"]):not([class*="text-primary"]):not([class*="text-emerald"]):not([class*="text-rose"]) {
+                color: #2D241E;
+              }
+              .booking-completed-modal .text-foreground {
+                color: #2D241E !important;
+              }
+              .booking-completed-modal .text-muted-foreground {
+                color: #69584D !important;
+              }
+              .booking-completed-modal .border-border\/40,
+              .booking-completed-modal .border-border\/50,
+              .booking-completed-modal .border-border\/60,
+              .booking-completed-modal .border-border {
+                border-color: rgba(105, 88, 77, 0.25) !important;
+              }
+              .booking-completed-modal .bg-muted\/20,
+              .booking-completed-modal .bg-muted\/30,
+              .booking-completed-modal .bg-muted\/40,
+              .booking-completed-modal .bg-muted\/50,
+              .booking-completed-modal .bg-muted\/60,
+              .booking-completed-modal .bg-muted {
+                background-color: rgba(255, 255, 255, 0.45) !important;
+              }
+              .booking-completed-modal .bg-card {
+                background-color: rgba(255, 255, 255, 0.6) !important;
+              }
+            `}</style>
+          )}
+
           <div className={cn('h-1.5 w-full shrink-0', accentBar)} />
 
           {/* Header */}
-          <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
+          <div className={cn(
+            'shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b',
+            isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
+          )}>
             <div className="flex items-center gap-3">
               <CustomerAvatar name={booking.customer_name} size="lg" />
               <div>
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Customer</p>
-                <p className="text-base font-extrabold leading-tight">{booking.customer_name}</p>
-                {booking.customer_phone && <p className="text-xs text-muted-foreground mt-0.5">{booking.customer_phone}</p>}
-                {booking.customer_email && <p className="text-xs text-muted-foreground">{booking.customer_email}</p>}
+                <p className={cn('text-[11px] font-semibold uppercase tracking-wider', isCompleted ? 'text-[#69584D]' : 'text-muted-foreground')}>Customer</p>
+                <p className={cn('text-base font-extrabold leading-tight', isCompleted ? 'text-[#2D241E]' : 'text-foreground')}>{booking.customer_name}</p>
+                {booking.customer_phone && <p className={cn('text-xs mt-0.5', isCompleted ? 'text-[#69584D]' : 'text-muted-foreground')}>{booking.customer_phone}</p>}
+                {booking.customer_email && <p className={cn('text-xs', isCompleted ? 'text-[#69584D]' : 'text-muted-foreground')}>{booking.customer_email}</p>}
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0 mt-1">
-              <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize', statusStyle(booking.status))}>
-                {booking.status === 'confirmed' || booking.status === 'completed' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                {booking.status}
+              <span className={cn(
+                'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize',
+                isCompleted
+                  ? 'bg-[#5C7359]/20 text-[#244221] border border-[#5C7359]/40'
+                  : statusStyle(curStatus || booking.status)
+              )}>
+                {curStatus === 'confirmed' || curStatus === 'completed' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {curStatus || booking.status}
               </span>
               {/* Payment status badge */}
               {booking.payment_status && (
-                <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize', paymentStyle(booking.payment_status))}>
+                <span className={cn(
+                  'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize',
+                  isCompleted
+                    ? 'bg-[#3D5A6C]/15 text-[#1B3A4B] border border-[#3D5A6C]/30'
+                    : paymentStyle(booking.payment_status)
+                )}>
                   <CreditCard className="h-3 w-3" />
                   {booking.payment_status}
                 </span>
               )}
-              <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition cursor-pointer" aria-label="Close">
+              <button onClick={onClose}
+                className={cn(
+                  'grid h-8 w-8 place-items-center rounded-xl transition cursor-pointer',
+                  isCompleted ? 'bg-black/10 hover:bg-black/20 text-[#2D241E]' : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground'
+                )}
+                aria-label="Close">
                 <X className="h-4 w-4" />
               </button>
             </div>
           </div>
 
           {/* Tabs */}
-          <div className="shrink-0 flex border-b border-border/40 px-6 bg-muted/20">
+          <div className={cn(
+            'shrink-0 flex border-b px-6',
+            isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/25' : 'border-border/40 bg-muted/20'
+          )}>
             <button
               type="button"
               onClick={() => setActiveTab('details')}
               className={cn(
                 'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
                 activeTab === 'details'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
+                  ? isCompleted ? 'border-[#3D2F27] text-[#2D241E]' : 'border-primary text-primary'
+                  : isCompleted ? 'border-transparent text-[#69584D] hover:text-[#2D241E]' : 'border-transparent text-muted-foreground hover:text-foreground'
               )}
             >
               <Info className="h-3.5 w-3.5" />
@@ -649,14 +753,17 @@ function BookingDetailModal({
               className={cn(
                 'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
                 activeTab === 'history'
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground'
+                  ? isCompleted ? 'border-[#3D2F27] text-[#2D241E]' : 'border-primary text-primary'
+                  : isCompleted ? 'border-transparent text-[#69584D] hover:text-[#2D241E]' : 'border-transparent text-muted-foreground hover:text-foreground'
               )}
             >
               <History className="h-3.5 w-3.5" />
               Audit &amp; Payment Info
               {historyList.length > 0 && (
-                <span className="rounded-full bg-primary/10 text-primary px-1.5 py-0.2 text-[10px] font-bold">
+                <span className={cn(
+                  'rounded-full px-1.5 py-0.2 text-[10px] font-bold',
+                  isCompleted ? 'bg-[#3D2F27]/10 text-[#3D2F27]' : 'bg-primary/10 text-primary'
+                )}>
                   {historyList.length}
                 </span>
               )}
@@ -1002,8 +1109,11 @@ function BookingDetailModal({
           </div>
 
           {/* Footer — up to 4 buttons when payment pending */}
-          <div className="shrink-0 border-t border-border/40 px-6 py-4 flex flex-col gap-2.5">
-            {!canCancel && booking.status !== 'cancelled' && cancellationEligibility.reason && (
+          <div className={cn(
+            'shrink-0 border-t px-6 py-4 flex flex-col gap-2.5',
+            isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
+          )}>
+            {!canCancel && booking.status !== 'cancelled' && !isCompleted && cancellationEligibility.reason && (
               <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 <span>{cancellationEligibility.reason}</span>
@@ -1012,7 +1122,7 @@ function BookingDetailModal({
             <div className="flex flex-wrap items-center gap-2 justify-between">
               {/* Left side: Cancel & Reschedule */}
               <div className="flex items-center gap-2">
-                {booking.status !== 'cancelled' && (
+                {booking.status !== 'cancelled' && !isCompleted && (
                   <>
                     <button
                       type="button"
@@ -1058,7 +1168,38 @@ function BookingDetailModal({
                     <ExternalLink className="h-3.5 w-3.5" /> Open Payment
                   </a>
                 )}
-                <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer whitespace-nowrap">
+                {(() => {
+                  const rawPaymentStatus = String(detail?.payment_status ?? (detail as any)?.paymentStatus ?? booking.payment_status ?? '').toLowerCase().trim();
+                  const isConfirmedAndPaid = curStatus === 'confirmed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
+                  const isCompletedAndPaid = curStatus === 'completed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
+                  const showPrintReceiptBtn = isConfirmedAndPaid || isCompletedAndPaid;
+                  if (!showPrintReceiptBtn) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={handlePrintReceipt}
+                      disabled={printUpdating}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer whitespace-nowrap disabled:opacity-60',
+                        isCompleted
+                          ? 'bg-[#3D2F27] hover:bg-[#281E18] text-white'
+                          : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white'
+                      )}
+                    >
+                      {printUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
+                      {printUpdating ? 'Completing…' : 'Print Receipt'}
+                    </button>
+                  );
+                })()}
+                <button
+                  onClick={onClose}
+                  className={cn(
+                    'rounded-xl px-4 py-2.5 text-xs font-semibold transition cursor-pointer whitespace-nowrap',
+                    isCompleted
+                      ? 'border border-[#B8A394] bg-white/40 hover:bg-white/60 text-[#2D241E]'
+                      : 'border border-border/60 bg-muted/40 hover:bg-muted text-foreground'
+                  )}
+                >
                   Close
                 </button>
               </div>
@@ -1077,6 +1218,49 @@ function BookingDetailModal({
             onSuccess?.();
             onClose();
           }}
+        />
+      )}
+
+      {/* Booking Receipt Modal Preview & Print */}
+      {showReceiptModal && (
+        <BookingReceiptModal
+          data={{
+            bookingNumber: booking.booking_number,
+            reference: booking.booking_number || booking.id,
+            customerName: booking.customer_name,
+            customerPhone: booking.customer_phone,
+            customerEmail: booking.customer_email,
+            branchName: booking.branch_name,
+            arrangementName: booking.arrangement_name,
+            therapistName: booking.therapist_name,
+            serviceName: booking.service_name,
+            serviceCategory: booking.service_category,
+            servicePrice: servicePrice,
+            appointmentStart: booking.appointment_start,
+            appointmentEnd: booking.appointment_end,
+            appointmentDate: formatDate(booking.appointment_start),
+            timeSlot: `${formatTime(booking.appointment_start)} – ${formatTime(booking.appointment_end)}`,
+            totalDuration: totalDuration,
+            serviceDuration: serviceDuration,
+            addonsDuration: addonsDuration,
+            extraMinutes: extraMinutes,
+            extraPrice: extraPrice,
+            addons: addons.map((a, idx) => ({
+              name: String(a.name ?? a.addon_name ?? `Addon #${idx + 1}`),
+              price: parseFloat(String(a.price ?? a.base_price ?? '0')) || 0,
+              duration: Number(a.duration_minutes ?? a.duration ?? 0),
+            })),
+            currency: currency,
+            totalAmount: computedTotal,
+            status: 'completed',
+            paymentStatus: String(detail?.payment_status ?? booking.payment_status ?? 'success'),
+            paymentMethod: booking.payment_method || booking.payment_provider || 'Desk Payment',
+            paymentProvider: booking.payment_provider || booking.payment_gateway,
+            transactionId: String(paymentDataObj?.transaction_id ?? ''),
+            referenceId: String(paymentDataObj?.reference_id ?? ''),
+            paidAt: String(paymentDataObj?.paid_at ?? ''),
+          }}
+          onClose={() => setShowReceiptModal(false)}
         />
       )}
     </>

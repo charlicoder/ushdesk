@@ -150,7 +150,7 @@ export function LocalBookingDetailModal({ appointment, token, onClose, onStatusC
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative z-10 w-full max-w-lg max-h-[90vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+      <div className="relative z-10 w-full max-w-2xl sm:max-w-3xl max-h-[90vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
 
         {/* Status accent bar */}
         <div className={cn('h-1.5 w-full bg-gradient-to-r shrink-0', styles.bar)} />

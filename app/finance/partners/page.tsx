@@ -25,6 +25,9 @@ import {
   ExternalLink,
   Globe,
   Clock,
+  Plus,
+  Save,
+  Loader2,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -34,6 +37,7 @@ import {
   formatAccountingDate,
   Partner,
 } from '@/hooks/use-accounting';
+import { authedFetch } from '@/lib/authedFetch';
 
 function partnerInitials(name: string) {
   if (!name) return '?';
@@ -55,6 +59,7 @@ export default function PartnersPage() {
   const [search, setSearch]         = useState<string>('');
   const [view, setView]             = useState<'list' | 'grid'>('list');
   const [selected, setSelected]     = useState<Partner | null>(null);
+  const [showNewPartner, setShowNewPartner] = useState(false);
 
   const {
     items: rawPartners,
@@ -100,10 +105,19 @@ export default function PartnersPage() {
 
   return (
     <DashboardShell>
-      <PageHeader
-        title="Business Partners"
-        subtitle="Manage verified vendor records, customer accounts, suppliers, and commercial partners"
-      />
+      <div className="flex items-start justify-between gap-3">
+        <PageHeader
+          title="Business Partners"
+          subtitle="Manage verified vendor records, customer accounts, suppliers, and commercial partners"
+        />
+        <button
+          onClick={() => setShowNewPartner(true)}
+          className="mt-1 flex shrink-0 items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-md hover:opacity-90 active:scale-95 transition"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New Partner
+        </button>
+      </div>
 
       {/* ── Summary Stats ── */}
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -457,6 +471,14 @@ export default function PartnersPage() {
 
       {/* ── Partner Details Modal ── */}
       {selected && <PartnerModal partner={selected} onClose={() => setSelected(null)} />}
+
+      {/* ── New Partner Form Modal ── */}
+      {showNewPartner && (
+        <PartnerFormModal
+          onClose={() => setShowNewPartner(false)}
+          onCreated={() => { setShowNewPartner(false); refetch(); }}
+        />
+      )}
     </DashboardShell>
   );
 }
@@ -596,6 +618,170 @@ function PartnerModal({ partner, onClose }: { partner: Partner; onClose: () => v
                 <p className="font-semibold text-foreground mt-0.5">{formatAccountingDate(partner.created_at)}</p>
               </div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── New Partner Form Modal ─────────────────────────────────────────────────────
+function PartnerFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState('');
+  const [partnerType, setPartnerType] = useState('customer');
+  const [isCustomer, setIsCustomer] = useState(true);
+  const [isVendor, setIsVendor] = useState(false);
+  const [isCompany, setIsCompany] = useState(false);
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [mobile, setMobile] = useState('');
+  const [street, setStreet] = useState('');
+  const [city, setCity] = useState('');
+  const [countryCode, setCountryCode] = useState('KW');
+  const [taxId, setTaxId] = useState('');
+  const [paymentTermsDays, setPaymentTermsDays] = useState('0');
+  const [currency, setCurrency] = useState('KWD');
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const handleSubmit = async () => {
+    setFormError(null);
+    if (!name.trim()) { setFormError('Partner name is required.'); return; }
+    setSubmitting(true);
+    try {
+      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cj = await cRes.json().catch(() => ({}));
+      const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
+      const payload = {
+        company_id: companyId,
+        name: name.trim(),
+        partner_type: partnerType,
+        is_customer: isCustomer,
+        is_vendor: isVendor,
+        is_company: isCompany,
+        email: email || undefined,
+        phone: phone || undefined,
+        mobile: mobile || undefined,
+        street: street || undefined,
+        city: city || undefined,
+        country_code: countryCode || undefined,
+        tax_id: taxId || undefined,
+        payment_terms_days: parseInt(paymentTermsDays) || 0,
+        currency_code: currency,
+        notes: notes || undefined,
+      };
+      const res = await authedFetch('/api/v1/uanr/partners/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
+      onCreated();
+    } catch (e: any) { setFormError(e.message); } finally { setSubmitting(false); }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  const inputCls = 'h-8 w-full rounded-lg border border-border/60 bg-background px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30';
+  const labelCls = 'block text-[10px] font-bold uppercase tracking-wide text-muted-foreground mb-1';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-xs" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-2xl max-h-[95vh] overflow-y-auto rounded-3xl border border-border/60 bg-card shadow-2xl">
+        <div className="sticky top-0 z-20 flex items-center justify-between border-b border-border/60 bg-card/95 backdrop-blur px-6 py-4 rounded-t-3xl">
+          <div className="flex items-center gap-3">
+            <div className="grid h-9 w-9 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <Handshake className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-foreground">New Business Partner</h3>
+              <p className="text-[11px] text-muted-foreground">Customer, vendor, or supplier</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:text-foreground transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          {/* Type selector */}
+          <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 p-1 w-fit">
+            {(['customer', 'vendor', 'both'] as const).map((t) => (
+              <button key={t} onClick={() => { setPartnerType(t === 'both' ? 'customer' : t); setIsCustomer(t !== 'vendor'); setIsVendor(t !== 'customer'); }}
+                className={cn('rounded-lg px-3 py-1.5 text-xs font-bold transition capitalize', (t === 'customer' && isCustomer && !isVendor) || (t === 'vendor' && isVendor && !isCustomer) || (t === 'both' && isCustomer && isVendor) ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground')}>
+                {t === 'both' ? 'Customer & Vendor' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className={labelCls}>Partner / Company Name *</label>
+              <input type="text" placeholder="Full legal name" value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Email</label>
+              <input type="email" placeholder="contact@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Phone</label>
+              <input type="tel" placeholder="+965 XXXX XXXX" value={phone} onChange={(e) => setPhone(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Mobile</label>
+              <input type="tel" placeholder="+965 XXXX XXXX" value={mobile} onChange={(e) => setMobile(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Tax / VAT ID</label>
+              <input type="text" placeholder="Tax registration number" value={taxId} onChange={(e) => setTaxId(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Street / Address</label>
+              <input type="text" placeholder="Street address" value={street} onChange={(e) => setStreet(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>City</label>
+              <input type="text" placeholder="City" value={city} onChange={(e) => setCity(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Country Code</label>
+              <input type="text" placeholder="e.g. KW, US, GB" maxLength={3} value={countryCode} onChange={(e) => setCountryCode(e.target.value.toUpperCase())} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Payment Terms (days)</label>
+              <input type="number" min="0" value={paymentTermsDays} onChange={(e) => setPaymentTermsDays(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Currency</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={cn(inputCls, 'h-8')}>
+                {['KWD','USD','EUR','GBP','AED','SAR'].map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 text-xs">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={isCompany} onChange={(e) => setIsCompany(e.target.checked)} className="rounded" />
+              <span>Is a Company (not individual)</span>
+            </label>
+          </div>
+          <div>
+            <label className={labelCls}>Notes</label>
+            <textarea rows={2} placeholder="Internal notes..." value={notes} onChange={(e) => setNotes(e.target.value)}
+              className="w-full rounded-xl border border-border/60 bg-background px-3 py-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30" />
+          </div>
+          {formError && (
+            <div className="flex items-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs text-rose-600">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {formError}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-3 border-t border-border/60 pt-4">
+            <button onClick={onClose} className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition">Cancel</button>
+            <button onClick={handleSubmit} disabled={submitting}
+              className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 disabled:opacity-60 transition">
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Create Partner
+            </button>
           </div>
         </div>
       </div>

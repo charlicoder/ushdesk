@@ -73,10 +73,11 @@ interface ApiScheduleRecord {
 
 // ── Slot model ─────────────────────────────────────────────────────────────────
 
-type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress';
+type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress' | 'completed';
 
 interface Slot {
   status: SlotStatus;
+  booking_status?: string;
   payment_status?: string;
   serviceName?: string;
   capacity?: number;
@@ -129,6 +130,18 @@ function getInitials(name: string): string {
 
 // ── Shared status config ───────────────────────────────────────────────────────
 const STATUS_CFG = {
+  completed: {
+    label:    'Completed',
+    badge:    'COMPLETED',
+    dot:      'bg-[#2D241E]',
+    cardCls:  'border-2 border-[#B8A394] bg-[#D3C0B2] text-[#2D241E] shadow-sm hover:shadow-md hover:border-[#9E8776]',
+    badgeCls: 'text-[#2D241E] font-extrabold',
+    pillCls:  'bg-[#2D241E]/15 text-[#2D241E]',
+    iconCls:  'text-[#2D241E]',
+    btnCls:   'bg-[#7D6453] hover:bg-[#685344]',
+    btnLabel: 'View Completed',
+    Icon:     CheckCircle2,
+  },
   in_progress: {
     label:    'In Progress',
     badge:    'IN PROGRESS',
@@ -442,12 +455,16 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
   const cfg = STATUS_CFG[slot.status as ActiveStatus] ?? STATUS_CFG.scheduled;
   const st = (slot.status as ActiveStatus) in STATUS_CFG ? (slot.status as ActiveStatus) : 'scheduled';
 
+  const bookingStatus = ((slot as any).booking_status ?? slot.status ?? '').toLowerCase().trim();
+  const isCompleted = slot.status === 'completed' || bookingStatus === 'completed';
   const pStatus = (slot.payment_status ?? '').toLowerCase().trim();
-  const isPaid = pStatus === 'success' || pStatus === 'paid' || pStatus === 'completed';
-  const isPending = pStatus === 'pending' || pStatus === 'unpaid';
+  const isPaid = (pStatus === 'success' || pStatus === 'paid' || pStatus === 'completed') && !isCompleted;
+  const isPending = (pStatus === 'pending' || pStatus === 'unpaid') && !isCompleted;
 
-  // Background and border styling: green if success, red if pending, fallback to status
-  const cardBorderBg = isPaid
+  // Background and border styling: #D3C0B2 if completed, green if success, red if pending, fallback to status
+  const cardBorderBg = isCompleted
+    ? 'border-[#B8A394] bg-[#D3C0B2] text-[#2D241E] shadow-sm hover:shadow-md hover:border-[#9E8776]'
+    : isPaid
     ? 'border-emerald-400/80 dark:border-emerald-600/70 bg-gradient-to-br from-emerald-50 to-emerald-100/70 dark:from-emerald-950/70 dark:to-emerald-900/40 shadow-sm shadow-emerald-500/10 hover:shadow-emerald-500/20 hover:border-emerald-500'
     : isPending
     ? 'border-rose-400/80 dark:border-rose-600/70 bg-gradient-to-br from-rose-50 to-rose-100/70 dark:from-rose-950/70 dark:to-rose-900/40 shadow-sm shadow-rose-500/10 hover:shadow-rose-500/20 hover:border-rose-500'
@@ -457,7 +474,9 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
     ? 'border-blue-300/70 dark:border-blue-600/50 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 shadow-sm shadow-blue-500/10 hover:shadow-blue-500/20 hover:border-blue-400'
     : 'border-violet-300/70 dark:border-violet-600/50 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 shadow-sm shadow-violet-500/10 hover:shadow-violet-500/20 hover:border-violet-400';
 
-  const accentBarColor = isPaid
+  const accentBarColor = isCompleted
+    ? 'bg-[#7D6453]'
+    : isPaid
     ? 'bg-emerald-500'
     : isPending
     ? 'bg-rose-500'
@@ -467,19 +486,25 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
     ? 'bg-blue-500'
     : 'bg-violet-500';
 
-  const pillCls = isPaid
+  const pillCls = isCompleted
+    ? 'bg-[#2D241E]/15 text-[#2D241E] font-extrabold border border-[#2D241E]/20'
+    : isPaid
     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
     : isPending
     ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300'
     : cfg.pillCls;
 
-  const dotCls = isPaid
+  const dotCls = isCompleted
+    ? 'bg-[#2D241E]'
+    : isPaid
     ? 'bg-emerald-600'
     : isPending
     ? 'bg-rose-600'
     : cfg.dot;
 
-  const iconBgCls = isPaid
+  const iconBgCls = isCompleted
+    ? 'bg-[#2D241E]/15'
+    : isPaid
     ? 'bg-emerald-500/15'
     : isPending
     ? 'bg-rose-500/15'
@@ -489,13 +514,17 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
     ? 'bg-blue-500/15'
     : 'bg-violet-500/15';
 
-  const iconCls = isPaid
+  const iconCls = isCompleted
+    ? 'text-[#2D241E]'
+    : isPaid
     ? 'text-emerald-600 dark:text-emerald-400'
     : isPending
     ? 'text-rose-600 dark:text-rose-400'
     : cfg.iconCls;
 
-  const durationCls = isPaid
+  const durationCls = isCompleted
+    ? 'bg-[#2D241E]/15 text-[#2D241E]'
+    : isPaid
     ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
     : isPending
     ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
@@ -505,8 +534,8 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
     ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
     : 'bg-violet-500/15 text-violet-700 dark:text-violet-300';
 
-  const badgeLabel = isPaid ? 'PAID' : isPending ? 'PENDING' : cfg.label;
-  const Icon = isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
+  const badgeLabel = isCompleted ? 'COMPLETED' : isPaid ? 'PAID' : isPending ? 'PENDING' : cfg.label;
+  const Icon = isCompleted ? CheckCircle2 : isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
 
   return (
     <div
@@ -514,6 +543,7 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+      style={isCompleted ? { backgroundColor: '#D3C0B2', borderColor: '#B8A394', color: '#2D241E' } : undefined}
       className={cn(
         'group relative h-full min-h-[82px] flex rounded-xl overflow-hidden cursor-pointer select-none',
         'border transition-all duration-200 active:scale-[0.98]',
@@ -541,12 +571,12 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
         </div>
 
         {/* Row 2: service name — wraps up to 2 lines */}
-        <p className="text-[11px] font-bold leading-tight text-foreground line-clamp-2 min-h-[24px] truncate" title={slot.serviceName || 'Booked'}>
+        <p className={cn("text-[11px] font-bold leading-tight line-clamp-2 min-h-[24px] truncate", isCompleted ? "text-[#2D241E]" : "text-foreground")} title={slot.serviceName || 'Booked'}>
           {slot.serviceName || 'Booked'}
         </p>
 
         {/* Row 3: duration + time range */}
-        <div className="flex items-center justify-between gap-1 pt-1 border-t border-border/20 text-[10px]">
+        <div className={cn("flex items-center justify-between gap-1 pt-1 border-t text-[10px]", isCompleted ? "border-[#B8A394]/50" : "border-border/20")}>
           {slot.duration && (
             <span className={cn(
               'inline-flex items-center gap-[2px] rounded-md px-1 py-[2px] text-[9px] font-bold leading-none shrink-0',
@@ -557,7 +587,7 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
             </span>
           )}
           {slot.start && slot.end && (
-            <span className="text-[9px] font-semibold text-muted-foreground leading-none tabular-nums truncate">
+            <span className={cn("text-[9px] font-semibold leading-none tabular-nums truncate", isCompleted ? "text-[#5C4A3E]" : "text-muted-foreground")}>
               {slot.start}–{slot.end}
             </span>
           )}
@@ -572,10 +602,14 @@ function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }
   const cfg   = STATUS_CFG[slot.status as ActiveStatus] ?? STATUS_CFG.scheduled;
   const st    = (slot.status as ActiveStatus) in STATUS_CFG ? (slot.status as ActiveStatus) : 'scheduled';
   const pStat = (slot.payment_status ?? '').toLowerCase().trim();
-  const isPaid    = pStat === 'success' || pStat === 'paid' || pStat === 'completed';
-  const isPending = pStat === 'pending'  || pStat === 'unpaid';
+  const bookingStatus = ((slot as any).booking_status ?? slot.status ?? '').toLowerCase().trim();
+  const isCompleted = slot.status === 'completed' || bookingStatus === 'completed';
+  const isPaid    = (pStat === 'success' || pStat === 'paid' || pStat === 'completed') && !isCompleted;
+  const isPending = (pStat === 'pending'  || pStat === 'unpaid') && !isCompleted;
 
-  const cardCls = isPaid
+  const cardCls = isCompleted
+    ? 'border-[#B8A394] bg-[#D3C0B2] text-[#2D241E] hover:border-[#9E8776] shadow-sm'
+    : isPaid
     ? 'border-emerald-400/80 bg-gradient-to-br from-emerald-50 to-emerald-100/70 dark:from-emerald-950/70 dark:to-emerald-900/40 hover:border-emerald-500 shadow-sm shadow-emerald-500/10'
     : isPending
     ? 'border-rose-400/80 bg-gradient-to-br from-rose-50 to-rose-100/70 dark:from-rose-950/70 dark:to-rose-900/40 hover:border-rose-500 shadow-sm shadow-rose-500/10'
@@ -585,26 +619,33 @@ function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }
     ? 'border-blue-300/70 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/60 dark:to-blue-900/30 hover:border-blue-400'
     : 'border-violet-300/70 bg-gradient-to-br from-violet-50 to-violet-100/50 dark:from-violet-950/60 dark:to-violet-900/30 hover:border-violet-400';
 
-  const accentBar = isPaid ? 'bg-emerald-500'
+  const accentBar = isCompleted ? 'bg-[#7D6453]'
+    : isPaid ? 'bg-emerald-500'
     : isPending ? 'bg-rose-500'
     : st === 'in_progress' ? 'bg-emerald-500'
     : st === 'booking' ? 'bg-blue-500' : 'bg-violet-500';
 
-  const pillCls = isPaid
+  const pillCls = isCompleted
+    ? 'bg-[#2D241E]/15 text-[#2D241E] font-extrabold border border-[#2D241E]/20'
+    : isPaid
     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
     : isPending
     ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/50 dark:text-rose-300'
     : cfg.pillCls;
-  const dotCls     = isPaid ? 'bg-emerald-600' : isPending ? 'bg-rose-600' : cfg.dot;
-  const badgeLabel = isPaid ? 'PAID'  : isPending ? 'PENDING' : cfg.label;
-  const Icon       = isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
-  const iconCls    = isPaid ? 'text-emerald-600 dark:text-emerald-400'
+  const dotCls     = isCompleted ? 'bg-[#2D241E]' : isPaid ? 'bg-emerald-600' : isPending ? 'bg-rose-600' : cfg.dot;
+  const badgeLabel = isCompleted ? 'COMPLETED' : isPaid ? 'PAID'  : isPending ? 'PENDING' : cfg.label;
+  const Icon       = isCompleted ? CheckCircle2 : isPaid ? CheckCircle2 : isPending ? Clock : cfg.Icon;
+  const iconCls    = isCompleted ? 'text-[#2D241E]'
+    : isPaid ? 'text-emerald-600 dark:text-emerald-400'
     : isPending ? 'text-rose-600 dark:text-rose-400' : cfg.iconCls;
-  const iconBgCls  = isPaid ? 'bg-emerald-500/15'
+  const iconBgCls  = isCompleted ? 'bg-[#2D241E]/15'
+    : isPaid ? 'bg-emerald-500/15'
     : isPending ? 'bg-rose-500/15'
     : st === 'in_progress' ? 'bg-emerald-500/15'
     : st === 'booking' ? 'bg-blue-500/15' : 'bg-violet-500/15';
-  const durCls = isPaid
+  const durCls = isCompleted
+    ? 'bg-[#2D241E]/15 text-[#2D241E]'
+    : isPaid
     ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
     : isPending
     ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
@@ -618,6 +659,7 @@ function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }
       tabIndex={0}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+      style={isCompleted ? { backgroundColor: '#D3C0B2', borderColor: '#B8A394', color: '#2D241E' } : undefined}
       className={cn(
         'group relative flex flex-1 rounded-lg overflow-hidden cursor-pointer select-none min-h-[60px]',
         'border transition-all duration-200 active:scale-[0.98]',
@@ -641,17 +683,17 @@ function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }
             <Icon className={cn('h-2 w-2', iconCls)} />
           </div>
         </div>
-        <p className="text-[9px] font-bold leading-tight text-foreground truncate" title={slot.serviceName || 'Booked'}>
+        <p className={cn("text-[9px] font-bold leading-tight truncate", isCompleted ? "text-[#2D241E]" : "text-foreground")} title={slot.serviceName || 'Booked'}>
           {slot.serviceName || 'Booked'}
         </p>
-        <div className="flex items-center gap-1 pt-0.5 border-t border-border/20">
+        <div className={cn("flex items-center gap-1 pt-0.5 border-t", isCompleted ? "border-[#B8A394]/50" : "border-border/20")}>
           {slot.duration && (
             <span className={cn('inline-flex items-center gap-[1px] rounded px-0.5 py-[1px] text-[7px] font-bold leading-none shrink-0', durCls)}>
               <Timer className="h-2 w-2 shrink-0" />{slot.duration}
             </span>
           )}
           {slot.start && slot.end && (
-            <span className="text-[7px] font-medium text-muted-foreground leading-none tabular-nums truncate">
+            <span className={cn("text-[7px] font-medium leading-none tabular-nums truncate", isCompleted ? "text-[#5C4A3E]" : "text-muted-foreground")}>
               {slot.start}–{slot.end}
             </span>
           )}
@@ -858,7 +900,7 @@ function buildScheduleFromApi(
       duration:    `${durationMin}m`,
       reference:   bk.id,
       bookingsId:  bk.bookings_id,
-      status:      bk.status ?? 'confirmed',
+      status:      bk.status ?? (bk as any).booking_status ?? 'confirmed',
       serviceName: bk.service_name ?? '',
       payment_status: paymentStatus || undefined,
     });
@@ -887,10 +929,13 @@ function buildScheduleFromApi(
     // Build a Slot object for a single booking entry
     const makeSlot = (bk: BkEntry): Slot => {
       let st: SlotStatus = 'scheduled';
-      if (bk.status === 'in_progress') st = 'in_progress';
-      else if (bk.status === 'booking' || bk.status === 'pending') st = 'booking';
+      const bkStatusLower = (bk.status ?? '').toLowerCase().trim();
+      if (bkStatusLower === 'completed') st = 'completed';
+      else if (bkStatusLower === 'in_progress') st = 'in_progress';
+      else if (bkStatusLower === 'booking' || bkStatusLower === 'pending') st = 'booking';
       return {
         status:         st,
+        booking_status: bk.status,
         serviceName:    bk.serviceName || arr.name,
         capacity:       arr.capacity,
         start:          bk.startLabel,
@@ -1058,7 +1103,63 @@ export default function BranchAppointmentsPage() {
           throw new Error((body as Record<string, string>).detail ?? `Error ${res.status}`);
         }
         const data: ApiScheduleRecord[] = await res.json();
-        setScheduleData(data?.[0] ?? null);
+        const record = data?.[0] ?? null;
+
+        // ── Secondary fetch: enrich bookings with status and payment_status from booknpay ──
+        if (record?.bookings?.length) {
+          try {
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedBranchId);
+            const branchParam = isUuid ? `&branch_id=${selectedBranchId}` : '';
+            const bpUrl = selectedDate
+              ? `/booknpay/api/v1/bookings?date=${selectedDate}${branchParam}&page_size=100`
+              : `/booknpay/api/v1/bookings?page_size=100`;
+
+            const headers: Record<string, string> = {
+              'Content-Type':    'application/json',
+              'Accept':          'application/json',
+              'Accept-Language': locale,
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+            };
+
+            const bpRes = await fetch(bpUrl, { signal: controller.signal, headers }).catch(() => null);
+            if (bpRes && bpRes.ok) {
+              const bpJson = await bpRes.json().catch(() => null);
+              if (bpJson) {
+                const list = Array.isArray(bpJson) ? bpJson : (bpJson?.data ?? bpJson?.results ?? []);
+                const payMap: Record<string, string> = {};
+                const statusMap: Record<string, string> = {};
+                for (const item of list) {
+                  const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
+                  const st = String(item?.status ?? (item as any)?.booking_status ?? '').toLowerCase().trim();
+                  const ids = [item.id, item.booking_id, item.bookings_id].filter(Boolean).map(String);
+                  for (const id of ids) {
+                    if (ps) payMap[id] = ps;
+                    if (st) statusMap[id] = st;
+                  }
+                }
+                if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0) {
+                  record.bookings = record.bookings.map(bk => {
+                    const matchId = [
+                      String((bk as any).booking_id ?? bk.bookings_id ?? ''),
+                      String(bk.bookings_id ?? ''),
+                      String(bk.id ?? ''),
+                    ].find(id => id && (payMap[id] || statusMap[id]));
+                    if (!matchId) return bk;
+                    return {
+                      ...bk,
+                      ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
+                      ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
+                    };
+                  });
+                }
+              }
+            }
+          } catch {
+            // Secondary fetch failure is non-fatal
+          }
+        }
+
+        setScheduleData(record);
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         setError(err instanceof Error ? err.message : 'Failed to load schedule');
@@ -1353,7 +1454,7 @@ export default function BranchAppointmentsPage() {
                         // Skip continuation slots — covered by the head cell's grid span
                         if (slot.isCont) { rowIdx++; continue; }
 
-                        const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress';
+                        const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress' || slot.status === 'completed';
                         // Determine if this slot has bookings with remaining capacity
                         const slotBookings: Slot[] = slot.groupBookings ?? (isBooked ? [slot] : []);
                         const bookedHere = slotBookings.length;

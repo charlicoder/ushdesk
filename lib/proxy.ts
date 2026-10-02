@@ -72,7 +72,7 @@ export function getDefaultCompanyId(): string {
     process.env['NEXT_PUBLIC_DEFAULT_COMPANY_ID'] ||
     process.env.COMPANY_ID ||
     process.env['COMPANY_ID'] ||
-    'f70caa2a-a435-4928-b7b1-7cb016619848'
+    '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68'
   ).trim();
 }
 
