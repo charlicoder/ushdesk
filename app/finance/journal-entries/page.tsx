@@ -540,7 +540,7 @@ function JournalEntryDetailModal({ entryId, onClose }: { entryId: string; onClos
     setLoading(true);
     setError(null);
 
-    authedFetch(`/api/v1/uanr/journal-entries/${entryId}`)
+    authedFetch(`/uanr/api/v1/journal-entries/${entryId}`)
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
         if (cancelled) return;
@@ -713,9 +713,9 @@ function JournalEntryFormModal({ onClose, onCreated }: { onClose: () => void; on
   useEffect(() => {
     const load = async () => {
       const [jRes, aRes, pRes] = await Promise.all([
-        authedFetch('/api/v1/uanr/journals/?page_size=50'),
-        authedFetch('/api/v1/uanr/accounts/?page_size=200'),
-        authedFetch('/api/v1/uanr/partners/?page_size=200'),
+        authedFetch('/uanr/api/v1/journals/?page_size=50'),
+        authedFetch('/uanr/api/v1/accounts/?page_size=200'),
+        authedFetch('/uanr/api/v1/partners/?page_size=200'),
       ]);
       if (jRes.ok) { const d = await jRes.json(); setJournals(d?.data?.items ?? d?.items ?? []); }
       if (aRes.ok) { const d = await aRes.json(); setAccounts(d?.data?.items ?? d?.items ?? []); }
@@ -746,7 +746,7 @@ function JournalEntryFormModal({ onClose, onCreated }: { onClose: () => void; on
     if (totalDebit === 0) { setFormError('Entry amounts cannot be zero.'); return; }
     setSubmitting(true);
     try {
-      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cRes = await authedFetch('/uanr/api/v1/companies/');
       const cj = await cRes.json().catch(() => ({}));
       const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
       const payload = {
@@ -763,12 +763,12 @@ function JournalEntryFormModal({ onClose, onCreated }: { onClose: () => void; on
           partner_id: l.partner_id || undefined,
         })),
       };
-      const res = await authedFetch('/api/v1/uanr/journal-entries/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await authedFetch('/uanr/api/v1/journal-entries/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
       const entryId = json?.data?.id;
       if (andPost && entryId) {
-        const postRes = await authedFetch(`/api/v1/uanr/journal-entries/${entryId}/post/`, { method: 'POST' });
+        const postRes = await authedFetch(`/uanr/api/v1/journal-entries/${entryId}/post/`, { method: 'POST' });
         if (!postRes.ok) { const pj = await postRes.json().catch(() => ({})); throw new Error(pj?.detail ?? 'Post failed'); }
       }
       onCreated();

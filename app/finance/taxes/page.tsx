@@ -415,7 +415,7 @@ function TaxFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
     if (!name.trim()) { setFormError('Tax name is required.'); return; }
     setSubmitting(true);
     try {
-      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cRes = await authedFetch('/uanr/api/v1/companies/');
       const cj = await cRes.json().catch(() => ({}));
       const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
       const payload = {
@@ -428,7 +428,7 @@ function TaxFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
         include_in_price: includeInPrice,
         is_active: true,
       };
-      const res = await authedFetch('/api/v1/uanr/taxes/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await authedFetch('/uanr/api/v1/taxes/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
       onCreated();

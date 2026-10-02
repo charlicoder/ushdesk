@@ -650,7 +650,7 @@ function PartnerFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
     if (!name.trim()) { setFormError('Partner name is required.'); return; }
     setSubmitting(true);
     try {
-      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cRes = await authedFetch('/uanr/api/v1/companies/');
       const cj = await cRes.json().catch(() => ({}));
       const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
       const payload = {
@@ -671,7 +671,7 @@ function PartnerFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
         currency_code: currency,
         notes: notes || undefined,
       };
-      const res = await authedFetch('/api/v1/uanr/partners/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await authedFetch('/uanr/api/v1/partners/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
       onCreated();

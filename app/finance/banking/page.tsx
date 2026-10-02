@@ -583,8 +583,8 @@ function PaymentFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
   useEffect(() => {
     const load = async () => {
       const [pRes, jRes] = await Promise.all([
-        authedFetch('/api/v1/uanr/partners/?page_size=200'),
-        authedFetch('/api/v1/uanr/journals/?page_size=50'),
+        authedFetch('/uanr/api/v1/partners/?page_size=200'),
+        authedFetch('/uanr/api/v1/journals/?page_size=50'),
       ]);
       if (pRes.ok) { const d = await pRes.json(); setPartners(d?.data?.items ?? d?.items ?? []); }
       if (jRes.ok) { const d = await jRes.json(); setJournals(d?.data?.items ?? d?.items ?? []); }
@@ -604,7 +604,7 @@ function PaymentFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
     if (parseFloat(amount) <= 0) { setFormError('Amount must be greater than zero.'); return; }
     setSubmitting(true);
     try {
-      const cRes = await authedFetch('/api/v1/uanr/companies/');
+      const cRes = await authedFetch('/uanr/api/v1/companies/');
       const cj = await cRes.json().catch(() => ({}));
       const companyId = cj?.data?.items?.[0]?.id ?? cj?.items?.[0]?.id;
       const payload = {
@@ -618,7 +618,7 @@ function PaymentFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
         reference: reference || undefined,
         memo: memo || undefined,
       };
-      const res = await authedFetch('/api/v1/uanr/payments/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await authedFetch('/uanr/api/v1/payments/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
       onCreated();

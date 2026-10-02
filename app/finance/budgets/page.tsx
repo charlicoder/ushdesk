@@ -304,7 +304,7 @@ function BudgetVarianceModal({ budget, onClose }: { budget: Budget; onClose: () 
     setLoading(true);
     setError(null);
 
-    authedFetch(`/api/v1/uanr/budgets/${budget.id}/variance`)
+    authedFetch(`/uanr/api/v1/budgets/${budget.id}/variance`)
       .then(async (res) => {
         const json = await res.json().catch(() => ({}));
         if (cancelled) return;
