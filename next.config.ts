@@ -76,18 +76,6 @@ const nextConfig: NextConfig = {
     ];
   },
 
-  // Prevent Next.js CSRF check from blocking server-side requests from these origins.
-  experimental: {
-    serverActions: {
-      allowedOrigins: [
-        'localhost:3000',
-        'api.ushspa.co',
-        'apidev.ushspa.co',
-        'main.d1w1ttnk2s5c9c.amplifyapp.com',
-        'main.doxmqd7pfk2wp.amplifyapp.com'
-      ],
-    },
-  },
 };
 
 export default nextConfig;

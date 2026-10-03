@@ -10,9 +10,12 @@ import {
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
   CreditCard, Hash, Fingerprint, Calendar, Building2, Wallet,
+  Receipt, Printer,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
+import { PaymentReferenceModal } from './PaymentReferenceModal';
+import { BookingReceiptModal } from './BookingReceiptModal';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
@@ -271,6 +274,177 @@ interface Form {
   arrangementType: string;
 }
 
+// ── Backend Invoice Generator ──────────────────────────────────────────────────
+/**
+ * Creates an invoice in the backend accounting system (/uanr/api/v1/invoices/).
+ * Returns the generated invoice number (structured like "INV/2026/00001").
+ */
+async function createBackendInvoice(params: {
+  customer?: { id?: string | null; name?: string | null; phone?: string | null; email?: string | null } | null;
+  serviceName?: string;
+  servicePrice?: number;
+  addons?: Array<{ name: string; price: number }>;
+  totalAmount: number;
+  date?: string;
+  referenceId?: string;
+  notes?: string;
+  authHeader?: string | null;
+}): Promise<string> {
+  const currentYear = new Date().getFullYear();
+  const defaultFallbackInv = `INV/${currentYear}/00001`;
+
+  try {
+    // 1. Resolve Company ID
+    let companyId: string | undefined;
+    try {
+      const cRes = await authedFetch('/uanr/api/v1/companies/', {
+        headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+      });
+      if (cRes.ok) {
+        const cJson = await cRes.json().catch(() => ({}));
+        const cItems = cJson?.data?.items ?? cJson?.items ?? (Array.isArray(cJson?.data) ? cJson.data : []);
+        const active = cItems.find((c: any) => c.is_active) || cItems[0];
+        if (active?.id) companyId = active.id;
+      }
+    } catch {
+      // Ignore company lookup error
+    }
+    if (!companyId) companyId = '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68';
+
+    // 2. Resolve Sale Journal, Accounts, Partners
+    let journalId: string | undefined;
+    let accountId: string | undefined;
+    let partnerId: string | undefined = params.customer?.id ?? undefined;
+
+    try {
+      const [jRes, aRes, pRes] = await Promise.all([
+        authedFetch('/uanr/api/v1/journals/?journal_type=sale&page_size=10', {
+          headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+        }).catch(() => null),
+        authedFetch('/uanr/api/v1/accounts/?page_size=20', {
+          headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+        }).catch(() => null),
+        authedFetch('/uanr/api/v1/partners/?page_size=5', {
+          headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+        }).catch(() => null),
+      ]);
+
+      if (jRes && jRes.ok) {
+        const jJson = await jRes.json().catch(() => ({}));
+        const jItems = jJson?.data?.items ?? jJson?.items ?? [];
+        const saleJ = jItems.find((j: any) => j.journal_type === 'sale') || jItems[0];
+        if (saleJ?.id) journalId = saleJ.id;
+      }
+
+      if (aRes && aRes.ok) {
+        const aJson = await aRes.json().catch(() => ({}));
+        const aItems = aJson?.data?.items ?? aJson?.items ?? [];
+        const incomeAcc = aItems.find((a: any) => a.account_type === 'income' || a.account_type === 'revenue' || a.internal_group === 'income') || aItems[0];
+        if (incomeAcc?.id) accountId = incomeAcc.id;
+      }
+
+      if (pRes && pRes.ok) {
+        const pJson = await pRes.json().catch(() => ({}));
+        const pItems = pJson?.data?.items ?? pJson?.items ?? [];
+        if (!partnerId && pItems.length > 0) {
+          partnerId = pItems[0]?.id;
+        }
+      }
+    } catch {
+      // Continue best effort
+    }
+
+    // 3. Build line items
+    const lines = [
+      {
+        name: params.serviceName || 'Spa Service',
+        description: `Booking service for ${params.customer?.name || 'Customer'}`,
+        quantity: 1,
+        unit_price: params.servicePrice ?? params.totalAmount,
+        discount: 0,
+        tax_rate: 0,
+        account_id: accountId,
+      },
+      ...(params.addons || []).map((addon) => ({
+        name: addon.name,
+        description: 'Add-on service',
+        quantity: 1,
+        unit_price: addon.price,
+        discount: 0,
+        tax_rate: 0,
+        account_id: accountId,
+      })),
+    ];
+
+    const invoicePayload = {
+      company_id: companyId,
+      invoice_type: 'invoice',
+      partner_id: partnerId || undefined,
+      journal_id: journalId || undefined,
+      invoice_date: params.date || new Date().toISOString().split('T')[0],
+      payment_terms: 'immediate',
+      currency_code: 'KWD',
+      reference: params.referenceId || undefined,
+      notes: params.notes || undefined,
+      lines,
+    };
+
+    const res = await authedFetch('/uanr/api/v1/invoices/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(params.authHeader ? { Authorization: params.authHeader } : {}),
+      },
+      body: JSON.stringify(invoicePayload),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (res.ok) {
+      const invData = json?.data ?? json;
+      const returnedNumber = invData?.name || invData?.invoice_number || invData?.number || invData?.invoice_no;
+      if (returnedNumber && typeof returnedNumber === 'string' && returnedNumber.trim()) {
+        if (invData.id) {
+          authedFetch(`/uanr/api/v1/invoices/${invData.id}/post/`, {
+            method: 'POST',
+            headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+          }).catch(() => {});
+        }
+        return returnedNumber.trim();
+      }
+    } else {
+      console.warn('[createBackendInvoice] Backend invoice return status:', res.status, json);
+    }
+  } catch (err) {
+    console.warn('[createBackendInvoice] Exception creating invoice in backend:', err);
+  }
+
+  // Fallback: Query the latest invoice number from uanr to increment sequence, or default to INV/YYYY/00001
+  try {
+    const listRes = await authedFetch('/uanr/api/v1/invoices/?page_size=1', {
+      headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
+    });
+    if (listRes.ok) {
+      const listJson = await listRes.json().catch(() => ({}));
+      const items = listJson?.data?.items ?? listJson?.items ?? [];
+      const first = items[0];
+      const lastName = first?.name || first?.invoice_number;
+      if (typeof lastName === 'string') {
+        const match = lastName.match(/INV\/(\d{4})\/(\d+)/i);
+        if (match) {
+          const year = match[1];
+          const seq = parseInt(match[2], 10) + 1;
+          return `INV/${year}/${String(seq).padStart(5, '0')}`;
+        }
+      }
+    }
+  } catch {
+    // Ignore fallback fetch error
+  }
+
+  return defaultFallbackInv;
+}
+
 // ── Main Modal ─────────────────────────────────────────────────────────────────
 
 export function TherapistScheduleBookingModal({
@@ -294,6 +468,12 @@ export function TherapistScheduleBookingModal({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch'>('on_branch');
   const [paymentProvider, setPaymentProvider] = useState<PaymentProviderOption>('MyFatoorah');
+  const [transactionRefId, setTransactionRefId] = useState<string>('');
+  const [invoiceId, setInvoiceId]               = useState<string>('');
+  const [receiptImage, setReceiptImage]         = useState<string | null>(null);
+  const [receiptNotes, setReceiptNotes]         = useState<string>('');
+  const [showPaymentRefModal, setShowPaymentRefModal] = useState<boolean>(false);
+  const [showReceiptModal, setShowReceiptModal]       = useState<boolean>(false);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [bookingResult,          setBookingResult]          = useState<Record<string, any> | null>(null);
@@ -568,6 +748,11 @@ export function TherapistScheduleBookingModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
+    if (paymentMethod === 'completed' && !transactionRefId.trim()) {
+      setShowPaymentRefModal(true);
+      setSubmitError('Please enter a Transaction / Ref ID or scan the receipt before confirming payment.');
+      return;
+    }
     setSubmitting(true); setSubmitError(null);
 
     const svc             = selectedService!;
@@ -595,6 +780,37 @@ export function TherapistScheduleBookingModal({
     const ampm       = hh >= 12 ? 'PM' : 'AM';
     const displayH   = hh % 12 || 12;
     const displayTime = `${displayH}:${String(mm).padStart(2, '0')} ${ampm}`;
+
+    // ── Generate/Retrieve Invoice from Backend ────────────────────────────────
+    let resolvedInvoiceNumber = invoiceId;
+    if (paymentMethod === 'completed') {
+      try {
+        resolvedInvoiceNumber = await createBackendInvoice({
+          customer: selectedCustomer ? {
+            id: selectedCustomer.id,
+            name: customerName,
+            phone: selectedCustomer.phone_number,
+            email: selectedCustomer.email,
+          } : null,
+          serviceName: svc.name,
+          servicePrice: effectiveBaseP,
+          addons: allSelectedAddons.map((a) => ({ name: a.name, price: parseFloat(String(a.price)) || 0 })),
+          totalAmount: totalPrice,
+          date: date || new Date().toISOString().split('T')[0],
+          referenceId: transactionRefId || undefined,
+          notes: receiptNotes || undefined,
+          authHeader,
+        });
+        if (resolvedInvoiceNumber) {
+          setInvoiceId(resolvedInvoiceNumber);
+        }
+      } catch (e) {
+        console.warn('Backend invoice creation error:', e);
+        const year = new Date().getFullYear();
+        resolvedInvoiceNumber = resolvedInvoiceNumber || `INV/${year}/00001`;
+        setInvoiceId(resolvedInvoiceNumber);
+      }
+    }
 
     const body = {
       // ── Service ─────────────────────────────────────────────────────────────
@@ -677,7 +893,9 @@ export function TherapistScheduleBookingModal({
         subtotal:          fmt(totalPrice),
         total:             fmt(totalPrice),
         total_price:       fmt(totalPrice),
-        currency: 'KWD',
+        currency:          'KWD',
+        invoice_number:    paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
+        invoice_id:        paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
       },
       total_price:    fmt(totalPrice),
       total_duration: totalDuration,
@@ -689,6 +907,36 @@ export function TherapistScheduleBookingModal({
       payment_gateway:  paymentMethod === 'completed' ? (paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider) : null,
       payment_method:   paymentMethod === 'completed' ? paymentProvider : 'on_branch',
       source:           'ushdesk',
+      transaction_id:   paymentMethod === 'completed' ? transactionRefId : null,
+      reference_id:     paymentMethod === 'completed' ? transactionRefId : null,
+      invoice_id:       paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
+      invoice_number:   paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
+      invoice_reference: paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
+      receipt_image:    paymentMethod === 'completed' ? receiptImage : null,
+      payment_data: paymentMethod === 'completed' ? {
+        transaction_id:   transactionRefId,
+        reference_id:     transactionRefId,
+        invoice_id:       resolvedInvoiceNumber,
+        invoice_number:   resolvedInvoiceNumber,
+        receipt_image:    receiptImage,
+        payment_provider: paymentProvider,
+        payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
+        paid_at:          new Date().toISOString(),
+        notes:            receiptNotes || null,
+      } : null,
+      payments_data: paymentMethod === 'completed' ? {
+        is_paid:          true,
+        status:           'Paid',
+        transaction_id:   transactionRefId,
+        reference_id:     transactionRefId,
+        invoice_id:       resolvedInvoiceNumber,
+        invoice_number:   resolvedInvoiceNumber,
+        receipt_image:    receiptImage,
+        payment_provider: paymentProvider,
+        payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
+        transaction_date: new Date().toISOString(),
+        notes:            receiptNotes || null,
+      } : null,
     };
 
     try {
@@ -723,6 +971,21 @@ export function TherapistScheduleBookingModal({
       const raw    = result as Record<string, unknown>;
       const rid    = String(raw.id ?? raw.booking_id ?? raw.bookings_id ?? raw.pk ?? '')
         .replace('undefined', '').replace('null', '');
+
+      const returnedInvoice = String(
+        raw.invoice_number ??
+        raw.invoice_id ??
+        raw.invoice_reference ??
+        (raw.payments_data as Record<string, unknown>)?.invoice_number ??
+        (raw.payments_data as Record<string, unknown>)?.invoice_id ??
+        (raw.payment_data as Record<string, unknown>)?.invoice_number ??
+        (raw.payment_data as Record<string, unknown>)?.invoice_id ??
+        resolvedInvoiceNumber ??
+        ''
+      );
+      if (returnedInvoice) {
+        setInvoiceId(returnedInvoice);
+      }
 
       const tSnap     = selectedTherapist;
       const cSnap     = selectedCustomer;
@@ -789,6 +1052,17 @@ export function TherapistScheduleBookingModal({
           payment_status: isPaid ? 'refunded' : 'cancelled',
           reason:         'Cancelled from ushdesk',
           source:         'ushdesk',
+          transaction_id: transactionRefId || (bookingResult?.transaction_id as string) || (bookingResult?.payments_data?.transaction_id as string) || null,
+          reference_id:   transactionRefId || (bookingResult?.reference_id as string) || (bookingResult?.payments_data?.reference_id as string) || null,
+          invoice_id:     invoiceId || (bookingResult?.invoice_number as string) || (bookingResult?.invoice_id as string) || (bookingResult?.payments_data?.invoice_id as string) || null,
+          invoice_number: invoiceId || (bookingResult?.invoice_number as string) || (bookingResult?.invoice_id as string) || (bookingResult?.payments_data?.invoice_number as string) || null,
+          payments_data: {
+            ...(typeof bookingResult?.payments_data === 'object' ? bookingResult.payments_data : {}),
+            transaction_id: transactionRefId || bookingResult?.transaction_id,
+            reference_id:   transactionRefId || bookingResult?.reference_id,
+            invoice_id:     invoiceId || bookingResult?.invoice_number || bookingResult?.invoice_id,
+            invoice_number: invoiceId || bookingResult?.invoice_number || bookingResult?.invoice_id,
+          },
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -817,6 +1091,33 @@ export function TherapistScheduleBookingModal({
     setConfirmingPayment(true); setConfirmPaymentError(null);
     try {
       // ── 1. PATCH booking status → confirmed ──────────────────────────────────
+      const customerName = selectedCustomer
+        ? ((selectedCustomer.full_name ?? [selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer')
+        : snapCustomerName || '';
+
+      let resolvedConfirmInvoice = paymentForm.invoice_id || invoiceId;
+      if (!resolvedConfirmInvoice) {
+        try {
+          resolvedConfirmInvoice = await createBackendInvoice({
+            customer: selectedCustomer ? {
+              id: selectedCustomer.id,
+              name: customerName,
+              phone: selectedCustomer.phone_number,
+              email: selectedCustomer.email,
+            } : null,
+            serviceName: selectedService?.name,
+            servicePrice: servicePrice,
+            totalAmount: totalPrice,
+            date: date,
+            referenceId: paymentForm.reference_id || undefined,
+            authHeader,
+          });
+        } catch {
+          resolvedConfirmInvoice = `INV/${new Date().getFullYear()}/00001`;
+        }
+        setInvoiceId(resolvedConfirmInvoice);
+      }
+
       const statusPayload = {
         status:         'confirmed',
         payment_status: 'success',
@@ -824,9 +1125,12 @@ export function TherapistScheduleBookingModal({
         payment_provider: paymentProvider,
         reason:         'Payment Success',
         source:         'ushdesk',
+        invoice_id:     resolvedConfirmInvoice,
+        invoice_number: resolvedConfirmInvoice,
         payments_data: {
           is_paid:          true,
-          invoice_id:       paymentForm.invoice_id,
+          invoice_id:       resolvedConfirmInvoice,
+          invoice_number:   resolvedConfirmInvoice,
           status:           'Paid',
           reference_id:     paymentForm.reference_id,
           invoice_value:    paymentForm.total_amount,
@@ -862,9 +1166,6 @@ export function TherapistScheduleBookingModal({
       // Resolve fields from bookingResult + component state
       const activeThId   = form.therapistId || therapistId;
       const activeThName = form.therapistSearch || therapistName;
-      const customerName = selectedCustomer
-        ? ((selectedCustomer.full_name ?? [selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer')
-        : snapCustomerName || '';
 
       const timeHHMM = (() => {
         const parts = timeSlot.trim().split(' ');
@@ -885,7 +1186,8 @@ export function TherapistScheduleBookingModal({
         source:       'ushdesk',
 
         // ── Transaction details (from payment form) ───────────────────────────
-        invoice_id:       paymentForm.invoice_id,
+        invoice_id:       resolvedConfirmInvoice,
+        invoice_number:   resolvedConfirmInvoice,
         reference_id:     paymentForm.reference_id,
         trace_id:         paymentForm.trace_id,
         transaction_date: paymentForm.transaction_date,
@@ -1568,105 +1870,176 @@ export function TherapistScheduleBookingModal({
                   />
                 </div>
 
-                {/* Payment Method */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <CreditCard className="h-4 w-4 text-primary" />
-                    <p className="text-sm font-extrabold">Payment Method</p>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      { value: 'on_branch', label: 'Pay on Branch',     desc: 'Pay later at reception',  color: 'amber'   },
-                      { value: 'completed', label: 'Payment Completed', desc: 'Paid now',                color: 'emerald' },
-                    ].map(({ value, label, desc, color }) => (
-                      <label
-                        key={value}
-                        className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition select-none ${
-                          paymentMethod === value
-                            ? color === 'emerald'
-                              ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30'
-                              : 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/30'
-                            : 'border-border bg-muted/20 hover:bg-muted/40'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="tsch-payment-method"
-                          value={value}
-                          checked={paymentMethod === value}
-                          onChange={() => setPaymentMethod(value as 'completed' | 'on_branch')}
-                          className="sr-only"
-                        />
-                        <span className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
-                          paymentMethod === value
-                            ? color === 'emerald' ? 'border-emerald-500' : 'border-amber-500'
-                            : 'border-muted-foreground/40'
-                        }`}>
-                          {paymentMethod === value && (
-                            <span className={`h-2 w-2 rounded-full block ${
-                              color === 'emerald' ? 'bg-emerald-500' : 'bg-amber-500'
-                            }`} />
-                          )}
-                        </span>
-                        <div className="min-w-0">
-                          <p className={`text-xs font-bold ${
-                            paymentMethod === value
-                              ? color === 'emerald' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
-                              : 'text-foreground'
-                          }`}>{label}</p>
-                          <p className="text-[10px] text-muted-foreground">{desc}</p>
-                        </div>
-                      </label>
-                    ))}
-                  </div>
-
-                  {/* Payment Provider Options (Shown when "Payment Completed" is selected) */}
-                  {paymentMethod === 'completed' && (
-                    <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                          <p className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                            Select Payment Provider <span className="text-destructive">*</span>
-                          </p>
-                        </div>
-                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                          {paymentProvider}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                        {PAYMENT_PROVIDERS.map((p) => {
-                          const isSel = paymentProvider === p.id;
-                          return (
-                            <button
-                              key={p.id}
-                              type="button"
-                              onClick={() => setPaymentProvider(p.id)}
-                              className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer select-none ${
-                                isSel
-                                  ? 'border-emerald-500 bg-white dark:bg-card shadow-sm ring-2 ring-emerald-500/20'
-                                  : 'border-border/70 bg-card/60 hover:bg-muted/40'
-                              }`}
-                            >
-                              <div className="flex items-center justify-between w-full mb-1">
-                                <span className={`text-xs font-extrabold ${isSel ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
-                                  {p.label}
-                                </span>
-                                {isSel && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                              </div>
-                              <span className="text-[10px] text-muted-foreground leading-tight">{p.desc}</span>
-                              <span className={`mt-1.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded ${
-                                isSel ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'
-                              }`}>
-                                {p.badge}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
+                  {/* Payment Method */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <CreditCard className="h-4 w-4 text-primary" />
+                      <p className="text-sm font-extrabold">Payment Method</p>
                     </div>
-                  )}
-                </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {[
+                        { value: 'on_branch', label: 'Pay on Branch',     desc: 'Pay later at reception',  color: 'amber'   },
+                        { value: 'completed', label: 'Payment Completed', desc: 'Paid now',                color: 'emerald' },
+                      ].map(({ value, label, desc, color }) => (
+                        <label
+                          key={value}
+                          className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition select-none ${
+                            paymentMethod === value
+                              ? color === 'emerald'
+                                ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30'
+                                : 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/30'
+                              : 'border-border bg-muted/20 hover:bg-muted/40'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="tsch-payment-method"
+                            value={value}
+                            checked={paymentMethod === value}
+                            onChange={() => {
+                              setPaymentMethod(value as 'completed' | 'on_branch');
+                              if (value === 'completed') {
+                                setShowPaymentRefModal(true);
+                              }
+                            }}
+                            className="sr-only"
+                          />
+                          <span className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
+                            paymentMethod === value
+                              ? color === 'emerald' ? 'border-emerald-500' : 'border-amber-500'
+                              : 'border-muted-foreground/40'
+                          }`}>
+                            {paymentMethod === value && (
+                              <span className={`h-2 w-2 rounded-full block ${
+                                color === 'emerald' ? 'bg-emerald-500' : 'bg-amber-500'
+                              }`} />
+                            )}
+                          </span>
+                          <div className="min-w-0">
+                            <p className={`text-xs font-bold ${
+                              paymentMethod === value
+                                ? color === 'emerald' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
+                                : 'text-foreground'
+                            }`}>{label}</p>
+                            <p className="text-[10px] text-muted-foreground">{desc}</p>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+
+                    {/* Payment Provider Options (Shown when "Payment Completed" is selected) */}
+                    {paymentMethod === 'completed' && (
+                      <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                            <p className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                              Select Payment Provider <span className="text-destructive">*</span>
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                            {paymentProvider}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                          {PAYMENT_PROVIDERS.map((p) => {
+                            const isSel = paymentProvider === p.id;
+                            return (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => {
+                                  setPaymentProvider(p.id);
+                                  setShowPaymentRefModal(true);
+                                }}
+                                className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer select-none ${
+                                  isSel
+                                    ? 'border-emerald-500 bg-white dark:bg-card shadow-sm ring-2 ring-emerald-500/20'
+                                    : 'border-border/70 bg-card/60 hover:bg-muted/40'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between w-full mb-1">
+                                  <span className={`text-xs font-extrabold ${isSel ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
+                                    {p.label}
+                                  </span>
+                                  {isSel && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                                </div>
+                                <span className="text-[10px] text-muted-foreground leading-tight">{p.desc}</span>
+                                <span className={`mt-1.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded ${
+                                  isSel ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'
+                                }`}>
+                                  {p.badge}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Invoice & Transaction Reference Attached Box */}
+                        <div className="mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                              <span className="text-xs font-bold text-foreground">
+                                Invoice Reference &amp; Receipt Status
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setShowPaymentRefModal(true)}
+                              className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
+                            >
+                              {transactionRefId ? 'Edit / Re-scan' : '+ Add Details / Scan'}
+                            </button>
+                          </div>
+
+                          {transactionRefId ? (
+                            <div className="space-y-1.5">
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="p-2 rounded-lg bg-card border border-border/60">
+                                  <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Ref / Trans ID</span>
+                                  <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
+                                    {transactionRefId}
+                                  </span>
+                                </div>
+                                <div className="p-2 rounded-lg bg-card border border-border/60">
+                                  <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Invoice ID</span>
+                                  <span className="font-mono font-bold text-foreground truncate block">
+                                    {invoiceId || 'Auto (INV/2026/00001)'}
+                                  </span>
+                                </div>
+                              </div>
+                              {receiptImage && (
+                                <div className="flex items-center gap-2.5 pt-1">
+                                  <img
+                                    src={receiptImage}
+                                    alt="Scanned receipt"
+                                    className="h-9 w-9 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
+                                  />
+                                  <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                    ✓ Receipt slip image attached to invoice for future reference
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
+                              <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                                Please input transaction ID or scan receipt to attach to invoice.
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setShowPaymentRefModal(true)}
+                                className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
+                              >
+                                Input / Scan Now
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
               </div>
             )}
 
@@ -1804,6 +2177,45 @@ export function TherapistScheduleBookingModal({
                       </p>
                     </div>
                   </div>
+
+                  {/* ── Attached Invoice & Transaction Details ── */}
+                  {(transactionRefId || invoiceId || (bookingResult as Record<string, any>)?.transaction_id) && (
+                    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                          <p className="text-xs font-extrabold text-foreground">Attached Invoice &amp; Payment Record</p>
+                        </div>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-500/20">
+                          {paymentProvider}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="p-2 rounded-xl bg-card border border-border/60">
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold block">Transaction / Ref ID</span>
+                          <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
+                            {transactionRefId || String((bookingResult as Record<string, any>)?.transaction_id ?? '—')}
+                          </span>
+                        </div>
+                        <div className="p-2 rounded-xl bg-card border border-border/60">
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold block">Invoice ID</span>
+                          <span className="font-mono font-bold text-foreground truncate block">
+                            {invoiceId || String((bookingResult as Record<string, any>)?.invoice_number ?? (bookingResult as Record<string, any>)?.invoice_id ?? 'INV/2026/00001')}
+                          </span>
+                        </div>
+                      </div>
+                      {receiptImage && (
+                        <div className="flex items-center gap-2.5 pt-1 text-[11px] text-emerald-700 dark:text-emerald-300 font-semibold">
+                          <img
+                            src={receiptImage}
+                            alt="Receipt"
+                            className="h-8 w-8 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
+                          />
+                          <span>Scanned receipt attached to invoice record</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* ── Cancel error feedback ── */}
                   {cancelBookingError && (
@@ -2076,7 +2488,17 @@ export function TherapistScheduleBookingModal({
                     {cancellingBooking ? 'Cancelling…' : 'Cancel Booking'}
                   </button>
                 )}
-                {!cancelBookingDone && (
+                {!cancelBookingDone && paymentMethod === 'completed' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowReceiptModal(true)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted px-4 py-2.5 text-sm font-bold transition cursor-pointer"
+                  >
+                    <Printer className="h-4 w-4" />
+                    Print Receipt
+                  </button>
+                )}
+                {!cancelBookingDone && paymentMethod === 'on_branch' && (
                   <button type="button" onClick={() => setStep(4)}
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
                     <CreditCard className="h-4 w-4" />
@@ -2116,6 +2538,58 @@ export function TherapistScheduleBookingModal({
           authHeader={authHeader}
           onCreated={handleCustomerCreated}
           onClose={() => setShowCreateCustomer(false)}
+        />
+      )}
+
+      {/* ── Payment Reference & Receipt Scan Modal ── */}
+      <PaymentReferenceModal
+        isOpen={showPaymentRefModal}
+        onClose={() => setShowPaymentRefModal(false)}
+        paymentProvider={paymentProvider}
+        totalAmount={totalPrice}
+        currency="KWD"
+        initialTransactionId={transactionRefId}
+        initialReceiptImage={receiptImage}
+        initialNotes={receiptNotes}
+        onConfirm={(data) => {
+          setTransactionRefId(data.transactionId);
+          setReceiptImage(data.receiptImage);
+          if (data.notes) setReceiptNotes(data.notes);
+          setSubmitError(null);
+        }}
+      />
+
+      {/* ── Booking Receipt Modal Preview & Print ── */}
+      {showReceiptModal && bookingResult && (
+        <BookingReceiptModal
+          data={{
+            bookingNumber: String(bookingResult.booking_number ?? ''),
+            reference: String(bookingResult.reference_number ?? bookingResult.booking_number ?? bookingId ?? ''),
+            invoiceNumber: invoiceId || (bookingResult.invoice_number as string) || (bookingResult.invoice_id as string) || null,
+            customerName: snapCustomerName || 'Customer',
+            customerPhone: snapCustomerPhone || null,
+            customerEmail: selectedCustomer?.email || null,
+            branchName: branchName || null,
+            arrangementName: form.arrangementName || null,
+            therapistName: snapTherapistName || therapistName,
+            serviceName: selectedService?.name || null,
+            serviceCategory: selectedService?.category || null,
+            servicePrice: servicePrice,
+            appointmentDate: date,
+            timeSlot: timeSlot,
+            totalDuration: totalDuration,
+            currency: 'KWD',
+            totalAmount: totalPrice,
+            status: 'confirmed',
+            paymentStatus: 'paid',
+            paymentMethod: paymentMethod === 'completed' ? paymentProvider : 'on_branch',
+            paymentProvider: paymentProvider,
+            transactionId: transactionRefId || (bookingResult.transaction_id as string) || null,
+            referenceId: transactionRefId || (bookingResult.reference_id as string) || null,
+            paidAt: new Date().toISOString(),
+            notes: form.notes || null,
+          }}
+          onClose={() => setShowReceiptModal(false)}
         />
       )}
     </>

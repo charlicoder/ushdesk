@@ -31,3 +31,26 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ detail: message }, { status: 502 });
   }
 }
+
+/**
+ * POST /api/v1/payments
+ * Creates a payment record (including refunds) via the booknpay upstream.
+ * Used by BookingCancellationModal to record refund entries in the ledger.
+ */
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.text();
+    const qs   = req.nextUrl.searchParams.toString();
+    const url  = qs ? `${UPSTREAM_URL}?${qs}` : UPSTREAM_URL;
+    const upstream = await fetch(url, {
+      method: 'POST',
+      headers: getProxyHeaders(req),
+      body,
+    });
+    const data = await upstream.json().catch(() => ({}));
+    return NextResponse.json(data, { status: upstream.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Proxy error';
+    return NextResponse.json({ detail: message }, { status: 502 });
+  }
+}

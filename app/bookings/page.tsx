@@ -1,12 +1,14 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle,
   ChevronDown, Calendar, Clock, MapPin, User, Scissors,
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
+  FileText, Receipt, Eye, ShieldCheck,
 } from 'lucide-react';
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -17,6 +19,8 @@ import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
 import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
+import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
+import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Booking {
@@ -451,16 +455,22 @@ function BookingDetailModal({
   onClose: () => void;
   onSuccess?: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'payment'>('details');
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedType, setCopiedType] = useState<string | null>(null);
+  const [receiptZoom, setReceiptZoom] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  const [showCancellationModal, setShowCancellationModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
-  const [printUpdating, setPrintUpdating] = useState(false);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoiceRecord, setInvoiceRecord] = useState<Record<string, unknown> | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
@@ -496,8 +506,43 @@ function BookingDetailModal({
       .finally(() => {
         if (active) setLoadingDetail(false);
       });
-    return () => { active = false; };
+
+    return () => {
+      active = false;
+    };
   }, [booking?.id]);
+
+  const invoiceNumber = String(
+    detail?.invoice_number ??
+    detail?.invoice_id ??
+    (detail?.pricing as any)?.invoice_number ??
+    (detail?.pricing as any)?.invoice_id ??
+    (detail?.payment_data as any)?.invoice_number ??
+    (detail?.payment_data as any)?.invoice_id ??
+    (booking as any)?.invoice_number ??
+    (booking as any)?.invoice_id ??
+    (booking as any)?.payment_data?.invoice_id ??
+    ''
+  ).trim();
+
+  // Load invoice detail from backend if invoice number exists
+  useEffect(() => {
+    if (!invoiceNumber || invoiceNumber === '—') {
+      setInvoiceRecord(null);
+      return;
+    }
+    let cancelled = false;
+    authedFetch(`/uanr/api/v1/invoices/?search=${encodeURIComponent(invoiceNumber)}`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (cancelled) return;
+        const items = res?.data?.items ?? res?.items ?? (Array.isArray(res?.data) ? res.data : []);
+        const found = items.find((i: Record<string, unknown>) => i.name === invoiceNumber || i.id === invoiceNumber || i.reference === invoiceNumber) || items[0];
+        if (found) setInvoiceRecord(found);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [invoiceNumber]);
 
   if (!booking) return null;
   const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
@@ -542,22 +587,57 @@ function BookingDetailModal({
   const paymentDataObj   = (detail?.payment_data ?? booking.payment_data) as Record<string, unknown> | null;
   const effectivePaymentUrl = String(detail?.payment_url ?? booking.payment_url ?? paymentDataObj?.payment_url ?? '');
 
-  const handleCancel = async () => {
+  const receiptImg = String(
+    (paymentDataObj as any)?.receipt_image ??
+    (detail as any)?.receipt_image ??
+    (booking as any).receipt_image ??
+    ''
+  ).trim();
+
+  const transactionId = String(
+    (paymentDataObj as any)?.transaction_id ??
+    (paymentDataObj as any)?.reference_id ??
+    (detail as any)?.transaction_id ??
+    (detail as any)?.reference_id ??
+    (booking as any).transaction_id ??
+    (booking as any).reference_id ??
+    ''
+  ).trim();
+
+  const traceId = String(
+    (paymentDataObj as any)?.trace_id ??
+    (detail as any)?.trace_id ??
+    (booking as any).trace_id ??
+    ''
+  ).trim();
+
+  const paymentProvider = String(
+    booking.payment_provider ||
+    booking.payment_gateway ||
+    (paymentDataObj as any)?.payment_provider ||
+    (paymentDataObj as any)?.payment_gateway ||
+    booking.payment_method ||
+    'Front Desk'
+  ).trim();
+
+  // Cancel booking — opens BookingCancellationModal which handles all accounting steps
+  const handleCancel = () => {
     if (!booking) return;
     if (!canCancel) {
       setCancelError(cancellationEligibility.reason || 'Cancellations within 12 hours of appointment time require Administrator, Branch Manager, Finance Manager, or Customer Support Manager privileges.');
       return;
     }
-    if (!confirm('Are you sure you want to cancel this booking? This will release the appointment slot.')) return;
-    setCancelling(true);
-    setCancelError(null);
-    const isPaid = (
-      booking.is_paid ||
-      booking.payment_status === 'success' ||
-      booking.payment_status === 'paid' ||
-      booking.payment_status === 'completed'
-    ) && booking.status !== 'payment_pending' && booking.payment_status !== 'pending';
+    setShowCancellationModal(true);
+  };
 
+  const handlePrintReceipt = () => {
+    setShowReceiptModal(true);
+  };
+
+  const handleCompleteBooking = async () => {
+    if (!booking) return;
+    setCompleting(true);
+    setCompleteError(null);
     try {
       const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
         method: 'PATCH',
@@ -566,55 +646,22 @@ function BookingDetailModal({
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          status: 'cancelled',
-          payment_status: isPaid ? 'refunded' : 'cancelled',
+          status: 'completed',
+          reason: 'Service Completed',
           source: 'ushdesk',
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || err.detail || `Failed to cancel (${res.status})`);
+        throw new Error(err.message || err.detail || `Failed to update status (${res.status})`);
       }
+      setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
       onSuccess?.();
-      onClose();
     } catch (err: unknown) {
-      setCancelError(err instanceof Error ? err.message : 'Failed to cancel booking');
+      console.error('[BookingDetailModal] Error completing booking:', err);
+      setCompleteError(err instanceof Error ? err.message : 'Failed to update status to completed');
     } finally {
-      setCancelling(false);
-    }
-  };
-
-  const handlePrintReceipt = async () => {
-    if (!booking) return;
-    setPrintUpdating(true);
-    try {
-      const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
-      if (curStatus !== 'completed') {
-        const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            status: 'completed',
-            reason: 'Receipt Printed / Service Completed',
-            source: 'ushdesk',
-          }),
-        });
-        if (!res.ok) {
-          const json = await res.json().catch(() => ({}));
-          console.warn('[BookingDetailModal] Status update warning:', json);
-        }
-        setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
-        onSuccess?.();
-      }
-      setShowReceiptModal(true);
-    } catch (err) {
-      console.error('[BookingDetailModal] Error updating status:', err);
-      setShowReceiptModal(true);
-    } finally {
-      setPrintUpdating(false);
+      setCompleting(false);
     }
   };
 
@@ -731,7 +778,7 @@ function BookingDetailModal({
 
           {/* Tabs */}
           <div className={cn(
-            'shrink-0 flex border-b px-6',
+            'shrink-0 flex items-center border-b px-6 gap-1 sm:gap-2',
             isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/25' : 'border-border/40 bg-muted/20'
           )}>
             <button
@@ -749,24 +796,25 @@ function BookingDetailModal({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('history')}
+              onClick={() => setActiveTab('payment')}
               className={cn(
                 'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
-                activeTab === 'history'
+                activeTab === 'payment'
                   ? isCompleted ? 'border-[#3D2F27] text-[#2D241E]' : 'border-primary text-primary'
                   : isCompleted ? 'border-transparent text-[#69584D] hover:text-[#2D241E]' : 'border-transparent text-muted-foreground hover:text-foreground'
               )}
             >
-              <History className="h-3.5 w-3.5" />
-              Audit &amp; Payment Info
-              {historyList.length > 0 && (
-                <span className={cn(
-                  'rounded-full px-1.5 py-0.2 text-[10px] font-bold',
-                  isCompleted ? 'bg-[#3D2F27]/10 text-[#3D2F27]' : 'bg-primary/10 text-primary'
-                )}>
-                  {historyList.length}
+              <CreditCard className="h-3.5 w-3.5" />
+              Payment &amp; Invoices
+              {booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
+                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                  Paid
                 </span>
-              )}
+              ) : isPaymentPending ? (
+                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                  Pending
+                </span>
+              ) : null}
             </button>
           </div>
 
@@ -907,9 +955,308 @@ function BookingDetailModal({
               </>
             ) : (
               <>
-                {/* ── TAB 2: AUDIT & PAYMENT INFO ── */}
+                {/* ── TAB 2: PAYMENT & INVOICES ── */}
 
-                {/* Created By User Info (Requirement 4) */}
+                {/* 1. Official Invoice Card */}
+                <div className={cn(
+                  'rounded-2xl border p-5 sm:p-6 transition shadow-xs space-y-4',
+                  isCompleted
+                    ? 'border-[#B8A394] bg-white/40'
+                    : 'border-violet-200/60 dark:border-violet-800/40 bg-gradient-to-br from-violet-50/40 via-card to-card dark:from-violet-950/20'
+                )}>
+                  <div className="flex items-start justify-between gap-3 pb-3 border-b border-border/40">
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Official Tax Invoice</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setShowInvoiceModal(true)}
+                            className="group/inv inline-flex items-center gap-1.5 text-sm font-mono font-extrabold text-foreground hover:text-violet-600 dark:hover:text-violet-400 transition cursor-pointer text-left"
+                            title="Click to view full invoice details"
+                          >
+                            <span className="underline underline-offset-4 decoration-violet-400/60 group-hover/inv:decoration-violet-600">
+                              {invoiceNumber || 'Pending Generation'}
+                            </span>
+                            <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
+                          </button>
+                          {Boolean(invoiceNumber) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(invoiceNumber);
+                                setCopiedType('invoice');
+                                setTimeout(() => setCopiedType(null), 2000);
+                              }}
+                              className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                              title="Copy invoice number"
+                            >
+                              {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setShowInvoiceModal(true)}
+                        className="inline-flex items-center gap-1 text-xs font-bold text-violet-600 dark:text-violet-400 hover:bg-violet-500/10 px-2.5 py-1 rounded-lg border border-violet-500/20 transition cursor-pointer"
+                        title="Open invoice details"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        <span>View Invoice</span>
+                      </button>
+                      <span className={cn(
+                        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
+                        (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
+                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
+                          : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20'
+                      )}>
+                        {booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : (
+                          <Clock className="h-3 w-3" />
+                        )}
+                        {(booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid') ? 'PAID' : 'DRAFT'}
+                      </span>
+                      {Boolean(invoiceNumber) && (
+                        <Link
+                          href={`/finance/invoices?search=${encodeURIComponent(invoiceNumber)}`}
+                          target="_blank"
+                          className="inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground hover:underline px-2 py-1 rounded-lg hover:bg-muted/40 transition"
+                        >
+                          <span>Accounting</span>
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Invoice details grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-3 border-b border-border/40 text-xs">
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold">Billed To</p>
+                      <p className="font-bold truncate mt-0.5">{booking.customer_name}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold">Issue Date</p>
+                      <p className="font-medium mt-0.5">{formatDate(booking.created_at)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold">Total Amount</p>
+                      <p className="font-extrabold text-violet-600 dark:text-violet-400 mt-0.5">
+                        {computedTotal.toFixed(3)} {currency}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase font-semibold">Balance Due</p>
+                      <p className="font-bold mt-0.5 text-foreground">
+                        {(booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
+                          ? `0.000 ${currency}`
+                          : `${computedTotal.toFixed(3)} ${currency}`}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Itemized breakdown in invoice */}
+                  <div className="pt-1 space-y-2 pb-1">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground font-semibold">
+                      <span>Description</span>
+                      <span>Amount</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-foreground">{booking.service_name}</span>
+                      <span className="font-semibold">{servicePrice.toFixed(3)} {currency}</span>
+                    </div>
+                    {addons.map((a, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>+ Add-on: {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}</span>
+                        <span>+{parseFloat(String(a.price ?? a.base_price ?? '0')).toFixed(3)} {currency}</span>
+                      </div>
+                    ))}
+                    {extraPrice > 0 && (
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>+ Extra Minutes (+{extraMinutes}m)</span>
+                        <span>+{extraPrice.toFixed(3)} {currency}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Payment Transaction & Gateway Details */}
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <CreditCard className="h-3.5 w-3.5 text-primary" /> Transaction &amp; Gateway Details
+                    </p>
+                    <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize', paymentStyle(booking.payment_status))}>
+                      {booking.payment_status || 'unpaid'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5 text-xs">
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground font-medium">Provider / Gateway</p>
+                      <p className="font-semibold text-foreground mt-0.5">{paymentProvider}</p>
+                    </div>
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
+                      <p className="font-semibold text-foreground mt-0.5 capitalize">{booking.payment_method || '—'}</p>
+                    </div>
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
+                      <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? 'ushdesk')}</p>
+                    </div>
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground font-medium">Amount</p>
+                      <p className="font-bold text-primary mt-0.5 font-mono">{computedTotal.toFixed(3)} {currency}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] text-muted-foreground font-medium">Transaction / Ref ID</p>
+                        {Boolean(transactionId) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(transactionId);
+                              setCopiedType('txn');
+                              setTimeout(() => setCopiedType(null), 2000);
+                            }}
+                            className="text-muted-foreground hover:text-foreground transition cursor-pointer"
+                          >
+                            {copiedType === 'txn' ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                          </button>
+                        )}
+                      </div>
+                      <p className="font-mono text-xs font-semibold text-foreground mt-0.5 truncate">
+                        {transactionId || 'Auto-generated upon settlement'}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] text-muted-foreground font-medium">Trace / Auth Code</p>
+                        {Boolean(traceId) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(traceId);
+                              setCopiedType('trace');
+                              setTimeout(() => setCopiedType(null), 2000);
+                            }}
+                            className="text-muted-foreground hover:text-foreground transition cursor-pointer"
+                          >
+                            {copiedType === 'trace' ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                          </button>
+                        )}
+                      </div>
+                      <p className="font-mono text-xs font-semibold text-foreground mt-0.5 truncate">
+                        {traceId || '—'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {Boolean(paymentDataObj?.paid_at) && (
+                    <div className="rounded-xl bg-card border border-border/40 px-3 py-2 text-xs flex items-center justify-between text-muted-foreground">
+                      <span>Paid Timestamp:</span>
+                      <span className="font-medium text-foreground">{formatDateTime(String(paymentDataObj?.paid_at))}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Scanned Receipt Slip / Proof of Payment */}
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Receipt className="h-4 w-4 text-primary" />
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                        Scanned Receipt / Slip
+                      </h4>
+                    </div>
+                    {Boolean(receiptImg) && (
+                      <button
+                        type="button"
+                        onClick={() => setReceiptZoom(true)}
+                        className="inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:underline cursor-pointer"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View Full Slip
+                      </button>
+                    )}
+                  </div>
+
+                  {Boolean(receiptImg) ? (
+                    <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-card/70 p-3">
+                      <button
+                        type="button"
+                        onClick={() => setReceiptZoom(true)}
+                        className="relative h-16 w-16 shrink-0 rounded-lg overflow-hidden border border-border/60 bg-muted hover:opacity-90 transition cursor-zoom-in"
+                      >
+                        <img src={receiptImg} alt="Receipt slip" className="h-full w-full object-cover" />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-foreground">Scanned Payment Receipt Attached</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Physical POS or bank voucher slip captured during booking check-in.</p>
+                        <button
+                          type="button"
+                          onClick={() => setReceiptZoom(true)}
+                          className="mt-1.5 text-xs font-semibold text-primary hover:underline"
+                        >
+                          Click to expand receipt image
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 bg-card/40 p-3 text-xs text-muted-foreground">
+                      <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span>No physical receipt slip uploaded for this transaction. Digital ledger record attached.</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Customer Payment Link */}
+                {effectivePaymentUrl ? (
+                  <div className="rounded-xl bg-card border border-primary/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
+                        <ExternalLink className="h-3.5 w-3.5" /> Customer Payment Link
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(effectivePaymentUrl);
+                          setCopiedLink(true);
+                          setTimeout(() => setCopiedLink(false), 2000);
+                        }}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                      >
+                        {copiedLink ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                        {copiedLink ? 'Copied' : 'Copy Link'}
+                      </button>
+                    </div>
+                    <p className="font-mono text-xs text-muted-foreground break-all bg-muted/40 p-2 rounded-lg border border-border/40 select-all">
+                      {effectivePaymentUrl}
+                    </p>
+                    <a
+                      href={effectivePaymentUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg bg-primary py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" /> Open Payment Link
+                    </a>
+                  </div>
+                ) : null}
+
+                {/* 5. Created By User Info */}
                 <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
                   <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                     <UserCheck className="h-3.5 w-3.5 text-primary" /> Created By User
@@ -949,107 +1296,6 @@ function BookingDetailModal({
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground italic">No creator user information available.</p>
-                  )}
-                </div>
-
-                {/* Payment Details & Payment Link (Requirement 4) */}
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <CreditCard className="h-3.5 w-3.5 text-primary" /> Payment Details
-                    </p>
-                    <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize', paymentStyle(booking.payment_status))}>
-                      {booking.payment_status || 'unpaid'}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2.5 text-xs">
-                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium">Provider / Gateway</p>
-                      <p className="font-semibold text-foreground mt-0.5">{booking.payment_provider || booking.payment_gateway || '—'}</p>
-                    </div>
-                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
-                      <p className="font-semibold text-foreground mt-0.5 capitalize">{booking.payment_method || '—'}</p>
-                    </div>
-                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
-                      <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? 'ushdesk')}</p>
-                    </div>
-                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium">Amount</p>
-                      <p className="font-bold text-primary mt-0.5 font-mono">{computedTotal.toFixed(3)} {currency}</p>
-                    </div>
-                  </div>
-
-                  {paymentDataObj && (
-                    <div className="rounded-xl bg-card border border-border/40 p-3 space-y-1.5 text-xs">
-                      {Boolean(paymentDataObj.paid_at) && (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Paid At:</span>
-                          <span className="font-medium text-foreground">{formatDateTime(String(paymentDataObj.paid_at))}</span>
-                        </div>
-                      )}
-                      {Boolean(paymentDataObj.invoice_id) && (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Invoice ID:</span>
-                          <span className="font-mono text-foreground font-semibold">{String(paymentDataObj.invoice_id)}</span>
-                        </div>
-                      )}
-                      {Boolean(paymentDataObj.payment_id) && (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Payment ID:</span>
-                          <span className="font-mono text-foreground font-semibold truncate max-w-[200px]" title={String(paymentDataObj.payment_id)}>{String(paymentDataObj.payment_id)}</span>
-                        </div>
-                      )}
-                      {Boolean(paymentDataObj.transaction_id) && (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Transaction ID:</span>
-                          <span className="font-mono text-foreground font-semibold">{String(paymentDataObj.transaction_id)}</span>
-                        </div>
-                      )}
-                      {Boolean(paymentDataObj.reference_id) && (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Reference ID:</span>
-                          <span className="font-mono text-foreground font-semibold">{String(paymentDataObj.reference_id)}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {effectivePaymentUrl ? (
-                    <div className="rounded-xl bg-card border border-primary/30 p-3 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
-                          <ExternalLink className="h-3.5 w-3.5" /> Payment Link
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(effectivePaymentUrl);
-                            setCopiedLink(true);
-                            setTimeout(() => setCopiedLink(false), 2000);
-                          }}
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
-                        >
-                          {copiedLink ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                          {copiedLink ? 'Copied' : 'Copy Link'}
-                        </button>
-                      </div>
-                      <p className="font-mono text-xs text-muted-foreground break-all bg-muted/40 p-2 rounded-lg border border-border/40 select-all">
-                        {effectivePaymentUrl}
-                      </p>
-                      <a
-                        href={effectivePaymentUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg bg-primary py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" /> Open Payment Link
-                      </a>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground italic">No external payment link generated for this booking.</p>
                   )}
                 </div>
 
@@ -1101,9 +1347,9 @@ function BookingDetailModal({
               </>
             )}
 
-            {cancelError && (
+            {(cancelError || completeError) && (
               <div className="rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400">
-                {cancelError}
+                {cancelError || completeError}
               </div>
             )}
           </div>
@@ -1127,16 +1373,16 @@ function BookingDetailModal({
                     <button
                       type="button"
                       onClick={handleCancel}
-                      disabled={cancelling || !canCancel}
+                      disabled={!canCancel}
                       title={!canCancel ? (cancellationEligibility.reason || undefined) : undefined}
                       className={cn(
                         'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
                         !canCancel
                           ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                          : 'border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer disabled:opacity-50'
+                          : 'border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer'
                       )}
                     >
-                      {cancelling ? 'Cancelling...' : 'Cancel Booking'}
+                      Cancel Booking
                     </button>
                     <button
                       type="button"
@@ -1144,6 +1390,15 @@ function BookingDetailModal({
                       className="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-3.5 py-2.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition cursor-pointer whitespace-nowrap"
                     >
                       Reschedule
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCompleteBooking}
+                      disabled={completing}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98] whitespace-nowrap disabled:opacity-60"
+                    >
+                      {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      {completing ? 'Completing…' : 'Mark Completed'}
                     </button>
                   </>
                 )}
@@ -1178,16 +1433,15 @@ function BookingDetailModal({
                     <button
                       type="button"
                       onClick={handlePrintReceipt}
-                      disabled={printUpdating}
                       className={cn(
-                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer whitespace-nowrap disabled:opacity-60',
+                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer whitespace-nowrap',
                         isCompleted
                           ? 'bg-[#3D2F27] hover:bg-[#281E18] text-white'
                           : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white'
                       )}
                     >
-                      {printUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />}
-                      {printUpdating ? 'Completing…' : 'Print Receipt'}
+                      <Printer className="h-4 w-4" />
+                      Print Receipt
                     </button>
                   );
                 })()}
@@ -1261,6 +1515,126 @@ function BookingDetailModal({
             paidAt: String(paymentDataObj?.paid_at ?? ''),
           }}
           onClose={() => setShowReceiptModal(false)}
+        />
+      )}
+
+      {/* ── Scanned Receipt Slip Zoom Modal ── */}
+      {receiptZoom && Boolean(receiptImg) && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setReceiptZoom(false)} />
+          <div className="relative z-10 max-w-2xl w-full max-h-[85vh] flex flex-col rounded-3xl bg-card border border-border/60 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/40">
+              <div className="flex items-center gap-2">
+                <Receipt className="h-4 w-4 text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Scanned Receipt Slip</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReceiptZoom(false)}
+                className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-black/5 dark:bg-black/40">
+              <img
+                src={receiptImg}
+                alt="Receipt slip full view"
+                className="max-h-[70vh] w-auto max-w-full object-contain rounded-xl shadow-lg border border-border/40"
+              />
+            </div>
+            <div className="px-5 py-3 border-t border-border/40 bg-muted/20 flex items-center justify-between">
+              <p className="text-xs text-muted-foreground">Invoice Reference: <strong className="font-mono text-foreground">{invoiceNumber || 'Attached'}</strong></p>
+              <a
+                href={receiptImg}
+                download="booking-receipt-slip"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                Open Original
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Invoice Detail Modal Popup ── */}
+      {showInvoiceModal && (
+        <InvoiceDetailModal
+          invoiceNumber={invoiceNumber || (invoiceRecord?.name as string) || ''}
+          invoiceRecord={invoiceRecord}
+          bookingData={{
+            customerName: booking.customer_name,
+            customerPhone: booking.customer_phone,
+            customerEmail: booking.customer_email,
+            serviceName: booking.service_name,
+            serviceCategory: booking.service_category,
+            servicePrice: servicePrice,
+            addons: addons as any,
+            extraMinutes: extraMinutes,
+            extraPrice: extraPrice,
+            totalPrice: computedTotal,
+            currency: currency,
+            paymentMethod: booking.payment_method,
+            paymentProvider: paymentProvider,
+            paymentThrough: String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? 'ushdesk'),
+            paymentDate: String(paymentDataObj?.paid_at ?? booking.created_at ?? ''),
+            transactionId: transactionId || undefined,
+            traceId: traceId || undefined,
+            bookingNumber: booking.booking_number,
+            branchName: booking.branch_name,
+            status: curStatus || booking.status,
+            pricing: pricingObj,
+          }}
+          onClose={() => setShowInvoiceModal(false)}
+        />
+      )}
+
+      {/* ── Booking Cancellation Modal (with refund/accounting) ── */}
+      {showCancellationModal && booking && (
+        <BookingCancellationModal
+          bookingId={booking.id}
+          bookingNumber={booking.booking_number || null}
+          invoiceNumber={invoiceNumber || null}
+          isPaid={
+            booking.is_paid ||
+            booking.payment_status === 'success' ||
+            booking.payment_status === 'paid' ||
+            booking.payment_status === 'completed'
+          }
+          totalAmount={computedTotal}
+          totalDuration={totalDuration}
+          currency={currency}
+          paymentMethod={paymentProvider !== 'Front Desk' ? paymentProvider : null}
+          customerId={
+            String(
+              (detail as any)?.customer_id ??
+              (booking.raw as any)?.customer_id ??
+              (booking as any).customer_id ??
+              ''
+            ).trim() || undefined
+          }
+          customerData={
+            (detail as any)?.customer_data ??
+            (booking.raw as any)?.customer_data ??
+            null
+          }
+          bookingType={
+            String(
+              (detail as any)?.booking_type ??
+              (booking.raw as any)?.booking_type ??
+              booking.booking_type ??
+              ''
+            ).trim() || undefined
+          }
+          onClose={() => setShowCancellationModal(false)}
+          onSuccess={() => {
+            setShowCancellationModal(false);
+            onSuccess?.();
+            onClose();
+          }}
         />
       )}
     </>

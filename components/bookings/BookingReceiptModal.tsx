@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 export interface BookingReceiptData {
   bookingNumber?: string | null;
   reference?: string | null;
+  invoiceNumber?: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   customerEmail?: string | null;
@@ -437,6 +438,12 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   {data.paymentMethod || data.paymentProvider || 'Desk Payment (Confirmed)'}
                 </span>
               </div>
+              {data.invoiceNumber && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Invoice No:</span>
+                  <span className="font-mono font-bold text-slate-800">{data.invoiceNumber}</span>
+                </div>
+              )}
               {data.transactionId && (
                 <div className="flex justify-between">
                   <span className="text-slate-500">Transaction ID:</span>
