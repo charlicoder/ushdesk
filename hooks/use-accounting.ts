@@ -492,7 +492,7 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
 
     const cleanEndpoint = endpoint.replace(/^\/+|\/+$/g, '');
     const queryString = query.toString();
-    const url = `/uanr/api/v1/${cleanEndpoint}${queryString ? `?${queryString}` : ''}`;
+    const url = `/uanr/api/v1/${cleanEndpoint}/${queryString ? `?${queryString}` : ''}`;
 
     authedFetch(url)
       .then(async (res) => {
@@ -576,7 +576,7 @@ export function useAnrReport<T>(reportPath: string, params?: Record<string, stri
 
     const cleanPath = reportPath.replace(/^\/+|\/+$/g, '');
     const queryString = query.toString();
-    const url = `/uanr/api/v1/reports/${cleanPath}${queryString ? `?${queryString}` : ''}`;
+    const url = `/uanr/api/v1/reports/${cleanPath}/${queryString ? `?${queryString}` : ''}`;
 
     authedFetch(url)
       .then(async (res) => {

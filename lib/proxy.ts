@@ -72,7 +72,7 @@ export function getDefaultCompanyId(): string {
     process.env['NEXT_PUBLIC_DEFAULT_COMPANY_ID'] ||
     process.env.COMPANY_ID ||
     process.env['COMPANY_ID'] ||
-    '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68'
+    'f70caa2a-a435-4928-b7b1-7cb016619848'
   ).trim();
 }
 
@@ -84,7 +84,17 @@ export function getProxyHeaders(
   req: NextRequest,
   extra?: Record<string, string>,
 ): Record<string, string> {
-  const authHeader = req.headers.get('authorization') ?? '';
+  let authHeader = req.headers.get('authorization') ?? '';
+  if (!authHeader) {
+    const cookieToken =
+      req.cookies.get('ush_access_token')?.value ||
+      req.cookies.get('token')?.value ||
+      req.cookies.get('access_token')?.value;
+    if (cookieToken) {
+      authHeader = `Bearer ${cookieToken}`;
+    }
+  }
+
   const rawLang = req.headers.get('accept-language') || 'en';
   const lang = rawLang.toLowerCase().includes('ar') ? 'ar' : 'en';
   const appToken = getAppToken();
@@ -93,13 +103,14 @@ export function getProxyHeaders(
     'Content-Type': 'application/json',
     'Accept': 'application/json',
     'Accept-Language': lang,
+    'Connection': 'close',
     ...(appToken ? { 'X-USHSPA-TOKEN': appToken } : {}),
     ...extra,
   };
 
   const cleanAuth = authHeader.replace(/^Bearer\s+/i, '').trim();
   if (cleanAuth && cleanAuth !== 'null' && cleanAuth !== 'undefined') {
-    headers['Authorization'] = authHeader;
+    headers['Authorization'] = authHeader.startsWith('Bearer ') ? authHeader : `Bearer ${cleanAuth}`;
   }
 
   return headers;

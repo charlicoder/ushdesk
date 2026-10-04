@@ -6,6 +6,7 @@ import {
   LayoutGrid, List, CheckCircle2, XCircle, ChevronDown,
   MessageCircle, ShieldCheck, User, Send, X, CheckCheck,
   MessageSquare, Loader2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  Check, Eye, Copy,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -18,6 +19,8 @@ import { cn } from '@/lib/utils';
 interface Customer {
   id: string;
   name: string;
+  first_name?: string;
+  last_name?: string;
   phone: string | null;
   email: string | null;
   gender: string | null;
@@ -29,17 +32,26 @@ interface Customer {
   is_email_verified: boolean;
   is_loyalty_enrolled: boolean;
   notification_channel: string | null;
+  created_at: string | null;
+  raw?: Record<string, unknown>;
 }
 
 type MessageChannel = 'sms' | 'whatsapp' | 'email';
+type SignupDateFilter = '' | 'today' | 'last_week' | 'last_month';
 
 // ── Normalise ──────────────────────────────────────────────────────────────────
 function normalise(raw: Record<string, unknown>): Customer {
   const first = String(raw.first_name ?? '');
   const last  = String(raw.last_name  ?? '');
+  const userObj = (raw.user && typeof raw.user === 'object' ? raw.user : null) as Record<string, unknown> | null;
+  const userCreatedAt = userObj ? (userObj.created_at ?? userObj.date_joined ?? userObj.created) : null;
+  const rawCreatedAt = raw.created_at ?? raw.date_joined ?? raw.created ?? raw.signup_date ?? raw.created_date ?? raw.registered_at ?? raw.joined_at ?? userCreatedAt;
+
   return {
     id:                   String(raw.id ?? ''),
     name:                 [first, last].filter(Boolean).join(' ') || String(raw.name ?? 'Unknown'),
+    first_name:           first || undefined,
+    last_name:            last  || undefined,
     phone:                (raw.phone_number ?? raw.phone ?? null) as string | null,
     email:                (raw.email ?? null) as string | null,
     gender:               (raw.gender ?? null) as string | null,
@@ -51,12 +63,53 @@ function normalise(raw: Record<string, unknown>): Customer {
     is_email_verified:    raw.is_email_verified === true,
     is_loyalty_enrolled:  raw.is_loyalty_enrolled === true,
     notification_channel: (raw.notification_channel ?? null) as string | null,
+    created_at:           rawCreatedAt ? String(rawCreatedAt) : null,
+    raw,
   };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function initials(name: string) {
   return name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
+}
+
+function parseCustomerDate(rawVal: unknown): Date | null {
+  if (!rawVal) return null;
+  if (rawVal instanceof Date) return isNaN(rawVal.getTime()) ? null : rawVal;
+  if (typeof rawVal === 'number') {
+    const d = new Date(rawVal > 1e11 ? rawVal : rawVal * 1000);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof rawVal === 'string') {
+    if (/^\d{10,13}$/.test(rawVal.trim())) {
+      const num = Number(rawVal.trim());
+      const d = new Date(num > 1e11 ? num : num * 1000);
+      if (!isNaN(d.getTime())) return d;
+    }
+    const d = new Date(rawVal);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function formatCustomerDate(dStr: string | null) {
+  if (!dStr) return null;
+  const d = parseCustomerDate(dStr);
+  if (!d) return null;
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function formatCustomerDateTime(dStr: string | null) {
+  if (!dStr) return null;
+  const d = parseCustomerDate(dStr);
+  if (!d) return null;
+  return d.toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function formatDob(dob: string | null) {
@@ -110,15 +163,45 @@ function Avatar({ customer, size = 'md' }: { customer: Customer; size?: 'sm' | '
   );
 }
 
-function SelectFilter({ label, value, options, onChange }: {
-  label: string; value: string; options: string[]; onChange: (v: string) => void;
+function SelectFilter({
+  label,
+  value,
+  options,
+  icon,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: (string | { label: string; value: string })[];
+  icon?: React.ReactNode;
+  onChange: (v: string) => void;
 }) {
   return (
     <div className="relative">
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        className="h-10 appearance-none rounded-xl border border-border bg-card pl-3 pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer">
+      {icon && (
+        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+          {icon}
+        </span>
+      )}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={cn(
+          'h-10 appearance-none rounded-xl border border-border bg-card pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer',
+          icon ? 'pl-9' : 'pl-3',
+          value ? 'border-primary/50 text-foreground font-semibold' : 'text-muted-foreground',
+        )}
+      >
         <option value="">{label}</option>
-        {options.map((o) => <option key={o} value={o} className="capitalize">{o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
+        {options.map((o) => {
+          const optVal = typeof o === 'string' ? o : o.value;
+          const optLabel = typeof o === 'string' ? (o.charAt(0).toUpperCase() + o.slice(1)) : o.label;
+          return (
+            <option key={optVal} value={optVal} className="text-foreground capitalize">
+              {optLabel}
+            </option>
+          );
+        })}
       </select>
       <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
     </div>
@@ -306,18 +389,240 @@ function SuccessToast({
   );
 }
 
+// ── Customer Details Modal ───────────────────────────────────────────────────
+function CustomerDetailsModal({
+  customer,
+  onClose,
+  onSendMessage,
+}: {
+  customer: Customer;
+  onClose: () => void;
+  onSendMessage: (customer: Customer) => void;
+}) {
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const handleCopy = (text: string, field: string) => {
+    navigator.clipboard?.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const signupDateFormatted = formatCustomerDateTime(customer.created_at);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden animate-fade-in-up">
+        {/* Header with avatar & basic info */}
+        <div className="relative border-b border-border/60 bg-gradient-to-r from-primary/10 via-primary/5 to-accent/10 p-6">
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-xl bg-card/80 border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+
+          <div className="flex items-start gap-4 pr-8">
+            <Avatar customer={customer} size="lg" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-lg font-bold text-foreground truncate">{customer.name}</h3>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize',
+                    customer.account_status === 'active'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                      : 'bg-muted text-muted-foreground',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      customer.account_status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground',
+                    )}
+                  />
+                  {customer.account_status}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5 font-mono">
+                ID: {customer.id}
+              </p>
+              {customer.gender && (
+                <p className="text-xs text-muted-foreground capitalize mt-0.5">
+                  Gender: <span className="text-foreground font-medium">{customer.gender}</span>
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Body content */}
+        <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+          {/* Contact Details */}
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+              Contact Information
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/20">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Phone className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Phone</p>
+                    <p className="text-xs font-medium text-foreground truncate">
+                      {customer.phone || 'Not provided'}
+                    </p>
+                  </div>
+                </div>
+                {customer.phone && (
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(customer.phone!, 'phone')}
+                    title="Copy phone"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                  >
+                    {copiedField === 'phone' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/20">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Mail className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Email</p>
+                    <p className="text-xs font-medium text-foreground truncate" title={customer.email || undefined}>
+                      {customer.email || 'Not provided'}
+                    </p>
+                  </div>
+                </div>
+                {customer.email && (
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(customer.email!, 'email')}
+                    title="Copy email"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                  >
+                    {copiedField === 'email' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Account & Profile Details */}
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+              Profile & Sign Up
+            </h4>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="p-3 rounded-xl border border-border bg-muted/20">
+                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Date of Birth</p>
+                <p className="text-xs font-semibold text-foreground mt-1 flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  {formatDob(customer.dob) || '—'}
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-border bg-muted/20">
+                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Signup Date</p>
+                <p className="text-xs font-semibold text-foreground mt-1 flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+                  {signupDateFormatted || '—'}
+                </p>
+              </div>
+
+              <div className="p-3 rounded-xl border border-border bg-muted/20">
+                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Loyalty Program</p>
+                <p className="text-xs font-semibold text-foreground mt-1">
+                  {customer.is_loyalty_enrolled ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">Enrolled</span>
+                  ) : (
+                    <span className="text-muted-foreground">Not Enrolled</span>
+                  )}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Verification Statuses */}
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+              Verification Status
+            </h4>
+            <div className="flex flex-wrap gap-2">
+              <VerifiedBadge ok={customer.is_whatsapp_verified} label="WhatsApp Verified" />
+              <VerifiedBadge ok={customer.is_email_verified} label="Email Verified" />
+              <VerifiedBadge ok={customer.is_mobile_verified} label="Mobile Phone Verified" />
+            </div>
+          </div>
+
+          {customer.notification_channel && (
+            <div className="p-3 rounded-xl border border-border bg-muted/20">
+              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Preferred Notification Channel</p>
+              <p className="text-xs font-semibold text-foreground mt-1 capitalize">
+                {customer.notification_channel}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer actions */}
+        <div className="flex items-center justify-between border-t border-border/60 bg-muted/20 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-10 rounded-xl border border-border bg-card px-5 text-sm font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+          >
+            Close
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onSendMessage(customer);
+            }}
+            className="flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+          >
+            <Send className="h-4 w-4" />
+            <span>Send Message</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SIGNUP_DATE_OPTIONS: { label: string; value: SignupDateFilter }[] = [
+  { label: 'Current Date', value: 'today' },
+  { label: 'Last Week', value: 'last_week' },
+  { label: 'Last Month', value: 'last_month' },
+];
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function CustomersPage() {
   const { t } = useI18n();
 
-  const [search,          setSearch]          = useState('');
-  const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [page,            setPage]            = useState(1);
-  const [pageSize,        setPageSize]        = useState(20);
-  const [genderFilter,    setGenderFilter]    = useState('');
-  const [whatsappOnly,    setWhatsappOnly]    = useState(false);
-  const [emailOnly,       setEmailOnly]       = useState(false);
-  const [viewMode,        setViewMode]        = useState<'grid' | 'list'>('grid');
+  const [search,           setSearch]           = useState('');
+  const [debouncedSearch,  setDebouncedSearch]  = useState('');
+  const [page,             setPage]             = useState(1);
+  const [pageSize,         setPageSize]         = useState(20);
+  const [genderFilter,     setGenderFilter]     = useState('');
+  const [signupDateFilter, setSignupDateFilter] = useState<SignupDateFilter>('');
+  const [whatsappOnly,     setWhatsappOnly]     = useState(false);
+  const [emailOnly,        setEmailOnly]        = useState(false);
+  const [viewMode,         setViewMode]         = useState<'grid' | 'list'>('list');
+  const [viewCustomer,     setViewCustomer]     = useState<Customer | null>(null);
 
   // Debounce search so we query backend cleanly
   useEffect(() => {
@@ -331,7 +636,7 @@ export default function CustomersPage() {
   // Reset page when client filters change
   useEffect(() => {
     setPage(1);
-  }, [genderFilter, whatsappOnly, emailOnly]);
+  }, [genderFilter, whatsappOnly, emailOnly, signupDateFilter]);
 
   // Multi-select
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
@@ -361,14 +666,37 @@ export default function CustomersPage() {
 
   const filtered = useMemo(() => {
     const q = debouncedSearch ? '' : search.toLowerCase();
+
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0, 0);
+    const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0);
+
     return customers.filter((c) => {
       const matchSearch   = !q || c.name.toLowerCase().includes(q) || c.phone?.includes(q) || c.email?.toLowerCase().includes(q);
       const matchGender   = !genderFilter || c.gender === genderFilter;
       const matchWhatsapp = !whatsappOnly || c.is_whatsapp_verified;
       const matchEmail    = !emailOnly    || c.is_email_verified;
-      return matchSearch && matchGender && matchWhatsapp && matchEmail;
+
+      let matchSignupDate = true;
+      if (signupDateFilter) {
+        const d = parseCustomerDate(c.created_at);
+        if (!d) {
+          matchSignupDate = false;
+        } else if (signupDateFilter === 'today') {
+          matchSignupDate = d >= todayStart && d <= todayEnd;
+        } else if (signupDateFilter === 'last_week') {
+          matchSignupDate = d >= sevenDaysAgo && d <= todayEnd;
+        } else if (signupDateFilter === 'last_month') {
+          matchSignupDate = d >= thirtyDaysAgo && d <= todayEnd;
+        }
+      }
+
+      return matchSearch && matchGender && matchWhatsapp && matchEmail && matchSignupDate;
     });
-  }, [customers, search, debouncedSearch, genderFilter, whatsappOnly, emailOnly]);
+  }, [customers, search, debouncedSearch, genderFilter, whatsappOnly, emailOnly, signupDateFilter]);
 
   const totalCount  = pagination?.count ?? customers.length;
   const totalPages  = pagination?.total_pages ?? Math.max(1, Math.ceil(totalCount / pageSize));
@@ -376,11 +704,12 @@ export default function CustomersPage() {
   const hasPrevPage = pagination ? Boolean(pagination.previous) : page > 1;
   const pageNumbers = useMemo(() => getPageNumbers(page, totalPages), [page, totalPages]);
 
-  const hasFilter = search || genderFilter || whatsappOnly || emailOnly;
+  const hasFilter = search || genderFilter || signupDateFilter || whatsappOnly || emailOnly;
   const clearAll  = () => {
     setSearch('');
     setDebouncedSearch('');
     setGenderFilter('');
+    setSignupDateFilter('');
     setWhatsappOnly(false);
     setEmailOnly(false);
     setPage(1);
@@ -428,6 +757,11 @@ export default function CustomersPage() {
     setTimeout(() => setSuccessInfo(null), 5000);
   }, [selectedIds, clearSelection]);
 
+  const handleSendMessageFromPopup = useCallback((customer: Customer) => {
+    setSelectedIds(new Set([customer.id]));
+    setShowMsgModal(true);
+  }, []);
+
   return (
     <DashboardShell>
       <PageHeader
@@ -462,6 +796,15 @@ export default function CustomersPage() {
             className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" />
         </div>
 
+        {/* Signup date filter */}
+        <SelectFilter
+          label="All Signup Dates"
+          value={signupDateFilter}
+          icon={<Calendar className="h-4 w-4" />}
+          options={SIGNUP_DATE_OPTIONS}
+          onChange={(v) => setSignupDateFilter(v as SignupDateFilter)}
+        />
+
         {/* Gender */}
         <SelectFilter label="All Genders" value={genderFilter} options={genderOptions} onChange={setGenderFilter} />
 
@@ -483,7 +826,7 @@ export default function CustomersPage() {
 
         {hasFilter && (
           <button onClick={clearAll}
-            className="h-10 rounded-xl border border-border bg-card px-3 text-sm text-muted-foreground hover:text-destructive transition">
+            className="h-10 rounded-xl border border-border bg-card px-3 text-sm text-muted-foreground hover:text-destructive transition cursor-pointer">
             Clear
           </button>
         )}
@@ -505,9 +848,9 @@ export default function CustomersPage() {
 
         {/* View toggle */}
         <div className="flex rounded-xl border border-border overflow-hidden">
-          {(['grid', 'list'] as const).map((m) => (
+          {(['list', 'grid'] as const).map((m) => (
             <button key={m} onClick={() => setViewMode(m)}
-              className={cn('flex h-10 w-10 items-center justify-center transition',
+              className={cn('flex h-10 w-10 items-center justify-center transition cursor-pointer',
                 viewMode === m ? 'bg-primary text-white' : 'bg-card hover:bg-muted text-muted-foreground')}
               aria-label={m === 'grid' ? 'Grid view' : 'List view'}>
               {m === 'grid' ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
@@ -525,13 +868,13 @@ export default function CustomersPage() {
           <div className="flex-1" />
           <button
             onClick={() => setShowMsgModal(true)}
-            className="flex h-9 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition"
+            className="flex h-9 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
           >
             <Send className="h-3.5 w-3.5" /> Send Message
           </button>
           <button
             onClick={clearSelection}
-            className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-muted-foreground hover:text-foreground transition"
+            className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
           >
             <X className="h-3.5 w-3.5" /> Deselect All
           </button>
@@ -561,29 +904,36 @@ export default function CustomersPage() {
             return (
               <div
                 key={c.id}
-                onClick={() => toggleSelect(c.id)}
                 className={cn(
-                  'group relative rounded-2xl border bg-card p-4 transition cursor-pointer animate-fade-in-up',
+                  'group relative rounded-2xl border bg-card p-4 transition animate-fade-in-up',
                   isSelected
                     ? 'border-primary/60 bg-primary/5 shadow-md ring-2 ring-primary/20'
                     : 'border-border/50 hover:border-primary/40 hover:shadow-md',
                 )}
               >
-                {/* Selection checkbox */}
-                <div className={cn(
-                  'absolute top-3 right-3 h-5 w-5 rounded-md border-2 transition flex items-center justify-center shrink-0',
-                  isSelected
-                    ? 'border-primary bg-primary'
-                    : 'border-border/60 bg-card group-hover:border-primary/50',
-                )}>
-                  {isSelected && <CheckCheck className="h-3 w-3 text-white" />}
-                </div>
+                {/* Circle selection checkbox on top right */}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleSelect(c.id);
+                  }}
+                  aria-label={isSelected ? 'Deselect customer' : 'Select customer'}
+                  className={cn(
+                    'absolute top-3 right-3 h-5 w-5 rounded-full border-2 transition flex items-center justify-center shrink-0 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary/40 z-10',
+                    isSelected
+                      ? 'border-primary bg-primary text-white shadow-xs'
+                      : 'border-border/80 bg-card hover:border-primary/60',
+                  )}
+                >
+                  {isSelected && <Check className="h-3 w-3 text-white stroke-[3]" />}
+                </button>
 
                 {/* Header row */}
-                <div className="flex items-start gap-3 pr-7">
+                <div className="flex items-start gap-3 pr-8">
                   <Avatar customer={c} size="md" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-bold text-sm">{c.name}</p>
+                    <p className="truncate font-bold text-sm text-foreground">{c.name}</p>
                     <p className="text-xs text-muted-foreground capitalize">{c.gender ?? '—'}</p>
                     {c.dob && (
                       <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
@@ -610,13 +960,32 @@ export default function CustomersPage() {
                   {c.email && (
                     <p className="flex items-center gap-1.5 truncate"><Mail className="h-3 w-3" /> {c.email}</p>
                   )}
+                  {c.created_at && (
+                    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground/80 pt-0.5">
+                      <Calendar className="h-3 w-3 text-muted-foreground/60" /> Signed up: {formatCustomerDate(c.created_at)}
+                    </p>
+                  )}
                 </div>
 
-                {/* Verification badges */}
-                <div className="mt-3 flex flex-wrap gap-1.5 border-t border-border/40 pt-3">
-                  <VerifiedBadge ok={c.is_whatsapp_verified} label="WhatsApp" />
-                  <VerifiedBadge ok={c.is_email_verified}    label="Email" />
-                  <VerifiedBadge ok={c.is_mobile_verified}   label="Mobile" />
+                {/* Verification badges & View details button */}
+                <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-3 gap-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    <VerifiedBadge ok={c.is_whatsapp_verified} label="WhatsApp" />
+                    <VerifiedBadge ok={c.is_email_verified}    label="Email" />
+                    <VerifiedBadge ok={c.is_mobile_verified}   label="Mobile" />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setViewCustomer(c);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-primary hover:text-white hover:border-primary transition cursor-pointer shrink-0 shadow-xs"
+                    title="View details"
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    <span>View</span>
+                  </button>
                 </div>
               </div>
             );
@@ -630,24 +999,26 @@ export default function CustomersPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border/50 bg-muted/40">
-                {/* Select-all checkbox */}
+                {/* Select-all circle checkbox */}
                 <th className="px-4 py-3 w-10">
-                  <div
+                  <button
+                    type="button"
                     onClick={toggleSelectAll}
+                    aria-label={allFilteredSelected ? 'Deselect all' : 'Select all'}
                     className={cn(
-                      'mx-auto h-5 w-5 rounded-md border-2 transition flex items-center justify-center cursor-pointer',
+                      'mx-auto h-5 w-5 rounded-full border-2 transition flex items-center justify-center cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
                       allFilteredSelected
-                        ? 'border-primary bg-primary'
+                        ? 'border-primary bg-primary text-white shadow-xs'
                         : someSelected
                           ? 'border-primary bg-primary/20'
-                          : 'border-border/60 bg-card hover:border-primary/50',
+                          : 'border-border/80 bg-card hover:border-primary/60',
                     )}
                   >
-                    {allFilteredSelected && <CheckCheck className="h-3 w-3 text-white" />}
+                    {allFilteredSelected && <Check className="h-3 w-3 text-white stroke-[3]" />}
                     {!allFilteredSelected && someSelected && (
-                      <span className="block h-0.5 w-3 bg-primary rounded-full" />
+                      <span className="block h-1.5 w-1.5 bg-primary rounded-full" />
                     )}
-                  </div>
+                  </button>
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Contact</th>
@@ -655,6 +1026,7 @@ export default function CustomersPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden lg:table-cell">DOB</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground hidden md:table-cell">Verified</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -663,9 +1035,8 @@ export default function CustomersPage() {
                 return (
                   <tr
                     key={c.id}
-                    onClick={() => toggleSelect(c.id)}
                     className={cn(
-                      'border-b border-border/30 transition cursor-pointer',
+                      'border-b border-border/30 transition',
                       isSelected
                         ? 'bg-primary/5 border-primary/20'
                         : i % 2 !== 0
@@ -673,23 +1044,38 @@ export default function CustomersPage() {
                           : 'hover:bg-muted/30',
                     )}
                   >
-                    {/* Row checkbox */}
+                    {/* Circle Row checkbox on the left */}
                     <td className="px-4 py-3 w-10">
-                      <div className={cn(
-                        'mx-auto h-5 w-5 rounded-md border-2 transition flex items-center justify-center',
-                        isSelected
-                          ? 'border-primary bg-primary'
-                          : 'border-border/60 bg-card',
-                      )}>
-                        {isSelected && <CheckCheck className="h-3 w-3 text-white" />}
-                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(c.id);
+                        }}
+                        aria-label={isSelected ? 'Deselect customer' : 'Select customer'}
+                        className={cn(
+                          'mx-auto h-5 w-5 rounded-full border-2 transition flex items-center justify-center cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+                          isSelected
+                            ? 'border-primary bg-primary text-white shadow-xs'
+                            : 'border-border/80 bg-card hover:border-primary/60',
+                        )}
+                      >
+                        {isSelected && <Check className="h-3 w-3 text-white stroke-[3]" />}
+                      </button>
                     </td>
 
-                    {/* Name */}
+                    {/* Name & Signup date */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <Avatar customer={c} size="sm" />
-                        <p className="font-semibold text-sm">{c.name}</p>
+                        <div className="min-w-0">
+                          <p className="font-semibold text-sm text-foreground truncate">{c.name}</p>
+                          {c.created_at && (
+                            <p className="text-[11px] text-muted-foreground flex items-center gap-1">
+                              <span>Signed up: {formatCustomerDate(c.created_at)}</span>
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </td>
 
@@ -749,6 +1135,22 @@ export default function CustomersPage() {
                         <span className={cn('h-1.5 w-1.5 rounded-full', c.account_status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground')} />
                         {c.account_status}
                       </span>
+                    </td>
+
+                    {/* Right-most Action button: View details in popup */}
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setViewCustomer(c);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-primary hover:text-white hover:border-primary transition shadow-xs cursor-pointer group"
+                        title="View customer details"
+                      >
+                        <Eye className="h-3.5 w-3.5 text-muted-foreground group-hover:text-white transition" />
+                        <span>View</span>
+                      </button>
                     </td>
                   </tr>
                 );
@@ -832,7 +1234,7 @@ export default function CustomersPage() {
               title="First page"
               aria-label="First page"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
                 page === 1
                   ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
                   : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
@@ -848,7 +1250,7 @@ export default function CustomersPage() {
               title="Previous page"
               aria-label="Previous page"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
                 !hasPrevPage
                   ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
                   : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
@@ -876,7 +1278,7 @@ export default function CustomersPage() {
                     key={`page-${p}`}
                     onClick={() => setPage(p)}
                     className={cn(
-                      'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95',
+                      'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer',
                       isCurrent
                         ? 'bg-primary text-white shadow-sm'
                         : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
@@ -895,7 +1297,7 @@ export default function CustomersPage() {
               title="Next page"
               aria-label="Next page"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
                 !hasNextPage
                   ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
                   : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
@@ -911,7 +1313,7 @@ export default function CustomersPage() {
               title="Last page"
               aria-label="Last page"
               className={cn(
-                'flex h-8 w-8 items-center justify-center rounded-xl border transition',
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
                 page === totalPages
                   ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
                   : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
@@ -921,6 +1323,15 @@ export default function CustomersPage() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Customer Details Popup Modal */}
+      {viewCustomer && (
+        <CustomerDetailsModal
+          customer={viewCustomer}
+          onClose={() => setViewCustomer(null)}
+          onSendMessage={handleSendMessageFromPopup}
+        />
       )}
 
       {/* Send Message Modal */}

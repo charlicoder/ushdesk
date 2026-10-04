@@ -26,14 +26,7 @@ async function resolveCompanyId(
   // 2. In-memory cached company ID
   if (cachedCompanyId) return cachedCompanyId;
 
-  // 3. Configured in environment variables / helper
-  const defaultEnvId = getDefaultCompanyId();
-  if (defaultEnvId && defaultEnvId !== 'f70caa2a-a435-4928-b7b1-7cb016619848') {
-    cachedCompanyId = defaultEnvId;
-    return cachedCompanyId;
-  }
-
-  // 4. Dynamic discovery from backend /companies/
+  // 3. Dynamic discovery from backend /companies/ (ensures correct company for current environment)
   const candidateUrls = [
     `${baseUrl}${uanr}/api/v1/companies/`,
     `${LOCAL_DIRECT_URL}/companies/`,
@@ -41,7 +34,10 @@ async function resolveCompanyId(
 
   for (const url of candidateUrls) {
     try {
-      const res = await fetch(url, { headers, cache: 'no-store' });
+      const res = await fetch(url, {
+        headers: { ...headers, Connection: 'close' },
+        cache: 'no-store',
+      });
       if (res.ok) {
         const json = await res.json().catch(() => ({}));
         const items = json?.data?.items ?? json?.items ?? (Array.isArray(json?.data) ? json.data : []);
@@ -56,9 +52,22 @@ async function resolveCompanyId(
     }
   }
 
-  cachedCompanyId = '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68';
+  // 4. Configured in environment variables / helper
+  const defaultEnvId = getDefaultCompanyId();
+  if (defaultEnvId) {
+    cachedCompanyId = defaultEnvId;
+    return cachedCompanyId;
+  }
+
+  cachedCompanyId = 'f70caa2a-a435-4928-b7b1-7cb016619848';
   return cachedCompanyId;
 }
+
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-USHSPA-TOKEN, Accept-Language, x-company-id',
+};
 
 export async function proxyRequest(req: NextRequest, slug: string[], method: string) {
   const path = slug.join('/') + (slug[slug.length - 1]?.includes('.') ? '' : '/');
@@ -89,18 +98,31 @@ export async function proxyRequest(req: NextRequest, slug: string[], method: str
     }
   }
 
+  const fetchWithRetry = async (url: string) => {
+    try {
+      return await fetch(url, {
+        method,
+        headers: { ...headers, Connection: 'close' },
+        body,
+        cache: 'no-store',
+      });
+    } catch {
+      return await fetch(url, {
+        method,
+        headers: { ...headers, Connection: 'close' },
+        body,
+        cache: 'no-store',
+      });
+    }
+  };
+
   // Attempt 1: Gateway proxy
   try {
-    const res = await fetch(gatewayUrl, {
-      method,
-      headers,
-      body,
-      cache: 'no-store',
-    });
+    const res = await fetchWithRetry(gatewayUrl);
 
     if (res.status !== 502 && res.status !== 504) {
       const data = await res.json().catch(() => ({}));
-      return NextResponse.json(data, { status: res.status });
+      return NextResponse.json(data, { status: res.status, headers: CORS_HEADERS });
     }
   } catch {
     // Gateway down or not responding, fallback to direct local instance
@@ -108,19 +130,21 @@ export async function proxyRequest(req: NextRequest, slug: string[], method: str
 
   // Attempt 2: Direct local fallback
   try {
-    const res = await fetch(directUrl, {
-      method,
-      headers,
-      body,
-      cache: 'no-store',
-    });
+    const res = await fetchWithRetry(directUrl);
     const data = await res.json().catch(() => ({}));
-    return NextResponse.json(data, { status: res.status });
+    return NextResponse.json(data, { status: res.status, headers: CORS_HEADERS });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Accounting proxy error';
     console.error('[UANR Proxy Error]', err);
-    return NextResponse.json({ detail: message }, { status: 502 });
+    return NextResponse.json({ detail: message }, { status: 502, headers: CORS_HEADERS });
   }
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: CORS_HEADERS,
+  });
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {

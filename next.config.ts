@@ -37,11 +37,6 @@ const nextConfig: NextConfig = {
           source: '/booknpay/api/:path*',
           destination: `${baseUrl}${booknpay}/api/:path*`,
         },
-        // Accounting & reporting proxy → https://apidev.ushspa.co/uanr/api/:path*
-        {
-          source: '/uanr/api/:path*',
-          destination: `${baseUrl}${uanr}/api/:path*`,
-        },
       ],
     };
   },
