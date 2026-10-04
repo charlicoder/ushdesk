@@ -363,7 +363,7 @@ export function BookingCancellationModal({
           refund_amount: isPaid ? refundAmount : 0,
         };
         // Try dedicated cancel endpoint; fall back to PATCH state
-        const r = await authedFetch(`/api/v1/invoices/${encodeURIComponent(invoiceNumber)}/cancel/`, {
+        const r = await authedFetch(`/uanr/api/v1/invoices/${encodeURIComponent(invoiceNumber)}/cancel/`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -373,7 +373,7 @@ export function BookingCancellationModal({
           body: JSON.stringify(invBody),
         });
         if (!r.ok) {
-          const patch = await authedFetch(`/api/v1/invoices/${encodeURIComponent(invoiceNumber)}/`, {
+          const patch = await authedFetch(`/uanr/api/v1/invoices/${encodeURIComponent(invoiceNumber)}/`, {
             method: 'PATCH',
             headers: {
               'Content-Type': 'application/json',

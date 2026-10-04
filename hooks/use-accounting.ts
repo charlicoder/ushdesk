@@ -492,9 +492,7 @@ export function useAnrList<T>(endpoint: string, options: UseAnrListOptions = {})
 
     const cleanEndpoint = endpoint.replace(/^\/+|\/+$/g, '');
     const queryString = query.toString();
-    const url = cleanEndpoint === 'invoices'
-      ? `/api/v1/invoices${queryString ? `?${queryString}` : ''}`
-      : `/uanr/api/v1/${cleanEndpoint}/${queryString ? `?${queryString}` : ''}`;
+    const url = `/uanr/api/v1/${cleanEndpoint}${queryString ? `?${queryString}` : ''}`;
 
     authedFetch(url)
       .then(async (res) => {

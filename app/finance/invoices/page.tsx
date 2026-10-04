@@ -445,7 +445,7 @@ function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClo
   const handlePost = async () => {
     setPosting(true); setActionError(null);
     try {
-      const res = await authedFetch(`/api/v1/invoices/${invoice.id}/post/`, { method: 'POST' });
+      const res = await authedFetch(`/uanr/api/v1/invoices/${invoice.id}/post/`, { method: 'POST' });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.detail ?? `HTTP ${res.status}`); }
       onRefresh?.(); onClose();
     } catch (e: any) { setActionError(e.message); } finally { setPosting(false); }
@@ -454,7 +454,7 @@ function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClo
   const handleCancel = async () => {
     setCancelling(true); setActionError(null);
     try {
-      const res = await authedFetch(`/api/v1/invoices/${invoice.id}/cancel/`, { method: 'POST' });
+      const res = await authedFetch(`/uanr/api/v1/invoices/${invoice.id}/cancel/`, { method: 'POST' });
       if (!res.ok) { const j = await res.json().catch(() => ({})); throw new Error(j?.detail ?? `HTTP ${res.status}`); }
       onRefresh?.(); onClose();
     } catch (e: any) { setActionError(e.message); } finally { setCancelling(false); }
@@ -761,12 +761,12 @@ function InvoiceFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
           tax_rate: parseFloat(l.tax_rate) || 0,
         })),
       };
-      const res = await authedFetch('/api/v1/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await authedFetch('/uanr/api/v1/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.detail ?? `HTTP ${res.status}`);
       const invoiceId = json?.data?.id;
       if (andPost && invoiceId) {
-        const postRes = await authedFetch(`/api/v1/invoices/${invoiceId}/post/`, { method: 'POST' });
+        const postRes = await authedFetch(`/uanr/api/v1/invoices/${invoiceId}/post/`, { method: 'POST' });
         if (!postRes.ok) { const pj = await postRes.json().catch(() => ({})); throw new Error(pj?.detail ?? 'Post failed'); }
       }
       onCreated();

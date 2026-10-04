@@ -66,7 +66,7 @@ export function InvoiceDetailModal({
     let cancelled = false;
     setLoading(true);
 
-    authedFetch(`/api/v1/invoices?search=${encodeURIComponent(invoiceNumber)}`)
+    authedFetch(`/uanr/api/v1/invoices?search=${encodeURIComponent(invoiceNumber)}`)
       .then((r) => r.json())
       .then((res) => {
         if (cancelled) return;
