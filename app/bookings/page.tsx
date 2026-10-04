@@ -532,7 +532,7 @@ function BookingDetailModal({
       return;
     }
     let cancelled = false;
-    authedFetch(`/uanr/api/v1/invoices/?search=${encodeURIComponent(invoiceNumber)}`)
+    authedFetch(`/api/v1/invoices?search=${encodeURIComponent(invoiceNumber)}`)
       .then((r) => r.json())
       .then((res) => {
         if (cancelled) return;

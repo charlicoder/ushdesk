@@ -276,7 +276,7 @@ interface Form {
 
 // ── Backend Invoice Generator ──────────────────────────────────────────────────
 /**
- * Creates an invoice in the backend accounting system (/uanr/api/v1/invoices/).
+ * Creates an invoice in the backend accounting system (/api/v1/invoices).
  * Returns the generated invoice number (structured like "INV/2026/00001").
  */
 async function createBackendInvoice(params: {
@@ -389,7 +389,7 @@ async function createBackendInvoice(params: {
       lines,
     };
 
-    const res = await authedFetch('/uanr/api/v1/invoices/', {
+    const res = await authedFetch('/api/v1/invoices', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -405,7 +405,7 @@ async function createBackendInvoice(params: {
       const returnedNumber = invData?.name || invData?.invoice_number || invData?.number || invData?.invoice_no;
       if (returnedNumber && typeof returnedNumber === 'string' && returnedNumber.trim()) {
         if (invData.id) {
-          authedFetch(`/uanr/api/v1/invoices/${invData.id}/post/`, {
+          authedFetch(`/api/v1/invoices/${invData.id}/post/`, {
             method: 'POST',
             headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
           }).catch(() => {});
@@ -421,7 +421,7 @@ async function createBackendInvoice(params: {
 
   // Fallback: Query the latest invoice number from uanr to increment sequence, or default to INV/YYYY/00001
   try {
-    const listRes = await authedFetch('/uanr/api/v1/invoices/?page_size=1', {
+    const listRes = await authedFetch('/api/v1/invoices?page_size=1', {
       headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
     });
     if (listRes.ok) {
