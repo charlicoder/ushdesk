@@ -27,11 +27,6 @@ const nextConfig: NextConfig = {
 
     return {
       fallback: [
-        // Auth service proxy  →  https://apidev.ushspa.co/uauth/api/v1/auth/:path*
-        {
-          source: '/api/v1/auth/:path*',
-          destination: `${baseUrl}${uauth}/api/v1/auth/:path*`,
-        },
         // Booking & payment proxy  →  https://apidev.ushspa.co/booknpay/api/:path*
         {
           source: '/booknpay/api/:path*',

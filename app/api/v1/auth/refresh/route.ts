@@ -9,14 +9,17 @@ export async function POST(req: NextRequest) {
   const refreshUrl = `${baseUrl}${uauth}/api/v1/auth/refresh/`;
 
   try {
-    const body = await req.json().catch(() => ({}));
+    const rawBody = await req.json().catch(() => ({}));
+    const refreshVal = rawBody.refresh || rawBody.refresh_token || '';
+    const body = { refresh: refreshVal };
 
     const upstream = await fetch(refreshUrl, {
       method: 'POST',
       headers: {
         'Content-Type':   'application/json',
         'Accept':         'application/json',
-        ...(appToken ? { 'X-USHSPA-TOKEN': appToken } : {}),
+        'Connection':     'close',
+        ...(appToken ? { 'X-USHSPA-TOKEN': appToken, 'USHSPA-TOKEN': appToken } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -32,7 +35,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Proxy error';
     return NextResponse.json(
-      { detail: `Cannot reach auth server at ${process.env['API_BASE_URL'] ?? '127.0.0.1'}: ${message}` },
+      { detail: `Cannot reach auth server at ${baseUrl}: ${message}` },
       { status: 502 },
     );
   }

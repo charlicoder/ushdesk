@@ -104,13 +104,13 @@ export function getProxyHeaders(
     'Accept': 'application/json',
     'Accept-Language': lang,
     'Connection': 'close',
-    ...(appToken ? { 'X-USHSPA-TOKEN': appToken } : {}),
+    ...(appToken ? { 'X-USHSPA-TOKEN': appToken, 'USHSPA-TOKEN': appToken } : {}),
     ...extra,
   };
 
-  const cleanAuth = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const cleanAuth = authHeader.replace(/^(Bearer\s+)+/i, '').trim();
   if (cleanAuth && cleanAuth !== 'null' && cleanAuth !== 'undefined') {
-    headers['Authorization'] = authHeader.startsWith('Bearer ') ? authHeader : `Bearer ${cleanAuth}`;
+    headers['Authorization'] = `Bearer ${cleanAuth}`;
   }
 
   return headers;

@@ -82,9 +82,12 @@ export const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 
 export function saveToken(token: string): void {
   if (typeof window !== 'undefined') {
-    localStorage.setItem(TOKEN_KEY, token);
+    const clean = token.replace(/^(Bearer\s+)+/i, '').trim();
+    localStorage.setItem(TOKEN_KEY, clean);
     // Record the exact time of login so we can enforce the 12-hour TTL
     localStorage.setItem(LOGINAT_KEY, String(Date.now()));
+    // Fallback cookie for server-side proxy route handlers
+    document.cookie = `${TOKEN_KEY}=${encodeURIComponent(clean)}; path=/; max-age=86400; SameSite=Lax`;
   }
 }
 
@@ -137,6 +140,7 @@ export function clearToken(): void {
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(LOGINAT_KEY);
     localStorage.removeItem('ush_refresh_token');
+    document.cookie = `${TOKEN_KEY}=; path=/; max-age=0; SameSite=Lax`;
   }
 }
 

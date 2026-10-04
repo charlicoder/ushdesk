@@ -16,6 +16,16 @@ export default function LoginPage() {
   const [phone, setPhone]       = useState('');
   const [password, setPassword] = useState('');
   const [showPwd, setShowPwd]   = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('expired') === '1') {
+        setSessionExpired(true);
+      }
+    }
+  }, []);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -27,6 +37,7 @@ export default function LoginPage() {
   // Clear stale error when user edits inputs
   useEffect(() => {
     if (error) dispatch(clearError());
+    if (sessionExpired) setSessionExpired(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phone, password]);
 
@@ -199,6 +210,13 @@ export default function LoginPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Session expired banner */}
+              {sessionExpired && !error && (
+                <div className="rounded-xl border border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm text-amber-800 dark:text-amber-300">
+                  Your session has expired. Please sign in again to continue.
+                </div>
+              )}
 
               {/* Error / warning banner */}
               {error && (() => {

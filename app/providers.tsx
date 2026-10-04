@@ -71,17 +71,25 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     dispatch(initAuthFromStorage());
   }, [dispatch]);
 
-  // Listen for silent token-refresh events from authedFetch
+  // Listen for silent token-refresh and session-expired events from authedFetch
   useEffect(() => {
     const onRefreshed = (e: Event) => {
       const token = (e as CustomEvent<{ token: string }>).detail?.token;
       if (token) dispatch(setToken(token));
     };
+    const onExpired = () => {
+      clearToken();
+      dispatch(logout());
+      router.replace('/login?expired=1');
+    };
+
     window.addEventListener('ush:token-refreshed', onRefreshed);
+    window.addEventListener('ush:session-expired', onExpired);
     return () => {
       window.removeEventListener('ush:token-refreshed', onRefreshed);
+      window.removeEventListener('ush:session-expired', onExpired);
     };
-  }, [dispatch]);
+  }, [dispatch, router]);
 
   // After initialization, redirect based on auth state
   useEffect(() => {

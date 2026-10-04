@@ -45,8 +45,22 @@ function getStoredLocale(): string {
 
 function saveNewToken(token: string): void {
   if (typeof window === 'undefined') return;
-  localStorage.setItem(TOKEN_KEY, token);
+  const clean = token.replace(/^(Bearer\s+)+/i, '').trim();
+  localStorage.setItem(TOKEN_KEY, clean);
   localStorage.setItem(LOGINAT_KEY, String(Date.now()));
+  document.cookie = `${TOKEN_KEY}=${encodeURIComponent(clean)}; path=/; max-age=86400; SameSite=Lax`;
+}
+
+function notifySessionExpired(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(LOGINAT_KEY);
+  localStorage.removeItem('ush_auth_user');
+  document.cookie = `${TOKEN_KEY}=; path=/; max-age=0; SameSite=Lax`;
+  window.dispatchEvent(
+    new CustomEvent('ush:session-expired', { detail: { reason: 'token_expired' } }),
+  );
 }
 
 // ── Refresh logic ──────────────────────────────────────────────────────────────
@@ -58,8 +72,11 @@ async function doRefresh(): Promise<string | null> {
   try {
     const res = await fetch('/api/v1/auth/refresh', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh: refreshToken }),
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({ refresh: refreshToken, refresh_token: refreshToken }),
     });
 
     if (!res.ok) return null;
@@ -104,13 +121,11 @@ async function doRefresh(): Promise<string | null> {
 /**
  * Drop-in replacement for `fetch` with transparent token auth + silent refresh.
  *
- * IMPORTANT: This function never triggers a global logout. It only:
+ * Flow:
  *  - Attaches the current token to every request.
  *  - On 401, silently tries a token refresh and retries once if it succeeds.
- *  - On refresh failure (or no refresh token), returns the original 401 to the
- *    caller so the component can show a friendly error message.
- *
- * Global logout is handled solely by the session TTL timer in providers.tsx.
+ *  - On refresh failure (or no refresh token), clears stale tokens and fires
+ *    `ush:session-expired` so the user is guided to log in with fresh credentials.
  */
 export async function authedFetch(
   input: RequestInfo | URL,
@@ -138,8 +153,7 @@ export async function authedFetch(
   // 3. Got a 401 — check whether we have a refresh token to attempt with
   const storedRefresh = getStoredRefreshToken();
   if (!storedRefresh) {
-    // No refresh token available — return the 401 to the caller.
-    // Do NOT wipe storage or dispatch logout here; the page will show an error.
+    notifySessionExpired();
     return res;
   }
 
@@ -151,10 +165,9 @@ export async function authedFetch(
   }
   const newToken = await refreshPromise;
 
-  // 5. Refresh failed — return the original 401 to the caller.
-  //    Do NOT wipe auth storage or trigger a global logout. The calling page
-  //    will show an error. The session TTL timer handles real session expiry.
+  // 5. Refresh failed — expired session
   if (!newToken) {
+    notifySessionExpired();
     return res;
   }
 
