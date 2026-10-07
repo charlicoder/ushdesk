@@ -214,13 +214,12 @@ export default function BookingListPage() {
               <tr className="border-b border-border/50 bg-muted/40">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Customer</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Service</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden md:table-cell">Branch</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden lg:table-cell">Therapist</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden md:table-cell">Branch/Therapist</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden xl:table-cell">Date &amp; Time</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground hidden sm:table-cell">Type</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Status</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground hidden md:table-cell">Payment</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground">Amount</th>
+                <th className="pl-4 pr-6 sm:pr-8 py-3 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -249,12 +248,16 @@ export default function BookingListPage() {
                     </p>
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell">
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <MapPin className="h-3 w-3 shrink-0" /><span className="max-w-[140px] truncate">{b.branch_name}</span>
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 hidden lg:table-cell">
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground"><User className="h-3 w-3 shrink-0" /> {b.therapist_name}</span>
+                    <div className="text-xs text-muted-foreground space-y-1">
+                      <p className="flex items-center gap-1">
+                        <MapPin className="h-3 w-3 shrink-0" />
+                        <span className="max-w-[160px] truncate">{b.branch_name || '—'}</span>
+                      </p>
+                      <p className="flex items-center gap-1">
+                        <User className="h-3 w-3 shrink-0" />
+                        <span className="max-w-[160px] truncate">{b.therapist_name || '—'}</span>
+                      </p>
+                    </div>
                   </td>
                   <td className="px-4 py-3 hidden xl:table-cell">
                     <div className="text-xs text-muted-foreground space-y-0.5">
@@ -276,7 +279,7 @@ export default function BookingListPage() {
                       {b.payment_status || '—'}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="pl-4 pr-6 sm:pr-8 py-3 text-right">
                     <p className="font-bold text-sm text-primary whitespace-nowrap">{parseFloat(b.total_amount).toFixed(3)}</p>
                     <p className="text-[11px] text-muted-foreground">{b.currency}</p>
                   </td>

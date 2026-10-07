@@ -140,6 +140,26 @@ export function formatDateTime(iso: string) {
   });
 }
 
+export function formatPaidTimestamp(iso: string) {
+  if (!iso) return '—';
+  const s = iso.trim();
+  let dateStr = s;
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
+    dateStr = dateStr.replace(' ', 'T') + 'Z';
+  }
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return iso;
+  // Format in user local timezone (e.g. Kuwait UTC+3) so 02:28 UTC shows as 05:28 AM
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 export function formatDate(iso: string) {
   if (!iso) return '—';
   const s = iso.trim();
@@ -300,6 +320,7 @@ function PaymentProviderModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const user = useAppSelector((s) => s.auth.user);
   const [selected, setSelected] = React.useState<ProviderId>('myfatoorah');
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -320,6 +341,20 @@ function PaymentProviderModal({
           payment_method: selected,
           reason: 'Paid on desk',
           source: 'ushdesk',
+          changed_by: user?.name || user?.id || 'Staff',
+          change_by_user: user?.name || user?.id || 'Staff',
+          change_by_user_data: user
+            ? {
+                id: user.id,
+                name: user.name,
+                full_name: user.name,
+                first_name: user.name.split(' ')[0] || user.name,
+                last_name: user.name.split(' ').slice(1).join(' ') || '',
+                email: user.email,
+                phone_number: user.phone_number,
+                role: user.user_type,
+              }
+            : undefined,
         }),
       });
       if (!res.ok) {
@@ -597,8 +632,34 @@ export function BookingDetailPopup({
     ? (detail.status_history as Array<Record<string, unknown>>)
     : [];
 
-  const createdByUserObj = (detail?.created_by_user_data ?? booking.created_by_user_data) as Record<string, unknown> | null;
+  const rawCreatorObj = detail?.created_by_user_data ?? booking.created_by_user_data;
+  const createdByUserObj: Record<string, unknown> | null = (() => {
+    if (!rawCreatorObj) return null;
+    if (typeof rawCreatorObj === 'object') return rawCreatorObj as Record<string, unknown>;
+    if (typeof rawCreatorObj === 'string') {
+      try {
+        const parsed = JSON.parse(rawCreatorObj);
+        if (typeof parsed === 'object' && parsed !== null) return parsed;
+      } catch {
+        return { name: rawCreatorObj };
+      }
+    }
+    return null;
+  })();
+
+  const createdByUserName = (
+    (createdByUserObj?.full_name as string) ||
+    [createdByUserObj?.first_name, createdByUserObj?.last_name].filter(Boolean).join(' ') ||
+    (createdByUserObj?.name as string) ||
+    (createdByUserObj?.username as string) ||
+    ((detail as any)?.created_by_name as string) ||
+    ((booking as any)?.created_by_name as string) ||
+    (typeof booking.created_by_user === 'string' && !/^[0-9a-f-]{10,}$/i.test(booking.created_by_user) ? booking.created_by_user : '') ||
+    ''
+  ).trim();
+
   const paymentDataObj   = (detail?.payment_data ?? booking.payment_data) as Record<string, unknown> | null;
+  const paidTimestamp    = (paymentDataObj?.paid_at ?? paymentDataObj?.transaction_date ?? paymentDataObj?.created_date) as string | undefined;
   const effectivePaymentUrl = String(detail?.payment_url ?? booking.payment_url ?? paymentDataObj?.payment_url ?? '');
 
   const receiptImg = String(
@@ -663,13 +724,32 @@ export function BookingDetailPopup({
           status: 'completed',
           reason: 'Service Completed',
           source: 'ushdesk',
+          changed_by: user?.name || user?.id || 'Staff',
+          change_by_user: user?.name || user?.id || 'Staff',
+          change_by_user_data: user
+            ? {
+                id: user.id,
+                name: user.name,
+                full_name: user.name,
+                first_name: user.name.split(' ')[0] || user.name,
+                last_name: user.name.split(' ').slice(1).join(' ') || '',
+                email: user.email,
+                phone_number: user.phone_number,
+                role: user.user_type,
+              }
+            : undefined,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.message || err.detail || `Failed to update status (${res.status})`);
       }
-      setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
+      const json = await res.json().catch(() => ({}));
+      if (json?.data) {
+        setDetail(json.data);
+      } else {
+        setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
+      }
       onSuccess?.();
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error completing booking:', err);
@@ -984,8 +1064,8 @@ export function BookingDetailPopup({
                         <FileText className="h-5 w-5" />
                       </div>
                       <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Official Tax Invoice</p>
-                        <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Invoice number</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                           <button
                             type="button"
                             onClick={() => setShowInvoiceModal(true)}
@@ -998,18 +1078,29 @@ export function BookingDetailPopup({
                             <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
                           </button>
                           {Boolean(invoiceNumber) && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText(invoiceNumber);
-                                setCopiedType('invoice');
-                                setTimeout(() => setCopiedType(null), 2000);
-                              }}
-                              className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
-                              title="Copy invoice number"
-                            >
-                              {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                            </button>
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(invoiceNumber);
+                                  setCopiedType('invoice');
+                                  setTimeout(() => setCopiedType(null), 2000);
+                                }}
+                                className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                                title="Copy invoice number"
+                              >
+                                {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                              <Link
+                                href={`/finance/invoices?search=${encodeURIComponent(invoiceNumber)}`}
+                                target="_blank"
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline px-1.5 py-0.5 rounded hover:bg-violet-500/10 transition"
+                                title="Open invoice link"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                <span>Link</span>
+                              </Link>
+                            </>
                           )}
                         </div>
                       </div>
@@ -1178,185 +1269,217 @@ export function BookingDetailPopup({
                     </div>
                   </div>
 
-                  {Boolean(paymentDataObj?.paid_at) && (
+                  {Boolean(paidTimestamp) && (
                     <div className="rounded-xl bg-card border border-border/40 px-3 py-2 text-xs flex items-center justify-between text-muted-foreground">
                       <span>Paid Timestamp:</span>
-                      <span className="font-medium text-foreground">{formatDateTime(String(paymentDataObj?.paid_at))}</span>
+                      <span className="font-medium text-foreground">{formatPaidTimestamp(String(paidTimestamp))}</span>
                     </div>
                   )}
                 </div>
 
-                {/* 3. Scanned Receipt Slip / Proof of Payment */}
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Receipt className="h-4 w-4 text-primary" />
-                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        Scanned Receipt / Slip
-                      </h4>
-                    </div>
-                    {Boolean(receiptImg) && (
-                      <button
-                        type="button"
-                        onClick={() => setReceiptZoom(true)}
-                        className="inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:underline cursor-pointer"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        View Full Slip
-                      </button>
-                    )}
-                  </div>
-
-                  {Boolean(receiptImg) ? (
-                    <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-card/70 p-3">
-                      <button
-                        type="button"
-                        onClick={() => setReceiptZoom(true)}
-                        className="relative h-16 w-16 shrink-0 rounded-lg overflow-hidden border border-border/60 bg-muted hover:opacity-90 transition cursor-zoom-in"
-                      >
-                        <img src={receiptImg} alt="Receipt slip" className="h-full w-full object-cover" />
-                      </button>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-foreground">Scanned Payment Receipt Attached</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">Physical POS or bank voucher slip captured during booking check-in.</p>
+                {/* 3 & 4. Scanned Receipt Slip & Customer Payment Link in one row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+                  {/* Scanned Receipt / Slip */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2.5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Receipt className="h-4 w-4 text-primary" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          Scanned Receipt / Slip
+                        </h4>
+                      </div>
+                      {Boolean(receiptImg) && (
                         <button
                           type="button"
                           onClick={() => setReceiptZoom(true)}
-                          className="mt-1.5 text-xs font-semibold text-primary hover:underline"
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:underline cursor-pointer"
                         >
-                          Click to expand receipt image
+                          <Eye className="h-3.5 w-3.5" />
+                          View Full Slip
                         </button>
+                      )}
+                    </div>
+
+                    {Boolean(receiptImg) ? (
+                      <div className="flex items-center gap-3 rounded-xl border border-border/40 bg-card/70 p-3">
+                        <button
+                          type="button"
+                          onClick={() => setReceiptZoom(true)}
+                          className="relative h-16 w-16 shrink-0 rounded-lg overflow-hidden border border-border/60 bg-muted hover:opacity-90 transition cursor-zoom-in"
+                        >
+                          <img src={receiptImg} alt="Receipt slip" className="h-full w-full object-cover" />
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-foreground">Scanned Payment Receipt Attached</p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Physical POS or bank voucher slip captured during booking check-in.</p>
+                          <button
+                            type="button"
+                            onClick={() => setReceiptZoom(true)}
+                            className="mt-1.5 text-xs font-semibold text-primary hover:underline"
+                          >
+                            Click to expand receipt image
+                          </button>
+                        </div>
                       </div>
+                    ) : (
+                      <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 bg-card/40 p-3 text-xs text-muted-foreground flex-1">
+                        <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span>No physical receipt slip uploaded for this transaction. Digital ledger record attached.</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Customer Payment Link */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2.5 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <ExternalLink className="h-4 w-4 text-primary" />
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                          Customer Payment Link
+                        </h4>
+                      </div>
+                      {Boolean(effectivePaymentUrl) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(effectivePaymentUrl);
+                            setCopiedLink(true);
+                            setTimeout(() => setCopiedLink(false), 2000);
+                          }}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                        >
+                          {copiedLink ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                          {copiedLink ? 'Copied' : 'Copy Link'}
+                        </button>
+                      )}
                     </div>
-                  ) : (
-                    <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 bg-card/40 p-3 text-xs text-muted-foreground">
-                      <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span>No physical receipt slip uploaded for this transaction. Digital ledger record attached.</span>
-                    </div>
-                  )}
+
+                    {effectivePaymentUrl ? (
+                      <div className="space-y-2 flex-1 flex flex-col justify-between">
+                        <p className="font-mono text-xs text-muted-foreground break-all bg-card/70 p-2 rounded-lg border border-border/40 select-all">
+                          {effectivePaymentUrl}
+                        </p>
+                        <a
+                          href={effectivePaymentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg bg-primary py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" /> Open Payment Link
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 bg-card/40 p-3 text-xs text-muted-foreground flex-1">
+                        <Info className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span>No customer payment link generated for this booking.</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {/* 4. Customer Payment Link */}
-                {effectivePaymentUrl ? (
-                  <div className="rounded-xl bg-card border border-primary/30 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-primary flex items-center gap-1.5">
-                        <ExternalLink className="h-3.5 w-3.5" /> Customer Payment Link
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(effectivePaymentUrl);
-                          setCopiedLink(true);
-                          setTimeout(() => setCopiedLink(false), 2000);
-                        }}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
-                      >
-                        {copiedLink ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                        {copiedLink ? 'Copied' : 'Copy Link'}
-                      </button>
-                    </div>
-                    <p className="font-mono text-xs text-muted-foreground break-all bg-muted/40 p-2 rounded-lg border border-border/40 select-all">
-                      {effectivePaymentUrl}
+                {/* 5 & 6. Created By User & Status History in one row */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+                  {/* Created By User Info */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3 flex flex-col">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <UserCheck className="h-3.5 w-3.5 text-primary" /> Created By User
                     </p>
-                    <a
-                      href={effectivePaymentUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg bg-primary py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> Open Payment Link
-                    </a>
-                  </div>
-                ) : null}
-
-                {/* 5. Created By User Info */}
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <UserCheck className="h-3.5 w-3.5 text-primary" /> Created By User
-                  </p>
-                  {createdByUserObj ? (
-                    <div className="rounded-xl bg-card border border-border/50 p-3 space-y-1.5 text-xs">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-foreground text-sm">
-                          {[createdByUserObj.first_name, createdByUserObj.last_name].filter(Boolean).join(' ') || String(createdByUserObj.name ?? 'Staff User')}
-                        </span>
-                        {Boolean(createdByUserObj.role) && (
-                          <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold capitalize">
-                            {String(createdByUserObj.role)}
+                    {createdByUserName || createdByUserObj ? (
+                      <div className="rounded-xl bg-card border border-border/50 p-3 space-y-1.5 text-xs flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-foreground text-sm">
+                            {createdByUserName || (createdByUserObj?.email ? String(createdByUserObj.email).split('@')[0] : 'System')}
                           </span>
+                          {Boolean(createdByUserObj?.role) && (
+                            <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold capitalize">
+                              {String(createdByUserObj?.role)}
+                            </span>
+                          )}
+                        </div>
+                        {Boolean(createdByUserObj?.email) && (
+                          <p className="text-muted-foreground flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">Email:</span> {String(createdByUserObj?.email)}
+                          </p>
+                        )}
+                        {Boolean(createdByUserObj?.phone_number) && (
+                          <p className="text-muted-foreground flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">Phone:</span> {String(createdByUserObj?.phone_number)}
+                          </p>
                         )}
                       </div>
-                      {Boolean(createdByUserObj.email) && (
-                        <p className="text-muted-foreground flex items-center gap-1.5">
-                          <span className="font-medium text-foreground">Email:</span> {String(createdByUserObj.email)}
-                        </p>
-                      )}
-                      {Boolean(createdByUserObj.phone_number) && (
-                        <p className="text-muted-foreground flex items-center gap-1.5">
-                          <span className="font-medium text-foreground">Phone:</span> {String(createdByUserObj.phone_number)}
-                        </p>
-                      )}
-                      {Boolean(createdByUserObj.id) && (
-                        <p className="text-muted-foreground font-mono text-[11px] truncate">
-                          <span className="font-sans font-medium text-foreground">User ID:</span> {String(createdByUserObj.id)}
-                        </p>
-                      )}
-                    </div>
-                  ) : booking.created_by_user ? (
-                    <div className="rounded-xl bg-card border border-border/50 p-3 text-xs">
-                      <span className="font-medium text-muted-foreground">User ID: </span>
-                      <span className="font-mono text-foreground font-semibold">{booking.created_by_user}</span>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground italic">No creator user information available.</p>
-                  )}
-                </div>
-
-                {/* Status History (Requirement 4) */}
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <History className="h-3.5 w-3.5 text-primary" /> Status History
-                    </p>
-                    {loadingDetail && <span className="text-[10px] text-muted-foreground animate-pulse">Updating...</span>}
+                    ) : (
+                      <div className="rounded-xl bg-card border border-border/40 p-3 text-xs text-muted-foreground flex-1 flex items-center">
+                        <p className="italic">No creator user information available.</p>
+                      </div>
+                    )}
                   </div>
-                  {historyList.length > 0 ? (
-                    <div className="relative pl-4 space-y-3 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/60">
-                      {historyList.map((item, idx) => {
-                        const changeByData = item.change_by_user_data as Record<string, unknown> | undefined;
-                        const changer = changeByData
-                          ? [changeByData.first_name, changeByData.last_name].filter(Boolean).join(' ') || changeByData.name
-                          : item.change_by_user || item.source || 'system';
-                        return (
-                          <div key={idx} className="relative text-xs space-y-1">
-                            <div className="absolute -left-[19px] top-1 h-2 w-2 rounded-full bg-primary ring-4 ring-card" />
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-bold text-foreground">
-                                {item.old_status ? `${String(item.old_status)} → ` : ''}
-                                <span className="capitalize">{String(item.new_status)}</span>
-                              </span>
-                              <span className="text-[10px] text-muted-foreground">· {formatDateTime(String(item.created_at))}</span>
-                            </div>
-                            <p className="text-[11px] text-muted-foreground">
-                              Changed by: <span className="font-medium text-foreground">{String(changer)}</span>
-                              {Boolean(item.source) && <span className="ml-1 text-[10px] text-muted-foreground/80">({String(item.source)})</span>}
-                            </p>
-                            {Boolean(item.reason) && (
-                              <p className="text-[11px] text-muted-foreground bg-card p-1.5 rounded-lg border border-border/40 italic">
-                                &ldquo;{String(item.reason)}&rdquo;
+
+                  {/* Status History */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3 flex flex-col">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <History className="h-3.5 w-3.5 text-primary" /> Status History
+                      </p>
+                      {loadingDetail && <span className="text-[10px] text-muted-foreground animate-pulse">Updating...</span>}
+                    </div>
+                    {historyList.length > 0 ? (
+                      <div className="relative pl-4 space-y-3 before:absolute before:left-1.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/60 flex-1">
+                        {historyList.map((item, idx) => {
+                          const changeByData = (item.change_by_user_data && typeof item.change_by_user_data === 'object')
+                            ? (item.change_by_user_data as Record<string, unknown>)
+                            : null;
+                          const changerFromData = changeByData
+                            ? ((changeByData.full_name as string) ||
+                               [changeByData.first_name, changeByData.last_name].filter(Boolean).join(' ') ||
+                               (changeByData.name as string) ||
+                               (changeByData.username as string) ||
+                               (changeByData.email as string) ||
+                               (changeByData.phone_number as string))
+                            : null;
+                          const changerRaw = (
+                            changerFromData ||
+                            (typeof item.change_by_user === 'string' &&
+                             !/^[0-9a-f-]{10,}$/i.test(item.change_by_user) &&
+                             item.change_by_user !== 'undefined' &&
+                             item.change_by_user !== 'null'
+                              ? item.change_by_user
+                              : '') ||
+                            (item.source === 'ushdesk' && user?.name ? user.name : '') ||
+                            (item.source === 'ushspa' && booking.customer_name ? booking.customer_name : '') ||
+                            (item.source && item.source !== 'undefined' ? String(item.source) : '') ||
+                            'Staff'
+                          ).trim();
+                          const changer = changerRaw || 'Staff';
+                          return (
+                            <div key={idx} className="relative text-xs space-y-1">
+                              <div className="absolute -left-[19px] top-1 h-2 w-2 rounded-full bg-primary ring-4 ring-card" />
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-foreground">
+                                  {item.old_status ? `${String(item.old_status)} → ` : ''}
+                                  <span className="capitalize">{String(item.new_status)}</span>
+                                </span>
+                                <span className="text-[10px] text-muted-foreground">· {formatDateTime(String(item.created_at))}</span>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground">
+                                Changed by: <span className="font-medium text-foreground">{changer}</span>
+                                {Boolean(item.source) && <span className="ml-1 text-[10px] text-muted-foreground/80">({String(item.source)})</span>}
                               </p>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="rounded-xl bg-card border border-border/40 p-3 text-xs space-y-1">
-                      <p className="font-medium text-foreground">Initial status: <span className="capitalize font-bold">{booking.status}</span></p>
-                      <p className="text-[11px] text-muted-foreground">Recorded at: {formatDateTime(booking.created_at)}</p>
-                    </div>
-                  )}
+                              {Boolean(item.reason) && (
+                                <p className="text-[11px] text-muted-foreground bg-card p-1.5 rounded-lg border border-border/40 italic">
+                                  &ldquo;{String(item.reason)}&rdquo;
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl bg-card border border-border/40 p-3 text-xs space-y-1 flex-1 flex flex-col justify-center">
+                        <p className="font-medium text-foreground">Initial status: <span className="capitalize font-bold">{booking.status}</span></p>
+                        <p className="text-[11px] text-muted-foreground">Recorded at: {formatDateTime(booking.created_at)}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             )}

@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { useAppSelector } from '@/store/hooks';
 
 // ── Refund method definitions ──────────────────────────────────────────────────
 // Maps UI choice → booknpay PaymentMethod enum value
@@ -182,6 +183,7 @@ export function BookingCancellationModal({
   onClose,
   onSuccess,
 }: BookingCancellationModalProps) {
+  const currentUser = useAppSelector((s) => s.auth.user);
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
@@ -237,6 +239,20 @@ export function BookingCancellationModal({
         reason:         reason.trim(),
         cancel_reason:  reason.trim(),
         source:         'ushdesk',
+        changed_by:     currentUser?.name || currentUser?.id || 'Staff',
+        change_by_user: currentUser?.name || currentUser?.id || 'Staff',
+        change_by_user_data: currentUser
+          ? {
+              id: currentUser.id,
+              name: currentUser.name,
+              full_name: currentUser.name,
+              first_name: currentUser.name.split(' ')[0] || currentUser.name,
+              last_name: currentUser.name.split(' ').slice(1).join(' ') || '',
+              email: currentUser.email,
+              phone_number: currentUser.phone_number,
+              role: currentUser.user_type,
+            }
+          : undefined,
       };
       if (isPaid && selectedMethod !== 'no_refund') {
         cancelBody.refund_method    = selectedMethod;
