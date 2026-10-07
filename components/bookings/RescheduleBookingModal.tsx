@@ -280,6 +280,23 @@ export function RescheduleBookingModal({
     }
   }, [bk, selectedBranchId, todayStr]);
 
+  // ── Max allowed reschedule date: original appointment date + 30 days ─
+  const maxDateStr = useMemo(() => {
+    const isoStart = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
+    const dateRaw = bk?.appointment_date ?? bk?.booking_date ?? bk?.date ?? (isoStart ? isoStart.split('T')[0] : '');
+    if (dateRaw && typeof dateRaw === 'string' && dateRaw.trim()) {
+      const base = new Date(`${dateRaw.trim().split('T')[0]}T00:00:00Z`);
+      if (!isNaN(base.getTime())) {
+        base.setUTCDate(base.getUTCDate() + 30);
+        return base.toISOString().split('T')[0];
+      }
+    }
+    // Fallback: today + 30 days
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + 30);
+    return fallback.toISOString().split('T')[0];
+  }, [bk]);
+
   // ── 2. Fetch Branches ────────────────────────────────────────────────
   useEffect(() => {
     fetchJson('/api/v1/branches/')
@@ -807,6 +824,7 @@ export function RescheduleBookingModal({
                       <input
                         type="date"
                         min={todayStr}
+                        max={maxDateStr}
                         value={selectedDate}
                         onChange={(e) => setSelectedDate(e.target.value)}
                         className="rounded-xl border border-border/70 bg-card px-3.5 py-2 text-sm font-semibold shadow-sm focus:border-primary focus:outline-none transition cursor-pointer"
@@ -829,7 +847,8 @@ export function RescheduleBookingModal({
                         onClick={() => {
                           const d = new Date();
                           d.setDate(d.getDate() + 1);
-                          setSelectedDate(d.toISOString().split('T')[0]);
+                          const tomorrowStr = d.toISOString().split('T')[0];
+                          setSelectedDate(tomorrowStr <= maxDateStr ? tomorrowStr : maxDateStr);
                         }}
                         className={cn(
                           'rounded-xl px-3 py-2 text-xs font-bold transition cursor-pointer border',

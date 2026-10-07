@@ -29,6 +29,8 @@ interface CustomerData {
 
 interface RawPayment {
   id?: unknown;
+  payment_number?: unknown;
+  payment_no?: unknown;
   booking_id?: unknown;
   customer_id?: unknown;
   amount?: unknown;
@@ -69,6 +71,7 @@ interface RawPayment {
 
 interface Payment {
   id: string;
+  payment_number: string | null;
   booking_id: string;
   customer_id: string;
   amount: string;
@@ -160,8 +163,17 @@ function normalise(raw: RawPayment): Payment {
   const createdAt = String(raw.created_at ?? raw.created_date ?? raw.transaction_date ?? raw.paid_at ?? '');
   const paidAt = raw.paid_at ? String(raw.paid_at) : (isPaid ? createdAt : null);
 
+  const paymentNumber = String(
+    raw.payment_number ??
+    raw.payment_no ??
+    (rawPaymentData.payment_number as string) ??
+    (rawPaymentData.payment_no as string) ??
+    ''
+  ).trim();
+
   return {
     id:                 String(raw.id                 ?? ''),
+    payment_number:     paymentNumber || null,
     booking_id:         String(raw.booking_id         ?? ''),
     customer_id:        String(raw.customer_id        ?? ''),
     amount:             totalAmount,
@@ -337,7 +349,14 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
               <CreditCard className="h-6 w-6" />
             </div>
             <div>
-              <p className="font-bold text-base">{payment.customer_name}</p>
+              <div className="flex items-center gap-2">
+                <p className="font-bold text-base">{payment.customer_name}</p>
+                {payment.payment_number && (
+                  <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
+                    {payment.payment_number}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">{payment.customer_mobile}</p>
             </div>
           </div>
@@ -389,6 +408,7 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Payment Details</p>
             <div className="rounded-2xl border border-border/40 bg-muted/20 px-4 py-1">
+              <DetailRow label="Payment Number" value={payment.payment_number || '—'} mono copyable={!!payment.payment_number} />
               <DetailRow label="Payment ID"    value={payment.payment_id || '—'} mono copyable={!!payment.payment_id} />
               <DetailRow label="Transaction ID" value={payment.transaction_id || '—'} mono copyable={!!payment.transaction_id} />
               <DetailRow label="Invoice ID"    value={payment.invoice_id || '—'} mono copyable={!!payment.invoice_id} />
@@ -497,6 +517,7 @@ export default function PaymentsPage() {
     return payments.filter((p) => {
       const q = filters.search.toLowerCase();
       if (q && ![
+        p.payment_number,
         p.customer_name, p.customer_mobile, p.customer_email,
         p.payment_id, p.transaction_id, p.invoice_id,
         p.customer_reference, p.invoice_reference,
@@ -781,14 +802,13 @@ function ListView({ payments, onSelect }: { payments: Payment[]; onSelect: (p: P
   return (
     <div className="mt-4 overflow-hidden rounded-2xl border border-border/50 bg-card">
       {/* Table head */}
-      <div className="grid grid-cols-[2fr_1.2fr_1.2fr_1fr_1fr_1fr_0.8fr] gap-3 border-b border-border/40 bg-muted/40 px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="grid grid-cols-[1.4fr_2fr_1.2fr_1.4fr_1fr_1fr] gap-3 border-b border-border/40 bg-muted/40 px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span>Payment Number</span>
         <span>Customer</span>
         <span>Amount</span>
         <span>Method / Provider</span>
         <span>Status</span>
-        <span>Paid</span>
         <span>Date</span>
-        <span>Deposit</span>
       </div>
 
       {/* Rows */}
@@ -797,8 +817,15 @@ function ListView({ payments, onSelect }: { payments: Payment[]; onSelect: (p: P
           <button
             key={p.id}
             onClick={() => onSelect(p)}
-            className="grid w-full grid-cols-[2fr_1.2fr_1.2fr_1fr_1fr_1fr_0.8fr] gap-3 px-5 py-3.5 text-left text-sm transition hover:bg-muted/40 items-center"
+            className="grid w-full grid-cols-[1.4fr_2fr_1.2fr_1.4fr_1fr_1fr] gap-3 px-5 py-3.5 text-left text-sm transition hover:bg-muted/40 items-center"
           >
+            {/* Payment Number */}
+            <div className="min-w-0">
+              <span className="font-mono font-bold text-xs text-primary tracking-wide">
+                {p.payment_number || '—'}
+              </span>
+            </div>
+
             {/* Customer */}
             <div className="flex items-center gap-2.5 min-w-0">
               <div className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white text-xs font-bold', gatewayColor(p.payment_method))}>
@@ -841,19 +868,8 @@ function ListView({ payments, onSelect }: { payments: Payment[]; onSelect: (p: P
             {/* Status */}
             <StatusBadge status={p.status} />
 
-            {/* Paid */}
-            <PaidBadge isPaid={p.is_paid} />
-
             {/* Date */}
             <p className="text-[11px] text-muted-foreground">{formatDate(p.created_at)}</p>
-
-            {/* Deposit */}
-            <span className={cn(
-              'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize',
-              DEPOSIT_STATUS_STYLES[p.deposit_status?.toLowerCase()] ?? 'bg-muted text-muted-foreground',
-            )}>
-              {p.deposit_status?.split(' ')[0] || '—'}
-            </span>
           </button>
         ))}
       </div>
@@ -918,8 +934,8 @@ function GridView({ payments, onSelect }: { payments: Payment[]; onSelect: (p: P
               <span className="capitalize font-medium">{p.payment_method || p.payment_gateway}</span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
-              <Hash className="h-3.5 w-3.5 shrink-0" />
-              <span className="font-mono">{p.payment_id || '—'}</span>
+              <Hash className="h-3.5 w-3.5 shrink-0 text-primary" />
+              <span className="font-mono font-bold text-primary">{p.payment_number || p.payment_id || '—'}</span>
             </div>
             <div className="flex items-center gap-2 text-muted-foreground">
               <Calendar className="h-3.5 w-3.5 shrink-0" />
