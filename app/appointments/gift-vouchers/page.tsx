@@ -6,7 +6,8 @@ import {
   X, CheckCircle2, Clock, XCircle, ChevronDown,
   User, Scissors, MapPin, Timer, Package, CreditCard,
   MessageSquare, Hash, Building2, Phone, Mail, Calendar,
-  Sparkles, Star, Search,
+  Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
+  KeyRound, Globe,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
@@ -128,6 +129,25 @@ function fmtDate(raw: string | null | undefined): string {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function initials(name: string | null | undefined): string {
+  if (!name) return '?';
+  return name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
+}
+
 function fmtMoney(amount: string, currency: string): string {
   const n = parseFloat(amount ?? '0');
   return `${isNaN(n) ? '0.000' : n.toFixed(3)} ${currency}`;
@@ -153,9 +173,39 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
+  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+
   const cfg = statusCfg(voucher.status);
   const StatusIcon = cfg.icon;
   const isExpired = voucher.expire_date && new Date(voucher.expire_date) < new Date();
+  const canRedeem = !isExpired && voucher.status?.toLowerCase() === 'active';
+
+  const publicUrl = voucher.public_token
+    ? `https://ushspa.co/gift/${voucher.public_token}`
+    : (voucher.payment_url || null);
+
+  const handleCopyCode = async () => {
+    if (!voucher.secret_code) return;
+    try {
+      await navigator.clipboard.writeText(voucher.secret_code);
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    } catch {
+      // fallback
+    }
+  };
+
+  const handleCopyUrl = async () => {
+    if (!publicUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicUrl);
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 2000);
+    } catch {
+      // fallback
+    }
+  };
 
   const barColor: Record<string, string> = {
     active:   'from-emerald-500 to-teal-400',
@@ -179,11 +229,6 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
             <div className="flex items-center gap-2 mb-1">
               <Gift className="h-4 w-4 text-primary shrink-0" />
               <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Gift Voucher</p>
-              {voucher.voucher_number && (
-                <span className="font-mono text-[11px] font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
-                  {voucher.voucher_number}
-                </span>
-              )}
             </div>
             <h2 className="text-base font-extrabold leading-tight">{voucher.service_data?.name ?? 'Voucher Details'}</h2>
             <div className="mt-2 flex items-center gap-2 flex-wrap">
@@ -213,23 +258,68 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4" style={{ scrollbarWidth: 'none' }}>
 
-          {/* Voucher Number Card */}
-          <div className="flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/5 px-5 py-3.5">
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                <Hash className="h-5 w-5" />
+          {/* Voucher Code & Public URL Card */}
+          <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                  <KeyRound className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Code</p>
+                  <p className="text-lg font-black tracking-widest font-mono text-primary">
+                    {voucher.secret_code || '—'}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Number</p>
-                <p className="text-lg font-black tracking-wider font-mono text-primary">
-                  {voucher.voucher_number || voucher.id.slice(0, 8).toUpperCase()}
-                </p>
-              </div>
+              {voucher.secret_code && (
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-background/80 hover:bg-background px-2.5 py-1.5 text-xs font-semibold text-primary shadow-xs transition"
+                  title="Copy Voucher Code"
+                >
+                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  <span>{copiedCode ? 'Copied' : 'Copy'}</span>
+                </button>
+              )}
             </div>
-            {voucher.public_token && (
-              <span className="text-xs font-mono font-medium text-muted-foreground bg-muted/60 px-2.5 py-1 rounded-lg">
-                Ref: #{voucher.public_token.slice(0, 8)}
-              </span>
+
+            {publicUrl && (
+              <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-primary/10">
+                <div className="min-w-0 flex-1 flex items-center gap-2">
+                  <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground shrink-0">Public URL:</span>
+                  <a
+                    href={publicUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline font-mono truncate"
+                    title={publicUrl}
+                  >
+                    {publicUrl}
+                  </a>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleCopyUrl}
+                    className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition"
+                    title="Copy Public URL"
+                  >
+                    {copiedUrl ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                  <a
+                    href={publicUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition"
+                    title="Open public URL"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                </div>
+              </div>
             )}
           </div>
 
@@ -367,7 +457,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
                 <Calendar className="h-3 w-3 text-sky-500" />
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created</p>
               </div>
-              <p className="text-xs font-bold">{fmtDate(voucher.created_at)}</p>
+              <p className="text-xs font-bold">{formatDateTime(voucher.created_at)}</p>
             </div>
             <div className="flex flex-col gap-1 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
               <div className="flex items-center gap-1.5">
@@ -375,7 +465,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expires</p>
               </div>
               <p className={cn('text-xs font-bold', isExpired ? 'text-rose-600 dark:text-rose-400' : '')}>
-                {fmtDate(voucher.expire_date)}
+                {formatDateTime(voucher.expire_date)}
               </p>
             </div>
           </div>
@@ -388,7 +478,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
               </div>
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400">Redeemed</p>
-                <p className="text-xs font-bold">{fmtDate(voucher.redeemed_at)}</p>
+                <p className="text-xs font-bold">{formatDateTime(voucher.redeemed_at)}</p>
               </div>
             </div>
           )}
@@ -431,6 +521,7 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
         {/* Footer */}
         <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
           <button onClick={onClose}
+            type="button"
             className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
             Close
           </button>
@@ -443,6 +534,14 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
             >
               <ExternalLink className="h-3.5 w-3.5" /> View Payment
             </a>
+          )}
+          {canRedeem && (
+            <button
+              type="button"
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition active:scale-[0.98]"
+            >
+              <CheckCircle2 className="h-4 w-4" /> Redeem
+            </button>
           )}
         </div>
       </div>
@@ -488,6 +587,116 @@ function StatusFilter({ value, onChange }: { value: string; onChange: (v: string
                 {o.label}
               </button>
             ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Share Voucher Dropdown ─────────────────────────────────────────────────────
+
+function VoucherShareDropdown({ voucher }: { voucher: Voucher }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const getShareUrl = () => {
+    if (voucher.payment_url) return voucher.payment_url;
+    if (voucher.public_token) {
+      return `https://ushspa.co/gift/${voucher.public_token}`;
+    }
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://desk.ushspa.co';
+    return `${origin}/appointments/gift-vouchers?code=${encodeURIComponent(voucher.secret_code || voucher.id)}`;
+  };
+
+  const getShareText = () => {
+    const senderName = voucher.sender_data?.name || voucher.sender_details?.name;
+    const recipientName = voucher.recipient_data?.name || voucher.recipient_details?.name;
+    const voucherCode = voucher.secret_code || voucher.voucher_number || voucher.id.slice(0, 8);
+    const url = getShareUrl();
+
+    return `Hello ${recipientName || 'there'}! You have received a Gift Voucher from ${senderName || 'USH Spa'}.\nVoucher Code: ${voucherCode}\n${url}`.trim();
+  };
+
+  const handleSms = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const phone = (voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '').trim();
+    const text = getShareText();
+    const smsUrl = phone ? `sms:${phone}?body=${encodeURIComponent(text)}` : `sms:?body=${encodeURIComponent(text)}`;
+    window.open(smsUrl, '_blank');
+    setOpen(false);
+  };
+
+  const handleWhatsApp = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const rawPhone = voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '';
+    const cleanPhone = rawPhone.replace(/\D/g, '');
+    const text = getShareText();
+    const waUrl = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
+      : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+    window.open(waUrl, '_blank');
+    setOpen(false);
+  };
+
+  const handleCopyUrl = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = getShareUrl();
+    navigator.clipboard?.writeText(url);
+    setCopied(true);
+    setTimeout(() => {
+      setCopied(false);
+      setOpen(false);
+    }, 1200);
+  };
+
+  return (
+    <div className="relative inline-block text-left" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition shadow-sm"
+        title="Share voucher"
+      >
+        <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
+        Share
+        <ChevronDown className={cn('h-3 w-3 text-muted-foreground transition-transform duration-200', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1.5 z-50 w-44 rounded-2xl border border-border/80 bg-card p-1.5 shadow-2xl space-y-0.5">
+            <button
+              type="button"
+              onClick={handleSms}
+              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left"
+            >
+              <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
+              SMS
+            </button>
+            <button
+              type="button"
+              onClick={handleWhatsApp}
+              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left"
+            >
+              <MessageCircle className="h-3.5 w-3.5 text-emerald-500" />
+              WhatsApp
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyUrl}
+              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left"
+            >
+              {copied ? (
+                <Check className="h-3.5 w-3.5 text-emerald-500" />
+              ) : (
+                <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+              )}
+              <span className={copied ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}>
+                {copied ? 'Copied URL!' : 'Copy URL'}
+              </span>
+            </button>
           </div>
         </>
       )}
@@ -548,20 +757,67 @@ export default function GiftVouchersPage() {
       // 2. Search box filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
+        const qDigits = q.replace(/\D/g, '');
+        const qCode = q.replace(/[\s\-_]/g, '');
+
+        // Voucher code (secret_code) matching
+        const secretCode = (v.secret_code ?? '').toLowerCase();
+        const secretCodeClean = secretCode.replace(/[\s\-_]/g, '');
+        const matchesSecretCode = secretCode.includes(q) || (qCode.length > 0 && secretCodeClean.includes(qCode));
+
         const vNum = (v.voucher_number ?? '').toLowerCase();
+        const vNumClean = vNum.replace(/[\s\-_]/g, '');
+        const matchesVNum = vNum.includes(q) || (qCode.length > 0 && vNumClean.includes(qCode));
+
+        // Recipient number matching
+        const recipientPhones = [
+          v.recipient_phone,
+          v.recipient_data?.phone_number,
+          v.recipient_details?.phone_number,
+          (v as any).recipient_number,
+        ].filter(Boolean) as string[];
+
+        const matchesRecipientPhone = recipientPhones.some((phone) => {
+          const phoneLower = phone.toLowerCase();
+          if (phoneLower.includes(q)) return true;
+          if (qDigits.length >= 3) {
+            const phoneDigits = phone.replace(/\D/g, '');
+            if (phoneDigits.includes(qDigits)) return true;
+          }
+          return false;
+        });
+
+        // Sender phone matching
+        const senderPhones = [
+          v.sender_data?.phone_number,
+          v.sender_details?.phone_number,
+          (v as any).sender_phone,
+        ].filter(Boolean) as string[];
+
+        const matchesSenderPhone = senderPhones.some((phone) => {
+          const phoneLower = phone.toLowerCase();
+          if (phoneLower.includes(q)) return true;
+          if (qDigits.length >= 3) {
+            const phoneDigits = phone.replace(/\D/g, '');
+            if (phoneDigits.includes(qDigits)) return true;
+          }
+          return false;
+        });
+
         const vId = (v.id ?? '').toLowerCase();
         const recName = (v.recipient_data?.name ?? v.recipient_details?.name ?? '').toLowerCase();
-        const recPhone = (v.recipient_data?.phone_number ?? v.recipient_details?.phone_number ?? v.recipient_phone ?? '').toLowerCase();
         const recEmail = (v.recipient_data?.email ?? v.recipient_details?.email ?? '').toLowerCase();
         const sndName = (v.sender_data?.name ?? v.sender_details?.name ?? '').toLowerCase();
         const srvName = (v.service_data?.name ?? '').toLowerCase();
         const brName = (v.branch_data?.name ?? '').toLowerCase();
 
         const match =
-          vNum.includes(q) ||
+          matchesSecretCode ||
+          matchesRecipientPhone ||
+          matchesVNum ||
+          matchesSenderPhone ||
           vId.includes(q) ||
           recName.includes(q) ||
-          recPhone.includes(q) ||
           recEmail.includes(q) ||
           sndName.includes(q) ||
           srvName.includes(q) ||
@@ -625,7 +881,7 @@ export default function GiftVouchersPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search voucher #, recipient, sender…"
+              placeholder="Search voucher code, recipient number, sender…"
               className="w-full h-10 pl-9 pr-8 rounded-xl border border-border bg-card text-sm font-medium outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground"
             />
             {searchQuery && (
@@ -704,17 +960,20 @@ export default function GiftVouchersPage() {
       {/* ── Table ── */}
       {!loading && !error && filtered.length > 0 && (
         <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-sm">
+          <div className="overflow-x-auto min-h-[300px] pb-32">
+            <table className="w-full min-w-[860px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border/60 bg-muted/30">
                   {[
-                    'Voucher #', 'Sender', 'Recipient', 'Service',
-                    'Duration', 'Total Price', 'Expires', 'Status',
+                    'Voucher Code', 'Sender → Recipient', 'Service',
+                    'Duration', 'Total Price', 'Expires', 'Status', 'Action',
                   ].map(col => (
                     <th
                       key={col}
-                      className="whitespace-nowrap px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-muted-foreground first:rounded-tl-2xl last:rounded-tr-2xl"
+                      className={cn(
+                        'whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground first:rounded-tl-2xl last:rounded-tr-2xl',
+                        col === 'Action' ? 'text-right' : 'text-left',
+                      )}
                     >
                       {col}
                     </th>
@@ -725,62 +984,50 @@ export default function GiftVouchersPage() {
                 {filtered.map(v => {
                   const cfg = statusCfg(v.status);
                   const expired = v.expire_date && new Date(v.expire_date) < new Date();
+                  const senderName = v.sender_data?.name || v.sender_details?.name;
+                  const recipientName = v.recipient_data?.name || v.recipient_details?.name;
+                  const recipientPhone = v.recipient_phone || v.recipient_data?.phone_number || v.recipient_details?.phone_number;
+
                   return (
                     <tr
                       key={v.id}
-                      onClick={() => setSelectedVoucher(v)}
-                      className="group transition hover:bg-muted/40 cursor-pointer"
+                      className="transition hover:bg-muted/20"
                     >
-                      {/* Voucher Number */}
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <Hash className="h-3.5 w-3.5 text-primary/70 shrink-0" />
-                          <span className="font-mono text-[12px] font-bold text-primary group-hover:underline">
-                            {v.voucher_number || v.id.slice(0, 8).toUpperCase()}
-                          </span>
+                      {/* Voucher Code */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedVoucher(v)}
+                          className="font-bold text-foreground font-mono text-[12px] hover:text-primary hover:underline text-left block cursor-pointer transition-colors"
+                          title="View voucher details"
+                        >
+                          {v.secret_code || '—'}
+                        </button>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{formatDateTime(v.created_at)}</p>
+                      </td>
+
+                      {/* Sender → Recipient */}
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary font-bold text-[10px] shrink-0">
+                            {initials(senderName)}
+                          </div>
+                          <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{senderName || '—'}</p>
                         </div>
-                      </td>
-
-                      {/* Sender */}
-                      <td className="px-4 py-3">
-                        {(() => {
-                          const senderName = v.sender_data?.name || v.sender_details?.name;
-                          const initials = senderName?.slice(0, 2)?.toUpperCase() ?? '??';
-                          return (
-                            <div className="flex items-center gap-2 min-w-[120px]">
-                              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-blue-400 to-violet-500 text-white text-[10px] font-bold">
-                                {initials}
-                              </div>
-                              <span className="font-medium text-[13px] leading-tight line-clamp-1">{senderName ?? '—'}</span>
-                            </div>
-                          );
-                        })()}
-                      </td>
-
-                      {/* Recipient */}
-                      <td className="px-4 py-3">
-                        {(() => {
-                          const recipientName = v.recipient_data?.name || v.recipient_details?.name;
-                          const recipientPhone = v.recipient_data?.phone_number || v.recipient_details?.phone_number;
-                          const initials = recipientName?.slice(0, 2)?.toUpperCase() ?? '??';
-                          return (
-                            <div className="flex items-center gap-2 min-w-[120px]">
-                              <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gradient-to-br from-rose-400 to-pink-500 text-white text-[10px] font-bold">
-                                {initials}
-                              </div>
-                              <div>
-                                <p className="font-medium text-[13px] leading-tight">{recipientName ?? '—'}</p>
-                                {recipientPhone && (
-                                  <p className="text-[10px] text-muted-foreground">{recipientPhone}</p>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })()}
+                        <div className="flex items-center gap-1.5">
+                          <ArrowRight className="h-3 w-3 text-muted-foreground ml-0.5" />
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-violet-500/10 text-violet-600 font-bold text-[10px] shrink-0">
+                            {initials(recipientName)}
+                          </div>
+                          <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{recipientName || '—'}</p>
+                        </div>
+                        {recipientPhone && (
+                          <p className="text-[11px] text-muted-foreground ml-7">{recipientPhone}</p>
+                        )}
                       </td>
 
                       {/* Service */}
-                      <td className="px-4 py-3 min-w-[180px]">
+                      <td className="px-4 py-3 align-top min-w-[180px]">
                         <p className="font-semibold text-[13px] line-clamp-2 leading-snug">{v.service_data?.name ?? '—'}</p>
                         {v.service_data?.service_types?.[0]?.name && (
                           <p className="text-[10px] text-muted-foreground mt-0.5">{v.service_data.service_types[0].name}</p>
@@ -788,7 +1035,7 @@ export default function GiftVouchersPage() {
                       </td>
 
                       {/* Duration */}
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
                         <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-[11px] font-bold">
                           <Timer className="h-3 w-3 text-muted-foreground" />
                           {v.total_duration} min
@@ -796,31 +1043,49 @@ export default function GiftVouchersPage() {
                       </td>
 
                       {/* Total Price */}
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
                         <p className="text-[13px] font-extrabold text-primary tabular-nums">
                           {fmtMoney(v.total_amount, v.currency)}
                         </p>
                       </td>
 
                       {/* Expires */}
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
                         <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
                           {fmtDate(v.expire_date)}
                         </p>
                       </td>
 
                       {/* Status */}
-                      <td className="px-4 py-3 whitespace-nowrap">
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
                         <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap', cfg.pill)}>
                           <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
                           {cfg.label}
                         </span>
+                      </td>
+
+                      {/* Action */}
+                      <td className="py-3 pl-4 pr-5 align-top text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedVoucher(v)}
+                            className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition shadow-sm"
+                            title="View voucher details"
+                          >
+                            <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                            View
+                          </button>
+                          <VoucherShareDropdown voucher={v} />
+                        </div>
                       </td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
+            {/* Spacing to ensure action dropdowns have ample room above footer */}
+            <div className="h-28 pointer-events-none" aria-hidden="true" />
           </div>
 
           {/* Table footer */}

@@ -7,7 +7,8 @@ import {
   ArrowRight, Gift, Truck,
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   KeyRound, Edit3, Sparkles, Star,
-  Building, MessageSquare, Pencil, Smartphone, Ticket,
+  Building, MessageSquare, Pencil, Smartphone,
+  Calendar,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -376,6 +377,7 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
   const CatIcon = catCfg.icon;
   const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
   const isDigital = (order.gift_category || '').toLowerCase() === 'digital' || Boolean(order.digital_product_data);
+  const delCfg = DELIVERY_STATUS_CONFIG[order.delivery_status || 'ordered'] ?? DELIVERY_STATUS_CONFIG.ordered;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -387,9 +389,9 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
               <Gift className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-foreground">Gift Order Details</h3>
+              <h3 className="font-extrabold text-base text-foreground">Gift Voucher Details</h3>
               <p className="text-xs text-muted-foreground">
-                {getOrderVoucherNumber(order) ? `${getOrderVoucherNumber(order)} · ` : ''}#{order.id.slice(0, 8).toUpperCase()} · {formatDate(order.created_at)}
+                {formatDate(order.created_at)}
               </p>
             </div>
           </div>
@@ -403,9 +405,6 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
           <div className="flex items-center gap-2 flex-wrap">
             <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold', catCfg.color)}>
               <CatIcon className="h-3.5 w-3.5" />{catCfg.label}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
-              <Star className="h-3 w-3" />{order.gift_template || 'Standard'}
             </span>
             {order.status && (
               <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', getOrderStatusConfig(order.status).badgeClass)}>
@@ -428,16 +427,6 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
               <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1"><Phone className="h-3 w-3 text-primary" />{order.recipient_phone || '—'}</p>
             </div>
           </div>
-
-          {/* Gift Message */}
-          {order.gift_message && (
-            <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
-                <MessageSquare className="h-3.5 w-3.5 text-primary" />Gift Message
-              </p>
-              <p className="text-sm text-foreground italic leading-relaxed">&ldquo;{order.gift_message}&rdquo;</p>
-            </div>
-          )}
 
           {/* Physical: Ordered Items */}
           {isPhysical && order.ordered_items && order.ordered_items.length > 0 && (
@@ -513,31 +502,6 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
           )}
 
-          {/* Branch */}
-          {order.branch_data?.name && (
-            <div className="rounded-xl border border-border/60 bg-muted/20 p-3 flex items-center gap-2.5 text-xs">
-              <Building className="h-4 w-4 text-primary shrink-0" />
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Branch</p>
-                <p className="font-semibold text-foreground">{order.branch_data.name}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Arrangement */}
-          {order.service_arrangement_data?.arrangement_name && (
-            <div className="rounded-xl border border-border/60 bg-muted/20 p-3 flex items-center gap-2.5 text-xs">
-              <Star className="h-4 w-4 text-amber-500 shrink-0" />
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Arrangement</p>
-                <p className="font-semibold text-foreground">{order.service_arrangement_data.arrangement_name}</p>
-                {order.service_arrangement_data.price && (
-                  <p className="text-muted-foreground">{formatAmount(order.service_arrangement_data.price, order.service_arrangement_data.currency || order.currency)}</p>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* Addons */}
           {order.addons && order.addons.length > 0 && (
             <div>
@@ -556,32 +520,110 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
           )}
 
-          {/* Voucher Number */}
-          {getOrderVoucherNumber(order) && (
-            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
-              <Ticket className="h-4 w-4 text-primary shrink-0" />
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Number</p>
-                <p className="font-mono font-extrabold text-base text-foreground tracking-wide">{getOrderVoucherNumber(order)}</p>
+          {/* Delivery Status */}
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Truck className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Status</span>
               </div>
-            </div>
-          )}
-
-          {/* Secret code */}
-          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
-            <KeyRound className="h-4 w-4 text-primary shrink-0" />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
-              <p className="font-mono font-extrabold text-base text-foreground tracking-widest">{order.secret_code}</p>
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold', delCfg.badgeClass)}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', delCfg.dotClass)} />
+                {order.delivery_status_label || delCfg.label}
+              </span>
             </div>
           </div>
 
-          {/* Expiry */}
-          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
-            <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expires</p>
-              <p className="font-semibold text-foreground">{formatDate(order.expire_date)}</p>
+          {/* Delivery Address */}
+          <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 space-y-2 text-xs">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-primary shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
+            </div>
+            {order.delivery_address ? (
+              <div className="space-y-2">
+                <p className="font-semibold text-foreground leading-snug">
+                  {formatAddressPreview(order.delivery_address)}
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                  {order.delivery_address.area && (
+                    <div className="rounded-lg border border-border/50 bg-card p-2">
+                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Area</span>
+                      <span className="font-medium text-foreground">{order.delivery_address.area}</span>
+                    </div>
+                  )}
+                  {order.delivery_address.city && (
+                    <div className="rounded-lg border border-border/50 bg-card p-2">
+                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">City</span>
+                      <span className="font-medium text-foreground">{order.delivery_address.city}</span>
+                    </div>
+                  )}
+                  {order.delivery_address.block && (
+                    <div className="rounded-lg border border-border/50 bg-card p-2">
+                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Block</span>
+                      <span className="font-medium text-foreground">{order.delivery_address.block}</span>
+                    </div>
+                  )}
+                  {order.delivery_address.street && (
+                    <div className="rounded-lg border border-border/50 bg-card p-2">
+                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Street</span>
+                      <span className="font-medium text-foreground">{order.delivery_address.street}</span>
+                    </div>
+                  )}
+                  {order.delivery_address.building && (
+                    <div className="rounded-lg border border-border/50 bg-card p-2">
+                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Building</span>
+                      <span className="font-medium text-foreground">{order.delivery_address.building}</span>
+                    </div>
+                  )}
+                  {(order.delivery_address.floor || order.delivery_address.apartment) && (
+                    <div className="rounded-lg border border-border/50 bg-card p-2">
+                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Floor / Apt</span>
+                      <span className="font-medium text-foreground">
+                        {[order.delivery_address.floor && `Fl: ${order.delivery_address.floor}`, order.delivery_address.apartment && `Apt: ${order.delivery_address.apartment}`].filter(Boolean).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {order.delivery_address.notes && (
+                  <div className="rounded-lg border border-amber-200/80 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800/40 p-2 text-xs">
+                    <span className="text-[9px] uppercase font-bold text-amber-700 dark:text-amber-400 block">Notes</span>
+                    <p className="text-foreground italic mt-0.5">&ldquo;{order.delivery_address.notes}&rdquo;</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No delivery address set</p>
+            )}
+          </div>
+
+          {/* Secret Code */}
+          <div className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
+            <div className="flex items-center gap-3">
+              <KeyRound className="h-4 w-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
+                <p className="font-mono font-extrabold text-base text-primary tracking-widest truncate">{order.secret_code || '—'}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Created & Expires Dates */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+              <Calendar className="h-4 w-4 text-sky-500 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created</p>
+                <p className="font-semibold text-foreground truncate">{formatDate(order.created_at)}</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+              <Clock className="h-4 w-4 text-rose-500 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expires</p>
+                <p className="font-semibold text-foreground truncate">{formatDate(order.expire_date)}</p>
+              </div>
             </div>
           </div>
         </div>
@@ -988,17 +1030,63 @@ export default function GiftOrdersPage() {
   const filteredOrders = useMemo(() => orders.filter((o) => {
     if (statusFilter !== 'all' && (o.delivery_status || '') !== statusFilter) return false;
     if (search.trim()) {
-      const q = search.toLowerCase();
+      const q = search.toLowerCase().trim();
+      const qDigits = q.replace(/\D/g, '');
+      const qCode = q.replace(/[\s\-_]/g, '');
+
+      // Voucher code / secret_code matching
+      const secretCode = (o.secret_code || '').toLowerCase();
+      const secretCodeClean = secretCode.replace(/[\s\-_]/g, '');
+      const matchesSecretCode = secretCode.includes(q) || (qCode.length > 0 && secretCodeClean.includes(qCode));
+
       const vNum = (o.voucher_number || (o as any).voucher_no || '').toLowerCase();
+      const vNumClean = vNum.replace(/[\s\-_]/g, '');
+      const matchesVNum = vNum.includes(q) || (qCode.length > 0 && vNumClean.includes(qCode));
+
+      // Recipient number matching (check all potential phone fields)
+      const recipientPhones = [
+        o.recipient_phone,
+        o.recipient_data?.phone_number,
+        (o as any).recipient_number,
+        (o as any).recipient_phone_number,
+        (o as any).recipient_details?.phone_number,
+      ].filter(Boolean) as string[];
+
+      const matchesRecipientPhone = recipientPhones.some((phone) => {
+        const phoneLower = phone.toLowerCase();
+        if (phoneLower.includes(q)) return true;
+        if (qDigits.length >= 3) {
+          const phoneDigits = phone.replace(/\D/g, '');
+          if (phoneDigits.includes(qDigits)) return true;
+        }
+        return false;
+      });
+
+      // Sender phone matching
+      const senderPhones = [
+        o.sender_data?.phone_number,
+        (o as any).sender_phone,
+      ].filter(Boolean) as string[];
+
+      const matchesSenderPhone = senderPhones.some((phone) => {
+        const phoneLower = phone.toLowerCase();
+        if (phoneLower.includes(q)) return true;
+        if (qDigits.length >= 3) {
+          const phoneDigits = phone.replace(/\D/g, '');
+          if (phoneDigits.includes(qDigits)) return true;
+        }
+        return false;
+      });
+
       return (
-        vNum.includes(q) ||
+        matchesSecretCode ||
+        matchesRecipientPhone ||
+        matchesVNum ||
+        matchesSenderPhone ||
         o.id.toLowerCase().includes(q) ||
         (o.sender_data?.name || '').toLowerCase().includes(q) ||
         (o.recipient_data?.name || '').toLowerCase().includes(q) ||
-        (o.recipient_phone || '').includes(q) ||
-        (o.sender_data?.phone_number || '').includes(q) ||
         (o.gift_message || '').toLowerCase().includes(q) ||
-        (o.secret_code || '').toLowerCase().includes(q) ||
         (o.status || '').toLowerCase().includes(q)
       );
     }
@@ -1034,7 +1122,7 @@ export default function GiftOrdersPage() {
         )}
 
         {/* Header */}
-        <PageHeader title="Gift Orders" subtitle="Track and manage physical gift deliveries for all gift orders.">
+        <PageHeader title="Gift Vouchers" subtitle="Track and manage physical gift deliveries for all gift vouchers.">
           <button onClick={fetchOrders} className="inline-flex h-10 items-center gap-2 rounded-xl border border-border/80 bg-card px-4 text-xs font-semibold text-foreground shadow-sm hover:bg-muted transition">
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
             Refresh
@@ -1054,7 +1142,7 @@ export default function GiftOrdersPage() {
           <div className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm col-span-2 sm:col-span-1">
             <div className="flex items-center justify-between text-muted-foreground"><span className="text-xs font-bold uppercase tracking-wider">Total</span><Gift className="h-4 w-4 text-primary" /></div>
             <p className="mt-2 text-2xl font-black tracking-tight text-foreground">{kpis.total}</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Physical gift orders</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Physical gift vouchers</p>
           </div>
           <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 shadow-sm">
             <div className="flex items-center justify-between text-amber-700 dark:text-amber-400"><span className="text-xs font-bold uppercase tracking-wider">Ordered</span><Clock className="h-4 w-4" /></div>
@@ -1084,7 +1172,7 @@ export default function GiftOrdersPage() {
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search voucher #, sender, recipient, code..."
+                placeholder="Search voucher code, recipient number, sender..."
                 className="w-full rounded-xl border border-border/80 bg-background pl-10 pr-10 py-2 text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary" />
               {search && (
                 <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
@@ -1138,11 +1226,11 @@ export default function GiftOrdersPage() {
         ) : filteredOrders.length === 0 ? (
           <div className="rounded-2xl border border-border/60 bg-card p-12 text-center">
             <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-muted/60 text-muted-foreground mb-3"><Gift className="h-8 w-8" /></div>
-            <h3 className="font-extrabold text-base text-foreground">No gift orders found</h3>
+            <h3 className="font-extrabold text-base text-foreground">No gift vouchers found</h3>
             <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
               {search || statusFilter !== 'all'
-                ? 'No gift orders matching the selected filters or search query.'
-                : 'No physical gift orders are currently available.'}
+                ? 'No gift vouchers matching the selected filters or search query.'
+                : 'No physical gift vouchers are currently available.'}
             </p>
             {(search || statusFilter !== 'all') && (
               <button onClick={() => { setStatusFilter('all'); setSearch(''); }}
@@ -1158,7 +1246,7 @@ export default function GiftOrdersPage() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-border/50 bg-muted/30 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                   <tr>
-                    <th className="py-3 px-4">Gift Order</th>
+                    <th className="py-3 px-4">Voucher Code</th>
                     <th className="py-3 px-4">Sender → Recipient</th>
                     <th className="py-3 px-4">Category / Items</th>
                     <th className="py-3 px-4">Delivery Address</th>
@@ -1172,7 +1260,6 @@ export default function GiftOrdersPage() {
                     const cfg = statusCfgFor(order);
                     const label = statusLabelFor(order);
                     const orderStatusCfg = getOrderStatusConfig(order.status);
-                    const voucherNum = getOrderVoucherNumber(order);
                     const catCfg = getCategoryConfig(order.gift_category, order);
                     const CatIcon = catCfg.icon;
                     const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
@@ -1182,18 +1269,8 @@ export default function GiftOrdersPage() {
                     return (
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors">
                         <td className="py-3 px-4 align-top">
-                          {voucherNum ? (
-                            <>
-                              <p className="font-bold text-foreground font-mono text-[11px]">{voucherNum}</p>
-                              <p className="text-[10px] text-muted-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
-                            </>
-                          ) : (
-                            <p className="font-bold text-foreground font-mono text-[11px]">#{order.id.slice(0, 8).toUpperCase()}</p>
-                          )}
+                          <p className="font-bold text-foreground font-mono text-[11px]">{order.secret_code || '—'}</p>
                           <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
-                          <span className="inline-flex items-center gap-0.5 mt-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
-                            <KeyRound className="h-2.5 w-2.5" />{order.secret_code}
-                          </span>
                         </td>
                         <td className="py-3 px-4 align-top">
                           <div className="flex items-center gap-1.5 mb-1">
