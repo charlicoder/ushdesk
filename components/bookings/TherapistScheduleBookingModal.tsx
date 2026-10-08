@@ -20,7 +20,7 @@ import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 
-export type PaymentProviderOption = 'MyFatoorah' | 'PaymentLink' | 'Deema' | 'KNET Card' | 'Other';
+export type PaymentProviderOption = 'PaymentLink' | 'Deema' | 'KNET Card' | 'Other';
 
 export interface PaymentProviderConfig {
   id: PaymentProviderOption;
@@ -30,7 +30,6 @@ export interface PaymentProviderConfig {
 }
 
 export const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
-  { id: 'MyFatoorah',  label: 'MyFatoorah',  badge: 'Gateway',        desc: 'KNET / Visa / Master' },
   { id: 'PaymentLink', label: 'PaymentLink', badge: 'Direct Link',    desc: 'SMS / WhatsApp link' },
   { id: 'Deema',       label: 'Deema',       badge: 'Installments',   desc: 'BNPL payment split' },
   { id: 'KNET Card',   label: 'KNET Card',   badge: 'POS Terminal',   desc: 'In-branch card machine' },
@@ -467,7 +466,7 @@ export function TherapistScheduleBookingModal({
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch'>('on_branch');
-  const [paymentProvider, setPaymentProvider] = useState<PaymentProviderOption>('MyFatoorah');
+  const [paymentProvider, setPaymentProvider] = useState<PaymentProviderOption | null>(null);
   const [transactionRefId, setTransactionRefId] = useState<string>('');
   const [invoiceId, setInvoiceId]               = useState<string>('');
   const [receiptImage, setReceiptImage]         = useState<string | null>(null);
@@ -745,13 +744,38 @@ export function TherapistScheduleBookingModal({
   };
   const goBack = () => { setSubmitError(null); setStep(1); };
 
+  // Validation for booking confirmation
+  const isPaymentCompletedValid =
+    paymentMethod !== 'completed' ||
+    (Boolean(paymentProvider) && Boolean(transactionRefId.trim()));
+
+  const isAllRequiredFieldsFilled = Boolean(
+    form.serviceId &&
+    form.arrangementId &&
+    (form.therapistId || therapistId) &&
+    form.customerId &&
+    isPaymentCompletedValid
+  );
+
+  const isConfirmDisabled = submitting || !isAllRequiredFieldsFilled;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
-    if (paymentMethod === 'completed' && !transactionRefId.trim()) {
-      setShowPaymentRefModal(true);
-      setSubmitError('Please enter a Transaction / Ref ID or scan the receipt before confirming payment.');
+    if (!form.serviceId || !form.arrangementId) {
+      setSubmitError('Please select both service and room arrangement.');
       return;
+    }
+    if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
+    if (paymentMethod === 'completed') {
+      if (!paymentProvider) {
+        setSubmitError('Please select a payment provider.');
+        return;
+      }
+      if (!transactionRefId.trim()) {
+        setShowPaymentRefModal(true);
+        setSubmitError('Please enter a Transaction / Ref ID or scan the receipt before confirming payment.');
+        return;
+      }
     }
     setSubmitting(true); setSubmitError(null);
 
@@ -1122,7 +1146,7 @@ export function TherapistScheduleBookingModal({
         status:         'confirmed',
         payment_status: 'success',
         payment_through:  'ushdesk',
-        payment_provider: paymentProvider,
+        payment_provider: paymentProvider ?? 'KNET Card',
         reason:         'Payment Success',
         source:         'ushdesk',
         invoice_id:     resolvedConfirmInvoice,
@@ -1135,8 +1159,8 @@ export function TherapistScheduleBookingModal({
           reference_id:     paymentForm.reference_id,
           invoice_value:    paymentForm.total_amount,
           transaction_date: paymentForm.transaction_date,
-          payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
-          payment_provider: paymentProvider,
+          payment_gateway:  (paymentProvider ?? 'KNET Card') === 'KNET Card' ? 'KNET' : (paymentProvider ?? 'KNET Card'),
+          payment_provider: paymentProvider ?? 'KNET Card',
           payment_through:  'ushdesk',
           trace_id:         paymentForm.trace_id,
           received_by:      paymentForm.received_by,
@@ -1194,13 +1218,13 @@ export function TherapistScheduleBookingModal({
         total_amount:     parseFloat(paymentForm.total_amount) || totalPrice,
         invoice_value:    paymentForm.total_amount,
         received_by:      paymentForm.received_by,
-        payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
+        payment_gateway:  (paymentProvider ?? 'KNET Card') === 'KNET Card' ? 'KNET' : (paymentProvider ?? 'KNET Card'),
         payment_status:   'success',
         is_paid:          true,
         status:           'Paid',
         payment_through:  'ushdesk',
-        payment_provider: paymentProvider,
-        provider:         paymentProvider,
+        payment_provider: paymentProvider ?? 'KNET Card',
+        provider:         paymentProvider ?? 'KNET Card',
         currency:         'KWD',
 
         // ── Service ────────────────────────────────────────────────────────────
@@ -1897,9 +1921,13 @@ export function TherapistScheduleBookingModal({
                             value={value}
                             checked={paymentMethod === value}
                             onChange={() => {
-                              setPaymentMethod(value as 'completed' | 'on_branch');
-                              if (value === 'completed') {
-                                setShowPaymentRefModal(true);
+                              const next = value as 'completed' | 'on_branch';
+                              setPaymentMethod(next);
+                              if (next === 'completed') {
+                                setPaymentProvider(null);
+                                setTransactionRefId('');
+                                setReceiptImage(null);
+                                setReceiptNotes('');
                               }
                             }}
                             className="sr-only"
@@ -1937,11 +1965,17 @@ export function TherapistScheduleBookingModal({
                               Select Payment Provider <span className="text-destructive">*</span>
                             </p>
                           </div>
-                          <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                            {paymentProvider}
-                          </span>
+                          {paymentProvider ? (
+                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                              {paymentProvider}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                              Required
+                            </span>
+                          )}
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                           {PAYMENT_PROVIDERS.map((p) => {
                             const isSel = paymentProvider === p.id;
                             return (
@@ -1949,6 +1983,10 @@ export function TherapistScheduleBookingModal({
                                 key={p.id}
                                 type="button"
                                 onClick={() => {
+                                  if (paymentProvider !== p.id) {
+                                    setTransactionRefId('');
+                                    setReceiptImage(null);
+                                  }
                                   setPaymentProvider(p.id);
                                   setShowPaymentRefModal(true);
                                 }}
@@ -1976,67 +2014,73 @@ export function TherapistScheduleBookingModal({
                         </div>
 
                         {/* Invoice & Transaction Reference Attached Box */}
-                        <div className="mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                              <span className="text-xs font-bold text-foreground">
-                                Invoice Reference &amp; Receipt Status
-                              </span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => setShowPaymentRefModal(true)}
-                              className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
-                            >
-                              {transactionRefId ? 'Edit / Re-scan' : '+ Add Details / Scan'}
-                            </button>
-                          </div>
-
-                          {transactionRefId ? (
-                            <div className="space-y-1.5">
-                              <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div className="p-2 rounded-lg bg-card border border-border/60">
-                                  <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Ref / Trans ID</span>
-                                  <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
-                                    {transactionRefId}
-                                  </span>
-                                </div>
-                                <div className="p-2 rounded-lg bg-card border border-border/60">
-                                  <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Invoice ID</span>
-                                  <span className="font-mono font-bold text-foreground truncate block">
-                                    {invoiceId || 'Auto (INV/2026/00001)'}
-                                  </span>
-                                </div>
+                        {paymentProvider ? (
+                          <div className="mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                                <span className="text-xs font-bold text-foreground">
+                                  Invoice Reference &amp; Receipt Status
+                                </span>
                               </div>
-                              {receiptImage && (
-                                <div className="flex items-center gap-2.5 pt-1">
-                                  <img
-                                    src={receiptImage}
-                                    alt="Scanned receipt"
-                                    className="h-9 w-9 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
-                                  />
-                                  <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                                    ✓ Receipt slip image attached to invoice for future reference
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
-                              <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
-                                Please input transaction ID or scan receipt to attach to invoice.
-                              </span>
                               <button
                                 type="button"
                                 onClick={() => setShowPaymentRefModal(true)}
-                                className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
+                                className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
                               >
-                                Input / Scan Now
+                                {transactionRefId ? 'Edit / Re-scan' : '+ Add Details / Scan'}
                               </button>
                             </div>
-                          )}
-                        </div>
+
+                            {transactionRefId ? (
+                              <div className="space-y-1.5">
+                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                  <div className="p-2 rounded-lg bg-card border border-border/60">
+                                    <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Ref / Trans ID</span>
+                                    <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
+                                      {transactionRefId}
+                                    </span>
+                                  </div>
+                                  <div className="p-2 rounded-lg bg-card border border-border/60">
+                                    <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Invoice ID</span>
+                                    <span className="font-mono font-bold text-foreground truncate block">
+                                      {invoiceId || 'Auto (INV/2026/00001)'}
+                                    </span>
+                                  </div>
+                                </div>
+                                {receiptImage && (
+                                  <div className="flex items-center gap-2.5 pt-1">
+                                    <img
+                                      src={receiptImage}
+                                      alt="Scanned receipt"
+                                      className="h-9 w-9 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
+                                    />
+                                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                      ✓ Receipt slip image attached to invoice for future reference
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-between gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
+                                <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                                  Please input transaction ID or scan receipt to attach to invoice.
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setShowPaymentRefModal(true)}
+                                  className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
+                                >
+                                  Input / Scan Now
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="mt-3 p-3 rounded-xl border border-dashed border-border/80 bg-muted/20 text-xs text-muted-foreground text-center">
+                            Please select a payment provider above to enter transaction details.
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2187,7 +2231,7 @@ export function TherapistScheduleBookingModal({
                           <p className="text-xs font-extrabold text-foreground">Attached Invoice &amp; Payment Record</p>
                         </div>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-500/20">
-                          {paymentProvider}
+                          {paymentProvider || 'Completed'}
                         </span>
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-xs">
@@ -2454,12 +2498,26 @@ export function TherapistScheduleBookingModal({
               </>)}
               {step === 2 && (<>
                 <button type="button" onClick={goBack}
-                  className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition">
+                  className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition cursor-pointer">
                   <ChevronLeft className="h-4 w-4" /> Back
                 </button>
                 <button type="submit" form="ts-booking-form"
-                  disabled={submitting || !form.customerId}
-                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  disabled={isConfirmDisabled}
+                  title={
+                    !form.customerId
+                      ? 'Please select a customer'
+                      : paymentMethod === 'completed' && !paymentProvider
+                        ? 'Please select a payment provider'
+                        : paymentMethod === 'completed' && !transactionRefId.trim()
+                          ? 'Please complete payment details'
+                          : undefined
+                  }
+                  className={cn(
+                    'flex-1 inline-flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold shadow-sm transition',
+                    isConfirmDisabled
+                      ? 'bg-muted text-muted-foreground/60 border border-border/60 cursor-not-allowed shadow-none'
+                      : 'bg-primary text-white hover:bg-primary/90 cursor-pointer active:scale-[0.98]'
+                  )}>
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                   {submitting ? 'Creating…' : 'Confirm Booking'}
                 </button>
@@ -2542,22 +2600,25 @@ export function TherapistScheduleBookingModal({
       )}
 
       {/* ── Payment Reference & Receipt Scan Modal ── */}
-      <PaymentReferenceModal
-        isOpen={showPaymentRefModal}
-        onClose={() => setShowPaymentRefModal(false)}
-        paymentProvider={paymentProvider}
-        totalAmount={totalPrice}
-        currency="KWD"
-        initialTransactionId={transactionRefId}
-        initialReceiptImage={receiptImage}
-        initialNotes={receiptNotes}
-        onConfirm={(data) => {
-          setTransactionRefId(data.transactionId);
-          setReceiptImage(data.receiptImage);
-          if (data.notes) setReceiptNotes(data.notes);
-          setSubmitError(null);
-        }}
-      />
+      {paymentProvider && (
+        <PaymentReferenceModal
+          isOpen={showPaymentRefModal}
+          onClose={() => setShowPaymentRefModal(false)}
+          paymentProvider={paymentProvider}
+          totalAmount={totalPrice}
+          currency="KWD"
+          initialTransactionId={transactionRefId}
+          initialReceiptImage={receiptImage}
+          initialNotes={receiptNotes}
+          onConfirm={(data) => {
+            setTransactionRefId(data.transactionId);
+            setReceiptImage(data.receiptImage);
+            if (data.notes) setReceiptNotes(data.notes);
+            setShowPaymentRefModal(false);
+            setSubmitError(null);
+          }}
+        />
+      )}
 
       {/* ── Booking Receipt Modal Preview & Print ── */}
       {showReceiptModal && bookingResult && (
@@ -2582,8 +2643,8 @@ export function TherapistScheduleBookingModal({
             totalAmount: totalPrice,
             status: 'confirmed',
             paymentStatus: 'paid',
-            paymentMethod: paymentMethod === 'completed' ? paymentProvider : 'on_branch',
-            paymentProvider: paymentProvider,
+            paymentMethod: paymentMethod === 'completed' ? (paymentProvider ?? 'completed') : 'on_branch',
+            paymentProvider: paymentProvider ?? null,
             transactionId: transactionRefId || (bookingResult.transaction_id as string) || null,
             referenceId: transactionRefId || (bookingResult.reference_id as string) || null,
             paidAt: new Date().toISOString(),

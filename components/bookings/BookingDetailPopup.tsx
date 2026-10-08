@@ -263,15 +263,6 @@ export function DRow({ icon: Icon, label, children }: { icon: React.ElementType;
 // ── Payment Provider Selector ─────────────────────────────────────────────────
 const PAYMENT_PROVIDERS = [
   {
-    id: 'myfatoorah',
-    name: 'MyFatoorah',
-    description: 'KNET / Visa / Master',
-    tag: 'Gateway',
-    tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-    borderColor: 'border-emerald-400',
-    checkColor: 'text-emerald-500',
-  },
-  {
     id: 'paymentlink',
     name: 'PaymentLink',
     description: 'SMS / WhatsApp link',
@@ -294,9 +285,9 @@ const PAYMENT_PROVIDERS = [
     name: 'KNET Card',
     description: 'In-branch card machine',
     tag: 'POS Terminal',
-    tagColor: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-    borderColor: 'border-border',
-    checkColor: 'text-primary',
+    tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    borderColor: 'border-emerald-400',
+    checkColor: 'text-emerald-500',
   },
   {
     id: 'other',
@@ -321,7 +312,7 @@ function PaymentProviderModal({
   onSuccess: () => void;
 }) {
   const user = useAppSelector((s) => s.auth.user);
-  const [selected, setSelected] = React.useState<ProviderId>('myfatoorah');
+  const [selected, setSelected] = React.useState<ProviderId>('knet');
   const [submitting, setSubmitting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
