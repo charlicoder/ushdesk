@@ -217,14 +217,21 @@ export function BookingCancellationModal({
     // ── Step 1: Cancel booking ─────────────────────────────────────────────
     setStep('booking');
     try {
+      const provConfig = selectedProvider && selectedProvider !== 'no_refund'
+        ? CANCELLATION_PROVIDERS.find((p) => p.id === selectedProvider)
+        : null;
+
+      const targetPaymentStatus = selectedProvider === 'no_refund'
+        ? 'cancelled'
+        : (isPaid ? 'refunded' : 'cancelled');
+
       const cancelBody: Record<string, unknown> = {
         status:         'cancelled',
-        payment_status: selectedProvider === 'no_refund' ? 'cancelled' : (isPartialRefund ? 'partially_refunded' : 'refunded'),
+        payment_status: targetPaymentStatus,
         reason:         reason.trim(),
-        cancel_reason:  reason.trim(),
         source:         'ushdesk',
         changed_by:     currentUser?.name || currentUser?.id || 'Staff',
-        change_by_user: currentUser?.name || currentUser?.id || 'Staff',
+        change_by_user: currentUser?.id || currentUser?.name || 'Staff',
         change_by_user_data: currentUser
           ? {
               id: currentUser.id,
@@ -239,14 +246,47 @@ export function BookingCancellationModal({
           : undefined,
       };
 
+      if (invoiceNumber) {
+        cancelBody.invoice_number = invoiceNumber;
+      }
+
       if (isPaid && selectedProvider && selectedProvider !== 'no_refund') {
-        cancelBody.refund_method    = selectedProvider;
-        cancelBody.refund_reference = transactionRefId.trim() || null;
-        cancelBody.refund_amount    = refundAmount;
-        cancelBody.refund_currency  = currency;
-        cancelBody.receipt_image    = receiptImage || null;
-        cancelBody.transaction_id   = transactionRefId.trim() || null;
-        cancelBody.reference_id     = transactionRefId.trim() || null;
+        const cleanRef = transactionRefId.trim();
+        cancelBody.payment_provider = provConfig?.booknpayProvider || selectedProvider;
+        if (provConfig?.booknpayGateway) {
+          cancelBody.payment_gateway = provConfig.booknpayGateway;
+        }
+        cancelBody.payment_through = 'ushdesk';
+        cancelBody.payment_method = provConfig?.booknpayMethod || 'card';
+
+        if (cleanRef) {
+          cancelBody.payment_id = cleanRef;
+          cancelBody.transaction_id = cleanRef;
+          cancelBody.reference_id = cleanRef;
+        }
+
+        cancelBody.payment_data = {
+          refund_reason:    reason.trim(),
+          refund_method:    selectedProvider,
+          refund_reference: cleanRef || null,
+          refund_amount:    Number(refundAmount.toFixed(3)),
+          refund_currency:  currency,
+          transaction_id:   cleanRef || null,
+          reference_id:     cleanRef || null,
+          original_amount:  Number(totalAmount.toFixed(3)),
+          is_partial:       isPartialRefund,
+          cancelled_via:    'ushdesk',
+          receipt_notes:    receiptNotes.trim() || null,
+          refunded_at:      new Date().toISOString(),
+        };
+
+        cancelBody.payments_data = {
+          transaction_id: cleanRef || null,
+          reference_id:   cleanRef || null,
+          invoice_number: invoiceNumber || null,
+          refund_method:  selectedProvider,
+          refund_amount:  Number(refundAmount.toFixed(3)),
+        };
       }
 
       const r = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/status/`, {
@@ -261,7 +301,8 @@ export function BookingCancellationModal({
 
       if (!r.ok) {
         const j = await r.json().catch(() => ({})) as Record<string, unknown>;
-        const msg = j.detail ?? j.message ?? j.error ?? `Booking cancel failed (${r.status})`;
+        const errObj = (j.error ?? j) as Record<string, unknown>;
+        const msg = j.detail ?? j.message ?? errObj.message ?? errObj.detail ?? `Booking cancel failed (${r.status})`;
         throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
       }
     } catch (err) {

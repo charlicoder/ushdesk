@@ -5,9 +5,12 @@ import {
   X, Camera, Upload, Receipt, CheckCircle2,
   AlertCircle, RotateCcw, Sparkles, Hash, CreditCard,
   Eye, RefreshCw, Smartphone, Image as ImageIcon, Check,
+  ChevronLeft, Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PaymentProviderOption } from './TherapistScheduleBookingModal';
+
+export type { PaymentProviderOption };
 
 export interface PaymentReferenceData {
   transactionId: string;
@@ -19,13 +22,17 @@ export interface PaymentReferenceData {
 interface PaymentReferenceModalProps {
   isOpen: boolean;
   onClose: () => void;
-  paymentProvider: PaymentProviderOption;
+  paymentProvider: PaymentProviderOption | string;
   totalAmount: number;
   currency?: string;
   initialTransactionId?: string;
   initialReceiptImage?: string | null;
   initialNotes?: string;
   onConfirm: (data: PaymentReferenceData) => void;
+  onBack?: () => void;
+  isSubmitting?: boolean;
+  confirmButtonLabel?: string;
+  error?: string | null;
 }
 
 export function PaymentReferenceModal({
@@ -38,6 +45,10 @@ export function PaymentReferenceModal({
   initialReceiptImage = null,
   initialNotes = '',
   onConfirm,
+  onBack,
+  isSubmitting = false,
+  confirmButtonLabel,
+  error,
 }: PaymentReferenceModalProps) {
   const [activeTab, setActiveTab] = useState<'manual' | 'scan'>('manual');
   const [transactionId, setTransactionId] = useState(initialTransactionId);
@@ -201,7 +212,9 @@ export function PaymentReferenceModal({
       receiptImage,
       notes: notes.trim() || undefined,
     });
-    onClose();
+    if (!onBack && isSubmitting === undefined) {
+      onClose();
+    }
   };
 
   return (
@@ -266,6 +279,13 @@ export function PaymentReferenceModal({
             </p>
           </div>
         </div>
+
+        {error && (
+          <div className="shrink-0 mx-6 mt-3 rounded-2xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span className="font-semibold">{error}</span>
+          </div>
+        )}
 
         {/* Tabs: Input Ref ID vs Scan Receipt */}
         <div className="shrink-0 px-6 pt-4">
@@ -584,25 +604,51 @@ export function PaymentReferenceModal({
 
         {/* Footer Actions */}
         <div className="shrink-0 flex items-center justify-between gap-3 border-t border-border/40 px-6 py-4 bg-muted/20">
-          <button
-            type="button"
-            onClick={() => {
-              stopCamera();
-              onClose();
-            }}
-            className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer"
-          >
-            Cancel
-          </button>
+          <div className="flex items-center gap-2">
+            {onBack && (
+              <button
+                type="button"
+                onClick={() => {
+                  stopCamera();
+                  onBack();
+                }}
+                disabled={isSubmitting}
+                className="rounded-xl border border-border/60 bg-muted/40 px-3.5 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Back
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                stopCamera();
+                onClose();
+              }}
+              disabled={isSubmitting}
+              className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
 
           <button
             type="button"
             onClick={handleSave}
-            disabled={!transactionId.trim() && !scanExtractedCode}
+            disabled={(!transactionId.trim() && !scanExtractedCode) || isSubmitting}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2.5 text-xs font-bold shadow-md transition active:scale-95 cursor-pointer"
           >
-            <Check className="h-4 w-4" />
-            Attach to Invoice &amp; Confirm
+            {isSubmitting ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Processing Payment...
+              </>
+            ) : (
+              <>
+                <Check className="h-4 w-4" />
+                {confirmButtonLabel || 'Attach to Invoice & Confirm'}
+              </>
+            )}
           </button>
         </div>
       </div>

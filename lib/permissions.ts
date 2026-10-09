@@ -28,6 +28,7 @@ export const PERMISSIONS = {
   // ── Bookings submenus ────────────────────────────────────────────────────────
   BOOKINGS_BOOKING_LIST:   'deskmenu.bookings.booking_list',
   BOOKINGS_PAYMENTS:       'deskmenu.bookings.payments',
+  BOOKINGS_REFUNDS:        'deskmenu.bookings.refunds',
   BOOKINGS_BOOKING_REPORT: 'deskmenu.bookings.booking_report',
 
   // ── UshSpa submenus ──────────────────────────────────────────────────────────
@@ -49,6 +50,12 @@ export const PERMISSIONS = {
   FINANCE_FINANCIAL_REPORTS:  'deskmenu.finance.financial_reports',
   FINANCE_PARTNERS:           'deskmenu.finance.partners',
   FINANCE_TAXES_AND_FISCAL:   'deskmenu.finance.taxes_and_fiscal',
+  FINANCE_FIXED_ASSETS:       'deskmenu.finance.fixed_assets',
+  FINANCE_JOURNALS:           'deskmenu.finance.journals',
+  FINANCE_GENERAL_LEDGER:     'deskmenu.finance.general_ledger',
+  FINANCE_FISCAL_PERIODS:     'deskmenu.finance.fiscal_periods',
+  FINANCE_COMPANIES:          'deskmenu.finance.companies',
+  FINANCE_PROFIT_ANALYSIS:    'deskmenu.finance.profit_analysis',
 
   // ── Vendors submenus ─────────────────────────────────────────────────────────
   VENDORS_ORDERS:      'deskmenu.vendors.orders',

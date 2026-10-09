@@ -19,12 +19,13 @@ import {
   X, Search, Loader2, ChevronDown, Check, Gift,
   MapPin, Scissors, Package, Timer, User, MessageSquare,
   Sparkles, ChevronRight, ChevronLeft, AlertCircle,
-  CreditCard, Calendar, Hash, Banknote,
-  CheckCircle2, ShoppingBag, Phone, Mail, FileText,
+  CreditCard, Calendar, Hash, Banknote, ArrowRight,
+  CheckCircle2, ShoppingBag, Phone, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
+import { PaymentReferenceModal, type PaymentReferenceData } from './PaymentReferenceModal';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
 const B = {
@@ -76,6 +77,8 @@ interface SlimService {
   duration_minutes?: number;
   currency?: string;
   category?: string;
+  is_packaged_services?: boolean | string | number;
+  is_packaged?: boolean | string | number;
 }
 
 interface AddonItem {
@@ -121,6 +124,8 @@ interface ServiceFullDetail {
   category?: string;
   branches?: Branch[];
   service_arrangements?: Arrangement[];
+  is_packaged_services?: boolean | string | number;
+  is_packaged?: boolean | string | number;
 }
 
 interface Customer {
@@ -517,6 +522,7 @@ function CustomerPicker({
   label,
   value,
   onSelect,
+  onClear,
   excludeId,
   onCreateNew,
   authHeader,
@@ -525,6 +531,7 @@ function CustomerPicker({
   label: string;
   value: Customer | null;
   onSelect: (c: Customer) => void;
+  onClear?: () => void;
   excludeId?: string;
   onCreateNew?: () => void;
   authHeader: string;
@@ -644,6 +651,19 @@ function CustomerPicker({
                 <p className="text-[10px] text-muted-foreground">{customerPhone(value)}</p>
               )}
             </div>
+            {onClear && (
+              <span
+                role="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClear();
+                }}
+                className="p-1 hover:bg-black/10 rounded-full transition"
+                title="Clear selection"
+              >
+                <X className="h-3.5 w-3.5 text-muted-foreground" />
+              </span>
+            )}
           </>
         ) : (
           <span className="text-xs text-muted-foreground flex-1">Search / select customer…</span>
@@ -898,24 +918,42 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
   const [createForRole, setCreateForRole] = useState<'sender' | 'recipient'>('sender');
 
-  // ── Payment Provider Popup State (Requirement 1.v & 1.vi) ──
+  // ── Payment Provider Popup State (Step 1) ──
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>('MyFatoorah');
   const [paymentSubmitLoading, setPaymentSubmitLoading] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState<string | null>(null);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
 
+  // ── Payment Reference & Receipt State (Step 2) ──
+  const [showPaymentRefModal, setShowPaymentRefModal] = useState(false);
+  const [receiptImage, setReceiptImage] = useState<string | null>(null);
+  const [transactionRefId, setTransactionRefId] = useState<string>('');
+  const [paymentNotes, setPaymentNotes] = useState<string>('');
+
   // Close on Escape
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showPaymentModal) setShowPaymentModal(false);
-        else onClose();
+        if (showPaymentRefModal) {
+          setShowPaymentRefModal(false);
+        } else if (showPaymentModal) {
+          setShowPaymentModal(false);
+        } else {
+          onClose();
+        }
       }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [onClose, showPaymentModal]);
+  }, [onClose, showPaymentModal, showPaymentRefModal]);
+
+  const handleSelectProvider = (provId: string) => {
+    setSelectedProvider(provId);
+    setPaymentSubmitError(null);
+    setShowPaymentModal(false);
+    setShowPaymentRefModal(true);
+  };
 
   // ── 1. Fetch Categories ──
   useEffect(() => {
@@ -1050,6 +1088,23 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   };
 
   // ── Totals Calculation ──
+  const isPackagedService = Boolean(
+    selectedService?.is_packaged_services === true ||
+    String(selectedService?.is_packaged_services).toLowerCase() === 'true' ||
+    (selectedService as any)?.is_packaged === true ||
+    String((selectedService as any)?.is_packaged).toLowerCase() === 'true' ||
+    fullDetail?.is_packaged_services === true ||
+    String(fullDetail?.is_packaged_services).toLowerCase() === 'true' ||
+    (fullDetail as any)?.is_packaged === true ||
+    String((fullDetail as any)?.is_packaged).toLowerCase() === 'true'
+  );
+
+  useEffect(() => {
+    if (isPackagedService && selectedAddons.length > 0) {
+      setSelectedAddons([]);
+    }
+  }, [isPackagedService, selectedAddons.length]);
+
   const currency = fullDetail?.currency ?? selectedService?.currency ?? 'KWD';
   const productPrice = isPhysical && selectedProduct ? parseFloat(String(selectedProduct.price)) || 0 : 0;
   const basePrice =
@@ -1057,8 +1112,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       fullDetail?.base_price ?? fullDetail?.price ?? selectedService?.base_price ?? selectedService?.price ?? '0'
     ) || 0;
   const baseDuration = fullDetail?.duration_minutes ?? selectedService?.duration_minutes ?? 60;
-  const addonPrice = selectedAddons.reduce((s, a) => s + (parseFloat(a.price) || 0), 0);
-  const addonDur = selectedAddons.reduce((s, a) => s + (a.duration_minutes || 0), 0);
+  const addonPrice = isPackagedService ? 0 : selectedAddons.reduce((s, a) => s + (parseFloat(a.price) || 0), 0);
+  const addonDur = isPackagedService ? 0 : selectedAddons.reduce((s, a) => s + (a.duration_minutes || 0), 0);
   const arrangPriceRaw = selectedArrangt?.arrangement_price ?? selectedArrangt?.price;
   const arrangPrice = parseFloat(String(arrangPriceRaw ?? '')) || 0;
 
@@ -1097,7 +1152,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     });
   }, [selectedBranch, fullDetail]);
 
-  const addons: AddonItem[] = selectedArrangt?.addons ?? [];
+  const addons: AddonItem[] = isPackagedService ? [] : (selectedArrangt?.addons ?? []);
 
   const toggleAddon = (addon: AddonItem, checked: boolean) =>
     setSelectedAddons((prev) => (checked ? [...prev, addon] : prev.filter((a) => a.id !== addon.id)));
@@ -1150,15 +1205,25 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   };
 
   // ── Build Voucher Payload & Submit (Requirement 1.vi) ──
-  const handleConfirmPaymentAndCreateVoucher = async () => {
+  const handleConfirmPaymentAndCreateVoucher = async (refData?: PaymentReferenceData) => {
     setPaymentSubmitLoading(true);
     setPaymentSubmitError(null);
+
+    const txnId = refData?.transactionId || transactionRefId || '';
+    const rcptImg = refData ? refData.receiptImage : receiptImage;
+    const notes = refData?.notes || paymentNotes || '';
+
+    if (refData) {
+      setTransactionRefId(txnId);
+      setReceiptImage(rcptImg);
+      if (notes) setPaymentNotes(notes);
+    }
 
     const svcCategory = fullDetail?.category ?? selectedService?.category ?? '';
     const arrRaw = selectedArrangt as unknown as Record<string, unknown>;
     const arrName = selectedArrangt?.arrangement_name ?? String(arrRaw?.name ?? 'Room');
 
-    const customerId = sender?.id ?? currentUser?.id ?? '';
+    const customerId = sender?.id ?? '';
 
     const payload = {
       gift_category: (selectedCategory?.code ?? 'DIGITAL').toLowerCase(),
@@ -1223,30 +1288,33 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         arrangement_type: selectedArrangt?.arrangement_type ?? 'room',
         image: selectedArrangt?.image ?? '',
       },
-      addons: selectedAddons.map((a) => ({
-        addon_id: a.id,
-        id: a.id,
-        name: a.name,
-        price: a.price,
-        duration: a.duration_minutes,
-      })),
+      addons: isPackagedService
+        ? []
+        : selectedAddons.map((a) => ({
+            addon_id: a.id,
+            id: a.id,
+            name: a.name,
+            price: a.price,
+            duration: a.duration_minutes,
+          })),
       extra_time: extraTime,
       price_for_extra_time: extraTimePrice,
       total_duration: totalDuration,
       total_amount: totalPrice,
       currency,
       recipient_phone: recipientPhone,
-      recipient_id: recipient?.id ?? '',
+      recipient_id: recipient?.id || null,
       recipient_data: {
         name: recipientName,
         phone_number: recipientPhone,
         email: recipientEmail,
       },
-      sender_id: customerId,
+      sender_id: sender?.id || null,
       sender_data: {
-        name: sender ? customerLabel(sender) : currentUser?.name ?? 'Desk Staff',
+        id: sender?.id ?? '',
+        name: sender ? customerLabel(sender) : '',
         phone_number: sender ? customerPhone(sender) : '',
-        email: sender?.email ?? currentUser?.email ?? '',
+        email: sender?.email ?? '',
       },
       gift_message: giftMessage,
       gift_template: giftTemplate,
@@ -1262,6 +1330,26 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       source: 'desk',
       payment_status: 'success',
       status: 'active',
+      transaction_id: txnId || null,
+      reference_id: txnId || null,
+      receipt_image: rcptImg || null,
+      invoice_id: refData?.invoiceId || null,
+      payment_notes: notes || null,
+      payment_data: {
+        transaction_id: txnId || null,
+        reference_id: txnId || null,
+        receipt_image: rcptImg || null,
+        invoice_id: refData?.invoiceId || null,
+        payment_notes: notes || null,
+        payment_provider: ({
+          MyFatoorah: 'MyFatoorah',
+          PaymentLink: 'DirectLink',
+          Deema: 'Deema',
+          'KNET Card': 'Other',
+          Other: 'Other',
+        } as Record<string, string>)[selectedProvider] ?? 'Other',
+        payment_method: selectedProvider === 'PaymentLink' ? 'DirectLink' : selectedProvider,
+      },
     };
 
     try {
@@ -1304,10 +1392,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
       setPaymentSuccess(true);
       setTimeout(() => {
+        setShowPaymentRefModal(false);
         setShowPaymentModal(false);
         onSuccess?.();
         onClose();
-      }, 1200);
+      }, 1000);
     } catch (err) {
       setPaymentSubmitError(err instanceof Error ? err.message : 'Failed to create gift voucher');
     } finally {
@@ -1662,7 +1751,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 )}
 
                 {/* Add-ons */}
-                {selectedArrangt && addons.length > 0 && (
+                {!isPackagedService && selectedArrangt && addons.length > 0 && (
                   <div>
                     <SectionLabel icon={Package} label="Add-ons (optional)" />
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -1789,30 +1878,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
-                      Recipient Email (Optional)
-                    </label>
-                    <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5" style={{ borderColor: B.linen }}>
-                      <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <input
-                        type="email"
-                        value={recipientEmail}
-                        onChange={(e) => setRecipientEmail(e.target.value)}
-                        placeholder="recipient@example.com"
-                        className="flex-1 bg-transparent text-sm outline-none font-medium"
-                      />
-                    </div>
-                  </div>
-
                   {/* Or pick from customer DB */}
                   <div className="pt-2 border-t" style={{ borderColor: B.lineMuted }}>
                     <CustomerPicker
                       label="Or pick from customer database"
-                      value={recipient}
-                      onSelect={handleSelectRecipient}
+                      value={sender}
+                      onSelect={(c) => {
+                        setSender(c);
+                      }}
+                      onClear={() => setSender(null)}
                       onCreateNew={() => {
-                        setCreateForRole('recipient');
+                        setCreateForRole('sender');
                         setShowCreateCustomer(true);
                       }}
                       authHeader={authHeader}
@@ -2043,7 +2119,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     <button
                       key={provider.id}
                       type="button"
-                      onClick={() => setSelectedProvider(provider.id)}
+                      onClick={() => handleSelectProvider(provider.id)}
                       className={cn(
                         'relative flex flex-col items-start p-3 rounded-2xl border-2 text-left transition cursor-pointer select-none',
                         isSelected
@@ -2088,13 +2164,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   <span>{paymentSubmitError}</span>
                 </div>
               )}
-
-              {paymentSuccess && (
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 shrink-0" />
-                  <span className="font-bold">Gift voucher created and payment recorded successfully!</span>
-                </div>
-              )}
             </div>
 
             {/* Footer */}
@@ -2114,31 +2183,42 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={handleConfirmPaymentAndCreateVoucher}
-                  disabled={paymentSubmitLoading || paymentSuccess}
+                  onClick={() => handleSelectProvider(selectedProvider)}
+                  disabled={paymentSubmitLoading}
                   className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 px-5 py-2 text-xs font-bold text-white shadow-sm transition cursor-pointer disabled:opacity-50 active:scale-[0.98]"
                 >
-                  {paymentSubmitLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Creating Voucher…
-                    </>
-                  ) : paymentSuccess ? (
-                    <>
-                      <Check className="h-4 w-4" />
-                      Voucher Created!
-                    </>
-                  ) : (
-                    <>
-                      <Banknote className="h-4 w-4" />
-                      Confirm Payment
-                    </>
-                  )}
+                  <span>Continue to Receipt Proof</span>
+                  <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Payment Reference & Receipt Scan Modal (Step 2 of payment) ── */}
+      {showPaymentRefModal && (
+        <PaymentReferenceModal
+          isOpen={showPaymentRefModal}
+          onClose={() => {
+            setShowPaymentRefModal(false);
+            setPaymentSubmitError(null);
+          }}
+          onBack={() => {
+            setShowPaymentRefModal(false);
+            setShowPaymentModal(true);
+          }}
+          paymentProvider={selectedProvider}
+          totalAmount={totalPrice}
+          currency={currency}
+          initialTransactionId={transactionRefId}
+          initialReceiptImage={receiptImage}
+          initialNotes={paymentNotes}
+          onConfirm={handleConfirmPaymentAndCreateVoucher}
+          isSubmitting={paymentSubmitLoading}
+          confirmButtonLabel="Confirm Payment"
+          error={paymentSubmitError}
+        />
       )}
 
       {/* Quick-add Customer Modal */}

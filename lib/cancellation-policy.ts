@@ -97,71 +97,163 @@ export function canCancelBookingAnytime(
 }
 
 /**
+ * Resolves the UTC offset in milliseconds for a given IANA timezone or offset string.
+ * Defaults to Kuwait (Asia/Kuwait, UTC+3, +10,800,000 ms).
+ */
+export function getTimezoneOffsetMs(
+  timeZone: string = 'Asia/Kuwait',
+  refDate: Date = new Date()
+): number {
+  if (!timeZone) return 3 * 60 * 60 * 1000;
+
+  const tz = timeZone.trim();
+  const offsetMatch = tz.match(/^([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === '-' ? -1 : 1;
+    const hours = parseInt(offsetMatch[2], 10);
+    const mins = parseInt(offsetMatch[3] || '0', 10);
+    return sign * (hours * 60 + mins) * 60 * 1000;
+  }
+
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      timeZoneName: 'longOffset',
+    }).formatToParts(refDate);
+    const tzPart = parts.find((p) => p.type === 'timeZoneName');
+    const match = tzPart && tzPart.value.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/);
+    if (match) {
+      const sign = match[1] === '-' ? -1 : 1;
+      const hours = parseInt(match[2], 10);
+      const mins = parseInt(match[3] || '0', 10);
+      return sign * (hours * 60 + mins) * 60 * 1000;
+    }
+  } catch {
+    // fallback to Kuwait UTC+3
+  }
+
+  return 3 * 60 * 60 * 1000;
+}
+
+/**
  * Extract the appointment start date/time as a Date object.
- * Handles ISO strings with/without timezone, date+time split fields, 12h/24h formats.
+ * Correctly accounts for timezone: backend stores local branch/Kuwait wall-clock time
+ * (frequently labeled with a trailing 'Z' or timezone-naive).
+ * Resolves to the true point-in-time Date in UTC epoch milliseconds.
  */
 export function getBookingAppointmentDateTime(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  booking: Record<string, any> | null | undefined
+  booking: Record<string, any> | string | null | undefined,
+  defaultTimeZone: string = 'Asia/Kuwait'
 ): Date | null {
   if (!booking) return null;
 
-  // 1. Direct ISO datetime fields: appointment_start, appointment_datetime, start_time
-  const directCandidate =
-    booking.appointment_start ??
-    booking.appointment_datetime ??
-    booking.start_time ??
-    booking.start;
+  let directCandidate: string | null = null;
+  let timeZone = defaultTimeZone;
 
+  if (typeof booking === 'string') {
+    directCandidate = booking;
+  } else if (typeof booking === 'object' && booking !== null) {
+    timeZone =
+      booking.timezone ||
+      booking.branch_timezone ||
+      booking.branch_data?.timezone ||
+      booking.branch?.timezone ||
+      defaultTimeZone;
+
+    directCandidate =
+      booking.appointment_start ??
+      booking.appointment_datetime ??
+      booking.start_time ??
+      booking.start ??
+      null;
+  }
+
+  const offsetMs = getTimezoneOffsetMs(timeZone);
+
+  // 1. Direct ISO datetime fields: appointment_start, appointment_datetime, start_time
   if (directCandidate && typeof directCandidate === 'string' && directCandidate.trim()) {
-    let s = directCandidate.trim();
-    // Normalize format like "2026-10-01 14:00:00" -> "2026-10-01T14:00:00Z"
-    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(s)) {
-      s = s.replace(' ', 'T') + 'Z';
+    const s = directCandidate.trim();
+
+    // If string already has a genuine non-Z timezone offset like "+03:00" or "-05:00"
+    if (/[+-]\d{2}:?\d{2}$/.test(s)) {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d;
     }
-    const d = new Date(s);
-    if (!isNaN(d.getTime())) return d;
+
+    // Match YYYY-MM-DD and HH:mm(:ss)
+    // In this app, strings like "2026-10-08T21:00:00Z" or "2026-10-08 21:00:00" contain the
+    // local branch/Kuwait wall-clock time (21:00 = 9:00 PM local).
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (m) {
+      const [_, y, mo, d, h, mi, sec] = m;
+      const utcEpoch = Date.UTC(
+        parseInt(y, 10),
+        parseInt(mo, 10) - 1,
+        parseInt(d, 10),
+        parseInt(h, 10),
+        parseInt(mi, 10),
+        parseInt(sec || '0', 10)
+      );
+      return new Date(utcEpoch - offsetMs);
+    }
+
+    const fallbackDate = new Date(s);
+    if (!isNaN(fallbackDate.getTime())) return fallbackDate;
   }
 
   // 2. Separate date and time fields
-  const dateCandidate =
-    booking.appointment_date ??
-    booking.booking_date ??
-    booking.date;
+  if (typeof booking === 'object' && booking !== null) {
+    const dateCandidate =
+      booking.appointment_date ??
+      booking.booking_date ??
+      booking.date;
 
-  const timeCandidate =
-    booking.appointment_time ??
-    booking.time_slot ??
-    booking.time ??
-    booking.displayTime;
+    const timeCandidate =
+      booking.appointment_time ??
+      booking.time_slot ??
+      booking.time ??
+      booking.displayTime;
 
-  if (dateCandidate && typeof dateCandidate === 'string' && dateCandidate.trim()) {
-    const dateStr = dateCandidate.trim().split('T')[0];
-    let timeStr = '00:00:00';
+    if (dateCandidate && typeof dateCandidate === 'string' && dateCandidate.trim()) {
+      const datePart = dateCandidate.trim().split('T')[0];
+      const dateMatch = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (dateMatch) {
+        let hour = 0;
+        let minute = 0;
+        let second = 0;
 
-    if (timeCandidate && typeof timeCandidate === 'string' && timeCandidate.trim()) {
-      const trimmedTime = timeCandidate.trim();
-      const match12 = trimmedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
-      const match24 = trimmedTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+        if (timeCandidate && typeof timeCandidate === 'string' && timeCandidate.trim()) {
+          const firstTime = timeCandidate.trim().split(/[–\-]/)[0].trim();
+          const match12 = firstTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+          const match24 = firstTime.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
 
-      if (match12) {
-        let h = parseInt(match12[1], 10);
-        const m = match12[2];
-        const s = match12[3] || '00';
-        const ampm = match12[4].toUpperCase();
-        if (ampm === 'PM' && h < 12) h += 12;
-        if (ampm === 'AM' && h === 12) h = 0;
-        timeStr = `${String(h).padStart(2, '0')}:${m}:${s}`;
-      } else if (match24) {
-        const h = String(parseInt(match24[1], 10)).padStart(2, '0');
-        const m = match24[2];
-        const s = match24[3] || '00';
-        timeStr = `${h}:${m}:${s}`;
+          if (match12) {
+            let h = parseInt(match12[1], 10);
+            minute = parseInt(match12[2], 10);
+            second = parseInt(match12[3] || '0', 10);
+            const ampm = match12[4].toUpperCase();
+            if (ampm === 'PM' && h < 12) h += 12;
+            if (ampm === 'AM' && h === 12) h = 0;
+            hour = h;
+          } else if (match24) {
+            hour = parseInt(match24[1], 10);
+            minute = parseInt(match24[2], 10);
+            second = parseInt(match24[3] || '0', 10);
+          }
+        }
+
+        const utcEpoch = Date.UTC(
+          parseInt(dateMatch[1], 10),
+          parseInt(dateMatch[2], 10) - 1,
+          parseInt(dateMatch[3], 10),
+          hour,
+          minute,
+          second
+        );
+        return new Date(utcEpoch - offsetMs);
       }
     }
-
-    const d = new Date(`${dateStr}T${timeStr}Z`);
-    if (!isNaN(d.getTime())) return d;
   }
 
   return null;

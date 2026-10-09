@@ -29,7 +29,7 @@ export interface Invoice {
   company_id: string;
   name: string;
   reference?: string | null;
-  invoice_type: 'invoice' | 'bill';
+  invoice_type: 'invoice' | 'bill' | 'credit_note' | string;
   state: 'draft' | 'posted' | 'paid' | 'cancelled';
   partner_id?: string | null;
   partner_name?: string | null;

@@ -46,7 +46,11 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
 
   // Forward query params (e.g. customer_id required by app-token auth)
-  const qs  = req.nextUrl.searchParams.toString();
+  const sp = new URLSearchParams(req.nextUrl.searchParams);
+  if (!sp.get('customer_id') && (body.sender_id || body.sender || body.customer_id)) {
+    sp.set('customer_id', String(body.sender_id || body.sender || body.customer_id));
+  }
+  const qs = sp.toString();
   const url = qs ? `${UPSTREAM_URL}?${qs}` : UPSTREAM_URL;
 
   try {

@@ -6,6 +6,12 @@ import { usePathname } from 'next/navigation';
 import { useState } from 'react';
 import {
   LayoutDashboard,
+  BookMarked,
+  ScrollText,
+  Boxes,
+  TrendingUp,
+  CalendarRange,
+  Briefcase,
   CalendarDays,
   BarChart3,
   Users,
@@ -35,6 +41,7 @@ import {
   PiggyBank,
   Percent,
   Handshake,
+  RotateCcw,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -113,6 +120,7 @@ export function Sidebar() {
       children: [
         { href: '/bookings',          label: 'Booking List',    icon: List,       permission: PERMISSIONS.BOOKINGS_BOOKING_LIST },
         { href: '/bookings/payments', label: 'Payments',        icon: CreditCard, permission: PERMISSIONS.BOOKINGS_PAYMENTS },
+        { href: '/bookings/refunds',  label: 'Refunds',         icon: RotateCcw,  permission: PERMISSIONS.BOOKINGS_REFUNDS },
         { href: '/bookings/reports',  label: 'Booking Reports', icon: PieChart,   permission: PERMISSIONS.BOOKINGS_BOOKING_REPORT },
       ],
     },
@@ -125,12 +133,18 @@ export function Sidebar() {
         { href: '/finance',                 label: 'Overview',           icon: LayoutDashboard, permission: PERMISSIONS.FINANCE_OVERVIEW },
         { href: '/finance/invoices',        label: 'Invoices & Bills',   icon: Receipt,         permission: PERMISSIONS.FINANCE_INVOICES_AND_BILLS },
         { href: '/finance/journal-entries', label: 'Journal Entries',    icon: FileText,        permission: PERMISSIONS.FINANCE_JOURNAL_ENTRIES },
+        { href: '/finance/journals',        label: 'Journals',           icon: BookMarked,      permission: PERMISSIONS.FINANCE_JOURNALS },
         { href: '/finance/accounts',        label: 'Chart of Accounts',  icon: Layers,          permission: PERMISSIONS.FINANCE_CHART_OF_ACCOUNTS },
+        { href: '/finance/general-ledger',  label: 'General Ledger',     icon: ScrollText,      permission: PERMISSIONS.FINANCE_GENERAL_LEDGER },
         { href: '/finance/banking',         label: 'Banking & Cash',     icon: Building2,       permission: PERMISSIONS.FINANCE_BANKING_AND_CASH },
+        { href: '/finance/assets',          label: 'Fixed Assets',       icon: Boxes,           permission: PERMISSIONS.FINANCE_FIXED_ASSETS },
         { href: '/finance/budgets',         label: 'Budgets & Planning', icon: PiggyBank,       permission: PERMISSIONS.FINANCE_BUDGETS_AND_PLANNING },
         { href: '/finance/reports',         label: 'Financial Reports',  icon: BarChart3,       permission: PERMISSIONS.FINANCE_FINANCIAL_REPORTS },
+        { href: '/finance/profit-analysis', label: 'Profit Analysis',    icon: TrendingUp,      permission: PERMISSIONS.FINANCE_PROFIT_ANALYSIS },
         { href: '/finance/partners',        label: 'Partners',           icon: Handshake,       permission: PERMISSIONS.FINANCE_PARTNERS },
         { href: '/finance/taxes',           label: 'Taxes & Fiscal',     icon: Percent,         permission: PERMISSIONS.FINANCE_TAXES_AND_FISCAL },
+        { href: '/finance/fiscal-periods',  label: 'Fiscal Periods',     icon: CalendarRange,   permission: PERMISSIONS.FINANCE_FISCAL_PERIODS },
+        { href: '/finance/companies',       label: 'Companies',          icon: Briefcase,       permission: PERMISSIONS.FINANCE_COMPANIES },
       ],
     },
     {

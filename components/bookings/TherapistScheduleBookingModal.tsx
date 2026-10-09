@@ -48,6 +48,8 @@ interface ApiService {
   extra_minutes?: number;
   category?: string;
   add_ons?: ApiAddOn[];
+  is_packaged_services?: boolean | string | number;
+  [key: string]: unknown;
 }
 
 interface ApiAddOn {
@@ -596,7 +598,14 @@ export function TherapistScheduleBookingModal({
     }) : therapists,
     [therapists, form.therapistSearch]);
 
-  const serviceAddons     = selectedService?.add_ons ?? [];
+  const isPackagedService = Boolean(
+    selectedService?.is_packaged_services === true ||
+    String(selectedService?.is_packaged_services).toLowerCase() === 'true' ||
+    (selectedService as any)?.is_packaged === true ||
+    String((selectedService as any)?.is_packaged).toLowerCase() === 'true'
+  );
+
+  const serviceAddons     = isPackagedService ? [] : (selectedService?.add_ons ?? []);
   // Pricing: if an arrangement is selected and has arrangement_price, use it; otherwise fall back to service price
   const selectedArrangement = useMemo(
     () => arrangements.find(a => a.id === form.arrangementId) ?? null,
@@ -609,8 +618,8 @@ export function TherapistScheduleBookingModal({
     ? arrPrice
     : (parseFloat(String(selectedService?.arrangement_price ?? selectedService?.base_price ?? '0')) || 0);
   // Merge service add-ons + arrangement add-ons into one total
-  const selectedAddons         = serviceAddons.filter(a => form.addonIds.includes(a.id));
-  const selectedArrAddons      = arrangementAddons.filter(a => form.arrangementAddonIds.includes(a.id));
+  const selectedAddons         = isPackagedService ? [] : serviceAddons.filter(a => form.addonIds.includes(a.id));
+  const selectedArrAddons      = isPackagedService ? [] : arrangementAddons.filter(a => form.arrangementAddonIds.includes(a.id));
   const allSelectedAddons      = [...selectedAddons, ...selectedArrAddons];
   const addonTotal             = allSelectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonDuration          = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
@@ -1525,7 +1534,14 @@ export function TherapistScheduleBookingModal({
                           <Scissors className="h-3.5 w-3.5" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold truncate">{s.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-semibold truncate">{s.name}</p>
+                            {(s.is_packaged_services === true || String(s.is_packaged_services).toLowerCase() === 'true') && (
+                              <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                                Package
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[11px] text-muted-foreground">
                             {s.category && <span className="mr-2">{s.category}</span>}
                             {s.duration_minutes && <span>{s.duration_minutes} min</span>}
@@ -1544,7 +1560,14 @@ export function TherapistScheduleBookingModal({
                     <div className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
+                          {isPackagedService && (
+                            <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                              Packaged Service
+                            </span>
+                          )}
+                        </div>
                         <p className="text-[10px] text-muted-foreground">
                           {selectedService.duration_minutes && <span>{selectedService.duration_minutes} min</span>}
                           {selectedService.category && <span> · {selectedService.category}</span>}
@@ -1707,8 +1730,8 @@ export function TherapistScheduleBookingModal({
                       </div>
                     )}
 
-                    {/* Arrangement add-ons — shown only when an arrangement is selected */}
-                    {form.arrangementId && (
+                    {/* Arrangement add-ons — shown only when an arrangement is selected and not a packaged service */}
+                    {form.arrangementId && !isPackagedService && (
                       <div className="mt-4">
                         <div className="flex items-center gap-2 mb-2">
                           <Package className="h-3.5 w-3.5 text-amber-500" />
@@ -1770,48 +1793,50 @@ export function TherapistScheduleBookingModal({
                   </div>
                 )}
 
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Package className="h-3.5 w-3.5 text-muted-foreground" />
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Add-on Services</p>
-                  </div>
-                  {serviceAddons.length === 0 && !servicesLoading && (
-                    <p className="text-xs text-muted-foreground italic">No add-ons available for this service</p>
-                  )}
-                  <div className="grid grid-cols-2 gap-2">
-                    {serviceAddons.map((addon) => {
-                      const checked = form.addonIds.includes(addon.id);
-                      return (
-                        <label key={addon.id} className={cn(
-                          'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
-                          checked ? 'border-primary/40 bg-primary/5 text-primary'
-                            : 'border-border bg-muted/20 hover:bg-muted/40',
-                        )}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
-                            className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0" />
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold leading-tight">{addon.name}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              {addon.price && <span className="text-[10px] font-bold text-primary">+{fmt(addon.price)} KWD</span>}
-                              {addon.duration_minutes && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Timer className="h-2.5 w-2.5" />+{addon.duration_minutes}m</span>}
-                            </div>
-                          </div>
-                        </label>
-                      );
-                    })}
-                  </div>
-                  {(addonDuration > 0 || addonTotal > 0) && (
-                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                        {addonDuration > 0 && <span className="font-bold">+{addonDuration} min</span>}
-                        {addonDuration > 0 && addonTotal > 0 && ' · '}
-                        {addonTotal > 0 && <span className="font-bold">+{fmt(addonTotal)} KWD</span>}
-                        <span className="font-normal text-emerald-600/70"> added by selected add-ons</span>
-                      </p>
+                {!isPackagedService && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Package className="h-3.5 w-3.5 text-muted-foreground" />
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Add-on Services</p>
                     </div>
-                  )}
-                </div>
+                    {serviceAddons.length === 0 && !servicesLoading && (
+                      <p className="text-xs text-muted-foreground italic">No add-ons available for this service</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      {serviceAddons.map((addon) => {
+                        const checked = form.addonIds.includes(addon.id);
+                        return (
+                          <label key={addon.id} className={cn(
+                            'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
+                            checked ? 'border-primary/40 bg-primary/5 text-primary'
+                              : 'border-border bg-muted/20 hover:bg-muted/40',
+                          )}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
+                              className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold leading-tight">{addon.name}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                {addon.price && <span className="text-[10px] font-bold text-primary">+{fmt(addon.price)} KWD</span>}
+                                {addon.duration_minutes && <span className="text-[10px] text-muted-foreground flex items-center gap-0.5"><Timer className="h-2.5 w-2.5" />+{addon.duration_minutes}m</span>}
+                              </div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {(addonDuration > 0 || addonTotal > 0) && (
+                      <div className="mt-2 flex items-center gap-2 rounded-xl border border-emerald-200/60 bg-emerald-50/60 dark:bg-emerald-950/20 dark:border-emerald-800/30 px-3 py-2">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                          {addonDuration > 0 && <span className="font-bold">+{addonDuration} min</span>}
+                          {addonDuration > 0 && addonTotal > 0 && ' · '}
+                          {addonTotal > 0 && <span className="font-bold">+{fmt(addonTotal)} KWD</span>}
+                          <span className="font-normal text-emerald-600/70"> added by selected add-ons</span>
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 

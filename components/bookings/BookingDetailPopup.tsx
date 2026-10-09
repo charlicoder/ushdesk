@@ -8,7 +8,7 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck,
+  FileText, Receipt, Eye, ShieldCheck, ArrowRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -18,6 +18,7 @@ import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingM
 import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
+import { PaymentReferenceModal, type PaymentReferenceData, type PaymentProviderOption } from '@/components/bookings/PaymentReferenceModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface Booking {
@@ -261,9 +262,21 @@ export function DRow({ icon: Icon, label, children }: { icon: React.ElementType;
 }
 
 // ── Payment Provider Selector ─────────────────────────────────────────────────
-const PAYMENT_PROVIDERS = [
+// ── Payment Provider Selector ─────────────────────────────────────────────────
+export const PAYMENT_PROVIDERS = [
+  {
+    id: 'knet',
+    providerOption: 'KNET Card' as PaymentProviderOption,
+    name: 'KNET Card',
+    description: 'In-branch card machine',
+    tag: 'POS Terminal',
+    tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    borderColor: 'border-emerald-400',
+    checkColor: 'text-emerald-500',
+  },
   {
     id: 'paymentlink',
+    providerOption: 'PaymentLink' as PaymentProviderOption,
     name: 'PaymentLink',
     description: 'SMS / WhatsApp link',
     tag: 'Direct Link',
@@ -273,6 +286,7 @@ const PAYMENT_PROVIDERS = [
   },
   {
     id: 'deema',
+    providerOption: 'Deema' as PaymentProviderOption,
     name: 'Deema',
     description: 'BNPL payment split',
     tag: 'Installments',
@@ -281,16 +295,8 @@ const PAYMENT_PROVIDERS = [
     checkColor: 'text-primary',
   },
   {
-    id: 'knet',
-    name: 'KNET Card',
-    description: 'In-branch card machine',
-    tag: 'POS Terminal',
-    tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-    borderColor: 'border-emerald-400',
-    checkColor: 'text-emerald-500',
-  },
-  {
     id: 'other',
+    providerOption: 'Other' as PaymentProviderOption,
     name: 'Other',
     description: 'Cash or other method',
     tag: 'Alternative',
@@ -300,71 +306,30 @@ const PAYMENT_PROVIDERS = [
   },
 ] as const;
 
-type ProviderId = typeof PAYMENT_PROVIDERS[number]['id'];
+export type ProviderId = typeof PAYMENT_PROVIDERS[number]['id'];
 
 function PaymentProviderModal({
   booking,
+  selected,
+  onSelect,
   onClose,
-  onSuccess,
+  onContinue,
 }: {
   booking: Booking;
+  selected: ProviderId;
+  onSelect: (p: ProviderId) => void;
   onClose: () => void;
-  onSuccess: () => void;
+  onContinue: () => void;
 }) {
-  const user = useAppSelector((s) => s.auth.user);
-  const [selected, setSelected] = React.useState<ProviderId>('knet');
-  const [submitting, setSubmitting] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-
-  const selectedProvider = PAYMENT_PROVIDERS.find((p) => p.id === selected)!;
-
-  const handleConfirm = async () => {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          status: 'confirmed',
-          payment_status: 'success',
-          payment_provider: selected,
-          payment_method: selected,
-          reason: 'Paid on desk',
-          source: 'ushdesk',
-          changed_by: user?.name || user?.id || 'Staff',
-          change_by_user: user?.name || user?.id || 'Staff',
-          change_by_user_data: user
-            ? {
-                id: user.id,
-                name: user.name,
-                full_name: user.name,
-                first_name: user.name.split(' ')[0] || user.name,
-                last_name: user.name.split(' ').slice(1).join(' ') || '',
-                email: user.email,
-                phone_number: user.phone_number,
-                role: user.user_type,
-              }
-            : undefined,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || err.detail || `Failed to mark as paid (${res.status})`);
-      }
-      onSuccess();
-      onClose();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to process payment');
-    } finally {
-      setSubmitting(false);
-    }
-  };
+  const selectedProvider = PAYMENT_PROVIDERS.find((p) => p.id === selected) || PAYMENT_PROVIDERS[0];
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-lg rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+      <div className="relative z-10 w-full max-w-lg rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        {/* Accent Bar */}
+        <div className="h-1.5 w-full bg-gradient-to-r from-emerald-500 via-teal-400 to-primary shrink-0" />
+
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border/40">
           <div className="flex items-center gap-2.5">
@@ -372,8 +337,10 @@ function PaymentProviderModal({
               <CreditCard className="h-4.5 w-4.5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Select Payment Provider</p>
-              <p className="text-sm font-bold text-foreground">{booking.customer_name} — {booking.currency} {parseFloat(booking.total_amount).toFixed(3)}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Step 1 of 2: Select Payment Method</p>
+              <p className="text-sm font-bold text-foreground">
+                {booking.customer_name} — {booking.currency} {parseFloat(booking.total_amount).toFixed(3)}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -388,17 +355,21 @@ function PaymentProviderModal({
 
         {/* Provider Grid */}
         <div className="p-6">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <p className="text-xs text-muted-foreground mb-3.5 font-medium">
+            Choose a payment provider/method below. You will then be prompted to attach the payment reference ID and scan or upload the receipt slip.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
             {PAYMENT_PROVIDERS.map((provider) => {
               const isSelected = selected === provider.id;
               return (
                 <button
                   key={provider.id}
                   type="button"
-                  onClick={() => setSelected(provider.id)}
+                  onClick={() => onSelect(provider.id)}
+                  onDoubleClick={onContinue}
                   className={cn(
                     'relative rounded-2xl border-2 bg-card p-4 text-left transition hover:shadow-md cursor-pointer',
-                    isSelected ? `${provider.borderColor} shadow-sm` : 'border-border/50 hover:border-border',
+                    isSelected ? `${provider.borderColor} shadow-sm bg-muted/20 ring-1 ring-primary/20` : 'border-border/50 hover:border-border',
                   )}
                 >
                   {isSelected && (
@@ -415,38 +386,25 @@ function PaymentProviderModal({
               );
             })}
           </div>
-
-          {error && (
-            <div className="mt-4 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400">
-              {error}
-            </div>
-          )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 border-t border-border/40 px-6 py-4">
-          <p className="text-xs text-muted-foreground">
-            This will mark the booking as <span className="font-bold text-emerald-600 dark:text-emerald-400">paid</span> and status as confirmed.
-          </p>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition cursor-pointer disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleConfirm}
-              disabled={submitting}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-4 py-2.5 text-sm font-bold text-white shadow-sm transition cursor-pointer disabled:opacity-50"
-            >
-              <Banknote className="h-4 w-4" />
-              {submitting ? 'Processing...' : 'Confirm Payment'}
-            </button>
-          </div>
+        <div className="flex items-center justify-between gap-3 border-t border-border/40 px-6 py-4 bg-muted/20">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onContinue}
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 px-5 py-2.5 text-xs font-bold text-white shadow-md transition cursor-pointer active:scale-95"
+          >
+            <span>Continue to Reference &amp; Receipt</span>
+            <ArrowRight className="h-4 w-4" />
+          </button>
         </div>
       </div>
     </div>
@@ -473,6 +431,15 @@ export function BookingDetailPopup({
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [showCancellationModal, setShowCancellationModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showPaymentRefModal, setShowPaymentRefModal] = useState(false);
+  const [selectedProviderId, setSelectedProviderId] = useState<ProviderId>('knet');
+  const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+
+  const selectedPaymentConfig = useMemo(() => {
+    return PAYMENT_PROVIDERS.find((p) => p.id === selectedProviderId) || PAYMENT_PROVIDERS[0];
+  }, [selectedProviderId]);
+
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -482,6 +449,7 @@ export function BookingDetailPopup({
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
+  const authPermissions = useAppSelector((s) => s.auth.permissions);
   const cancellationEligibility = checkBookingCancellationEligibility(detail || booking, roleInfo, user);
   const canCancel = cancellationEligibility.canCancel;
 
@@ -490,27 +458,52 @@ export function BookingDetailPopup({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const u = user as any;
     const candidates = [
+      (roleInfo as any)?.role_code,
       roleInfo?.role_name,
       roleInfo?.role_description,
       u?.role,
       u?.role_name,
+      u?.role_title,
       u?.position,
+      u?.user_type,
     ]
       .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
       .map((s) => s.trim().toLowerCase());
-    return candidates.some((c) => c.includes('call center') || c.includes('call_center'));
+
+    const hasAgentRole = candidates.some((c) =>
+      c.includes('call center') ||
+      c.includes('call_center') ||
+      c.includes('callcenter')
+    );
+    if (hasAgentRole) return true;
+
+    const userPerms = (authPermissions ?? []).map((p) => String(p).toLowerCase());
+    return userPerms.some((p) =>
+      p.includes('call_center') ||
+      p.includes('callcenter') ||
+      p.includes('call center')
+    );
   })();
 
   const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
-  const apptDateTime = getBookingAppointmentDateTime(detail || booking);
-  const msUntilAppt = apptDateTime ? apptDateTime.getTime() - Date.now() : null;
-  const isWithin6Hours = msUntilAppt !== null && msUntilAppt < SIX_HOURS_MS;
+  const apptDateTime =
+    getBookingAppointmentDateTime(detail || booking) ||
+    (booking?.raw ? getBookingAppointmentDateTime(booking.raw) : null) ||
+    (booking?.appointment_start ? getBookingAppointmentDateTime(booking.appointment_start) : null);
 
-  // For Call Center Agent: both cancel & reschedule are restricted if within 6 h
-  const callCenterRescheduleBlocked = isCallCenterAgent && isWithin6Hours;
-  const callCenterCancelBlocked     = isCallCenterAgent && isWithin6Hours;
-  const AGENT_BLOCK_REASON = apptDateTime && isWithin6Hours
-    ? `Call Center Agents can only reschedule or cancel at least 6 hours before the appointment (appointment is in ${Math.max(0, msUntilAppt! / (1000 * 60)).toFixed(0)} min).`
+  // Condition: current datetime + 6 hours is greater than booked appointment datetime
+  const isCurrentPlus6HoursGreaterThanAppt = Boolean(
+    apptDateTime && (Date.now() + SIX_HOURS_MS > apptDateTime.getTime())
+  );
+  const msUntilAppt = apptDateTime ? apptDateTime.getTime() - Date.now() : null;
+
+  // For Call Center Agent: both cancel & reschedule are restricted if current datetime + 6h > booked appointment datetime
+  const callCenterRescheduleBlocked = isCallCenterAgent && isCurrentPlus6HoursGreaterThanAppt;
+  const callCenterCancelBlocked     = isCallCenterAgent && isCurrentPlus6HoursGreaterThanAppt;
+  const AGENT_BLOCK_REASON = callCenterCancelBlocked && apptDateTime
+    ? (msUntilAppt !== null && msUntilAppt > 0
+        ? `Call Center Agents can only reschedule or cancel at least 6 hours before the appointment (appointment is in ${Math.max(0, msUntilAppt / (1000 * 60)).toFixed(0)} min).`
+        : `Call Center Agents cannot reschedule or cancel past or immediate appointments.`)
     : null;
 
   const canReschedule = !callCenterRescheduleBlocked;
@@ -589,8 +582,25 @@ export function BookingDetailPopup({
   const isCompleted = curStatus === 'completed';
   const accentBar = isCompleted ? 'bg-[#7D6453]' : (STATUS_BAR[booking.status] ?? 'bg-slate-400');
 
+  // Normalized payment status & isPaid determination
+  const rawPaymentStatus = String(
+    detail?.payment_status ??
+    (detail as any)?.paymentStatus ??
+    booking.payment_status ??
+    ''
+  ).toLowerCase().trim();
+
+  const isPaid =
+    booking.is_paid === true ||
+    (detail as any)?.is_paid === true ||
+    (booking.raw?.payments_meta as any)?.is_paid === true ||
+    (booking.raw?.payment_data as any)?.is_paid === true ||
+    rawPaymentStatus === 'success' ||
+    rawPaymentStatus === 'paid' ||
+    rawPaymentStatus === 'completed';
+
   // Whether payment is pending (not paid yet)
-  const isPaymentPending = !booking.is_paid && booking.payment_status !== 'success' && booking.status !== 'cancelled' && booking.status !== 'completed';
+  const isPaymentPending = !isPaid && curStatus !== 'cancelled' && curStatus !== 'completed';
 
   // ── Compute durations & amounts adding service + addons + extra minutes ─────
   const addons = (detail?.addons && Array.isArray(detail.addons) && detail.addons.length > 0)
@@ -689,8 +699,12 @@ export function BookingDetailPopup({
   // Cancel booking — opens BookingCancellationModal which handles all accounting steps
   const handleCancel = () => {
     if (!booking) return;
-    if (!canCancel) {
-      setCancelError(cancellationEligibility.reason || 'Cancellations within 12 hours of appointment time require Administrator, Branch Manager, Finance Manager, or Customer Support Manager privileges.');
+    if (!effectiveCanCancel) {
+      setCancelError(
+        callCenterCancelBlocked
+          ? (AGENT_BLOCK_REASON || 'Call Center Agents cannot cancel bookings within 6 hours of the appointment.')
+          : (cancellationEligibility.reason || 'Cancellations within 12 hours of appointment time require Administrator, Branch Manager, Finance Manager, or Customer Support Manager privileges.')
+      );
       return;
     }
     setShowCancellationModal(true);
@@ -701,7 +715,7 @@ export function BookingDetailPopup({
   };
 
   const handleCompleteBooking = async () => {
-    if (!booking) return;
+    if (!booking || isPaymentPending || completing) return;
     setCompleting(true);
     setCompleteError(null);
     try {
@@ -750,14 +764,226 @@ export function BookingDetailPopup({
     }
   };
 
+  const handleProcessPayment = async (data: PaymentReferenceData) => {
+    if (!booking) return;
+    setPaymentSubmitting(true);
+    setPaymentError(null);
+    try {
+      const providerOption = selectedPaymentConfig.providerOption;
+      const providerId = selectedPaymentConfig.id;
+
+      const patchPayload = {
+        status: curStatus === 'completed' ? 'completed' : 'confirmed',
+        payment_status: 'success',
+        payment_provider: providerId,
+        payment_method: providerOption,
+        payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+        transaction_id: data.transactionId || null,
+        reference_id: data.transactionId || null,
+        receipt_image: data.receiptImage || null,
+        notes: data.notes || 'Paid on desk',
+        reason: 'Paid on desk',
+        source: 'ushdesk',
+        payment_data: {
+          transaction_id: data.transactionId,
+          reference_id: data.transactionId,
+          payment_provider: providerId,
+          payment_method: providerOption,
+          payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+          receipt_image: data.receiptImage || null,
+          notes: data.notes || null,
+          total_amount: booking.total_amount,
+          currency: booking.currency,
+          paid_at: new Date().toISOString(),
+        },
+        payments_data: {
+          is_paid: true,
+          status: 'Paid',
+          transaction_id: data.transactionId,
+          reference_id: data.transactionId,
+          payment_provider: providerId,
+          payment_method: providerOption,
+          payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+          receipt_image: data.receiptImage || null,
+          notes: data.notes || null,
+          transaction_date: new Date().toISOString(),
+        },
+        changed_by: user?.name || user?.id || 'Staff',
+        change_by_user: user?.name || user?.id || 'Staff',
+        change_by_user_data: user
+          ? {
+              id: user.id,
+              name: user.name,
+              full_name: user.name,
+              first_name: user.name.split(' ')[0] || user.name,
+              last_name: user.name.split(' ').slice(1).join(' ') || '',
+              email: user.email,
+              phone_number: user.phone_number,
+              role: user.user_type,
+            }
+          : undefined,
+      };
+
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(patchPayload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.detail || `Failed to process payment (${res.status})`);
+      }
+
+      // Record in payments endpoint if supported
+      try {
+        await authedFetch('/booknpay/api/v1/payments/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({
+            booking_id: booking.id,
+            amount: parseFloat(booking.total_amount) || 0,
+            currency: booking.currency || 'KWD',
+            status: 'success',
+            payment_method: providerOption === 'KNET Card' ? 'card' : providerId,
+            payment_provider: providerOption,
+            payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+            payment_through: 'ushdesk',
+            payment_for: (booking.booking_type === 'home_service' || booking.booking_type === 'home') ? 'home_service' : 'branch_service',
+            reference_id: data.transactionId || null,
+            transaction_id: data.transactionId || null,
+            receipt_image: data.receiptImage || null,
+            notes: data.notes || null,
+            payment_data: {
+              booking_number: booking.booking_number ?? booking.id,
+              receipt_image: data.receiptImage || null,
+              notes: data.notes || null,
+              transaction_id: data.transactionId || null,
+            },
+          }),
+        });
+      } catch (e) {
+        console.warn('[BookingDetailPopup] Optional /payments call:', e);
+      }
+
+      // Immediately update local booking object & state so UI updates instantly
+      booking.is_paid = true;
+      booking.payment_status = 'success';
+      booking.payment_provider = providerId;
+      booking.payment_method = providerOption;
+      if (curStatus !== 'completed') {
+        booking.status = 'confirmed';
+      }
+      if (data.receiptImage) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (booking as any).receipt_image = data.receiptImage;
+      }
+      if (data.transactionId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (booking as any).transaction_id = data.transactionId;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (booking as any).reference_id = data.transactionId;
+      }
+
+      setDetail((prev) => {
+        const nextStatus = curStatus === 'completed' ? 'completed' : 'confirmed';
+        if (!prev) {
+          return {
+            ...booking.raw,
+            status: nextStatus,
+            is_paid: true,
+            payment_status: 'success',
+            payment_provider: providerId,
+            payment_method: providerOption,
+            receipt_image: data.receiptImage || null,
+            transaction_id: data.transactionId || null,
+            reference_id: data.transactionId || null,
+          };
+        }
+        return {
+          ...prev,
+          status: nextStatus,
+          is_paid: true,
+          payment_status: 'success',
+          payment_provider: providerId,
+          payment_method: providerOption,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          receipt_image: data.receiptImage || (prev as any)?.receipt_image || null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          transaction_id: data.transactionId || (prev as any)?.transaction_id || null,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          reference_id: data.transactionId || (prev as any)?.reference_id || null,
+          payment_data: {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            ...((prev as any)?.payment_data ?? {}),
+            status: 'success',
+            is_paid: true,
+            receipt_image: data.receiptImage || null,
+            transaction_id: data.transactionId || null,
+            payment_provider: providerId,
+            payment_method: providerOption,
+          },
+        };
+      });
+
+      // Re-fetch detail from backend to sync full payments_meta, invoice, etc.
+      authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.data) setDetail(d.data);
+          else if (d?.success && d?.data) setDetail(d.data);
+        })
+        .catch(() => {});
+
+      setShowPaymentRefModal(false);
+      setShowPaymentModal(false);
+      onSuccess?.();
+    } catch (err: unknown) {
+      console.error('[BookingDetailPopup] Payment error:', err);
+      setPaymentError(err instanceof Error ? err.message : 'Failed to process payment');
+    } finally {
+      setPaymentSubmitting(false);
+    }
+  };
+
   return (
     <>
-      {/* Payment Provider Modal (nested, z-60) */}
+      {/* Step 1: Payment Provider Modal (nested, z-60) */}
       {showPaymentModal && (
         <PaymentProviderModal
           booking={booking}
+          selected={selectedProviderId}
+          onSelect={(id) => setSelectedProviderId(id)}
           onClose={() => setShowPaymentModal(false)}
-          onSuccess={() => { onSuccess?.(); onClose(); }}
+          onContinue={() => {
+            setPaymentError(null);
+            setShowPaymentModal(false);
+            setShowPaymentRefModal(true);
+          }}
+        />
+      )}
+
+      {/* Step 2: Payment Reference & Receipt Scan Modal (nested, z-60) */}
+      {showPaymentRefModal && (
+        <PaymentReferenceModal
+          isOpen={showPaymentRefModal}
+          onClose={() => {
+            setShowPaymentRefModal(false);
+            setPaymentError(null);
+          }}
+          onBack={() => {
+            setShowPaymentRefModal(false);
+            setShowPaymentModal(true);
+          }}
+          paymentProvider={selectedPaymentConfig.providerOption}
+          totalAmount={parseFloat(booking.total_amount) || 0}
+          currency={booking.currency || 'KWD'}
+          initialReceiptImage={receiptImg || null}
+          initialTransactionId={transactionId || ''}
+          onConfirm={handleProcessPayment}
+          isSubmitting={paymentSubmitting}
+          confirmButtonLabel="Confirm & Record Payment"
+          error={paymentError}
         />
       )}
 
@@ -1541,8 +1767,18 @@ export function BookingDetailPopup({
                     <button
                       type="button"
                       onClick={handleCompleteBooking}
-                      disabled={completing}
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer active:scale-[0.98] whitespace-nowrap disabled:opacity-60"
+                      disabled={completing || isPaymentPending}
+                      title={
+                        isPaymentPending
+                          ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
+                          : undefined
+                      }
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                        isPaymentPending
+                          ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                          : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
+                      )}
                     >
                       {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                       {completing ? 'Completing…' : 'Mark Completed'}
@@ -1557,7 +1793,11 @@ export function BookingDetailPopup({
                 {isPaymentPending && (
                   <button
                     type="button"
-                    onClick={() => setShowPaymentModal(true)}
+                    onClick={() => {
+                      setPaymentError(null);
+                      setShowPaymentRefModal(false);
+                      setShowPaymentModal(true);
+                    }}
                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer whitespace-nowrap"
                   >
                     <CreditCard className="h-4 w-4" />

@@ -41,7 +41,7 @@ import {
 import { authedFetch } from '@/lib/authedFetch';
 
 export default function InvoicesPage() {
-  const [typeFilter, setTypeFilter]   = useState<'all' | 'invoice' | 'bill'>('all');
+  const [typeFilter, setTypeFilter]   = useState<'all' | 'invoice' | 'bill' | 'credit_note'>('all');
   const [stateFilter, setStateFilter] = useState<string>('all');
   const [search, setSearch]           = useState<string>('');
   const [view, setView]               = useState<'list' | 'grid'>('list');
@@ -65,17 +65,27 @@ export default function InvoicesPage() {
     },
   });
 
-  // Client-side search filtering
+  // Client-side search & type filtering
   const filtered = useMemo(() => {
-    if (!search.trim()) return rawInvoices;
+    let list = rawInvoices;
+    if (typeFilter !== 'all') {
+      list = list.filter((inv) => {
+        const t = (inv.invoice_type ?? '').toLowerCase().trim();
+        if (typeFilter === 'credit_note') {
+          return t === 'credit_note' || t === 'credit_notes' || t === 'credit note';
+        }
+        return t === typeFilter;
+      });
+    }
+    if (!search.trim()) return list;
     const q = search.toLowerCase();
-    return rawInvoices.filter((inv) =>
+    return list.filter((inv) =>
       inv.name?.toLowerCase().includes(q) ||
       inv.reference?.toLowerCase().includes(q) ||
       inv.partner_name?.toLowerCase().includes(q) ||
       inv.notes?.toLowerCase().includes(q)
     );
-  }, [rawInvoices, search]);
+  }, [rawInvoices, search, typeFilter]);
 
   // Summary stats computed from current filtered items
   const stats = useMemo(() => {
@@ -163,6 +173,7 @@ export default function InvoicesPage() {
             { id: 'all', label: 'All Records' },
             { id: 'invoice', label: 'Customer Invoices' },
             { id: 'bill', label: 'Vendor Bills' },
+            { id: 'credit_note', label: 'Credit Notes' },
           ].map((t) => (
             <button
               key={t.id}
@@ -295,9 +306,13 @@ export default function InvoicesPage() {
                         <div className="flex items-center gap-2">
                           <div className={cn(
                             'grid h-7 w-7 place-items-center rounded-lg text-xs font-bold',
-                            inv.invoice_type === 'invoice' ? 'bg-blue-500/10 text-blue-600' : 'bg-purple-500/10 text-purple-600',
+                            inv.invoice_type === 'invoice'
+                              ? 'bg-blue-500/10 text-blue-600'
+                              : inv.invoice_type === 'credit_note'
+                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                              : 'bg-purple-500/10 text-purple-600',
                           )}>
-                            {inv.invoice_type === 'invoice' ? 'INV' : 'BIL'}
+                            {inv.invoice_type === 'invoice' ? 'INV' : inv.invoice_type === 'credit_note' ? 'CRN' : 'BIL'}
                           </div>
                           <div>
                             <p className="font-bold text-foreground group-hover:text-primary transition">{inv.name}</p>
@@ -307,7 +322,11 @@ export default function InvoicesPage() {
                       </td>
                       <td className="px-4 py-3">
                         <span className="capitalize text-muted-foreground">
-                          {inv.invoice_type === 'invoice' ? 'Customer Invoice' : 'Vendor Bill'}
+                          {inv.invoice_type === 'invoice'
+                            ? 'Customer Invoice'
+                            : inv.invoice_type === 'credit_note'
+                            ? 'Credit Note'
+                            : 'Vendor Bill'}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">
@@ -354,9 +373,13 @@ export default function InvoicesPage() {
                     <div className="flex items-center gap-2">
                       <div className={cn(
                         'grid h-8 w-8 place-items-center rounded-xl text-xs font-bold',
-                        inv.invoice_type === 'invoice' ? 'bg-blue-500/10 text-blue-600' : 'bg-purple-500/10 text-purple-600',
+                        inv.invoice_type === 'invoice'
+                          ? 'bg-blue-500/10 text-blue-600'
+                          : inv.invoice_type === 'credit_note'
+                          ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                          : 'bg-purple-500/10 text-purple-600',
                       )}>
-                        {inv.invoice_type === 'invoice' ? 'INV' : 'BIL'}
+                        {inv.invoice_type === 'invoice' ? 'INV' : inv.invoice_type === 'credit_note' ? 'CRN' : 'BIL'}
                       </div>
                       <div>
                         <p className="font-extrabold text-sm text-foreground group-hover:text-primary transition">{inv.name}</p>
@@ -488,7 +511,11 @@ function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClo
           <div className="flex items-center gap-3">
             <div className={cn(
               'grid h-11 w-11 place-items-center rounded-2xl text-sm font-black shadow-xs',
-              invoice.invoice_type === 'invoice' ? 'bg-blue-500/10 text-blue-600' : 'bg-purple-500/10 text-purple-600',
+              invoice.invoice_type === 'invoice'
+                ? 'bg-blue-500/10 text-blue-600'
+                : invoice.invoice_type === 'credit_note'
+                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                : 'bg-purple-500/10 text-purple-600',
             )}>
               <Receipt className="h-5 w-5" />
             </div>
@@ -504,7 +531,11 @@ function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClo
                 </button>
               </div>
               <p className="text-xs text-muted-foreground capitalize">
-                {invoice.invoice_type === 'invoice' ? 'Customer Invoice' : 'Vendor Bill'} · ID: {invoice.id.slice(0, 8)}…
+                {invoice.invoice_type === 'invoice'
+                  ? 'Customer Invoice'
+                  : invoice.invoice_type === 'credit_note'
+                  ? 'Credit Note'
+                  : 'Vendor Bill'} · ID: {invoice.id.slice(0, 8)}…
               </p>
             </div>
           </div>
@@ -684,7 +715,7 @@ function calcLine(l: LineItem) {
 }
 
 function InvoiceFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [invoiceType, setInvoiceType] = useState<'invoice' | 'bill'>('invoice');
+  const [invoiceType, setInvoiceType] = useState<'invoice' | 'bill' | 'credit_note'>('invoice');
   const [partnerId, setPartnerId] = useState('');
   const [journalId, setJournalId] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
@@ -806,11 +837,11 @@ function InvoiceFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
         <div className="p-6 space-y-5">
           {/* Type Toggle */}
           <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-muted/20 p-1 w-fit">
-            {(['invoice', 'bill'] as const).map((t) => (
+            {(['invoice', 'bill', 'credit_note'] as const).map((t) => (
               <button key={t} onClick={() => setInvoiceType(t)}
                 className={cn('rounded-lg px-4 py-1.5 text-xs font-bold transition', invoiceType === t ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground')}
               >
-                {t === 'invoice' ? '🧾 Customer Invoice' : '📄 Vendor Bill'}
+                {t === 'invoice' ? '🧾 Customer Invoice' : t === 'bill' ? '📄 Vendor Bill' : '💳 Credit Note'}
               </button>
             ))}
           </div>
