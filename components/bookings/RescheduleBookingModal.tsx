@@ -534,6 +534,11 @@ export function RescheduleBookingModal({
       return;
     }
 
+    if (selectedDate > maxDateStr) {
+      setSubmitError(`Reschedule is allowed only max 30 days from current appointment start datetime (${maxDateStr}).`);
+      return;
+    }
+
     setSubmitting(true);
     setSubmitError(null);
 
@@ -995,6 +1000,7 @@ export function RescheduleBookingModal({
               !selectedBranchId ||
               !selectedRoomId ||
               !selectedDate ||
+              selectedDate > maxDateStr ||
               !selectedTimeSlot ||
               !selectedTherapistId
             }

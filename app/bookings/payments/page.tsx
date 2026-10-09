@@ -42,6 +42,10 @@ interface RawPayment {
   payment_method?: unknown;
   payment_gateway?: unknown;
   gateway_name?: unknown;
+  payment_url?: unknown;
+  payment_link?: unknown;
+  payments_meta?: Record<string, unknown>;
+  payment_data?: Record<string, unknown>;
   status?: unknown;
   transaction_status?: unknown;
   is_paid?: unknown;
@@ -76,6 +80,7 @@ interface RawPayment {
 interface Payment {
   id: string;
   payment_number: string | null;
+  payment_url: string | null;
   booking_number: string | null;
   booking_id: string;
   customer_id: string;
@@ -203,9 +208,29 @@ function normalise(raw: RawPayment): Payment {
     ''
   ).trim();
 
+  const rawPaymentsMeta = (typeof raw.payments_meta === 'object' && raw.payments_meta !== null)
+    ? (raw.payments_meta as Record<string, unknown>)
+    : {};
+  const rawBookingPaymentData = (typeof rawBookingData.payment_data === 'object' && rawBookingData.payment_data !== null)
+    ? (rawBookingData.payment_data as Record<string, unknown>)
+    : {};
+
+  const paymentUrl = String(
+    raw.payment_url ??
+    rawPaymentData.payment_url ??
+    rawPaymentsMeta.payment_url ??
+    rawBookingPaymentData.payment_url ??
+    rawBookingData.payment_url ??
+    raw.payment_link ??
+    rawPaymentData.payment_link ??
+    raw.url ??
+    ''
+  ).trim();
+
   return {
     id:                 String(raw.id                 ?? ''),
     payment_number:     paymentNumber || null,
+    payment_url:        paymentUrl || null,
     booking_number:     bookingNumber || null,
     booking_id:         String(raw.booking_id         ?? ''),
     customer_id:        String(raw.customer_id        ?? ''),
@@ -378,15 +403,16 @@ function CopyButton({ value }: { value: string }) {
 }
 
 // ── Detail Row ─────────────────────────────────────────────────────────────────
-function DetailRow({ label, value, mono = false, copyable = false }: {
-  label: string; value: React.ReactNode; mono?: boolean; copyable?: boolean;
+function DetailRow({ label, value, mono = false, copyable = false, copyText }: {
+  label: string; value: React.ReactNode; mono?: boolean; copyable?: boolean; copyText?: string;
 }) {
+  const textToCopy = copyText || (typeof value === 'string' ? value : undefined);
   return (
     <div className="flex items-start justify-between gap-3 py-2.5 border-b border-border/40 last:border-0">
       <span className="text-xs font-medium text-muted-foreground shrink-0 w-36 sm:w-44">{label}</span>
       <span className={cn('text-xs text-right flex items-center gap-1 flex-wrap justify-end', mono && 'font-mono')}>
         {value}
-        {copyable && typeof value === 'string' && <CopyButton value={value} />}
+        {copyable && textToCopy && <CopyButton value={textToCopy} />}
       </span>
     </div>
   );
@@ -500,10 +526,10 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Payment Details</p>
             <div className="rounded-2xl border border-border/40 bg-muted/20 px-4 py-1">
               <DetailRow label="Payment Number" value={payment.payment_number || '—'} mono copyable={!!payment.payment_number} />
-              {payment.booking_number ? (
-                <DetailRow
-                  label="Booking Number"
-                  value={
+              <DetailRow
+                label="Booking Number"
+                value={
+                  payment.booking_number ? (
                     <a
                       href={`/bookings?search=${encodeURIComponent(payment.booking_number)}`}
                       className="font-mono font-bold text-primary hover:underline inline-flex items-center gap-1.5"
@@ -513,13 +539,16 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
                       {payment.booking_number}
                       <ExternalLink className="h-3 w-3" />
                     </a>
-                  }
-                  mono
-                  copyable
-                />
-              ) : payment.booking_id ? (
-                <DetailRow label="Booking ID" value={shortId(payment.booking_id)} mono copyable={!!payment.booking_id} />
-              ) : null}
+                  ) : payment.booking_id ? (
+                    shortId(payment.booking_id)
+                  ) : (
+                    '—'
+                  )
+                }
+                mono
+                copyable={!!payment.booking_number || !!payment.booking_id}
+                copyText={payment.booking_number || payment.booking_id || undefined}
+              />
               <DetailRow
                 label="Invoice Number"
                 value={
@@ -539,17 +568,12 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
                 }
                 mono
                 copyable={!!payment.invoice_number}
+                copyText={payment.invoice_number || undefined}
               />
-              <DetailRow label="Payment ID"    value={payment.payment_id || '—'} mono copyable={!!payment.payment_id} />
-              <DetailRow label="Transaction ID" value={payment.transaction_id || '—'} mono copyable={!!payment.transaction_id} />
-              <DetailRow label="Invoice ID"    value={payment.invoice_id || '—'} mono copyable={!!payment.invoice_id} />
-              <DetailRow label="Invoice Ref"   value={payment.invoice_reference || '—'} mono copyable={!!payment.invoice_reference} />
-              <DetailRow label="Customer Ref"  value={payment.customer_reference || '—'} mono copyable={!!payment.customer_reference} />
-              <DetailRow label="Provider"      value={<span className="font-bold capitalize">{payment.payment_provider || payment.provider || '—'}</span>} />
-              {payment.payment_through && (
-                <DetailRow
-                  label="Channel"
-                  value={
+              <DetailRow
+                label="Payment Through"
+                value={
+                  payment.payment_through ? (
                     <span className={cn(
                       'text-[10px] font-black px-2 py-0.5 rounded tracking-wider uppercase',
                       payment.payment_through.toLowerCase() === 'ushdesk'
@@ -558,14 +582,33 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
                     )}>
                       {payment.payment_through}
                     </span>
-                  }
-                />
-              )}
-              <DetailRow label="Method"        value={<span className="capitalize">{payment.payment_method || '—'}</span>} />
-              <DetailRow label="Gateway"       value={payment.payment_gateway || '—'} />
-              {payment.reference_id && <DetailRow label="Reference ID" value={payment.reference_id} mono copyable />}
-              {payment.track_id     && <DetailRow label="Track ID"     value={payment.track_id}     mono copyable />}
-              {payment.paid_at      && <DetailRow label="Paid At"      value={formatDateTime(payment.paid_at)} />}
+                  ) : (
+                    '—'
+                  )
+                }
+              />
+              <DetailRow
+                label="Payment URL"
+                value={
+                  payment.payment_url ? (
+                    <a
+                      href={payment.payment_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-mono text-xs text-primary hover:underline inline-flex items-center gap-1 break-all max-w-[260px] sm:max-w-[340px] truncate"
+                      title={payment.payment_url}
+                    >
+                      <span className="truncate">{payment.payment_url}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  ) : (
+                    '—'
+                  )
+                }
+                mono
+                copyable={!!payment.payment_url}
+                copyText={payment.payment_url || undefined}
+              />
             </div>
           </div>
 

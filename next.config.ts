@@ -32,6 +32,11 @@ const nextConfig: NextConfig = {
           source: '/booknpay/api/:path*',
           destination: `${baseUrl}${booknpay}/api/:path*`,
         },
+        // Auth & user management proxy  →  https://apidev.ushspa.co/uauth/api/:path*
+        {
+          source: '/uauth/api/:path*',
+          destination: `${baseUrl}${uauth}/api/:path*`,
+        },
       ],
     };
   },

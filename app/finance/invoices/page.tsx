@@ -129,7 +129,7 @@ export default function InvoicesPage() {
             icon: CheckCircle2,
           },
           {
-            label: 'Outstanding Residual',
+            label: 'Outstanding Balance',
             val: formatKwd(stats.residual),
             sub: 'Pending balance',
             color: 'from-rose-500/20 to-rose-500/5 text-rose-600 dark:text-rose-400',
@@ -530,13 +530,6 @@ function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClo
                   {copied ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
               </div>
-              <p className="text-xs text-muted-foreground capitalize">
-                {invoice.invoice_type === 'invoice'
-                  ? 'Customer Invoice'
-                  : invoice.invoice_type === 'credit_note'
-                  ? 'Credit Note'
-                  : 'Vendor Bill'} · ID: {invoice.id.slice(0, 8)}…
-              </p>
             </div>
           </div>
 
@@ -623,7 +616,7 @@ function InvoiceModal({ invoice, onClose, onRefresh }: { invoice: Invoice; onClo
               <p className="font-semibold text-foreground mt-0.5">{invoice.reference || '—'}</p>
             </div>
             <div>
-              <span className="text-muted-foreground text-[10px] uppercase font-bold">Outstanding Residual</span>
+              <span className="text-muted-foreground text-[10px] uppercase font-bold">Outstanding Balance</span>
               <p className="font-semibold text-rose-600 dark:text-rose-400 mt-0.5">{formatKwd(invoice.amount_residual)}</p>
             </div>
           </div>

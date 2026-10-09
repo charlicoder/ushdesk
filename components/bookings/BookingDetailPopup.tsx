@@ -8,13 +8,14 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck, ArrowRight,
+  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility, getBookingAppointmentDateTime } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
+import { ChangeTherapistModal } from '@/components/bookings/ChangeTherapistModal';
 import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
@@ -48,6 +49,9 @@ export interface Booking {
   payment_method: string | null;
   payment_url: string | null;
   payment_data: Record<string, unknown> | null;
+  channel?: string;
+  source?: string;
+  payment_through?: string;
   is_paid: boolean;
   total_amount: string;
   currency: string;
@@ -105,6 +109,9 @@ export function normalise(raw: Record<string, unknown>): Booking {
     payment_method:    (raw.payment_method ?? null) as string | null,
     payment_url:       (pd.payment_url     ?? pm.payment_url     ?? raw.payment_url ?? null) as string | null,
     payment_data:      (raw.payment_data ?? null) as Record<string, unknown> | null,
+    channel:           String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || 'ushdesk').trim(),
+    source:            String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || 'ushdesk').trim(),
+    payment_through:   String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || 'ushdesk').trim(),
     is_paid:           pm.is_paid === true || pd.is_paid === true || pd.status === 'success' || raw.payment_status === 'success',
     total_amount:      String(raw.total_amount ?? '0'),
     currency:          String(raw.currency     ?? 'KWD'),
@@ -441,11 +448,14 @@ export function BookingDetailPopup({
   }, [selectedProviderId]);
 
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [showChangeTherapistModal, setShowChangeTherapistModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceRecord, setInvoiceRecord] = useState<Record<string, unknown> | null>(null);
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  const [markingNoShow, setMarkingNoShow] = useState(false);
+  const [noShowError, setNoShowError] = useState<string | null>(null);
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
@@ -453,8 +463,8 @@ export function BookingDetailPopup({
   const cancellationEligibility = checkBookingCancellationEligibility(detail || booking, roleInfo, user);
   const canCancel = cancellationEligibility.canCancel;
 
-  // ── Call Center Agent 6-hour restriction ─────────────────────────────
-  const isCallCenterAgent = (() => {
+  // ── Role detection for Call Center Agent & Receptionist ──────────────
+  const { isSuperuserOrAdmin, isCallCenterAgent, isReceptionist, isPaymentTabRestricted } = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const u = user as any;
     const candidates = [
@@ -470,26 +480,83 @@ export function BookingDetailPopup({
       .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
       .map((s) => s.trim().toLowerCase());
 
-    const hasAgentRole = candidates.some((c) =>
+    const isSuperuserOrAdmin = Boolean(
+      roleInfo?.is_superuser ||
+      user?.user_type === 'admin' ||
+      user?.user_type === 'administrator' ||
+      (roleInfo?.role_name && ['admin', 'administrator', 'superuser'].includes(roleInfo.role_name.toLowerCase().trim()))
+    );
+
+    const userPerms = (authPermissions ?? []).map((p) => String(p).toLowerCase());
+
+    const isAgent = candidates.some((c) =>
       c.includes('call center') ||
       c.includes('call_center') ||
       c.includes('callcenter')
-    );
-    if (hasAgentRole) return true;
-
-    const userPerms = (authPermissions ?? []).map((p) => String(p).toLowerCase());
-    return userPerms.some((p) =>
+    ) || userPerms.some((p) =>
       p.includes('call_center') ||
       p.includes('callcenter') ||
       p.includes('call center')
     );
-  })();
+
+    const isRecep = candidates.some((c) =>
+      c.includes('receptionist') ||
+      c.includes('reception') ||
+      c.includes('front desk') ||
+      c.includes('front_desk') ||
+      c.includes('frontdesk')
+    ) || userPerms.some((p) =>
+      p.includes('receptionist') ||
+      p.includes('reception') ||
+      p.includes('front_desk') ||
+      p.includes('frontdesk') ||
+      p.includes('front desk')
+    );
+
+    const restricted = !isSuperuserOrAdmin && (isAgent || isRecep);
+
+    return {
+      isSuperuserOrAdmin,
+      isCallCenterAgent: isAgent,
+      isReceptionist: isRecep,
+      isPaymentTabRestricted: restricted,
+    };
+  }, [user, roleInfo, authPermissions]);
+
+  // Keep activeTab strictly on details when payment tab is restricted
+  useEffect(() => {
+    if (isPaymentTabRestricted && activeTab !== 'details') {
+      setActiveTab('details');
+    }
+  }, [isPaymentTabRestricted, activeTab]);
 
   const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+  const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
   const apptDateTime =
     getBookingAppointmentDateTime(detail || booking) ||
     (booking?.raw ? getBookingAppointmentDateTime(booking.raw) : null) ||
     (booking?.appointment_start ? getBookingAppointmentDateTime(booking.appointment_start) : null);
+
+  const rawEnd = (detail as any)?.appointment_end ?? booking?.appointment_end ?? (booking?.raw as any)?.appointment_end;
+  const apptEndDateTime = (() => {
+    if (rawEnd && typeof rawEnd === 'string' && rawEnd.trim()) {
+      const parsed = getBookingAppointmentDateTime(rawEnd);
+      if (parsed) return parsed;
+    }
+    if (apptDateTime) {
+      const dur = Number(detail?.total_duration ?? booking?.total_duration ?? booking?.duration_minutes ?? 60);
+      return new Date(apptDateTime.getTime() + dur * 60 * 1000);
+    }
+    return null;
+  })();
+
+  // 1. Reschedule is allowed only max 30 days from current appointment start datetime
+  const isPast30DaysFromApptStart = Boolean(
+    apptDateTime && (Date.now() > apptDateTime.getTime() + THIRTY_DAYS_MS)
+  );
+  const RESCHEDULE_30_DAYS_REASON = 'Reschedule is allowed only up to 30 days from the appointment start datetime.';
 
   // Condition: current datetime + 6 hours is greater than booked appointment datetime
   const isCurrentPlus6HoursGreaterThanAppt = Boolean(
@@ -506,9 +573,75 @@ export function BookingDetailPopup({
         : `Call Center Agents cannot reschedule or cancel past or immediate appointments.`)
     : null;
 
-  const canReschedule = !callCenterRescheduleBlocked;
+  const canReschedule = !callCenterRescheduleBlocked && !isPast30DaysFromApptStart;
+  const rescheduleBlockReason = callCenterRescheduleBlocked
+    ? (AGENT_BLOCK_REASON ?? undefined)
+    : isPast30DaysFromApptStart
+    ? RESCHEDULE_30_DAYS_REASON
+    : undefined;
+
   // Combine existing cancel eligibility with Call Center restriction
   const effectiveCanCancel = canCancel && !callCenterCancelBlocked;
+
+  // 2. If current datetime is greater than appointment_end + 3 hours dont show / hide "Mark Completed" button for employee role "Call Center Agent" and "Receptionist"
+  const isPastApptEndPlus3Hours = Boolean(
+    apptEndDateTime && (Date.now() > apptEndDateTime.getTime() + THREE_HOURS_MS)
+  );
+  const isCompleteRestrictedForRole =
+    !isSuperuserOrAdmin &&
+    (isCallCenterAgent || isReceptionist) &&
+    isPastApptEndPlus3Hours;
+
+  // 3. If current datetime is greater than appointment_end show a button "Mark No Show" for employee role "Administrator", "Branch Manager", "Finance Manager", "Spa Director"
+  const isPastApptEnd = Boolean(
+    apptEndDateTime && (Date.now() > apptEndDateTime.getTime())
+  );
+
+  const canMarkNoShow = useMemo(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const u = user as any;
+    if (roleInfo?.is_superuser || roleInfo?.is_branch_manager) return true;
+    if (['admin', 'administrator', 'branch_manager'].includes((u?.user_type || '').toLowerCase().trim())) return true;
+
+    const candidates = [
+      (roleInfo as any)?.role_code,
+      roleInfo?.role_name,
+      roleInfo?.role_description,
+      u?.role,
+      u?.role_name,
+      u?.role_title,
+      u?.position,
+      u?.user_type,
+    ]
+      .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+      .map((s) => s.trim().toLowerCase());
+
+    const allowedPatterns = [
+      'administrator',
+      'admin',
+      'branch manager',
+      'branch_manager',
+      'branch manger',
+      'finance manager',
+      'finance_manager',
+      'spa director',
+      'spa_director',
+      'director',
+    ];
+
+    const hasMatch = candidates.some((c) =>
+      allowedPatterns.some((pattern) => c.includes(pattern) || pattern.includes(c))
+    );
+    if (hasMatch) return true;
+
+    const userPerms = (authPermissions ?? []).map((p) => String(p).toLowerCase());
+    return userPerms.some((p) =>
+      p.includes('admin') ||
+      p.includes('branch_manager') ||
+      p.includes('finance_manager') ||
+      p.includes('spa_director')
+    );
+  }, [user, roleInfo, authPermissions]);
 
   useEffect(() => {
     if (!booking) return;
@@ -580,6 +713,14 @@ export function BookingDetailPopup({
   if (!booking) return null;
   const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
   const isCompleted = curStatus === 'completed';
+  const canChangeTherapist =
+    curStatus !== 'completed' &&
+    curStatus !== 'no_show' &&
+    curStatus !== 'cancelled' &&
+    booking.status !== 'completed' &&
+    booking.status !== 'no_show' &&
+    booking.status !== 'cancelled' &&
+    !isCompleted;
   const accentBar = isCompleted ? 'bg-[#7D6453]' : (STATUS_BAR[booking.status] ?? 'bg-slate-400');
 
   // Normalized payment status & isPaid determination
@@ -633,7 +774,15 @@ export function BookingDetailPopup({
     ? (detail.status_history as Array<Record<string, unknown>>)
     : [];
 
-  const rawCreatorObj = detail?.created_by_user_data ?? booking.created_by_user_data;
+  const rawCreatorObj =
+    detail?.created_by_user_data ??
+    booking.created_by_user_data ??
+    booking.raw?.created_by_user_data ??
+    (detail as any)?.created_by_data ??
+    (booking.raw as any)?.created_by_data ??
+    (detail as any)?.creator ??
+    (booking.raw as any)?.creator;
+
   const createdByUserObj: Record<string, unknown> | null = (() => {
     if (!rawCreatorObj) return null;
     if (typeof rawCreatorObj === 'object') return rawCreatorObj as Record<string, unknown>;
@@ -656,6 +805,31 @@ export function BookingDetailPopup({
     ((detail as any)?.created_by_name as string) ||
     ((booking as any)?.created_by_name as string) ||
     (typeof booking.created_by_user === 'string' && !/^[0-9a-f-]{10,}$/i.test(booking.created_by_user) ? booking.created_by_user : '') ||
+    ''
+  ).trim();
+
+  const createdByUserRole = (
+    (createdByUserObj?.role as string) ||
+    (createdByUserObj?.role_name as string) ||
+    (createdByUserObj?.role_title as string) ||
+    ((createdByUserObj?.role_info as any)?.role_name as string) ||
+    ((createdByUserObj?.roleInfo as any)?.role_name as string) ||
+    (createdByUserObj?.position as string) ||
+    ((detail as any)?.created_by_role as string) ||
+    ((detail as any)?.created_by_user_role as string) ||
+    ((booking as any)?.created_by_role as string) ||
+    ((booking as any)?.created_by_user_role as string) ||
+    ((booking.raw as any)?.created_by_role as string) ||
+    ((booking.raw as any)?.created_by_user_role as string) ||
+    ''
+  ).trim();
+
+  const createdByUserType = (
+    (createdByUserObj?.user_type as string) ||
+    (createdByUserObj?.type as string) ||
+    ((detail as any)?.created_by_user_type as string) ||
+    ((booking as any)?.created_by_user_type as string) ||
+    ((booking.raw as any)?.created_by_user_type as string) ||
     ''
   ).trim();
 
@@ -698,7 +872,7 @@ export function BookingDetailPopup({
 
   // Cancel booking — opens BookingCancellationModal which handles all accounting steps
   const handleCancel = () => {
-    if (!booking) return;
+    if (!booking || isPastApptEnd) return;
     if (!effectiveCanCancel) {
       setCancelError(
         callCenterCancelBlocked
@@ -761,6 +935,92 @@ export function BookingDetailPopup({
       setCompleteError(err instanceof Error ? err.message : 'Failed to update status to completed');
     } finally {
       setCompleting(false);
+    }
+  };
+
+  const handleMarkNoShow = async () => {
+    if (!booking || markingNoShow) return;
+    setMarkingNoShow(true);
+    setNoShowError(null);
+    try {
+      let statusToSend = 'no_show';
+      let res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          status: statusToSend,
+          reason: 'Customer No Show',
+          source: 'ushdesk',
+          changed_by: user?.name || user?.id || 'Staff',
+          change_by_user: user?.name || user?.id || 'Staff',
+          change_by_user_data: user
+            ? {
+                id: user.id,
+                name: user.name,
+                full_name: user.name,
+                first_name: user.name.split(' ')[0] || user.name,
+                last_name: user.name.split(' ').slice(1).join(' ') || '',
+                email: user.email,
+                phone_number: user.phone_number,
+                role: user.user_type,
+              }
+            : undefined,
+        }),
+      });
+
+      // Fallback retry with uppercase 'NO_SHOW' if backend strictly expects uppercase
+      if (!res.ok && res.status === 400) {
+        const retryRes = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            status: 'NO_SHOW',
+            reason: 'Customer No Show',
+            source: 'ushdesk',
+            changed_by: user?.name || user?.id || 'Staff',
+            change_by_user: user?.name || user?.id || 'Staff',
+            change_by_user_data: user
+              ? {
+                  id: user.id,
+                  name: user.name,
+                  full_name: user.name,
+                  first_name: user.name.split(' ')[0] || user.name,
+                  last_name: user.name.split(' ').slice(1).join(' ') || '',
+                  email: user.email,
+                  phone_number: user.phone_number,
+                  role: user.user_type,
+                }
+              : undefined,
+          }),
+        });
+        if (retryRes.ok) {
+          res = retryRes;
+          statusToSend = 'NO_SHOW';
+        }
+      }
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.detail || `Failed to update status to No Show (${res.status})`);
+      }
+      const json = await res.json().catch(() => ({}));
+      if (json?.data) {
+        setDetail(json.data);
+      } else {
+        setDetail((prev) => (prev ? { ...prev, status: statusToSend } : { ...booking, status: statusToSend }));
+      }
+      onSuccess?.();
+    } catch (err: unknown) {
+      console.error('[BookingDetailPopup] Error marking booking as no show:', err);
+      setNoShowError(err instanceof Error ? err.message : 'Failed to update status to No Show');
+    } finally {
+      setMarkingNoShow(false);
     }
   };
 
@@ -1105,33 +1365,35 @@ export function BookingDetailPopup({
               <Info className="h-3.5 w-3.5" />
               Booking Details
             </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('payment')}
-              className={cn(
-                'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
-                activeTab === 'payment'
-                  ? isCompleted ? 'border-[#3D2F27] text-[#2D241E]' : 'border-primary text-primary'
-                  : isCompleted ? 'border-transparent text-[#69584D] hover:text-[#2D241E]' : 'border-transparent text-muted-foreground hover:text-foreground'
-              )}
-            >
-              <CreditCard className="h-3.5 w-3.5" />
-              Payment &amp; Invoices
-              {booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
-                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                  Paid
-                </span>
-              ) : isPaymentPending ? (
-                <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20">
-                  Pending
-                </span>
-              ) : null}
-            </button>
+            {!isPaymentTabRestricted && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('payment')}
+                className={cn(
+                  'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
+                  activeTab === 'payment'
+                    ? isCompleted ? 'border-[#3D2F27] text-[#2D241E]' : 'border-primary text-primary'
+                    : isCompleted ? 'border-transparent text-[#69584D] hover:text-[#2D241E]' : 'border-transparent text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <CreditCard className="h-3.5 w-3.5" />
+                Payment &amp; Invoices
+                {booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                    Paid
+                  </span>
+                ) : isPaymentPending ? (
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                    Pending
+                  </span>
+                ) : null}
+              </button>
+            )}
           </div>
 
           {/* Scrollable Body */}
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
-            {activeTab === 'details' ? (
+            {activeTab === 'details' || isPaymentTabRestricted ? (
               <>
                 {/* Row 1: Booking Number and Booked On in one row */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1231,7 +1493,28 @@ export function BookingDetailPopup({
                 </div>
 
                 {/* Therapist */}
-                <DRow icon={User} label="Therapist">{booking.therapist_name || '—'}</DRow>
+                <DRow icon={User} label="Therapist">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>
+                      {(detail?.therapist_data as any)?.therapist_name ??
+                        (detail?.therapist_data as any)?.name ??
+                        (detail?.therapist_data as any)?.full_name ??
+                        detail?.therapist_name ??
+                        booking.therapist_name ??
+                        '—'}
+                    </span>
+                    {canChangeTherapist && (
+                      <button
+                        type="button"
+                        onClick={() => setShowChangeTherapistModal(true)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer"
+                      >
+                        <UserCog className="h-3.5 w-3.5" />
+                        Change
+                      </button>
+                    )}
+                  </div>
+                </DRow>
 
                 {/* Pricing Summary (Sum of all items: Service + Addons + Extra Minutes) */}
                 <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/30 to-muted/10 p-4 space-y-3">
@@ -1601,18 +1884,37 @@ export function BookingDetailPopup({
                     <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                       <UserCheck className="h-3.5 w-3.5 text-primary" /> Created By User
                     </p>
-                    {createdByUserName || createdByUserObj ? (
+                    {createdByUserName || createdByUserObj || createdByUserRole || createdByUserType ? (
                       <div className="rounded-xl bg-card border border-border/50 p-3 space-y-1.5 text-xs flex-1">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className="font-bold text-foreground text-sm">
                             {createdByUserName || (createdByUserObj?.email ? String(createdByUserObj.email).split('@')[0] : 'System')}
                           </span>
-                          {Boolean(createdByUserObj?.role) && (
-                            <span className="rounded-full bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-bold capitalize">
-                              {String(createdByUserObj?.role)}
-                            </span>
-                          )}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {Boolean(createdByUserRole) && (
+                              <span className="rounded-full bg-primary/10 text-primary border border-primary/20 px-2 py-0.5 text-[10px] font-bold capitalize">
+                                {createdByUserRole}
+                              </span>
+                            )}
+                            {Boolean(createdByUserType) && (!createdByUserRole || createdByUserType.toLowerCase() !== createdByUserRole.toLowerCase()) && (
+                              <span className="rounded-full bg-secondary/80 text-secondary-foreground border border-border/50 px-2 py-0.5 text-[10px] font-semibold capitalize">
+                                {createdByUserType}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        {Boolean(createdByUserRole) && (
+                          <p className="text-muted-foreground flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">Role:</span>{' '}
+                            <span className="capitalize">{createdByUserRole}</span>
+                          </p>
+                        )}
+                        {Boolean(createdByUserType) && (!createdByUserRole || createdByUserType.toLowerCase() !== createdByUserRole.toLowerCase()) && (
+                          <p className="text-muted-foreground flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">User Type:</span>{' '}
+                            <span className="capitalize">{createdByUserType}</span>
+                          </p>
+                        )}
                         {Boolean(createdByUserObj?.email) && (
                           <p className="text-muted-foreground flex items-center gap-1.5">
                             <span className="font-medium text-foreground">Email:</span> {String(createdByUserObj?.email)}
@@ -1621,6 +1923,11 @@ export function BookingDetailPopup({
                         {Boolean(createdByUserObj?.phone_number) && (
                           <p className="text-muted-foreground flex items-center gap-1.5">
                             <span className="font-medium text-foreground">Phone:</span> {String(createdByUserObj?.phone_number)}
+                          </p>
+                        )}
+                        {Boolean(createdByUserObj?.branch_name || (createdByUserObj as any)?.branch) && (
+                          <p className="text-muted-foreground flex items-center gap-1.5">
+                            <span className="font-medium text-foreground">Branch:</span> {String(createdByUserObj?.branch_name ?? (createdByUserObj as any)?.branch)}
                           </p>
                         )}
                       </div>
@@ -1701,9 +2008,9 @@ export function BookingDetailPopup({
               </>
             )}
 
-            {(cancelError || completeError) && (
+            {(cancelError || completeError || noShowError) && (
               <div className="rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400">
-                {cancelError || completeError}
+                {cancelError || completeError || noShowError}
               </div>
             )}
           </div>
@@ -1713,48 +2020,56 @@ export function BookingDetailPopup({
             'shrink-0 border-t px-6 py-4 flex flex-col gap-2.5',
             isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
           )}>
-            {booking.status !== 'cancelled' && !isCompleted && (callCenterCancelBlocked || callCenterRescheduleBlocked) && AGENT_BLOCK_REASON && (
+            {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (callCenterCancelBlocked || callCenterRescheduleBlocked) && AGENT_BLOCK_REASON && (
               <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 <span>{AGENT_BLOCK_REASON}</span>
               </div>
             )}
-            {!effectiveCanCancel && !callCenterCancelBlocked && booking.status !== 'cancelled' && !isCompleted && cancellationEligibility.reason && (
+            {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPast30DaysFromApptStart && !callCenterRescheduleBlocked && (
+              <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                <span>{RESCHEDULE_30_DAYS_REASON}</span>
+              </div>
+            )}
+            {!isPastApptEnd && !effectiveCanCancel && !callCenterCancelBlocked && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && cancellationEligibility.reason && (
               <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 <span>{cancellationEligibility.reason}</span>
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2 justify-between">
-              {/* Left side: Cancel & Reschedule */}
-              <div className="flex items-center gap-2">
-                {booking.status !== 'cancelled' && !isCompleted && (
+              {/* Left side: Cancel, Reschedule, Complete, No Show */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
                   <>
-                    <button
-                      type="button"
-                      onClick={handleCancel}
-                      disabled={!effectiveCanCancel}
-                      title={
-                        callCenterCancelBlocked
-                          ? (AGENT_BLOCK_REASON ?? undefined)
-                          : !canCancel
-                          ? (cancellationEligibility.reason ?? undefined)
-                          : undefined
-                      }
-                      className={cn(
-                        'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                        !effectiveCanCancel
-                          ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                          : 'border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer'
-                      )}
-                    >
-                      Cancel Booking
-                    </button>
+                    {!isPastApptEnd && (
+                      <button
+                        type="button"
+                        onClick={handleCancel}
+                        disabled={!effectiveCanCancel}
+                        title={
+                          callCenterCancelBlocked
+                            ? (AGENT_BLOCK_REASON ?? undefined)
+                            : !canCancel
+                            ? (cancellationEligibility.reason ?? undefined)
+                            : undefined
+                        }
+                        className={cn(
+                          'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                          !effectiveCanCancel
+                            ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                            : 'border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer'
+                        )}
+                      >
+                        Cancel Booking
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => canReschedule && setShowRescheduleModal(true)}
                       disabled={!canReschedule}
-                      title={!canReschedule ? (AGENT_BLOCK_REASON ?? undefined) : undefined}
+                      title={rescheduleBlockReason}
                       className={cn(
                         'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
                         !canReschedule
@@ -1764,25 +2079,43 @@ export function BookingDetailPopup({
                     >
                       Reschedule
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleCompleteBooking}
-                      disabled={completing || isPaymentPending}
-                      title={
-                        isPaymentPending
-                          ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
-                          : undefined
-                      }
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                        isPaymentPending
-                          ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                          : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
-                      )}
-                    >
-                      {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                      {completing ? 'Completing…' : 'Mark Completed'}
-                    </button>
+                    {!isCompleteRestrictedForRole && (
+                      <button
+                        type="button"
+                        onClick={handleCompleteBooking}
+                        disabled={completing || isPaymentPending}
+                        title={
+                          isPaymentPending
+                            ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
+                            : undefined
+                        }
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                          isPaymentPending
+                            ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
+                        )}
+                      >
+                        {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                        {completing ? 'Completing…' : 'Mark Completed'}
+                      </button>
+                    )}
+                    {canMarkNoShow && isPastApptEnd && (
+                      <button
+                        type="button"
+                        onClick={handleMarkNoShow}
+                        disabled={markingNoShow}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
+                          markingNoShow
+                            ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                            : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
+                        )}
+                      >
+                        {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
+                        {markingNoShow ? 'Updating…' : 'Mark No Show'}
+                      </button>
+                    )}
                   </>
                 )}
               </div>
@@ -1804,7 +2137,7 @@ export function BookingDetailPopup({
                     Make Payment
                   </button>
                 )}
-                {effectivePaymentUrl && (
+                {!isPaymentTabRestricted && effectivePaymentUrl && (
                   <a href={effectivePaymentUrl} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer whitespace-nowrap">
                     <ExternalLink className="h-3.5 w-3.5" /> Open Payment
@@ -1858,6 +2191,45 @@ export function BookingDetailPopup({
           onSuccess={() => {
             onSuccess?.();
             onClose();
+          }}
+        />
+      )}
+
+      {/* Change Therapist Modal */}
+      {showChangeTherapistModal && (
+        <ChangeTherapistModal
+          bookingId={booking.id}
+          initialBooking={(detail || booking) as unknown as Record<string, any>}
+          currentTherapistName={
+            (detail?.therapist_data as any)?.therapist_name ??
+            (detail?.therapist_data as any)?.name ??
+            (detail?.therapist_data as any)?.full_name ??
+            booking.therapist_name
+          }
+          onClose={() => setShowChangeTherapistModal(false)}
+          onSuccess={(updatedTherapist) => {
+            const tName =
+              updatedTherapist?.name ||
+              updatedTherapist?.full_name ||
+              updatedTherapist?.therapist_name ||
+              '';
+            setDetail((prev) => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                therapist_id: updatedTherapist.id || updatedTherapist.therapist_id,
+                therapist_data: updatedTherapist.therapist_data || updatedTherapist,
+                therapist_name: tName || (prev as any).therapist_name,
+              };
+            });
+            // Refetch fresh booking detail
+            authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
+              .then((r) => r.json())
+              .then((res) => {
+                if (res?.data) setDetail(res.data);
+              })
+              .catch(() => {});
+            onSuccess?.();
           }}
         />
       )}

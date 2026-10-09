@@ -206,6 +206,85 @@ function getBranchName(r: RefundItem): string {
   );
 }
 
+function getStaffDetails(r: RefundItem): { name: string; phone: string } {
+  const raw =
+    r.processed_by_data ??
+    (r as any).processed_by_user_data ??
+    (r as any).processed_by_user ??
+    (r as any).staff_data ??
+    (r as any).employee_data ??
+    (r as any).user_data ??
+    (r as any).created_by_user_data ??
+    (r as any).created_by_data ??
+    (r as any).staff ??
+    (r as any).employee;
+
+  let data: Record<string, unknown> | null = null;
+  if (raw && typeof raw === 'object') {
+    data = raw as Record<string, unknown>;
+  } else if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') data = parsed;
+    } catch {
+      // not JSON
+    }
+  }
+
+  let name = '';
+  let phone = '';
+
+  if (data) {
+    name = (
+      (data.full_name as string) ||
+      [data.first_name, data.last_name].filter(Boolean).join(' ') ||
+      (data.name as string) ||
+      (data.username as string) ||
+      (data.display_name as string) ||
+      ''
+    ).trim();
+
+    phone = String(
+      data.phone_number ||
+      data.phone ||
+      data.mobile ||
+      data.mobile_number ||
+      data.contact_number ||
+      ''
+    ).trim();
+  }
+
+  if (!name) {
+    name = String(
+      (r as any).processed_by_name ||
+      (r as any).staff_name ||
+      (r as any).employee_name ||
+      (r as any).created_by_name ||
+      ''
+    ).trim();
+  }
+
+  if (!phone) {
+    phone = String(
+      (r as any).processed_by_phone ||
+      (r as any).processed_by_mobile ||
+      (r as any).staff_phone ||
+      (r as any).employee_phone ||
+      ''
+    ).trim();
+  }
+
+  const rawP = String(r.processed_by ?? '').trim();
+  if (!name && rawP && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawP) && !/^\d+$/.test(rawP)) {
+    name = rawP;
+  }
+
+  return {
+    name: name || 'Staff',
+    phone: phone || '',
+  };
+}
+
 function getInitials(name: string): string {
   if (!name) return '?';
   const parts = name.trim().split(' ').filter(Boolean);
@@ -309,6 +388,13 @@ function TypeBadge({ type }: { type: string }) {
 // ── Detail Modal ──────────────────────────────────────────────────────────────
 
 function RefundDetailModal({ refund, onClose }: { refund: RefundItem; onClose: () => void }) {
+  const [detail, setDetail] = useState<RefundItem>(refund);
+  const [fetchedStaff, setFetchedStaff] = useState<{ name?: string; phone?: string } | null>(null);
+
+  useEffect(() => {
+    setDetail(refund);
+  }, [refund]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -317,11 +403,65 @@ function RefundDetailModal({ refund, onClose }: { refund: RefundItem; onClose: (
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
 
-  const customerName = getCustomerName(refund);
-  const customerPhone = getCustomerPhone(refund);
-  const customerEmail = getCustomerEmail(refund);
-  const bookingNumber = getBookingNumber(refund);
-  const branchName = getBranchName(refund);
+  // Fetch full refund detail from /booknpay/api/v1/refunds/<id>/ if available
+  useEffect(() => {
+    if (!refund.id) return;
+    let active = true;
+    authedFetch(`/booknpay/api/v1/refunds/${refund.id}/`)
+      .then(async (res) => {
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        const data = json?.data ?? json;
+        if (active && data && typeof data === 'object') {
+          setDetail((prev) => ({ ...prev, ...data }));
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [refund.id]);
+
+  // If staff name or phone is missing, and processed_by looks like a UUID or ID, fetch employee info
+  useEffect(() => {
+    const rawP = String(detail.processed_by ?? '').trim();
+    const isId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawP) || /^\d+$/.test(rawP);
+    const staff = getStaffDetails(detail);
+
+    if (isId && (!staff.phone || staff.name === 'Staff')) {
+      let active = true;
+      authedFetch(`/uauth/api/v1/employees/${rawP}/`)
+        .then(async (res) => {
+          if (!res.ok) return;
+          const json = await res.json().catch(() => null);
+          const emp = json?.data ?? json?.employee ?? json;
+          if (active && emp && typeof emp === 'object') {
+            const eName =
+              [emp.first_name, emp.last_name].filter(Boolean).join(' ') ||
+              (emp.name as string) ||
+              (emp.full_name as string) ||
+              '';
+            const ePhone = String(emp.phone_number || emp.phone || emp.mobile || '').trim();
+            if (eName || ePhone) {
+              setFetchedStaff({
+                name: eName || undefined,
+                phone: ePhone || undefined,
+              });
+            }
+          }
+        })
+        .catch(() => {});
+      return () => { active = false; };
+    }
+  }, [detail.processed_by, detail]);
+
+  const customerName = getCustomerName(detail);
+  const customerPhone = getCustomerPhone(detail);
+  const customerEmail = getCustomerEmail(detail);
+  const bookingNumber = getBookingNumber(detail);
+  const branchName = getBranchName(detail);
+
+  const staff = getStaffDetails(detail);
+  const staffName = fetchedStaff?.name || staff.name;
+  const staffPhone = fetchedStaff?.phone || staff.phone;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -337,11 +477,10 @@ function RefundDetailModal({ refund, onClose }: { refund: RefundItem; onClose: (
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-black text-foreground">Refund Details</h3>
                 <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
-                  {refund.refund_number}
+                  {detail.refund_number}
                 </span>
-                <CopyButton text={refund.refund_number} />
+                <CopyButton text={detail.refund_number} />
               </div>
-              <p className="text-[11px] text-muted-foreground">ID: {refund.id}</p>
             </div>
           </div>
           <button
@@ -505,15 +644,18 @@ function RefundDetailModal({ refund, onClose }: { refund: RefundItem; onClose: (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <div>
                 <span className="text-[10px] text-muted-foreground block">Processed By</span>
-                <span className="font-semibold">{refund.processed_by || 'Staff'}</span>
+                <p className="font-semibold text-foreground">{staffName}</p>
+                {staffPhone && (
+                  <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{staffPhone}</p>
+                )}
               </div>
               <div>
                 <span className="text-[10px] text-muted-foreground block">Processed At</span>
-                <span>{formatDateTime(refund.processed_at)}</span>
+                <span>{formatDateTime(detail.processed_at)}</span>
               </div>
               <div>
                 <span className="text-[10px] text-muted-foreground block">Created At</span>
-                <span>{formatDateTime(refund.created_at)}</span>
+                <span>{formatDateTime(detail.created_at)}</span>
               </div>
             </div>
           </div>

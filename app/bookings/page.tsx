@@ -8,7 +8,7 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck,
+  FileText, Receipt, Eye, ShieldCheck, Filter,
 } from 'lucide-react';
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -28,27 +28,14 @@ import {
   CustomerAvatar, DRow, BookingDetailPopup,
 } from "@/components/bookings/BookingDetailPopup";
 
-function SelectFilter({ label, value, options, onChange }: {
-  label: string; value: string; options: string[]; onChange: (v: string) => void;
-}) {
-  return (
-    <div className="relative">
-      <select value={value} onChange={(e) => onChange(e.target.value)}
-        className="h-10 appearance-none rounded-xl border border-border bg-card pl-3 pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer">
-        <option value="">{label}</option>
-        {options.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-    </div>
-  );
-}
-
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BookingListPage() {
   const [search,          setSearch]          = useState('');
   const [branchFilter,    setBranchFilter]    = useState('');
   const [statusFilter,    setStatusFilter]    = useState('');
   const [payFilter,       setPayFilter]       = useState('');
+  const [channelFilter,   setChannelFilter]   = useState('');
+  const [showFilters,     setShowFilters]     = useState(false);
   const [viewMode,        setViewMode]        = useState<'grid' | 'list'>('list');
   const [page,            setPage]            = useState(1);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
@@ -56,12 +43,13 @@ export default function BookingListPage() {
   const proxyUrl = `/api/v1/bookings?page=${page}&page_size=20`;
   const { data: rawBookings, loading, error, pagination, refetch } = useBookings<Record<string, unknown>>(proxyUrl, []);
 
-  useEffect(() => { setPage(1); }, [search, branchFilter, statusFilter, payFilter]);
+  useEffect(() => { setPage(1); }, [search, branchFilter, statusFilter, payFilter, channelFilter]);
 
   const bookings    = useMemo(() => rawBookings.map(normalise), [rawBookings]);
   const branches    = useMemo(() => Array.from(new Set(bookings.map((b) => b.branch_name))).filter(Boolean).sort(),    [bookings]);
   const statuses    = useMemo(() => Array.from(new Set(bookings.map((b) => b.status))).filter(Boolean).sort(),         [bookings]);
   const payStatuses = useMemo(() => Array.from(new Set(bookings.map((b) => b.payment_status))).filter(Boolean).sort(), [bookings]);
+  const channels    = useMemo(() => Array.from(new Set(bookings.map((b) => (b.channel || b.source || b.payment_through || '').trim()))).filter(Boolean).sort(), [bookings]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -76,17 +64,26 @@ export default function BookingListPage() {
         !q ||
         (b.booking_number ? b.booking_number.toLowerCase().includes(q) || (cleanQ ? bNumClean.includes(cleanQ) : false) : false) ||
         b.customer_name.toLowerCase().includes(q) ||
-        (b.customer_phone ? b.customer_phone.toLowerCase().includes(q) || (cleanPhoneQ ? bPhoneClean.includes(cleanPhoneQ) : false) : false);
+        (b.customer_phone ? b.customer_phone.toLowerCase().includes(q) || (cleanPhoneQ ? bPhoneClean.includes(cleanPhoneQ) : false) : false) ||
+        (b.channel ? b.channel.toLowerCase().includes(q) : false);
 
-      const matchBranch = !branchFilter || b.branch_name    === branchFilter;
-      const matchStatus = !statusFilter || b.status         === statusFilter;
-      const matchPay    = !payFilter    || b.payment_status === payFilter;
-      return matchSearch && matchBranch && matchStatus && matchPay;
+      const matchBranch  = !branchFilter  || b.branch_name.toLowerCase() === branchFilter.toLowerCase();
+      const matchStatus  = !statusFilter  || b.status.toLowerCase()      === statusFilter.toLowerCase();
+      const matchPay     = !payFilter     || b.payment_status.toLowerCase() === payFilter.toLowerCase();
+      const matchChannel = !channelFilter || (b.channel || b.source || b.payment_through || '').trim().toLowerCase() === channelFilter.trim().toLowerCase();
+      return matchSearch && matchBranch && matchStatus && matchPay && matchChannel;
     });
-  }, [bookings, search, branchFilter, statusFilter, payFilter]);
+  }, [bookings, search, branchFilter, statusFilter, payFilter, channelFilter]);
 
-  const hasFilter   = search || branchFilter || statusFilter || payFilter;
-  const clearAll    = () => { setSearch(''); setBranchFilter(''); setStatusFilter(''); setPayFilter(''); };
+  const activeCount = [branchFilter, statusFilter, payFilter, channelFilter].filter(Boolean).length;
+  const hasFilter   = Boolean(search || activeCount > 0);
+  const clearAll    = () => {
+    setSearch('');
+    setBranchFilter('');
+    setStatusFilter('');
+    setPayFilter('');
+    setChannelFilter('');
+  };
   const hasNextPage = pagination ? page < pagination.total_pages : false;
   const totalCount  = pagination?.count ?? rawBookings.length;
 
@@ -103,14 +100,15 @@ export default function BookingListPage() {
       )}
 
       {/* Toolbar */}
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[280px] sm:min-w-[360px] md:min-w-[420px]">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[240px] sm:min-w-[320px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by booking #, name, phone number…"
-            className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-9 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="h-10 w-full rounded-xl border border-border/60 bg-card pl-9 pr-9 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
           {search && (
             <button
@@ -123,25 +121,127 @@ export default function BookingListPage() {
             </button>
           )}
         </div>
-        <SelectFilter label="All Branches"   value={branchFilter}    options={branches}    onChange={setBranchFilter} />
-        <SelectFilter label="All Statuses"   value={statusFilter}    options={statuses}    onChange={setStatusFilter} />
-        <SelectFilter label="Payment Status" value={payFilter}       options={payStatuses} onChange={setPayFilter} />
+
+        {/* Filter toggle */}
+        <button
+          onClick={() => setShowFilters((v) => !v)}
+          className={cn(
+            'flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-medium transition cursor-pointer',
+            showFilters || activeCount > 0
+              ? 'border-primary/40 bg-primary/10 text-primary'
+              : 'border-border/60 bg-card hover:bg-muted/60',
+          )}
+        >
+          <Filter className="h-4 w-4" />
+          Filters
+          {activeCount > 0 && (
+            <span className="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground font-bold">
+              {activeCount}
+            </span>
+          )}
+        </button>
+
+        {/* View toggle */}
+        <div className="flex items-center rounded-xl border border-border/60 bg-card p-1">
+          {(['list', 'grid'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setViewMode(m)}
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-lg transition cursor-pointer',
+                viewMode === m ? 'bg-primary text-primary-foreground shadow' : 'text-muted-foreground hover:text-foreground',
+              )}
+              aria-label={m === 'grid' ? 'Grid view' : 'List view'}
+            >
+              {m === 'grid' ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
+            </button>
+          ))}
+        </div>
+
+        {/* Refresh */}
+        <button
+          onClick={() => refetch()}
+          className="flex h-10 w-10 items-center justify-center rounded-xl border border-border/60 bg-card hover:bg-muted/60 transition cursor-pointer"
+          title="Refresh"
+        >
+          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+        </button>
+
+        {/* Clear */}
         {hasFilter && (
-          <button onClick={clearAll} className="h-10 rounded-xl border border-border bg-card px-3 text-sm text-muted-foreground hover:text-destructive transition cursor-pointer">Clear</button>
+          <button
+            onClick={clearAll}
+            className="flex h-10 items-center gap-1.5 rounded-xl border border-border/60 bg-card px-4 text-sm text-muted-foreground hover:text-destructive transition cursor-pointer"
+          >
+            <X className="h-4 w-4" /> Clear
+          </button>
         )}
-        <div className="ml-auto flex items-center gap-3">
+
+        <div className="ml-auto hidden sm:flex items-center">
           <span className="text-xs text-muted-foreground">{filtered.length} shown</span>
-          <div className="flex rounded-xl border border-border overflow-hidden">
-            {(['grid', 'list'] as const).map((m) => (
-              <button key={m} onClick={() => setViewMode(m)}
-                className={cn('flex h-10 w-10 items-center justify-center transition cursor-pointer', viewMode === m ? 'bg-primary text-white' : 'bg-card hover:bg-muted text-muted-foreground')}
-                aria-label={m === 'grid' ? 'Grid view' : 'List view'}>
-                {m === 'grid' ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
-              </button>
-            ))}
-          </div>
         </div>
       </div>
+
+      {/* ── Filter Panel ── */}
+      {showFilters && (
+        <div className="mt-3 mb-5 rounded-2xl border border-border/50 bg-card/80 backdrop-blur p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* Branch */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Branch</label>
+            <select
+              value={branchFilter}
+              onChange={(e) => setBranchFilter(e.target.value)}
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+
+          {/* Status */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Status</label>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="">All Statuses</option>
+              {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {/* Payment Status */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Payment Status</label>
+            <select
+              value={payFilter}
+              onChange={(e) => setPayFilter(e.target.value)}
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="">All Payment Statuses</option>
+              {payStatuses.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+
+          {/* Channel / Source */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Channel / Source</label>
+            <select
+              value={channelFilter}
+              onChange={(e) => setChannelFilter(e.target.value)}
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="">All Channels / Sources</option>
+              {channels.map((c) => (
+                <option key={c} value={c}>
+                  {c.toLowerCase() === 'ushdesk' ? 'USHDesk' : c.charAt(0).toUpperCase() + c.slice(1)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* Skeleton */}
       {loading && (
@@ -194,10 +294,20 @@ export default function BookingListPage() {
                 {b.arrangement_name && <p className="flex items-center gap-1.5"><Scissors className="h-3 w-3 shrink-0" /> {b.arrangement_name}</p>}
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-3">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <CreditCard className="h-3 w-3 text-muted-foreground" />
                   <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize', paymentStyle(b.payment_status))}>{b.payment_status || 'unpaid'}</span>
                   {b.payment_gateway && <span className="text-[11px] text-muted-foreground">via {b.payment_gateway}</span>}
+                  {b.channel && (
+                    <span className={cn(
+                      'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
+                      b.channel.toLowerCase() === 'ushdesk'
+                        ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
+                        : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
+                    )}>
+                      {b.channel}
+                    </span>
+                  )}
                 </div>
                 <p className="font-bold text-sm text-primary">{parseFloat(b.total_amount).toFixed(3)} <span className="text-[11px] font-normal text-muted-foreground">{b.currency}</span></p>
               </div>
@@ -266,7 +376,19 @@ export default function BookingListPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 hidden sm:table-cell text-center">
-                    <span className="inline-block rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] font-semibold capitalize">{b.booking_type}</span>
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="inline-block rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] font-semibold capitalize">{b.booking_type}</span>
+                      {b.channel && (
+                        <span className={cn(
+                          'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
+                          b.channel.toLowerCase() === 'ushdesk'
+                            ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
+                            : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
+                        )}>
+                          {b.channel}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', statusStyle(b.status))}>
