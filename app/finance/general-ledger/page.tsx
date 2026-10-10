@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import { useMemo, useState } from 'react';
 import { ScrollText, Download, ChevronLeft, ChevronRight, ArrowDownCircle, ArrowUpCircle, Rows3 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -38,7 +39,7 @@ interface LedgerReport {
 const PAGE_SIZE = 100;
 
 function isoDay(d: Date) {
-  return d.toISOString().slice(0, 10);
+  return kuwaitDateString(d);
 }
 
 export default function GeneralLedgerPage() {

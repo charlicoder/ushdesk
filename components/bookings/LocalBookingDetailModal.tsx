@@ -7,6 +7,7 @@
  * not the booknpay API.
  */
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useEffect, useState } from 'react';
 import {
   X, User, Scissors, MapPin, CalendarDays, Clock, Timer,
@@ -64,9 +65,9 @@ export function LocalBookingDetailModal({ appointment, token, onClose, onStatusC
 
   const dt        = new Date(a.start_time);
   const dtEnd     = new Date(dt.getTime() + a.duration_min * 60_000);
-  const dateStr   = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-  const timeStr   = dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
-  const timeEndStr = dtEnd.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+  const dateStr   = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: KUWAIT_TZ });
+  const timeStr   = dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: KUWAIT_TZ });
+  const timeEndStr = dtEnd.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: KUWAIT_TZ });
   const shortRef  = a.id.slice(0, 8).toUpperCase();
 
   const customerName  = a.customer?.name ?? '—';

@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useMemo, useEffect, useState } from 'react';
 import {
   CalendarCheck,
@@ -197,7 +198,7 @@ function MiniStat({ icon: Icon, label, value, color }: { icon: typeof Clock; lab
 
 function UpcomingItem({ appointment: a }: { appointment: Appointment }) {
   const dt = new Date(a.start_time);
-  const time = dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const time = dt.toLocaleTimeString('en-US', { timeZone: KUWAIT_TZ, hour: '2-digit', minute: '2-digit' });
   return (
     <div className="flex items-center gap-3 rounded-xl border border-border/50 bg-muted/30 p-3 transition hover:bg-muted/60">
       <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">

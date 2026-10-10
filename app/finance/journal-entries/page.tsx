@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import { useState, useMemo, useEffect } from 'react';
 import {
   FileText,
@@ -700,7 +701,7 @@ const emptyJELine = (): JELine => ({ account_id: '', name: '', debit: '', credit
 
 function JournalEntryFormModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [journalId, setJournalId] = useState('');
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [entryDate, setEntryDate] = useState(kuwaitDateString());
   const [narration, setNarration] = useState('');
   const [reference, setReference] = useState('');
   const [lines, setLines] = useState<JELine[]>([emptyJELine(), emptyJELine()]);

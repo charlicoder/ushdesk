@@ -1,5 +1,6 @@
 'use client';
 // v2 – live API, calendar picker, dynamic branch/date
+import { kuwaitWallClockDate } from '@/lib/datetime';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
@@ -717,6 +718,65 @@ function generateTimeSlots(grid: ApiGrid): string[] {
   return slots;
 }
 
+// ── Timezone & Past Slot Helpers ──────────────────────────────────────────────
+function getCurrentKuwaitDateTime(): { dateStr: string; minutes: number } {
+  const now = new Date();
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kuwait',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    const y = parts.find(p => p.type === 'year')?.value;
+    const m = parts.find(p => p.type === 'month')?.value;
+    const d = parts.find(p => p.type === 'day')?.value;
+    let h = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+    if (h === 24) h = 0;
+    const min = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+    if (y && m && d) {
+      return {
+        dateStr: `${y}-${m}-${d}`,
+        minutes: h * 60 + min,
+      };
+    }
+  } catch {
+    // fallback to local time
+  }
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return {
+    dateStr: `${y}-${m}-${d}`,
+    minutes: now.getHours() * 60 + now.getMinutes(),
+  };
+}
+
+function slotToMinutes(label: string): number {
+  if (!label) return 0;
+  const parts = label.trim().split(/\s+/);
+  const [hStr, mStr] = (parts[0] || '0:0').split(':');
+  let h = parseInt(hStr || '0', 10);
+  const m = parseInt(mStr || '0', 10);
+  const period = parts[1]?.toUpperCase();
+  if (period === 'AM' && h === 12) h = 0;
+  if (period === 'PM' && h !== 12) h += 12;
+  return h * 60 + m;
+}
+
+function isSlotInPast(selectedDate: string, slotLabel: string): boolean {
+  if (!selectedDate || !slotLabel) return false;
+  const current = getCurrentKuwaitDateTime();
+  if (selectedDate < current.dateStr) return true;
+  if (selectedDate > current.dateStr) return false;
+  const slotMin = slotToMinutes(slotLabel);
+  return slotMin <= current.minutes;
+}
+
 // ── Build schedule map from API data ──────────────────────────────────────────
 function buildScheduleFromApi(
   therapists: ApiTherapist[],
@@ -724,18 +784,9 @@ function buildScheduleFromApi(
   bookings: ApiBooking[],
   timeSlots: string[],
   slotDurationMinutes: number,
+  selectedDate?: string,
 ): Record<string, Record<string, Slot>> {
   const sched: Record<string, Record<string, Slot>> = {};
-
-  const slotToMinutes = (label: string): number => {
-    const [timePart, period] = label.split(' ');
-    const [hStr, mStr] = timePart.split(':');
-    let h = parseInt(hStr, 10);
-    const m = parseInt(mStr, 10);
-    if (period === 'AM' && h === 12) h = 0;
-    if (period === 'PM' && h !== 12) h += 12;
-    return h * 60 + m;
-  };
 
   const availMap: Record<string, { startMin: number; endMin: number }[]> = {};
   for (const av of availability) {
@@ -761,8 +812,8 @@ function buildScheduleFromApi(
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
     if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
-    const s = new Date(bk.start);
-    const e = new Date(bk.end);
+    const s = kuwaitWallClockDate(bk.start);
+    const e = kuwaitWallClockDate(bk.end);
     const sm = s.getUTCHours() * 60 + s.getUTCMinutes();
     const em = e.getUTCHours() * 60 + e.getUTCMinutes();
     const fmt = (h: number, m: number) => {
@@ -830,7 +881,8 @@ function buildScheduleFromApi(
       }
 
       const isAvail = avIntervals.some(av => av.startMin <= slotStart && av.endMin >= slotEnd);
-      sched[therapist.id][slotLabel] = { status: isAvail ? 'available' : 'unavailable' };
+      const isPast = selectedDate ? isSlotInPast(selectedDate, slotLabel) : false;
+      sched[therapist.id][slotLabel] = { status: (isAvail && !isPast) ? 'available' : 'unavailable' };
     }
   }
   return sched;
@@ -852,9 +904,8 @@ export default function TherapistSchedulePage() {
   const token  = useAppSelector((s) => s.auth.token);
   const locale = useAppSelector((s) => s.ui.locale);
 
-  // Today's date as YYYY-MM-DD
-  const today    = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  // Today's date as YYYY-MM-DD (Kuwait wall-clock date)
+  const todayStr = getCurrentKuwaitDateTime().dateStr;
 
   // Selected branch — defaults to first available branch once branch list is loaded
   const [branchList,       setBranchList]        = useState<ApiBranch[]>([]);
@@ -1089,8 +1140,15 @@ export default function TherapistSchedulePage() {
     branchName: t.branch_name,
   }));
 
+  // Auto-refresh minute tick to keep past-time checks up to date
+  const [, setMinuteTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setMinuteTick(t => t + 1), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const schedule = scheduleData
-    ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes)
+    ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes, selectedDate)
     : {};
 
   const filteredTherapists = search
@@ -1137,8 +1195,9 @@ export default function TherapistSchedulePage() {
   }, [branchLabel, dateDisplay]);
 
   const openBookingModal = useCallback((therapist: Therapist, timeSlot: string) => {
+    if (isSlotInPast(selectedDate, timeSlot)) return;
     setBookingModal({ therapist, timeSlot });
-  }, []);
+  }, [selectedDate]);
 
   return (
     <DashboardShell>

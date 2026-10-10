@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import { useState, useMemo, useEffect } from 'react';
 import {
   Building2,
@@ -572,7 +573,7 @@ function PaymentFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [journalId, setJournalId] = useState('');
   const [amount, setAmount] = useState('0');
   const [currency, setCurrency] = useState('KWD');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paymentDate, setPaymentDate] = useState(kuwaitDateString());
   const [reference, setReference] = useState('');
   const [memo, setMemo] = useState('');
   const [submitting, setSubmitting] = useState(false);

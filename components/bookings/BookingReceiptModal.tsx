@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import React, { useEffect, useRef } from 'react';
 import {
   Printer,
@@ -81,7 +82,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
     try {
       const d = new Date(val);
       if (isNaN(d.getTime())) return val;
-      return d.toLocaleDateString('en-US', {
+      return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ,
         weekday: 'short',
         year: 'numeric',
         month: 'short',
@@ -99,7 +100,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
       if (/^\d{1,2}:\d{2}/.test(val)) return val;
       const d = new Date(val);
       if (isNaN(d.getTime())) return val;
-      return d.toLocaleTimeString('en-US', {
+      return d.toLocaleTimeString('en-US', { timeZone: KUWAIT_TZ,
         hour: 'numeric',
         minute: '2-digit',
         hour12: true,
@@ -310,7 +311,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               <div className="flex justify-between">
                 <span className="text-slate-500">Issue Date:</span>
                 <span className="font-medium text-slate-800">
-                  {new Date().toLocaleDateString('en-US', {
+                  {new Date().toLocaleDateString('en-US', { timeZone: KUWAIT_TZ,
                     year: 'numeric',
                     month: 'short',
                     day: 'numeric',

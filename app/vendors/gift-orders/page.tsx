@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle, X,
@@ -267,7 +268,7 @@ function formatDate(iso: string | null | undefined) {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+  return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function initials(name: string | null | undefined) {

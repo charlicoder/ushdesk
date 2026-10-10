@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -29,8 +30,8 @@ export function AppointmentDialog({ appointment, open, onClose }: {
   if (!appointment) return null;
   const a = appointment;
   const dt = new Date(a.start_time);
-  const dateStr = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-  const timeStr = dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const dateStr = dt.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const timeStr = dt.toLocaleTimeString('en-US', { timeZone: KUWAIT_TZ, hour: '2-digit', minute: '2-digit' });
 
   const handleStatusChange = (status: AppointmentStatus) => {
     dispatch(updateAppointmentStatus({ id: a.id, status }));

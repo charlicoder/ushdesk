@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useMemo, useState } from 'react';
 import {
   CalendarOff, Search, ChevronDown, RefreshCw, AlertCircle,
@@ -71,7 +72,7 @@ function normalise(raw: Record<string, unknown>): LeaveRecord {
 function formatDate(dateStr: string | null) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function calculateDays(startDate: string, endDate: string | null, type: string) {

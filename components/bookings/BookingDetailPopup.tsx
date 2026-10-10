@@ -1,7 +1,7 @@
 "use client";
 
 import Link from 'next/link';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle,
   ChevronDown, Calendar, Clock, MapPin, User, Scissors,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString, nowWithTimezone } from '@/lib/datetime';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility, getBookingAppointmentDateTime } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
@@ -125,15 +126,15 @@ export function normalise(raw: Record<string, unknown>): Booking {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-// Backend stores local Kuwait time labelled as UTC (timezone-naive by design).
-// Format functions must use timeZone: 'UTC' to display exact database values
-// without browser local-timezone offset (which shifts +3h in Kuwait).
+// Backends return timezone-aware instants (ISO-8601 with offset, rendered in +03:00).
+// Always display them in Asia/Kuwait (business timezone), never in UTC or the
+// browser timezone. Naive strings are treated as Kuwait wall-clock.
 export function formatDateTime(iso: string) {
   if (!iso) return '—';
   const s = iso.trim();
   let dateStr = s;
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return iso;
@@ -144,7 +145,7 @@ export function formatDateTime(iso: string) {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-    timeZone: 'UTC',
+    timeZone: KUWAIT_TZ,
   });
 }
 
@@ -153,12 +154,12 @@ export function formatPaidTimestamp(iso: string) {
   const s = iso.trim();
   let dateStr = s;
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return iso;
   // Format in user local timezone (e.g. Kuwait UTC+3) so 02:28 UTC shows as 05:28 AM
-  return d.toLocaleString('en-US', {
+  return d.toLocaleString('en-US', { timeZone: KUWAIT_TZ,
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -182,7 +183,7 @@ export function formatDate(iso: string) {
   }
   let dateStr = s;
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return iso;
@@ -190,7 +191,7 @@ export function formatDate(iso: string) {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: KUWAIT_TZ,
   });
 }
 
@@ -207,7 +208,7 @@ export function formatTime(iso: string) {
   }
   let dateStr = s;
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return iso;
@@ -215,7 +216,7 @@ export function formatTime(iso: string) {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-    timeZone: 'UTC',
+    timeZone: KUWAIT_TZ,
   });
 }
 export function initials(name: string) {
@@ -464,7 +465,7 @@ export function BookingDetailPopup({
   const canCancel = cancellationEligibility.canCancel;
 
   // ── Role detection for Call Center Agent & Receptionist ──────────────
-  const { isSuperuserOrAdmin, isCallCenterAgent, isReceptionist, isPaymentTabRestricted } = useMemo(() => {
+  const { isSuperuserOrAdmin, isCallCenterAgent, isReceptionist, isPaymentTabRestricted, rescheduleDaysCount } = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const u = user as any;
     const candidates = [
@@ -513,6 +514,16 @@ export function BookingDetailPopup({
       p.includes('front desk')
     );
 
+    const isManagerOrAdmin = isSuperuserOrAdmin || candidates.some((c) =>
+      c.includes('admin') ||
+      c.includes('manager') ||
+      c.includes('director') ||
+      c.includes('finance')
+    );
+
+    const isCallCenterOrReceptionist = !isManagerOrAdmin && (isAgent || isRecep);
+    const rescheduleDaysCount = isCallCenterOrReceptionist ? 10 : 30;
+
     const restricted = !isSuperuserOrAdmin && (isAgent || isRecep);
 
     return {
@@ -520,6 +531,7 @@ export function BookingDetailPopup({
       isCallCenterAgent: isAgent,
       isReceptionist: isRecep,
       isPaymentTabRestricted: restricted,
+      rescheduleDaysCount,
     };
   }, [user, roleInfo, authPermissions]);
 
@@ -532,7 +544,6 @@ export function BookingDetailPopup({
 
   const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
   const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-  const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
   const apptDateTime =
     getBookingAppointmentDateTime(detail || booking) ||
@@ -552,11 +563,12 @@ export function BookingDetailPopup({
     return null;
   })();
 
-  // 1. Reschedule is allowed only max 30 days from current appointment start datetime
-  const isPast30DaysFromApptStart = Boolean(
-    apptDateTime && (Date.now() > apptDateTime.getTime() + THIRTY_DAYS_MS)
+  // 1. Reschedule is allowed max days_count (10 for Call Center Agent, Receptionist and 30 for Administrator, Finance Manager, Customer Support Manager, Spa Director etc)
+  const rescheduleAllowedMs = rescheduleDaysCount * 24 * 60 * 60 * 1000;
+  const isPastAllowedDaysFromApptStart = Boolean(
+    apptDateTime && (Date.now() > apptDateTime.getTime() + rescheduleAllowedMs)
   );
-  const RESCHEDULE_30_DAYS_REASON = 'Reschedule is allowed only up to 30 days from the appointment start datetime.';
+  const RESCHEDULE_DAYS_REASON = `Reschedule is allowed only up to ${rescheduleDaysCount} days from the appointment start datetime.`;
 
   // Condition: current datetime + 6 hours is greater than booked appointment datetime
   const isCurrentPlus6HoursGreaterThanAppt = Boolean(
@@ -573,11 +585,11 @@ export function BookingDetailPopup({
         : `Call Center Agents cannot reschedule or cancel past or immediate appointments.`)
     : null;
 
-  const canReschedule = !callCenterRescheduleBlocked && !isPast30DaysFromApptStart;
+  const canReschedule = !callCenterRescheduleBlocked && !isPastAllowedDaysFromApptStart;
   const rescheduleBlockReason = callCenterRescheduleBlocked
     ? (AGENT_BLOCK_REASON ?? undefined)
-    : isPast30DaysFromApptStart
-    ? RESCHEDULE_30_DAYS_REASON
+    : isPastAllowedDaysFromApptStart
+    ? RESCHEDULE_DAYS_REASON
     : undefined;
 
   // Combine existing cancel eligibility with Call Center restriction
@@ -649,6 +661,86 @@ export function BookingDetailPopup({
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [booking, onClose]);
+
+  const [rescheduleFetchState, setRescheduleFetchState] = useState<{
+    params: {
+      serviceId: string;
+      arrangementType: string;
+      branchId: string;
+      appointmentDate: string;
+      daysCount: number;
+    };
+    promise?: Promise<any>;
+  } | null>(null);
+
+  const handleOpenReschedule = useCallback(() => {
+    if (!canReschedule || !booking) return;
+
+    const rawBk = (detail || booking.raw || booking) as Record<string, any>;
+    const sd = (rawBk.service_data || rawBk.service || {}) as Record<string, any>;
+    const sad = (rawBk.service_arrangement_data || rawBk.arrangement || rawBk.service_arrangement || {}) as Record<string, any>;
+    const bd = (rawBk.branch_data || rawBk.branch || {}) as Record<string, any>;
+
+    const serviceId = String(
+      rawBk.service_id ||
+      sd.service_id ||
+      sd.id ||
+      (booking as any)?.service_id ||
+      ''
+    );
+    const arrangementType = String(
+      sad.arrangement_type ||
+      sad.type ||
+      rawBk.arrangement_type ||
+      rawBk.room_type ||
+      'room'
+    );
+    const branchId = String(
+      rawBk.branch_id ||
+      bd.branch_id ||
+      bd.id ||
+      (booking as any)?.branch_id ||
+      ''
+    );
+
+    const apptStart = (detail?.appointment_start || booking?.appointment_start || rawBk.appointment_start || '') as string;
+    const appointmentDate = apptStart
+      ? (apptStart.includes('T') ? apptStart.split('T')[0] : apptStart.split(' ')[0])
+      : String(rawBk.date || rawBk.booking_date || rawBk.appointment_date || kuwaitDateString());
+
+    const daysCount = rescheduleDaysCount;
+
+    // Send API request: /uauth/api/v1/find-availabilities-for-reschedule-appointment/?service_id=<service_id>&arrangement_type=<arrangement_type>&branch_id=<branch_id>&date=<current appointment booking date>&days_count=<days_count>
+    const qs = new URLSearchParams({
+      service_id: serviceId,
+      arrangement_type: arrangementType,
+      branch_id: branchId,
+      date: appointmentDate,
+      days_count: String(daysCount),
+    });
+    const endpoint = `/uauth/api/v1/find-availabilities-for-reschedule-appointment/?${qs.toString()}`;
+
+    const fetchPromise = authedFetch(endpoint)
+      .then((r) => r.json().catch(() => ({})))
+      .catch((err) => {
+        console.error('Error finding availabilities for reschedule:', err);
+        return null;
+      });
+
+    setRescheduleFetchState({
+      params: {
+        serviceId,
+        arrangementType,
+        branchId,
+        appointmentDate,
+        daysCount,
+      },
+      promise: fetchPromise,
+    });
+
+    // Window for reschedule appears
+    setShowRescheduleModal(true);
+  }, [canReschedule, detail, booking, rescheduleDaysCount]);
 
   // Fetch full booking detail (addons, status_history, pricing breakdown) from backend
   useEffect(() => {
@@ -1032,6 +1124,7 @@ export function BookingDetailPopup({
       const providerOption = selectedPaymentConfig.providerOption;
       const providerId = selectedPaymentConfig.id;
 
+      const paidAtNow = nowWithTimezone();
       const patchPayload = {
         status: curStatus === 'completed' ? 'completed' : 'confirmed',
         payment_status: 'success',
@@ -1054,7 +1147,7 @@ export function BookingDetailPopup({
           notes: data.notes || null,
           total_amount: booking.total_amount,
           currency: booking.currency,
-          paid_at: new Date().toISOString(),
+          paid_at: paidAtNow,
         },
         payments_data: {
           is_paid: true,
@@ -1066,7 +1159,8 @@ export function BookingDetailPopup({
           payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
           receipt_image: data.receiptImage || null,
           notes: data.notes || null,
-          transaction_date: new Date().toISOString(),
+          transaction_date: paidAtNow,
+          paid_at: paidAtNow,
         },
         changed_by: user?.name || user?.id || 'Staff',
         change_by_user: user?.name || user?.id || 'Staff',
@@ -1112,6 +1206,10 @@ export function BookingDetailPopup({
             payment_for: (booking.booking_type === 'home_service' || booking.booking_type === 'home') ? 'home_service' : 'branch_service',
             reference_id: data.transactionId || null,
             transaction_id: data.transactionId || null,
+            transaction_date: paidAtNow,
+            paid_at: paidAtNow,
+            invoice_number: invoiceNumber || null,
+            invoice_id: invoiceNumber || null,
             receipt_image: data.receiptImage || null,
             notes: data.notes || null,
             payment_data: {
@@ -2026,10 +2124,10 @@ export function BookingDetailPopup({
                 <span>{AGENT_BLOCK_REASON}</span>
               </div>
             )}
-            {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPast30DaysFromApptStart && !callCenterRescheduleBlocked && (
+            {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPastAllowedDaysFromApptStart && !callCenterRescheduleBlocked && (
               <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                <span>{RESCHEDULE_30_DAYS_REASON}</span>
+                <span>{RESCHEDULE_DAYS_REASON}</span>
               </div>
             )}
             {!isPastApptEnd && !effectiveCanCancel && !callCenterCancelBlocked && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && cancellationEligibility.reason && (
@@ -2067,7 +2165,7 @@ export function BookingDetailPopup({
                     )}
                     <button
                       type="button"
-                      onClick={() => canReschedule && setShowRescheduleModal(true)}
+                      onClick={handleOpenReschedule}
                       disabled={!canReschedule}
                       title={rescheduleBlockReason}
                       className={cn(
@@ -2189,9 +2287,12 @@ export function BookingDetailPopup({
           initialBooking={(detail || booking) as unknown as Record<string, any>}
           onClose={() => setShowRescheduleModal(false)}
           onSuccess={() => {
+            setShowRescheduleModal(false);
             onSuccess?.();
             onClose();
           }}
+          initialRescheduleParams={rescheduleFetchState?.params}
+          initialAvailabilitiesPromise={rescheduleFetchState?.promise}
         />
       )}
 

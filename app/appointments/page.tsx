@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString, kuwaitTimeString } from '@/lib/datetime';
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import { CalendarDays, List, Filter, ChevronDown, MapPin, Clock, Store } from 'lucide-react';
 import { useAppSelector, useAppDispatch } from '@/store/hooks';
@@ -89,7 +90,7 @@ export default function AppointmentsPage() {
         if (id) {
           if (isoStart) {
             const d = new Date(isoStart);
-            const k = `${d.toISOString().slice(0, 10)}|${d.toISOString().slice(11, 16)}`;
+            const k = `${kuwaitDateString(d)}|${kuwaitTimeString(d)}`;
             map[k] = id;
           }
           if (dateKey && timeKey) map[`${dateKey}|${timeKey}`] = id;
@@ -140,7 +141,7 @@ export default function AppointmentsPage() {
       // Try to find the booknpay booking_id from the fetched map.
       // Key: "YYYY-MM-DD|HH:MM" (both UTC-ISO and local HH:MM tried)
       const dt    = new Date(appt.start_time);
-      const isoK  = `${dt.toISOString().slice(0, 10)}|${dt.toISOString().slice(11, 16)}`;
+      const isoK  = `${kuwaitDateString(dt)}|${kuwaitTimeString(dt)}`;
       const localH = String(dt.getHours()).padStart(2, '0');
       const localM = String(dt.getMinutes()).padStart(2, '0');
       const localK = `${filters.selectedDate}|${localH}:${localM}`;
@@ -321,8 +322,8 @@ export default function AppointmentsPage() {
                       <td className="px-3 py-3 text-muted-foreground">{a.service?.name ?? '—'}</td>
                       <td className="px-3 py-3 text-muted-foreground">{a.branch?.name ?? '—'}</td>
                       <td className="px-3 py-3 text-muted-foreground">{a.staff?.name ?? '—'}</td>
-                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })}</td>
-                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: KUWAIT_TZ })}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: KUWAIT_TZ })}</td>
                       <td className="px-3 py-3 font-semibold">{formatCurrency(Number(a.price), t('currency'))}</td>
                       <td className="px-3 py-3"><StatusBadge status={a.status} /></td>
                     </tr>

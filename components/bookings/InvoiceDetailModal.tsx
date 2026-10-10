@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
@@ -114,7 +115,7 @@ export function InvoiceDetailModal({
     if (!d) return '—';
     try {
       const dt = new Date(d);
-      return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString('en-US', {
+      return isNaN(dt.getTime()) ? String(d) : dt.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ,
         year: 'numeric',
         month: 'short',
         day: 'numeric',

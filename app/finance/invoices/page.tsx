@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   Receipt,
@@ -711,7 +712,7 @@ function InvoiceFormModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [invoiceType, setInvoiceType] = useState<'invoice' | 'bill' | 'credit_note'>('invoice');
   const [partnerId, setPartnerId] = useState('');
   const [journalId, setJournalId] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceDate, setInvoiceDate] = useState(kuwaitDateString());
   const [dueDate, setDueDate] = useState('');
   const [paymentTerms, setPaymentTerms] = useState('immediate');
   const [currency, setCurrency] = useState('KWD');

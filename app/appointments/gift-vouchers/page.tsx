@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Gift, Loader2, AlertCircle, RefreshCw, ExternalLink, Eye,
@@ -126,14 +127,14 @@ function fmtDate(raw: string | null | undefined): string {
   if (!raw) return '—';
   const d = new Date(raw);
   if (isNaN(d.getTime())) return raw;
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  return d.toLocaleDateString('en-GB', { timeZone: KUWAIT_TZ, day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-US', {
+  return d.toLocaleString('en-US', { timeZone: KUWAIT_TZ,
     month: 'short',
     day: 'numeric',
     year: 'numeric',

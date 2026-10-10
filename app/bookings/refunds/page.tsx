@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString } from '@/lib/datetime';
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import {
@@ -135,11 +136,11 @@ function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
   let dateStr = String(iso).trim();
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleString('en-US', {
+  return d.toLocaleString('en-US', { timeZone: KUWAIT_TZ,
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -163,7 +164,7 @@ function formatDate(iso: string | null | undefined): string {
   }
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return String(iso);
-  return d.toLocaleDateString('en-US', {
+  return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ,
     month: 'short',
     day: 'numeric',
     year: 'numeric',
@@ -846,7 +847,7 @@ export default function RefundsPage() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `refunds_export_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `refunds_export_${kuwaitDateString()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };

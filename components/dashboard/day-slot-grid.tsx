@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import React, { useMemo } from 'react';
 import { Clock, User, Sparkles, CheckCircle2, Circle } from 'lucide-react';
 import type { Appointment, Branch } from '@/types/appointment';
@@ -194,8 +195,8 @@ function SlotCard({
 
   const apptStart  = new Date(a.start_time);
   const apptEnd    = new Date(apptStart.getTime() + a.duration_min * 60_000);
-  const startLabel = apptStart.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-  const endLabel   = apptEnd.toLocaleTimeString('en-US',   { hour: '2-digit', minute: '2-digit' });
+  const startLabel = apptStart.toLocaleTimeString('en-US', { timeZone: KUWAIT_TZ, hour: '2-digit', minute: '2-digit' });
+  const endLabel   = apptEnd.toLocaleTimeString('en-US',   { timeZone: KUWAIT_TZ, hour: '2-digit', minute: '2-digit' });
   const isSpanning = spanCount > 1;
 
   const statusColors: Record<string, string> = {

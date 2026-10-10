@@ -1,6 +1,7 @@
 'use client';
 // Branch Appointments – mirrors Therapist Schedule design
 // Data: /api/v1/service-arrangements/schedule/?branch_id=all&date=YYYY-MM-DD
+import { kuwaitWallClockDate } from '@/lib/datetime';
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
@@ -718,7 +719,7 @@ function CapacitySlotCell({
   onAddBooking?: () => void;
 }) {
   const bookedCount  = bookings.length;
-  const hasRoom      = bookedCount < capacity;
+  const hasRoom      = bookedCount < capacity && Boolean(onAddBooking);
 
   return (
     <div className="flex flex-col gap-1 h-full min-h-[82px] overflow-hidden">
@@ -850,24 +851,74 @@ function generateTimeSlots(grid: ApiGrid): string[] {
   return slots;
 }
 
+// ── Timezone & Past Slot Helpers ──────────────────────────────────────────────
+function getCurrentKuwaitDateTime(): { dateStr: string; minutes: number } {
+  const now = new Date();
+  try {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kuwait',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(now);
+    const y = parts.find(p => p.type === 'year')?.value;
+    const m = parts.find(p => p.type === 'month')?.value;
+    const d = parts.find(p => p.type === 'day')?.value;
+    let h = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
+    if (h === 24) h = 0;
+    const min = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
+    if (y && m && d) {
+      return {
+        dateStr: `${y}-${m}-${d}`,
+        minutes: h * 60 + min,
+      };
+    }
+  } catch {
+    // fallback to local time
+  }
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return {
+    dateStr: `${y}-${m}-${d}`,
+    minutes: now.getHours() * 60 + now.getMinutes(),
+  };
+}
+
+function slotToMinutes(label: string): number {
+  if (!label) return 0;
+  const parts = label.trim().split(/\s+/);
+  const [hStr, mStr] = (parts[0] || '0:0').split(':');
+  let h = parseInt(hStr || '0', 10);
+  const m = parseInt(mStr || '0', 10);
+  const period = parts[1]?.toUpperCase();
+  if (period === 'AM' && h === 12) h = 0;
+  if (period === 'PM' && h !== 12) h += 12;
+  return h * 60 + m;
+}
+
+function isSlotInPast(selectedDate: string, slotLabel: string): boolean {
+  if (!selectedDate || !slotLabel) return false;
+  const current = getCurrentKuwaitDateTime();
+  if (selectedDate < current.dateStr) return true;
+  if (selectedDate > current.dateStr) return false;
+  const slotMin = slotToMinutes(slotLabel);
+  return slotMin <= current.minutes;
+}
+
 // ── Build schedule map from API data ──────────────────────────────────────────
 function buildScheduleFromApi(
   arrangements: ApiArrangement[],
   bookings: ApiBooking[],
   timeSlots: string[],
   slotDurationMinutes: number,
+  selectedDate?: string,
 ): Record<string, Record<string, Slot>> {
   const sched: Record<string, Record<string, Slot>> = {};
-
-  const slotToMinutes = (label: string): number => {
-    const [timePart, period] = label.split(' ');
-    const [hStr, mStr] = timePart.split(':');
-    let h = parseInt(hStr, 10);
-    const m = parseInt(mStr, 10);
-    if (period === 'AM' && h === 12) h = 0;
-    if (period === 'PM' && h !== 12) h += 12;
-    return h * 60 + m;
-  };
 
   type BkEntry = {
     startMin: number; endMin: number;
@@ -881,8 +932,8 @@ function buildScheduleFromApi(
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
     if (!bookingMap[bk.arrangement_id]) bookingMap[bk.arrangement_id] = [];
-    const s = new Date(bk.start);
-    const e = new Date(bk.end);
+    const s = kuwaitWallClockDate(bk.start);
+    const e = kuwaitWallClockDate(bk.end);
     const sm = s.getUTCHours() * 60 + s.getUTCMinutes();
     const em = e.getUTCHours() * 60 + e.getUTCMinutes();
     const fmt = (h: number, m: number) => {
@@ -952,10 +1003,11 @@ function buildScheduleFromApi(
       const slotLabel = timeSlots[i];
       const slotStart = slotMins[i];
       const slotEnd   = slotStart + slotDurationMinutes;
+      const isPast    = selectedDate ? isSlotInPast(selectedDate, slotLabel) : false;
 
       const group = groups.find(g => g.startMin < slotEnd && g.endMin > slotStart);
       if (!group) {
-        sched[arr.id][slotLabel] = { status: 'available' };
+        sched[arr.id][slotLabel] = { status: isPast ? 'unavailable' : 'available' };
         continue;
       }
 
@@ -1003,8 +1055,8 @@ export default function BranchAppointmentsPage() {
   const token  = useAppSelector((s) => s.auth.token) ?? '';
   const locale = useAppSelector((s) => s.ui.locale);
 
-  const today    = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  // Today's date as YYYY-MM-DD (Kuwait wall-clock date)
+  const todayStr = getCurrentKuwaitDateTime().dateStr;
 
   // Selected branch — defaults to first available branch once branch list is loaded
   const [branchList,       setBranchList]        = useState<ApiBranch[]>([]);
@@ -1192,8 +1244,15 @@ export default function BranchAppointmentsPage() {
     color:           ARRANGEMENT_COLORS[i % ARRANGEMENT_COLORS.length],
   }));
 
+  // Auto-refresh minute tick to keep past-time checks up to date
+  const [, setMinuteTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setMinuteTick(t => t + 1), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
   const schedule = scheduleData
-    ? buildScheduleFromApi(scheduleData.arrangements, scheduleData.bookings, timeSlots, grid.slot_duration_minutes)
+    ? buildScheduleFromApi(scheduleData.arrangements, scheduleData.bookings, timeSlots, grid.slot_duration_minutes, selectedDate)
     : {};
 
   const filteredArrangements = search
@@ -1244,6 +1303,7 @@ export default function BranchAppointmentsPage() {
   }, [branchLabel, dateDisplay]);
 
   const openNewBooking = useCallback((arrangement: Arrangement, timeSlot: string) => {
+    if (isSlotInPast(selectedDate, timeSlot)) return;
     setNewBookingModal({ arrangement, timeSlot, date: selectedDate });
   }, [selectedDate]);
 
@@ -1459,7 +1519,8 @@ export default function BranchAppointmentsPage() {
                         const slotBookings: Slot[] = slot.groupBookings ?? (isBooked ? [slot] : []);
                         const bookedHere = slotBookings.length;
                         const capacity   = a.capacity ?? 1;
-                        const hasRoom    = isBooked && bookedHere < capacity;
+                        const isPast     = isSlotInPast(selectedDate, time);
+                        const hasRoom    = isBooked && bookedHere < capacity && !isPast;
                         // Row span: how many time-slot rows this booking spans
                         const span = isBooked ? (slot.groupRowSpan ?? 1) : 1;
 
@@ -1482,7 +1543,7 @@ export default function BranchAppointmentsPage() {
                                 onClick={
                                   isBooked && !slot.groupBookings
                                     ? () => openDetailModal(slot, a, time)
-                                    : slot.status === 'available'
+                                    : slot.status === 'available' && !isPast
                                       ? () => openNewBooking(a, time)
                                       : undefined
                                 }

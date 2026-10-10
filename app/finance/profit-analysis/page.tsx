@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import { useState } from 'react';
 import { TrendingUp, Wallet, Receipt, Percent, Layers } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -46,7 +47,7 @@ interface AnalyticReport {
   total_net: number | string;
 }
 
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const isoDay = (d: Date) => kuwaitDateString(d);
 const num = (v: unknown) => Number(v ?? 0) || 0;
 
 export default function ProfitAnalysisPage() {

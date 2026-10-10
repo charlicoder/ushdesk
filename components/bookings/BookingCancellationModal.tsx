@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { nowWithTimezone } from '@/lib/datetime';
 import { useAppSelector } from '@/store/hooks';
 import { PaymentReferenceModal } from './PaymentReferenceModal';
 import {
@@ -277,7 +278,7 @@ export function BookingCancellationModal({
           is_partial:       isPartialRefund,
           cancelled_via:    'ushdesk',
           receipt_notes:    receiptNotes.trim() || null,
-          refunded_at:      new Date().toISOString(),
+          refunded_at:      nowWithTimezone(),
         };
 
         cancelBody.payments_data = {

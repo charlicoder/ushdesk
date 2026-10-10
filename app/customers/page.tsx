@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   Phone, Mail, Calendar, RefreshCw, AlertCircle, Search,
@@ -96,14 +97,14 @@ function formatCustomerDate(dStr: string | null) {
   if (!dStr) return null;
   const d = parseCustomerDate(dStr);
   if (!d) return null;
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function formatCustomerDateTime(dStr: string | null) {
   if (!dStr) return null;
   const d = parseCustomerDate(dStr);
   if (!d) return null;
-  return d.toLocaleString('en-US', {
+  return d.toLocaleString('en-US', { timeZone: KUWAIT_TZ,
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -114,7 +115,7 @@ function formatCustomerDateTime(dStr: string | null) {
 
 function formatDob(dob: string | null) {
   if (!dob) return null;
-  return new Date(dob).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return new Date(dob).toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function VerifiedBadge({ ok, label }: { ok: boolean; label: string }) {

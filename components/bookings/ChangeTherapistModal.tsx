@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   User, CheckCircle2, AlertCircle, Loader2, X, Search,
@@ -174,7 +175,7 @@ export function ChangeTherapistModal({
       if (apptStart.includes(' ')) return apptStart.split(' ')[0];
       if (/^\d{4}-\d{2}-\d{2}$/.test(apptStart)) return apptStart;
     }
-    return String(raw.date || raw.booking_date || raw.appointment_date || new Date().toISOString().split('T')[0]);
+    return String(raw.date || raw.booking_date || raw.appointment_date || kuwaitDateString());
   }, [raw, initialBooking]);
 
   const timeslots = useMemo(() => {

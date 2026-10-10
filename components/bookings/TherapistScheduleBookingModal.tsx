@@ -19,6 +19,7 @@ import { BookingReceiptModal } from './BookingReceiptModal';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
+import { buildAppointmentWindow, nowWithTimezone, toZonedIsoFromLocal } from '@/lib/datetime';
 
 export type PaymentProviderOption = 'PaymentLink' | 'Deema' | 'KNET Card' | 'Other';
 
@@ -273,177 +274,6 @@ interface Form {
   arrangementId: string;
   arrangementName: string;
   arrangementType: string;
-}
-
-// ── Backend Invoice Generator ──────────────────────────────────────────────────
-/**
- * Creates an invoice in the backend accounting system (/api/v1/invoices).
- * Returns the generated invoice number (structured like "INV/2026/00001").
- */
-async function createBackendInvoice(params: {
-  customer?: { id?: string | null; name?: string | null; phone?: string | null; email?: string | null } | null;
-  serviceName?: string;
-  servicePrice?: number;
-  addons?: Array<{ name: string; price: number }>;
-  totalAmount: number;
-  date?: string;
-  referenceId?: string;
-  notes?: string;
-  authHeader?: string | null;
-}): Promise<string> {
-  const currentYear = new Date().getFullYear();
-  const defaultFallbackInv = `INV/${currentYear}/00001`;
-
-  try {
-    // 1. Resolve Company ID
-    let companyId: string | undefined;
-    try {
-      const cRes = await authedFetch('/uanr/api/v1/companies/', {
-        headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
-      });
-      if (cRes.ok) {
-        const cJson = await cRes.json().catch(() => ({}));
-        const cItems = cJson?.data?.items ?? cJson?.items ?? (Array.isArray(cJson?.data) ? cJson.data : []);
-        const active = cItems.find((c: any) => c.is_active) || cItems[0];
-        if (active?.id) companyId = active.id;
-      }
-    } catch {
-      // Ignore company lookup error
-    }
-    if (!companyId) companyId = '20bf55dd-7db8-40d1-a2f8-f9da6bb61b68';
-
-    // 2. Resolve Sale Journal, Accounts, Partners
-    let journalId: string | undefined;
-    let accountId: string | undefined;
-    let partnerId: string | undefined = params.customer?.id ?? undefined;
-
-    try {
-      const [jRes, aRes, pRes] = await Promise.all([
-        authedFetch('/uanr/api/v1/journals/?journal_type=sale&page_size=10', {
-          headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
-        }).catch(() => null),
-        authedFetch('/uanr/api/v1/accounts/?page_size=20', {
-          headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
-        }).catch(() => null),
-        authedFetch('/uanr/api/v1/partners/?page_size=5', {
-          headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
-        }).catch(() => null),
-      ]);
-
-      if (jRes && jRes.ok) {
-        const jJson = await jRes.json().catch(() => ({}));
-        const jItems = jJson?.data?.items ?? jJson?.items ?? [];
-        const saleJ = jItems.find((j: any) => j.journal_type === 'sale') || jItems[0];
-        if (saleJ?.id) journalId = saleJ.id;
-      }
-
-      if (aRes && aRes.ok) {
-        const aJson = await aRes.json().catch(() => ({}));
-        const aItems = aJson?.data?.items ?? aJson?.items ?? [];
-        const incomeAcc = aItems.find((a: any) => a.account_type === 'income' || a.account_type === 'revenue' || a.internal_group === 'income') || aItems[0];
-        if (incomeAcc?.id) accountId = incomeAcc.id;
-      }
-
-      if (pRes && pRes.ok) {
-        const pJson = await pRes.json().catch(() => ({}));
-        const pItems = pJson?.data?.items ?? pJson?.items ?? [];
-        if (!partnerId && pItems.length > 0) {
-          partnerId = pItems[0]?.id;
-        }
-      }
-    } catch {
-      // Continue best effort
-    }
-
-    // 3. Build line items
-    const lines = [
-      {
-        name: params.serviceName || 'Spa Service',
-        description: `Booking service for ${params.customer?.name || 'Customer'}`,
-        quantity: 1,
-        unit_price: params.servicePrice ?? params.totalAmount,
-        discount: 0,
-        tax_rate: 0,
-        account_id: accountId,
-      },
-      ...(params.addons || []).map((addon) => ({
-        name: addon.name,
-        description: 'Add-on service',
-        quantity: 1,
-        unit_price: addon.price,
-        discount: 0,
-        tax_rate: 0,
-        account_id: accountId,
-      })),
-    ];
-
-    const invoicePayload = {
-      company_id: companyId,
-      invoice_type: 'invoice',
-      partner_id: partnerId || undefined,
-      journal_id: journalId || undefined,
-      invoice_date: params.date || new Date().toISOString().split('T')[0],
-      payment_terms: 'immediate',
-      currency_code: 'KWD',
-      reference: params.referenceId || undefined,
-      notes: params.notes || undefined,
-      lines,
-    };
-
-    const res = await authedFetch('/uanr/api/v1/invoices', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        ...(params.authHeader ? { Authorization: params.authHeader } : {}),
-      },
-      body: JSON.stringify(invoicePayload),
-    });
-
-    const json = await res.json().catch(() => ({}));
-    if (res.ok) {
-      const invData = json?.data ?? json;
-      const returnedNumber = invData?.name || invData?.invoice_number || invData?.number || invData?.invoice_no;
-      if (returnedNumber && typeof returnedNumber === 'string' && returnedNumber.trim()) {
-        if (invData.id) {
-          authedFetch(`/uanr/api/v1/invoices/${invData.id}/post/`, {
-            method: 'POST',
-            headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
-          }).catch(() => {});
-        }
-        return returnedNumber.trim();
-      }
-    } else {
-      console.warn('[createBackendInvoice] Backend invoice return status:', res.status, json);
-    }
-  } catch (err) {
-    console.warn('[createBackendInvoice] Exception creating invoice in backend:', err);
-  }
-
-  // Fallback: Query the latest invoice number from uanr to increment sequence, or default to INV/YYYY/00001
-  try {
-    const listRes = await authedFetch('/uanr/api/v1/invoices?page_size=1', {
-      headers: params.authHeader ? { Authorization: params.authHeader } : undefined,
-    });
-    if (listRes.ok) {
-      const listJson = await listRes.json().catch(() => ({}));
-      const items = listJson?.data?.items ?? listJson?.items ?? [];
-      const first = items[0];
-      const lastName = first?.name || first?.invoice_number;
-      if (typeof lastName === 'string') {
-        const match = lastName.match(/INV\/(\d{4})\/(\d+)/i);
-        if (match) {
-          const year = match[1];
-          const seq = parseInt(match[2], 10) + 1;
-          return `INV/${year}/${String(seq).padStart(5, '0')}`;
-        }
-      }
-    }
-  } catch {
-    // Ignore fallback fetch error
-  }
-
-  return defaultFallbackInv;
 }
 
 // ── Main Modal ─────────────────────────────────────────────────────────────────
@@ -814,36 +644,13 @@ export function TherapistScheduleBookingModal({
     const displayH   = hh % 12 || 12;
     const displayTime = `${displayH}:${String(mm).padStart(2, '0')} ${ampm}`;
 
-    // ── Generate/Retrieve Invoice from Backend ────────────────────────────────
-    let resolvedInvoiceNumber = invoiceId;
-    if (paymentMethod === 'completed') {
-      try {
-        resolvedInvoiceNumber = await createBackendInvoice({
-          customer: selectedCustomer ? {
-            id: selectedCustomer.id,
-            name: customerName,
-            phone: selectedCustomer.phone_number,
-            email: selectedCustomer.email,
-          } : null,
-          serviceName: svc.name,
-          servicePrice: effectiveBaseP,
-          addons: allSelectedAddons.map((a) => ({ name: a.name, price: parseFloat(String(a.price)) || 0 })),
-          totalAmount: totalPrice,
-          date: date || new Date().toISOString().split('T')[0],
-          referenceId: transactionRefId || undefined,
-          notes: receiptNotes || undefined,
-          authHeader,
-        });
-        if (resolvedInvoiceNumber) {
-          setInvoiceId(resolvedInvoiceNumber);
-        }
-      } catch (e) {
-        console.warn('Backend invoice creation error:', e);
-        const year = new Date().getFullYear();
-        resolvedInvoiceNumber = resolvedInvoiceNumber || `INV/${year}/00001`;
-        setInvoiceId(resolvedInvoiceNumber);
-      }
-    }
+    // Invoices are created by ushbooknpay (via ushanr) when the booking is confirmed;
+    // ushdesk never creates invoices directly. The number is read back from the booking response.
+    const resolvedInvoiceNumber: string | null = null;
+
+    // Timezone-aware datetimes (branch timezone) built from the customer-chosen slot.
+    const apptWindow = buildAppointmentWindow(date, timeHHMM, totalDuration);
+    const paidAtNow   = nowWithTimezone();
 
     const body = {
       // ── Service ─────────────────────────────────────────────────────────────
@@ -901,6 +708,10 @@ export function TherapistScheduleBookingModal({
       date, formattedDate,
       time_slot:   timeHHMM,
       displayTime,
+      timezone:          apptWindow.timezone,
+      appointment_date:  apptWindow.appointment_date,
+      appointment_start: apptWindow.appointment_start,
+      appointment_end:   apptWindow.appointment_end,
       // ── Customer ────────────────────────────────────────────────────────────
       customer_id: form.customerId || '',
       customer_data: customerName ? {
@@ -946,6 +757,8 @@ export function TherapistScheduleBookingModal({
       invoice_number:   paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
       invoice_reference: paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
       receipt_image:    paymentMethod === 'completed' ? receiptImage : null,
+      transaction_date: paymentMethod === 'completed' ? paidAtNow : null,
+      paid_at:          paymentMethod === 'completed' ? paidAtNow : null,
       payment_data: paymentMethod === 'completed' ? {
         transaction_id:   transactionRefId,
         reference_id:     transactionRefId,
@@ -954,7 +767,7 @@ export function TherapistScheduleBookingModal({
         receipt_image:    receiptImage,
         payment_provider: paymentProvider,
         payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
-        paid_at:          new Date().toISOString(),
+        paid_at:          paidAtNow,
         notes:            receiptNotes || null,
       } : null,
       payments_data: paymentMethod === 'completed' ? {
@@ -967,7 +780,8 @@ export function TherapistScheduleBookingModal({
         receipt_image:    receiptImage,
         payment_provider: paymentProvider,
         payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
-        transaction_date: new Date().toISOString(),
+        transaction_date: paidAtNow,
+        paid_at:          paidAtNow,
         notes:            receiptNotes || null,
       } : null,
     };
@@ -1128,28 +942,13 @@ export function TherapistScheduleBookingModal({
         ? ((selectedCustomer.full_name ?? [selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || 'Customer')
         : snapCustomerName || '';
 
-      let resolvedConfirmInvoice = paymentForm.invoice_id || invoiceId;
-      if (!resolvedConfirmInvoice) {
-        try {
-          resolvedConfirmInvoice = await createBackendInvoice({
-            customer: selectedCustomer ? {
-              id: selectedCustomer.id,
-              name: customerName,
-              phone: selectedCustomer.phone_number,
-              email: selectedCustomer.email,
-            } : null,
-            serviceName: selectedService?.name,
-            servicePrice: servicePrice,
-            totalAmount: totalPrice,
-            date: date,
-            referenceId: paymentForm.reference_id || undefined,
-            authHeader,
-          });
-        } catch {
-          resolvedConfirmInvoice = `INV/${new Date().getFullYear()}/00001`;
-        }
-        setInvoiceId(resolvedConfirmInvoice);
-      }
+      // The real invoice number (ushanr invoices.name) is assigned by ushbooknpay on confirmation.
+      const resolvedConfirmInvoice: string | null =
+        invoiceId || (bookingResult?.invoice_number as string) || null;
+
+      // transaction_date: the staff-entered value is normalised to branch tz; empty => now (never null)
+      const txnDateIso = toZonedIsoFromLocal(paymentForm.transaction_date);
+      const confirmWindow = buildAppointmentWindow(date, timeSlot, totalDuration);
 
       const statusPayload = {
         status:         'confirmed',
@@ -1167,7 +966,8 @@ export function TherapistScheduleBookingModal({
           status:           'Paid',
           reference_id:     paymentForm.reference_id,
           invoice_value:    paymentForm.total_amount,
-          transaction_date: paymentForm.transaction_date,
+          transaction_date: txnDateIso,
+          paid_at:          txnDateIso,
           payment_gateway:  (paymentProvider ?? 'KNET Card') === 'KNET Card' ? 'KNET' : (paymentProvider ?? 'KNET Card'),
           payment_provider: paymentProvider ?? 'KNET Card',
           payment_through:  'ushdesk',
@@ -1223,7 +1023,8 @@ export function TherapistScheduleBookingModal({
         invoice_number:   resolvedConfirmInvoice,
         reference_id:     paymentForm.reference_id,
         trace_id:         paymentForm.trace_id,
-        transaction_date: paymentForm.transaction_date,
+        transaction_date: txnDateIso,
+        paid_at:          txnDateIso,
         total_amount:     parseFloat(paymentForm.total_amount) || totalPrice,
         invoice_value:    paymentForm.total_amount,
         received_by:      paymentForm.received_by,
@@ -1312,6 +1113,10 @@ export function TherapistScheduleBookingModal({
         date,
         time_slot:    timeHHMM,
         display_time: timeSlot,
+        timezone:          confirmWindow.timezone,
+        appointment_date:  confirmWindow.appointment_date,
+        appointment_start: confirmWindow.appointment_start,
+        appointment_end:   confirmWindow.appointment_end,
 
         // ── Pricing summary ────────────────────────────────────────────────────
         pricing_details: {

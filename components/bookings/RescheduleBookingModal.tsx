@@ -1,5 +1,6 @@
 'use client';
 
+import { buildAppointmentWindow, kuwaitDateString } from '@/lib/datetime';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   CalendarDays, Clock, Building2, MapPin, Scissors,
@@ -18,6 +19,14 @@ export interface RescheduleBookingModalProps {
   token?: string;
   onClose: () => void;
   onSuccess?: () => void;
+  initialRescheduleParams?: {
+    serviceId: string;
+    arrangementType: string;
+    branchId: string;
+    appointmentDate: string;
+    daysCount: number;
+  };
+  initialAvailabilitiesPromise?: Promise<any>;
 }
 
 interface ApiBranch {
@@ -35,6 +44,7 @@ interface ApiArrangement {
   capacity?: number;
   branch_id?: string;
   branch_name?: string;
+  availabilities?: Record<string, string[]>;
 }
 
 interface ApiGrid {
@@ -53,6 +63,7 @@ interface ApiTherapist {
   photo_url?: string;
   profile_picture?: string;
   specialization?: string;
+  availabilities?: Record<string, string[]>;
 }
 
 const STATUS_STYLES: Record<string, { bar: string; pill: string; dot: string }> = {
@@ -158,6 +169,8 @@ export function RescheduleBookingModal({
   token,
   onClose,
   onSuccess,
+  initialRescheduleParams,
+  initialAvailabilitiesPromise,
 }: RescheduleBookingModalProps) {
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
@@ -168,28 +181,34 @@ export function RescheduleBookingModal({
   const [fetchingBooking, setFetchingBooking] = useState(!initialBooking);
   const [bookingError, setBookingError] = useState<string | null>(null);
 
+  // Availabilities Cache (keyed by branch_id) & In-Flight Tracking
+  const availabilitiesCache = React.useRef<Record<string, any>>({});
+  const inFlightRequests = React.useRef<Record<string, Promise<any> | undefined>>({});
+  const [availabilitiesData, setAvailabilitiesData] = useState<any>(null);
+  const [availabilitiesLoading, setAvailabilitiesLoading] = useState(false);
+  const [availabilitiesError, setAvailabilitiesError] = useState<string | null>(null);
+
   // Branches
   const [branches, setBranches] = useState<ApiBranch[]>([]);
-  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(initialRescheduleParams?.branchId || '');
 
-  // Arrangements
-  const [arrangements, setArrangements] = useState<ApiArrangement[]>([]);
-  const [arrangementsLoading, setArrangementsLoading] = useState(false);
+  // Arrangements & Selection
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
 
   // Date & Timeslots
-  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const todayStr = useMemo(() => kuwaitDateString(), []);
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
-  const [scheduleLoading, setScheduleLoading] = useState(false);
   const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
 
-  // Therapists
-  const [therapists, setTherapists] = useState<ApiTherapist[]>([]);
-  const [therapistSchedule, setTherapistSchedule] = useState<AnyRecord | null>(null);
-  const [therapistsLoading, setTherapistsLoading] = useState(false);
+  // Therapists Selection
   const [selectedTherapistId, setSelectedTherapistId] = useState<string>('');
   const [selectedTherapist, setSelectedTherapist] = useState<ApiTherapist | null>(null);
+
+  // Sync virtual loading states for existing UI indicators
+  const arrangementsLoading = availabilitiesLoading;
+  const scheduleLoading = availabilitiesLoading;
+  const therapistsLoading = availabilitiesLoading;
 
   // Submission
   const [submitting, setSubmitting] = useState(false);
@@ -240,7 +259,6 @@ export function RescheduleBookingModal({
   const bk = booking;
   const status = (bk?.status ?? 'scheduled').toLowerCase();
   const ss = statusStyle(status);
-  const ref = firstTruthy(bk?.booking_reference, bk?.reference, bk?.id, bookingId);
   const bookingNum = firstTruthy(bk?.booking_number, bk?.number);
 
   const svcObj = bk?.service as AnyRecord | undefined;
@@ -253,51 +271,164 @@ export function RescheduleBookingModal({
 
   // Previously booked arrangement type
   const prevArrObj = (bk?.service_arrangement_data ?? bk?.arrangement ?? bk?.service_arrangement) as AnyRecord | undefined;
-  const prevArrType = firstTruthy(prevArrObj?.arrangement_type, prevArrObj?.type, bk?.arrangement_type, bk?.room_type, 'room');
+  const prevArrType = firstTruthy(
+    initialRescheduleParams?.arrangementType,
+    prevArrObj?.arrangement_type,
+    prevArrObj?.type,
+    bk?.arrangement_type,
+    bk?.room_type,
+    'room'
+  );
 
   // Service ID
-  const serviceId = firstTruthy(svcObj?.id, svcObj?.service_id, bk?.service_id);
+  const serviceId = firstTruthy(
+    initialRescheduleParams?.serviceId,
+    svcObj?.id,
+    svcObj?.service_id,
+    bk?.service_id
+  );
+
+  // Appointment date
+  const isoStart = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
+  const appointmentDate = useMemo(() => {
+    return firstTruthy(
+      initialRescheduleParams?.appointmentDate,
+      bk?.date,
+      bk?.booking_date,
+      bk?.appointment_date,
+      isoStart ? (isoStart.includes('T') ? isoStart.split('T')[0] : isoStart.split(' ')[0]) : '',
+      todayStr
+    );
+  }, [initialRescheduleParams?.appointmentDate, bk, isoStart, todayStr]);
+
+  const daysCount = initialRescheduleParams?.daysCount ?? 30;
 
   // Initialize selected branch and date from booking
   useEffect(() => {
     if (!bk) return;
     const initialBranchId = firstTruthy(
+      initialRescheduleParams?.branchId,
       bk?.branch_id,
       bk?.branch_data?.branch_id,
       bk?.branch_data?.id,
       bk?.branch?.id
     );
-    if (initialBranchId && !selectedBranchId) {
-      setSelectedBranchId(initialBranchId);
-    }
+    setSelectedBranchId((prev) => prev || initialBranchId);
 
-    const isoStart = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
     const dateRaw = firstTruthy(bk?.date, bk?.booking_date, bk?.appointment_date, isoStart ? isoStart.split('T')[0] : '');
     if (dateRaw && dateRaw >= todayStr) {
       setSelectedDate(dateRaw);
     } else {
       setSelectedDate(todayStr);
     }
-  }, [bk, selectedBranchId, todayStr]);
+  }, [bk, todayStr, initialRescheduleParams?.branchId, isoStart]);
 
-  // ── Max allowed reschedule date: original appointment date + 30 days ─
-  const maxDateStr = useMemo(() => {
-    const isoStart = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
-    const dateRaw = bk?.appointment_date ?? bk?.booking_date ?? bk?.date ?? (isoStart ? isoStart.split('T')[0] : '');
-    if (dateRaw && typeof dateRaw === 'string' && dateRaw.trim()) {
-      const base = new Date(`${dateRaw.trim().split('T')[0]}T00:00:00Z`);
-      if (!isNaN(base.getTime())) {
-        base.setUTCDate(base.getUTCDate() + 30);
-        return base.toISOString().split('T')[0];
-      }
+  // ── Handle initial availabilities promise ───────────────────────────
+  useEffect(() => {
+    if (!initialAvailabilitiesPromise || !initialRescheduleParams?.branchId) return;
+    const bId = initialRescheduleParams.branchId;
+    inFlightRequests.current[bId] = initialAvailabilitiesPromise;
+    setAvailabilitiesLoading(true);
+
+    let active = true;
+    initialAvailabilitiesPromise
+      .then((data) => {
+        if (!active || !data) return;
+        availabilitiesCache.current[bId] = data;
+        setAvailabilitiesData(data);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load availability');
+      })
+      .finally(() => {
+        delete inFlightRequests.current[bId];
+        if (active) setAvailabilitiesLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [initialAvailabilitiesPromise, initialRescheduleParams?.branchId]);
+
+  // ── With change of branch: check cache or send request ──────────────
+  const fetchAvailabilitiesForBranch = useCallback(async (branchIdToFetch: string) => {
+    if (!branchIdToFetch) return;
+
+    // 1. Check in-memory cache first!
+    if (availabilitiesCache.current[branchIdToFetch]) {
+      setAvailabilitiesData(availabilitiesCache.current[branchIdToFetch]);
+      setAvailabilitiesError(null);
+      setAvailabilitiesLoading(false);
+      return;
     }
-    // Fallback: today + 30 days
-    const fallback = new Date();
-    fallback.setDate(fallback.getDate() + 30);
-    return fallback.toISOString().split('T')[0];
-  }, [bk]);
 
-  // ── 2. Fetch Branches ────────────────────────────────────────────────
+    // 2. Check if already in-flight
+    const activeReq = inFlightRequests.current[branchIdToFetch];
+    if (activeReq) {
+      setAvailabilitiesLoading(true);
+      try {
+        const data = await activeReq;
+        if (data) {
+          availabilitiesCache.current[branchIdToFetch] = data;
+          setAvailabilitiesData(data);
+        }
+      } catch (err) {
+        setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load availability');
+      } finally {
+        setAvailabilitiesLoading(false);
+      }
+      return;
+    }
+
+    // 3. Fetch from endpoint and cache
+    setAvailabilitiesLoading(true);
+    setAvailabilitiesError(null);
+
+    const qs = new URLSearchParams({
+      service_id: serviceId || '',
+      arrangement_type: prevArrType || 'room',
+      branch_id: branchIdToFetch,
+      date: appointmentDate || todayStr,
+      days_count: String(daysCount),
+    });
+    const endpoint = `/uauth/api/v1/find-availabilities-for-reschedule-appointment/?${qs.toString()}`;
+
+    const promise = fetchJson(endpoint)
+      .then((data) => {
+        availabilitiesCache.current[branchIdToFetch] = data;
+        setAvailabilitiesData(data);
+        return data;
+      })
+      .catch((err) => {
+        console.error('Failed to fetch availabilities on branch change:', err);
+        setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load branch availability');
+        throw err;
+      })
+      .finally(() => {
+        delete inFlightRequests.current[branchIdToFetch];
+        setAvailabilitiesLoading(false);
+      });
+
+    inFlightRequests.current[branchIdToFetch] = promise;
+  }, [serviceId, prevArrType, appointmentDate, todayStr, daysCount, fetchJson]);
+
+  useEffect(() => {
+    if (!selectedBranchId) return;
+
+    const initialInFlight = inFlightRequests.current[selectedBranchId];
+    if (
+      selectedBranchId === initialRescheduleParams?.branchId &&
+      (initialAvailabilitiesPromise || availabilitiesCache.current[selectedBranchId] || initialInFlight)
+    ) {
+      if (availabilitiesCache.current[selectedBranchId]) {
+        setAvailabilitiesData(availabilitiesCache.current[selectedBranchId]);
+      }
+      return;
+    }
+
+    fetchAvailabilitiesForBranch(selectedBranchId);
+  }, [selectedBranchId, fetchAvailabilitiesForBranch, initialRescheduleParams?.branchId, initialAvailabilitiesPromise]);
+
+  // ── Fetch Branches (for branch dropdown only) ───────────────────────
   useEffect(() => {
     fetchJson('/api/v1/branches/')
       .then((data) => {
@@ -307,216 +438,192 @@ export function RescheduleBookingModal({
       .catch(() => setBranches([]));
   }, [fetchJson]);
 
-  // ── 3. Fetch Arrangements when branch changes ───────────────────────
+  // Ensure current branch from availabilitiesData is present in branches list
   useEffect(() => {
-    if (!selectedBranchId) {
-      setArrangements([]);
+    if (!availabilitiesData?.branch) return;
+    const b = availabilitiesData.branch;
+    const bId = b.id ?? b.branch_id;
+    if (bId) {
+      setBranches((prev) => {
+        if (prev.some((item) => (item.id ?? item.branch_id) === bId)) return prev;
+        return [{ id: bId, branch_id: bId, name: b.name, branch_name: b.name }, ...prev];
+      });
+    }
+  }, [availabilitiesData]);
+
+  // ── Max allowed reschedule date: original appointment date + daysCount (10 or 30 days) ─
+  const maxDateStr = useMemo(() => {
+    const daysAllowed = daysCount || 30;
+    const dateRaw = appointmentDate;
+    if (dateRaw && typeof dateRaw === 'string' && dateRaw.trim()) {
+      const base = new Date(`${dateRaw.trim().split('T')[0]}T00:00:00Z`);
+      if (!isNaN(base.getTime())) {
+        base.setUTCDate(base.getUTCDate() + daysAllowed);
+        return base.toISOString().split('T')[0];
+      }
+    }
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + daysAllowed);
+    return kuwaitDateString(fallback);
+  }, [appointmentDate, daysCount]);
+
+  // ── Compute Arrangements from availabilitiesData ────────────────────
+  const arrangements = useMemo<ApiArrangement[]>(() => {
+    const list = Array.isArray(availabilitiesData?.arrangements)
+      ? availabilitiesData.arrangements
+      : Array.isArray(availabilitiesData?.data?.arrangements)
+      ? availabilitiesData.data.arrangements
+      : [];
+    return list.filter((a: any) => {
+      const type = a.arrangement_type || a.type || '';
+      return isSimilarArrangementType(type, prevArrType);
+    });
+  }, [availabilitiesData, prevArrType]);
+
+  // Pre-select arrangement when arrangements change
+  useEffect(() => {
+    if (arrangements.length === 0) {
       setSelectedRoomId('');
       return;
     }
+    // If selected room is already in filtered arrangements, keep it
+    if (selectedRoomId && arrangements.some((a) => a.id === selectedRoomId)) {
+      return;
+    }
+    const prevArrId = firstTruthy(
+      bk?.service_arrangement_id,
+      bk?.service_arrangement_data?.id,
+      bk?.service_arrangement_data?.arrangement_id,
+      bk?.arrangement_id
+    );
+    const matchPrev = arrangements.find((a) => a.id === prevArrId);
+    setSelectedRoomId(matchPrev ? matchPrev.id : arrangements[0].id);
+  }, [arrangements, bk, selectedRoomId]);
 
-    setArrangementsLoading(true);
-    setSelectedRoomId('');
+  // ── Compute Therapists from availabilitiesData ──────────────────────
+  const therapists = useMemo<ApiTherapist[]>(() => {
+    return Array.isArray(availabilitiesData?.therapists)
+      ? availabilitiesData.therapists
+      : Array.isArray(availabilitiesData?.data?.therapists)
+      ? availabilitiesData.data.therapists
+      : [];
+  }, [availabilitiesData]);
+
+  // Reset timeslot and therapist when room or date changes
+  useEffect(() => {
     setSelectedTimeSlot('');
     setSelectedTherapistId('');
     setSelectedTherapist(null);
+  }, [selectedDate, selectedRoomId]);
 
-    const branchArrUrl = `/api/v1/service-arrangements/?branch_id=${selectedBranchId}`;
-    const svcArrUrl = serviceId ? `/api/v1/services/${serviceId}/arrangements/?branch_id=${selectedBranchId}` : null;
-
-    const fetchPromise = svcArrUrl
-      ? fetchJson(svcArrUrl)
-          .then((d) => (Array.isArray(d) && d.length > 0 ? d : fetchJson(branchArrUrl)))
-          .catch(() => fetchJson(branchArrUrl))
-      : fetchJson(branchArrUrl);
-
-    fetchPromise
-      .then((data) => {
-        const list: ApiArrangement[] = Array.isArray(data) ? data : (data.results ?? data.data ?? []);
-        // Requirement 1.i.e: Only show rooms which is similar type of previously booked room/arrangement type
-        const filtered = list.filter((a) => {
-          const type = a.arrangement_type || a.type || '';
-          return isSimilarArrangementType(type, prevArrType);
-        });
-        setArrangements(filtered);
-
-        // Pre-select room if matches current booking or pick first
-        const prevArrId = firstTruthy(
-          bk?.service_arrangement_id,
-          bk?.service_arrangement_data?.id,
-          bk?.service_arrangement_data?.arrangement_id,
-          bk?.arrangement_id
-        );
-        const matchPrev = filtered.find((a) => a.id === prevArrId);
-        if (matchPrev) {
-          setSelectedRoomId(matchPrev.id);
-        } else if (filtered.length > 0) {
-          setSelectedRoomId(filtered[0].id);
-        }
-      })
-      .catch(() => setArrangements([]))
-      .finally(() => setArrangementsLoading(false));
-  }, [selectedBranchId, serviceId, prevArrType, fetchJson, bk]);
-
-  // ── 4. Fetch Branch Schedule & Compute Slots when Room/Date changes ─
+  // ── Timeslot Calculation: Merge therapist availabilities by day, then intersect with arrangement ──
   useEffect(() => {
-    if (!selectedBranchId || !selectedRoomId || !selectedDate) {
+    if (!selectedDate || arrangements.length === 0) {
       setAvailableSlots([]);
       return;
     }
 
-    setScheduleLoading(true);
-    const scheduleUrl = `/api/v1/service-arrangements/schedule/?branch_id=${selectedBranchId}&date=${selectedDate}`;
-
-    fetchJson(scheduleUrl)
-      .then((data) => {
-        const rec = Array.isArray(data) ? data[0] : data;
-        const grid: ApiGrid = rec?.grid ?? { start: '09:00', end: '22:00', slot_duration_minutes: 30 };
-        const rawBookings: AnyRecord[] = rec?.bookings ?? [];
-
-        // Filter bookings for the selected room
-        const roomBookings = rawBookings.filter((b) => {
-          const arrId = b.arrangement_id || b.service_arrangement_id;
-          const bkId = b.id || b.booking_id || b.bookings_id;
-          // Ignore current booking being rescheduled
-          if (bkId && bkId === bookingId) return false;
-          return arrId === selectedRoomId && b.status !== 'cancelled';
-        });
-
-        // Generate time slots
-        const [startH, startM] = (grid.start || '09:00').split(':').map(Number);
-        const [endH, endM] = (grid.end || '22:00').split(':').map(Number);
-        const startMin = startH * 60 + startM;
-        const endMin = endH * 60 + endM;
-        const step = grid.slot_duration_minutes || 30;
-
-        const now = new Date();
-        const isToday = selectedDate === todayStr;
-        const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
-
-        const slots: { time: string; available: boolean }[] = [];
-
-        for (let m = startMin; m < endMin; m += step) {
-          const h = Math.floor(m / 60);
-          const min = m % 60;
-          const ampm = h >= 12 ? 'PM' : 'AM';
-          const hd = h % 12 === 0 ? 12 : h % 12;
-          const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
-
-          // Check if slot has already passed today
-          if (isToday && m <= currentTotalMinutes) {
-            slots.push({ time: timeLabel, available: false });
-            continue;
-          }
-
-          // Check if slot overlaps with any room booking
-          const slotStart = m;
-          const slotEnd = m + durationVal;
-
-          let hasConflict = false;
-          for (const b of roomBookings) {
-            const bStart = new Date(b.start);
-            const bEnd = new Date(b.end);
-            const bStartMin = bStart.getUTCHours() * 60 + bStart.getUTCMinutes();
-            const bEndMin = bEnd.getUTCHours() * 60 + bEnd.getUTCMinutes();
-
-            if (Math.max(slotStart, bStartMin) < Math.min(slotEnd, bEndMin)) {
-              hasConflict = true;
-              break;
-            }
-          }
-
-          slots.push({ time: timeLabel, available: !hasConflict });
-        }
-
-        setAvailableSlots(slots);
-      })
-      .catch(() => setAvailableSlots([]))
-      .finally(() => setScheduleLoading(false));
-  }, [selectedBranchId, selectedRoomId, selectedDate, durationVal, todayStr, bookingId, authHeader]);
-
-  // ── 5. Fetch Therapists & Schedule for Auto-Selection ─────────────────
-  useEffect(() => {
-    if (!selectedBranchId || !selectedDate) {
-      setTherapists([]);
-      setTherapistSchedule(null);
+    const selArrangement = arrangements.find((a) => a.id === selectedRoomId) || arrangements[0];
+    if (!selArrangement) {
+      setAvailableSlots([]);
       return;
     }
 
-    setTherapistsLoading(true);
-    const thUrl = serviceId
-      ? `/api/v1/services/${serviceId}/therapists?branch_id=${selectedBranchId}`
-      : `/api/v1/therapists/?branch_id=${selectedBranchId}`;
-    const thSchedUrl = `/api/v1/therapists/schedule/?branch_id=${selectedBranchId}&date=${selectedDate}`;
+    // 1. Merge all therapist availabilities for the selected day
+    const therapistSlotsForDay = new Set<number>();
+    for (const t of therapists) {
+      const tSlots: string[] = t.availabilities?.[selectedDate] || [];
+      for (const s of tSlots) {
+        therapistSlotsForDay.add(parseTimeToMinutes(s));
+      }
+    }
 
-    Promise.all([
-      fetchJson(thUrl).catch(() => []),
-      fetchJson(thSchedUrl).catch(() => null),
-    ])
-      .then(([thData, schedData]) => {
-        const list: ApiTherapist[] = Array.isArray(thData) ? thData : (thData.data ?? thData.results ?? []);
-        setTherapists(list);
-        setTherapistSchedule(Array.isArray(schedData) ? schedData[0] : schedData);
-      })
-      .finally(() => setTherapistsLoading(false));
-  }, [selectedBranchId, selectedDate, serviceId, fetchJson]);
+    // 2. Arrangement availabilities for the selected day
+    const rawArrSlots: string[] = selArrangement.availabilities?.[selectedDate] || [];
+    const arrangementSlotsForDay = new Set<number>(
+      rawArrSlots.map((s) => parseTimeToMinutes(s))
+    );
 
-  // ── 6. Auto-select available therapist when timeslot changes ─────────
+    // 3. Grid timeslot bounds: from branch opening/closing or explicit slots
+    const branchInfo = availabilitiesData?.branch;
+    const openTime = branchInfo?.opening_time || '09:00:00';
+    const closeTime = branchInfo?.closing_time || '23:00:00';
+    const step = Number(availabilitiesData?.slot_duration_minutes || 30) || 30;
+
+    const startMin = parseTimeToMinutes(openTime);
+    let endMin = parseTimeToMinutes(closeTime);
+    if (endMin <= startMin) {
+      endMin = 23 * 60;
+    }
+
+    const allKnownMinutes = new Set<number>();
+    for (let m = startMin; m < endMin; m += step) {
+      allKnownMinutes.add(m);
+    }
+    therapistSlotsForDay.forEach((m) => {
+      allKnownMinutes.add(m);
+    });
+    arrangementSlotsForDay.forEach((m) => {
+      allKnownMinutes.add(m);
+    });
+
+    const sortedMinutes: number[] = [];
+    allKnownMinutes.forEach((m) => {
+      sortedMinutes.push(m);
+    });
+    sortedMinutes.sort((a, b) => a - b);
+
+    const now = new Date();
+    const isToday = selectedDate === todayStr;
+    const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
+
+    const slots: { time: string; available: boolean }[] = [];
+
+    for (const m of sortedMinutes) {
+      // Per requirement: If today, do not show timeslots smaller than or equal to current datetime
+      if (isToday && m <= currentTotalMinutes) {
+        continue;
+      }
+
+      const h = Math.floor(m / 60);
+      const min = m % 60;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hd = h % 12 === 0 ? 12 : h % 12;
+      const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
+
+      // Intersection: must be in therapist union AND arrangement availability
+      const isAvailableInTherapists = therapistSlotsForDay.has(m);
+      const isAvailableInArrangement = arrangementSlotsForDay.has(m);
+      const available = isAvailableInTherapists && isAvailableInArrangement;
+
+      slots.push({ time: timeLabel, available });
+    }
+
+    setAvailableSlots(slots);
+  }, [
+    selectedDate,
+    selectedRoomId,
+    arrangements,
+    therapists,
+    availabilitiesData,
+    todayStr,
+  ]);
+
+  // ── Auto-Select Therapist when timeslot changes ───────────────────────
   useEffect(() => {
-    if (!selectedTimeSlot || therapists.length === 0) {
+    if (!selectedTimeSlot || therapists.length === 0 || !selectedDate) {
       setSelectedTherapistId('');
       setSelectedTherapist(null);
       return;
     }
 
     const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
-    const slotEndMin = slotStartMin + durationVal;
 
-    const thBookings: AnyRecord[] = therapistSchedule?.bookings ?? [];
-    const thAvailability: AnyRecord[] = therapistSchedule?.availability ?? [];
-
-    // Find first available therapist
-    let autoAssigned: ApiTherapist | null = null;
-
-    for (const t of therapists) {
-      // 1. Check existing bookings
-      const bookingsForT = thBookings.filter((b) => {
-        const tId = b.therapist_id || b.therapist?.id;
-        const bkId = b.id || b.booking_id || b.bookings_id;
-        if (bkId && bkId === bookingId) return false;
-        return tId === t.id && b.status !== 'cancelled';
-      });
-
-      let hasBookingConflict = false;
-      for (const b of bookingsForT) {
-        const bStart = new Date(b.start);
-        const bEnd = new Date(b.end);
-        const bStartMin = bStart.getUTCHours() * 60 + bStart.getUTCMinutes();
-        const bEndMin = bEnd.getUTCHours() * 60 + bEnd.getUTCMinutes();
-
-        if (Math.max(slotStartMin, bStartMin) < Math.min(slotEndMin, bEndMin)) {
-          hasBookingConflict = true;
-          break;
-        }
-      }
-
-      if (hasBookingConflict) continue;
-
-      // 2. Check working intervals if provided
-      const tAvail = thAvailability.find((a) => a.therapist_id === t.id);
-      if (tAvail && Array.isArray(tAvail.intervals) && tAvail.intervals.length > 0) {
-        const isWithinInterval = tAvail.intervals.some((iv: { start: string; end: string }) => {
-          const ivStartMin = parseTimeToMinutes(iv.start);
-          const ivEndMin = parseTimeToMinutes(iv.end);
-          return slotStartMin >= ivStartMin && slotEndMin <= ivEndMin;
-        });
-        if (!isWithinInterval) continue;
-      }
-
-      // If passed both, therapist is free!
-      autoAssigned = t;
-      break;
-    }
+    // Find the first therapist who is available at this timeslot on this date
+    const autoAssigned = therapists.find((t) => {
+      const daySlots: string[] = t.availabilities?.[selectedDate] || [];
+      return daySlots.some((s) => parseTimeToMinutes(s) === slotStartMin);
+    });
 
     if (autoAssigned) {
       setSelectedTherapistId(autoAssigned.id);
@@ -525,7 +632,7 @@ export function RescheduleBookingModal({
       setSelectedTherapistId('');
       setSelectedTherapist(null);
     }
-  }, [selectedTimeSlot, durationVal, therapists, therapistSchedule, bookingId]);
+  }, [selectedTimeSlot, therapists, selectedDate]);
 
   // ── Handle Submit Reschedule ──────────────────────────────────────────
   const handleUpdateBooking = async () => {
@@ -548,70 +655,107 @@ export function RescheduleBookingModal({
     const roomName = selRoom?.name ?? 'Room';
     const roomType = selRoom?.arrangement_type ?? selRoom?.type ?? prevArrType;
 
-    const therapistName = getTherapistDisplayName(selectedTherapist);
-
     const formattedTime = toHHMM(selectedTimeSlot);
-    const appointmentStartIso = `${selectedDate}T${formattedTime}Z`;
-    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
-    const slotEndMin = slotStartMin + durationVal;
-    const endH = Math.floor(slotEndMin / 60);
-    const endM = slotEndMin % 60;
-    const endFormattedTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}:00`;
-    const appointmentEndIso = `${selectedDate}T${endFormattedTime}Z`;
+    // Selected date/slot are Asia/Kuwait wall-clock: send offset-aware ISO (+03:00).
+    // Never suffix wall-clock with "Z" — that labels it UTC and shifts it by +3h.
+    const apptWindow = buildAppointmentWindow(selectedDate, selectedTimeSlot, durationVal);
+    const appointmentStartIso = apptWindow.appointment_start;
+    const appointmentEndIso = apptWindow.appointment_end;
 
-    const payload = {
-      branch_id: selectedBranchId,
-      branch_data: {
-        id: selectedBranchId,
+    const buildPayload = (therapist: ApiTherapist | null, therapistId: string) => {
+      const therapistName = getTherapistDisplayName(therapist);
+      return {
         branch_id: selectedBranchId,
-        branch_name: branchName,
-        name: branchName,
-      },
-      service_arrangement_id: selectedRoomId,
-      service_arrangement_data: {
-        id: selectedRoomId,
-        arrangement_id: selectedRoomId,
-        arrangement_name: roomName,
-        name: roomName,
-        arrangement_type: roomType,
-      },
-      appointment_date: selectedDate,
-      appointment_time: formattedTime,
-      appointment_start: appointmentStartIso,
-      appointment_end: appointmentEndIso,
-      duration: durationVal,
-      therapist_id: selectedTherapistId,
-      therapist_data: {
-        id: selectedTherapistId,
-        therapist_id: selectedTherapistId,
-        therapist_name: therapistName,
-        name: therapistName,
-      },
-      source: 'ushdesk',
-      reason: 'Rescheduled by desk staff',
+        branch_data: {
+          id: selectedBranchId,
+          branch_id: selectedBranchId,
+          branch_name: branchName,
+          name: branchName,
+        },
+        service_arrangement_id: selectedRoomId,
+        service_arrangement_data: {
+          id: selectedRoomId,
+          arrangement_id: selectedRoomId,
+          arrangement_name: roomName,
+          name: roomName,
+          arrangement_type: roomType,
+        },
+        appointment_date: selectedDate,
+        appointment_time: formattedTime,
+        appointment_start: appointmentStartIso,
+        appointment_end: appointmentEndIso,
+        duration: durationVal,
+        therapist_id: therapistId,
+        therapist_data: {
+          id: therapistId,
+          therapist_id: therapistId,
+          therapist_name: therapistName,
+          name: therapistName,
+        },
+        source: 'ushdesk',
+        reason: 'Rescheduled by desk staff',
+      };
     };
 
-    try {
-      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authHeader ? { Authorization: authHeader } : {}),
-        },
-        body: JSON.stringify(payload),
-      });
+    // Candidates: the auto-selected therapist first, then every other therapist in the
+    // list who is available at this slot (availability data can be stale, so the backend
+    // may still reject a therapist as already booked).
+    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
+    const isFreeAtSlot = (t: ApiTherapist) =>
+      (t.availabilities?.[selectedDate] || []).some((s: string) => parseTimeToMinutes(s) === slotStartMin);
+    const candidates: { id: string; therapist: ApiTherapist | null }[] = [
+      { id: selectedTherapistId, therapist: selectedTherapist },
+      ...therapists
+        .filter((t) => t.id && t.id !== selectedTherapistId && isFreeAtSlot(t))
+        .map((t) => ({ id: t.id, therapist: t })),
+    ];
 
-      if (!res.ok) {
+    // Errors that mean "this therapist cannot take the slot" → try the next one.
+    const isTherapistConflict = (status: number, msg: string) =>
+      /therapist/i.test(msg) && /(already booked|not available|unavailable|conflict|overlap|busy)/i.test(msg)
+      || (status === 409 && /therapist/i.test(msg));
+
+    try {
+      for (const cand of candidates) {
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+          body: JSON.stringify(buildPayload(cand.therapist, cand.id)),
+        });
+
+        if (res.ok) {
+          if (cand.id !== selectedTherapistId) {
+            // Reflect the therapist that was actually assigned.
+            setSelectedTherapistId(cand.id);
+            setSelectedTherapist(cand.therapist);
+          }
+          setSubmitSuccess(true);
+          setTimeout(() => {
+            onSuccess?.();
+            onClose();
+          }, 900);
+          return;
+        }
+
         const errData = await res.json().catch(() => ({}));
-        const msg = errData.detail || errData.message || (typeof errData.error === 'string' ? errData.error : errData.error?.message) || `Error ${res.status}`;
-        throw new Error(msg);
+        const msg = String(
+          errData.detail || errData.message ||
+          (typeof errData.error === 'string' ? errData.error : errData.error?.message) ||
+          `Error ${res.status}`,
+        );
+        if (!isTherapistConflict(res.status, msg)) {
+          throw new Error(msg);
+        }
+        // Conflict for this therapist → continue with the next available one.
       }
 
-      setSubmitSuccess(true);
-      setTimeout(() => {
-        onSuccess?.();
-        onClose();
-      }, 900);
+      // Every therapist in the list is booked for this slot.
+      throw new Error(
+        `No therapist is available at ${selectedTimeSlot} on ${selectedDate}. Please choose a different time slot.`,
+      );
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to update booking. Please try again.');
     } finally {
@@ -634,10 +778,6 @@ export function RescheduleBookingModal({
         {/* ── Header (Requirement 1.i.a: Booking number, status not change) ── */}
         <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <p className="text-[11px] font-mono font-semibold text-muted-foreground truncate">{ref}</p>
-            </div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-extrabold leading-tight">Reschedule Booking</h2>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300">
@@ -718,10 +858,24 @@ export function RescheduleBookingModal({
 
               {/* ── Branch Selection (Requirement 1.i.c: below service name, changeable) ── */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5 text-sky-500" />
-                  Branch
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <MapPin className="h-3.5 w-3.5 text-sky-500" />
+                    Branch
+                  </label>
+                  {availabilitiesLoading && (
+                    <span className="flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 font-medium">
+                      <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
+                      Checking branch availability…
+                    </span>
+                  )}
+                </div>
+                {availabilitiesError && (
+                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    <span>{availabilitiesError}</span>
+                  </div>
+                )}
                 <div className="relative">
                   <select
                     value={selectedBranchId}
@@ -852,7 +1006,7 @@ export function RescheduleBookingModal({
                         onClick={() => {
                           const d = new Date();
                           d.setDate(d.getDate() + 1);
-                          const tomorrowStr = d.toISOString().split('T')[0];
+                          const tomorrowStr = kuwaitDateString(d);
                           setSelectedDate(tomorrowStr <= maxDateStr ? tomorrowStr : maxDateStr);
                         }}
                         className={cn(
@@ -860,7 +1014,7 @@ export function RescheduleBookingModal({
                           (() => {
                             const d = new Date();
                             d.setDate(d.getDate() + 1);
-                            return selectedDate === d.toISOString().split('T')[0];
+                            return selectedDate === kuwaitDateString(d);
                           })()
                             ? 'bg-primary text-white border-primary'
                             : 'bg-muted/40 text-muted-foreground border-border hover:bg-muted'

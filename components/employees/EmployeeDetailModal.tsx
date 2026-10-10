@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useEffect, useState } from 'react';
 import {
   X, Phone, Mail, Building2, Briefcase, CalendarDays,
@@ -76,7 +77,7 @@ function formatDate(date: string | null | undefined) {
   if (!date) return null;
   const d = new Date(date);
   if (isNaN(d.getTime())) return String(date);
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 export function EmployeeDetailModal({ employeeId, initialEmployee, onClose }: Props) {

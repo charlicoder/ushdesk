@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { buildAppointmentWindow } from '@/lib/datetime';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
 // ── Exported types ─────────────────────────────────────────────────────────────
@@ -518,6 +519,15 @@ export function NewBranchBookingModal({
       date, formattedDate,
       time_slot:        timeHHMM,
       displayTime:      timeSlot,
+      ...(() => {
+        const w = buildAppointmentWindow(date, timeHHMM, totalDuration);
+        return {
+          timezone:          w.timezone,
+          appointment_date:  w.appointment_date,
+          appointment_start: w.appointment_start,
+          appointment_end:   w.appointment_end,
+        };
+      })(),
       customer_id:      form.customerId,
       customer_data: customerName ? {
         customer_name: customerName,

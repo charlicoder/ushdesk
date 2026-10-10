@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle, X,
@@ -282,7 +283,7 @@ function formatDateTime(iso: string | null) {
   const s = String(iso).trim();
   let dateStr = s;
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return String(iso);
@@ -293,7 +294,7 @@ function formatDateTime(iso: string | null) {
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-    timeZone: 'UTC',
+    timeZone: KUWAIT_TZ,
   });
 }
 
@@ -311,7 +312,7 @@ function formatDate(iso: string | null) {
   }
   let dateStr = s;
   if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(dateStr)) {
-    dateStr = dateStr.replace(' ', 'T') + 'Z';
+    dateStr = dateStr.replace(' ', 'T') + '+03:00';
   }
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return String(iso);
@@ -319,7 +320,7 @@ function formatDate(iso: string | null) {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: KUWAIT_TZ,
   });
 }
 

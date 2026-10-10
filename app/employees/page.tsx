@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import {
   UserCheck, Phone, Mail, Building2, Briefcase,
@@ -140,7 +141,7 @@ function initials(name: string) {
 
 function formatDate(date: string | null) {
   if (!date) return null;
-  return new Date(date).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return new Date(date).toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 // ── Filter Select ──────────────────────────────────────────────────────────────

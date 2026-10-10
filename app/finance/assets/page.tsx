@@ -1,5 +1,6 @@
 'use client';
 
+import { kuwaitDateString } from '@/lib/datetime';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Boxes,
@@ -486,7 +487,7 @@ function NewAssetModal({ onClose, onCreated }: { onClose: () => void; onCreated:
 
   const [name, setName] = useState('');
   const [group, setGroup] = useState('');
-  const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
+  const [purchaseDate, setPurchaseDate] = useState(kuwaitDateString());
   const [cost, setCost] = useState('');
   const [salvage, setSalvage] = useState('0');
   const [periods, setPeriods] = useState('36');

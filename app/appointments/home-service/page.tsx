@@ -11,6 +11,7 @@ import {
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { buildAppointmentWindow, kuwaitWallClockDate } from '@/lib/datetime';
 import { CreateCustomerModal, type CreatedCustomer } from '@/components/bookings/CreateCustomerModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -639,6 +640,11 @@ function BookingFormModal({
       const extraP      = extraMinutesPrice;
       const total       = totalPrice;
       const timeHHMM    = toHHMM(timeSlot);
+      const apptWindow  = buildAppointmentWindow(
+        date,
+        timeHHMM,
+        (svc.duration_minutes ?? 0) + addonDuration + form.extraMinutes,
+      );
 
       const body = {
         service_id:         svc.id,
@@ -679,7 +685,10 @@ function BookingFormModal({
           area:           form.area,
         },
         booking_type: 'home',
-        appointment_start: slotIsoStart,
+        timezone:          apptWindow.timezone,
+        appointment_date:  apptWindow.appointment_date,
+        appointment_start: apptWindow.appointment_start,
+        appointment_end:   apptWindow.appointment_end,
         pricing_details: {
           base:              fmtPrice(baseP),
           base_price:        fmtPrice(baseP),
@@ -1464,7 +1473,7 @@ function buildScheduleFromApi(
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
     if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
-    const s = new Date(bk.start); const e = new Date(bk.end);
+    const s = kuwaitWallClockDate(bk.start); const e = kuwaitWallClockDate(bk.end);
     const sm = s.getUTCHours() * 60 + s.getUTCMinutes(); const em = e.getUTCHours() * 60 + e.getUTCMinutes();
     const fmt = (h: number, m: number) => { const ap = h >= 12 ? 'PM' : 'AM'; const hd = h % 12 === 0 ? 12 : h % 12; return `${String(hd).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`; };
     const dur = bk.duration_minutes ?? (em - sm);

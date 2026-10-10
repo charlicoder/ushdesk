@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { useState, useMemo, useEffect } from 'react';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
@@ -41,7 +42,7 @@ function fmtTime(isoStr: string): string {
   if (!isoStr) return '';
   const d = new Date(isoStr);
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString('en-US', { timeZone: KUWAIT_TZ, hour: '2-digit', minute: '2-digit' });
 }
 
 export function BookingFormDialog({
