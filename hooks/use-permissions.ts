@@ -7,7 +7,16 @@
  */
 
 import { useAppSelector } from '@/store/hooks';
-import { hasPermission, hasAnyPermission, isAdmin as checkIsAdmin } from '@/lib/permissions';
+import {
+  hasPermission,
+  hasAnyPermission,
+  isAdmin as checkIsAdmin,
+  isAdministratorRole,
+  isSpaDirectorRole,
+  isFinanceManagerRole,
+  isRefundsAndFinancePermittedRole,
+  isRefundsOrFinancePermission,
+} from '@/lib/permissions';
 
 export function usePermissions() {
   const user        = useAppSelector((s) => s.auth.user);
@@ -15,21 +24,34 @@ export function usePermissions() {
   const roleInfo    = useAppSelector((s) => s.auth.roleInfo);
 
   const userType   = user?.user_type ?? null;
-  // Treat both admin user_type AND is_superuser flag as full access
-  const adminAccess = checkIsAdmin(userType) || (roleInfo?.is_superuser === true);
+  // Treat admin user_type, is_superuser flag, or Administrator role as full access
+  const adminAccess = checkIsAdmin(userType) || (roleInfo?.is_superuser === true) || isAdministratorRole(roleInfo, user);
+  const isRefundsAndFinanceAllowed = isRefundsAndFinancePermittedRole(roleInfo, user);
 
   return {
-    /** True if the current user has full access (admin user_type or is_superuser flag) */
+    /** True if the current user has full access (admin user_type or is_superuser flag or administrator role) */
     isAdmin: adminAccess,
+
+    /** True if the user is a Spa Director */
+    isSpaDirector: isSpaDirectorRole(roleInfo, user),
+
+    /** True if the user is a Finance Manager */
+    isFinanceManager: isFinanceManagerRole(roleInfo, user),
+
+    /** True if user has access to Refunds and Finance submenus */
+    isRefundsAndFinancePermitted: isRefundsAndFinanceAllowed,
 
     /** Check if the user has a specific permission string */
     can: (permission: string): boolean => {
       if (adminAccess) return true;
-      return hasPermission(userType, permissions, permission);
+      if (isRefundsAndFinanceAllowed && isRefundsOrFinancePermission(permission)) {
+        return true;
+      }
+      return hasPermission(userType, permissions, permission, roleInfo, user);
     },
 
     /** True if the employee has at least one permission; always true for admins/superusers */
-    hasAnyPermission: adminAccess || hasAnyPermission(userType, permissions),
+    hasAnyPermission: adminAccess || isRefundsAndFinanceAllowed || hasAnyPermission(userType, permissions, roleInfo, user),
 
     /** The raw permissions codenames array */
     permissions,
@@ -41,3 +63,4 @@ export function usePermissions() {
     userType,
   };
 }
+

@@ -77,6 +77,28 @@ export const ADMIN_USER_TYPES = ['admin', 'administrator', 'superuser'] as const
 
 export type AllowedUserType = (typeof ALLOWED_USER_TYPES)[number];
 
+import { loadUser } from './api';
+
+// ─── Role & Permission Types ──────────────────────────────────────────────────
+
+export interface RoleInfoLike {
+  role_id?: string | null;
+  role_name?: string | null;
+  role_description?: string | null;
+  role_code?: string | null;
+  is_superuser?: boolean;
+  is_branch_manager?: boolean;
+  is_therapist_role?: boolean;
+}
+
+export interface UserLike {
+  user_type?: string | null;
+  role?: string | null;
+  role_name?: string | null;
+  role_title?: string | null;
+  position?: string | null;
+}
+
 // ─── Permission helpers ───────────────────────────────────────────────────────
 
 /**
@@ -98,28 +120,138 @@ export function isCustomerType(userType: string | undefined | null): boolean {
 }
 
 /**
+ * Extracts and normalizes role candidate strings from roleInfo and user data.
+ */
+function extractRoleCandidates(roleInfo?: RoleInfoLike | null, user?: UserLike | null): string[] {
+  if (!roleInfo && !user && typeof window !== 'undefined') {
+    try {
+      const stored = loadUser() as (UserLike & { roleInfo?: RoleInfoLike }) | null;
+      if (stored) {
+        roleInfo = stored.roleInfo ?? null;
+        user = stored;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const rawValues = [
+    roleInfo?.role_name,
+    roleInfo?.role_description,
+    roleInfo?.role_code,
+    user?.role,
+    user?.role_name,
+    user?.role_title,
+    user?.position,
+    user?.user_type,
+  ];
+
+  return rawValues
+    .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    .map((s) => s.trim().toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' '));
+}
+
+/**
+ * Checks whether the current user has the Administrator role.
+ */
+export function isAdministratorRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  if (roleInfo?.is_superuser === true) return true;
+  if (isAdmin(user?.user_type)) return true;
+
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['administrator', 'admin', 'superuser'];
+  return candidates.some((c) =>
+    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
+  );
+}
+
+/**
+ * Checks whether the current user has the Spa Director role.
+ */
+export function isSpaDirectorRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['spa director', 'spadirector'];
+  return candidates.some((c) =>
+    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
+  );
+}
+
+/**
+ * Checks whether the current user has the Finance Manager role.
+ */
+export function isFinanceManagerRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['finance manager', 'financemanager'];
+  return candidates.some((c) =>
+    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
+  );
+}
+
+/**
+ * Checks whether the user is in one of the roles granted access to
+ * the Refunds submenu under Bookings and all submenus under Finance:
+ * - Administrator
+ * - Spa Director
+ * - Finance Manager
+ */
+export function isRefundsAndFinancePermittedRole(
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  return (
+    isAdministratorRole(roleInfo, user) ||
+    isSpaDirectorRole(roleInfo, user) ||
+    isFinanceManagerRole(roleInfo, user)
+  );
+}
+
+/**
+ * Checks whether a given permission corresponds to the Refunds submenu
+ * or any Finance menu / submenu.
+ */
+export function isRefundsOrFinancePermission(permission: string): boolean {
+  return (
+    permission === PERMISSIONS.BOOKINGS_REFUNDS ||
+    permission === PERMISSIONS.BOOKINGS ||
+    permission === PERMISSIONS.FINANCE ||
+    permission.startsWith('deskmenu.finance')
+  );
+}
+
+/**
  * Check whether a user has a given permission.
- * - Admins always return true.
- * - Employees must have the permission string in their permissions array.
+ * - Admins and Administrator roles always return true.
+ * - Spa Director and Finance Manager have automatic access to Refunds and Finance menus.
+ * - Other employees must have the permission string in their permissions array.
  */
 export function hasPermission(
   userType: string | undefined | null,
   permissions: string[],
   permission: string,
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
 ): boolean {
   if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (isRefundsAndFinancePermittedRole(roleInfo, user) && isRefundsOrFinancePermission(permission)) {
+    return true;
+  }
   return permissions.includes(permission);
 }
 
 /**
  * Check whether the employee has at least one permission assigned.
- * Admins always return true.
+ * Admins, superusers, and privileged roles always return true.
  */
 export function hasAnyPermission(
   userType: string | undefined | null,
   permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
 ): boolean {
   if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (isRefundsAndFinancePermittedRole(roleInfo, user)) return true;
   return permissions.length > 0;
 }
 
@@ -129,3 +261,4 @@ export {
   getBookingAppointmentDateTime,
   MIN_HOURS_BEFORE_CANCELLATION,
 } from './cancellation-policy';
+

@@ -7,7 +7,12 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { store } from '@/store';
 import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice';
 import { getSessionRemainingMs, clearToken } from '@/lib/api';
-import { hasAnyPermission, isAdmin } from '@/lib/permissions';
+import {
+  hasAnyPermission,
+  isAdmin,
+  isAdministratorRole,
+  isRefundsAndFinancePermittedRole,
+} from '@/lib/permissions';
 
 // ── Ensure all client-side fetch requests send Accept-Language header ────────
 if (typeof window !== 'undefined') {
@@ -103,12 +108,19 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     } else if (user && isPublic) {
       router.replace('/');
     } else if (user && !isNoPermPage) {
-      // If user is logged in but has NO permissions (and is not an admin/superuser),
+      // If user is logged in but has NO permissions (and is not an admin/superuser/privileged role),
       // redirect to the no-permission page
-      const authState = store.getState().auth as { permissions: string[]; roleInfo: { is_superuser?: boolean } | null };
+      const authState = store.getState().auth as {
+        permissions: string[];
+        roleInfo: { is_superuser?: boolean; role_name?: string | null } | null;
+      };
       const userPerms  = authState.permissions;
-      const isSuperuser = authState.roleInfo?.is_superuser === true;
-      if (!isAdmin(user.user_type) && !isSuperuser && !hasAnyPermission(user.user_type, userPerms)) {
+      const roleInfo   = authState.roleInfo;
+      const isSuperuser = roleInfo?.is_superuser === true;
+      const isAdminAccess = isAdmin(user.user_type) || isSuperuser || isAdministratorRole(roleInfo, user);
+      const isPrivileged = isRefundsAndFinancePermittedRole(roleInfo, user);
+
+      if (!isAdminAccess && !isPrivileged && !hasAnyPermission(user.user_type, userPerms, roleInfo, user)) {
         router.replace('/no-permission');
       }
     }

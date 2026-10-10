@@ -173,6 +173,10 @@ export function Sidebar() {
 
     return { ...item, children: filteredChildren };
   }).filter((item) => {
+    // If the item had submenus originally, but all were filtered out, hide the empty parent
+    if (item.children && item.children.length === 0) return false;
+    // If it has visible submenus, keep the parent visible
+    if (item.children && item.children.length > 0) return true;
     if (!item.permission) return true; // no permission required — always show
     return can(item.permission);
   });
