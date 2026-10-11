@@ -16,6 +16,7 @@ import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString, nowWithTimezone } from
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility, getBookingAppointmentDateTime } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
+import { UpdateBookingModal } from '@/components/bookings/UpdateBookingModal';
 import { ChangeTherapistModal } from '@/components/bookings/ChangeTherapistModal';
 import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
@@ -449,6 +450,17 @@ export function BookingDetailPopup({
   }, [selectedProviderId]);
 
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateFetchState, setUpdateFetchState] = useState<{
+    params: {
+      serviceId: string;
+      arrangementType: string;
+      branchId: string;
+      appointmentDate: string;
+      daysCount: number;
+    };
+    promise?: Promise<any>;
+  } | null>(null);
   const [showChangeTherapistModal, setShowChangeTherapistModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -742,6 +754,75 @@ export function BookingDetailPopup({
     setShowRescheduleModal(true);
   }, [canReschedule, detail, booking, rescheduleDaysCount]);
 
+  const handleOpenUpdateBooking = useCallback(() => {
+    if (!booking) return;
+
+    const rawBk = (detail || booking.raw || booking) as Record<string, any>;
+    const sd = (rawBk.service_data || rawBk.service || {}) as Record<string, any>;
+    const sad = (rawBk.service_arrangement_data || rawBk.arrangement || rawBk.service_arrangement || {}) as Record<string, any>;
+    const bd = (rawBk.branch_data || rawBk.branch || {}) as Record<string, any>;
+
+    const serviceId = String(
+      rawBk.service_id ||
+      sd.service_id ||
+      sd.id ||
+      (booking as any)?.service_id ||
+      ''
+    );
+    const arrangementType = String(
+      sad.arrangement_type ||
+      sad.type ||
+      rawBk.arrangement_type ||
+      rawBk.room_type ||
+      'room'
+    );
+    const branchId = String(
+      rawBk.branch_id ||
+      bd.branch_id ||
+      bd.id ||
+      (booking as any)?.branch_id ||
+      ''
+    );
+
+    const apptStart = (detail?.appointment_start || booking?.appointment_start || rawBk.appointment_start || '') as string;
+    const appointmentDate = apptStart
+      ? (apptStart.includes('T') ? apptStart.split('T')[0] : apptStart.split(' ')[0])
+      : String(rawBk.date || rawBk.booking_date || rawBk.appointment_date || kuwaitDateString());
+
+    const daysCount = rescheduleDaysCount;
+
+    // Send API request: /uauth/api/v1/find-availabilities-for-reschedule-appointment/?service_id=<service_id>&arrangement_type=<arrangement_type>&branch_id=<branch_id>&date=<current appointment booking date>&days_count=<days_count>
+    const qs = new URLSearchParams({
+      service_id: serviceId,
+      arrangement_type: arrangementType,
+      branch_id: branchId,
+      date: appointmentDate,
+      days_count: String(daysCount),
+    });
+    const endpoint = `/uauth/api/v1/find-availabilities-for-reschedule-appointment/?${qs.toString()}`;
+
+    const fetchPromise = authedFetch(endpoint)
+      .then((r) => r.json().catch(() => ({})))
+      .catch((err) => {
+        console.error('Error finding availabilities for update booking:', err);
+        return null;
+      });
+
+    setUpdateFetchState({
+      params: {
+        serviceId,
+        arrangementType,
+        branchId,
+        appointmentDate,
+        daysCount,
+      },
+      promise: fetchPromise,
+    });
+
+    // Window for updating service appears
+    setShowUpdateModal(true);
+  }, [detail, booking, rescheduleDaysCount]);
+
   // Fetch full booking detail (addons, status_history, pricing breakdown) from backend
   useEffect(() => {
     if (!booking?.id) {
@@ -834,6 +915,11 @@ export function BookingDetailPopup({
 
   // Whether payment is pending (not paid yet)
   const isPaymentPending = !isPaid && curStatus !== 'cancelled' && curStatus !== 'completed';
+
+  // 1. If bookings status=payment_pending and appointment_end > current datetime add "Update" button in Booking Details popup window
+  const isPaymentPendingStatus = curStatus === 'payment_pending' || booking.status === 'payment_pending';
+  const isBeforeApptEnd = Boolean(apptEndDateTime && apptEndDateTime.getTime() > Date.now());
+  const canUpdateBooking = isPaymentPendingStatus && isBeforeApptEnd;
 
   // ── Compute durations & amounts adding service + addons + extra minutes ─────
   const addons = (detail?.addons && Array.isArray(detail.addons) && detail.addons.length > 0)
@@ -2141,6 +2227,16 @@ export function BookingDetailPopup({
               <div className="flex items-center gap-2 flex-wrap">
                 {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
                   <>
+                    {/* Update button for payment_pending before appointment_end */}
+                    {canUpdateBooking && (
+                      <button
+                        type="button"
+                        onClick={handleOpenUpdateBooking}
+                        className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
+                      >
+                        Update
+                      </button>
+                    )}
                     {!isPastApptEnd && (
                       <button
                         type="button"
@@ -2293,6 +2389,28 @@ export function BookingDetailPopup({
           }}
           initialRescheduleParams={rescheduleFetchState?.params}
           initialAvailabilitiesPromise={rescheduleFetchState?.promise}
+        />
+      )}
+
+      {/* Update Booking Modal */}
+      {showUpdateModal && booking && (
+        <UpdateBookingModal
+          bookingId={booking.id}
+          initialBooking={(detail || booking) as unknown as Record<string, any>}
+          onClose={() => setShowUpdateModal(false)}
+          onSuccess={() => {
+            setShowUpdateModal(false);
+            onSuccess?.();
+            // Refresh detail to reflect updated booking
+            authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
+              .then((r) => r.json())
+              .then((d) => {
+                setDetail(d);
+              })
+              .catch(() => {});
+          }}
+          initialUpdateParams={updateFetchState?.params}
+          initialAvailabilitiesPromise={updateFetchState?.promise}
         />
       )}
 

@@ -50,7 +50,7 @@ export async function PATCH(
 
   try {
     const upstream = await fetch(url, {
-      method: 'PATCH',
+      method: req.method,
       headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
