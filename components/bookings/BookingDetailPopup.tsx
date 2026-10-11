@@ -2577,11 +2577,21 @@ export function BookingDetailPopup({
           bookingNumber={booking.booking_number || null}
           invoiceNumber={invoiceNumber || null}
           isPaid={
-            booking.is_paid ||
+            (Boolean(booking.is_paid) ||
+            (booking.raw?.is_paid === true) ||
+            (booking.raw?.payments_meta as any)?.is_paid === true ||
+            (booking.raw?.payment_data as any)?.is_paid === true ||
+            rawPaymentStatus === 'success' ||
+            rawPaymentStatus === 'paid' ||
+            rawPaymentStatus === 'completed' ||
             booking.payment_status === 'success' ||
             booking.payment_status === 'paid' ||
-            booking.payment_status === 'completed'
+            booking.payment_status === 'completed') &&
+            curStatus !== 'payment_pending' &&
+            booking.status !== 'payment_pending'
           }
+          bookingStatus={curStatus || booking.status}
+          paymentStatus={rawPaymentStatus || booking.payment_status}
           totalAmount={computedTotal}
           totalDuration={totalDuration}
           currency={currency}

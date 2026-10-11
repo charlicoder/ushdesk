@@ -101,6 +101,8 @@ export interface BookingCancellationModalProps {
   bookingNumber?: string | null;
   invoiceNumber?: string | null;
   isPaid: boolean;
+  bookingStatus?: string | null;
+  paymentStatus?: string | null;
   totalAmount: number;
   totalDuration?: number;       // minutes — required by booknpay (defaults to 0)
   currency?: string;
@@ -120,6 +122,8 @@ export function BookingCancellationModal({
   bookingNumber,
   invoiceNumber,
   isPaid,
+  bookingStatus,
+  paymentStatus,
   totalAmount,
   totalDuration = 0,
   currency = 'KWD',
@@ -134,6 +138,14 @@ export function BookingCancellationModal({
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
+
+  // Whether booking is unpaid / payment_pending (no payment was made, so no refund needed)
+  const isUnpaid =
+    !isPaid ||
+    bookingStatus === 'payment_pending' ||
+    paymentStatus === 'payment_pending' ||
+    paymentStatus === 'pending' ||
+    paymentStatus === 'unpaid';
 
   // Form states
   const [reason, setReason] = useState('');
@@ -161,14 +173,13 @@ export function BookingCancellationModal({
 
   // Validation rules for Confirm Cancellation
   const isReceiptCompleted =
+    isUnpaid ||
     selectedProvider === 'no_refund' ||
     (Boolean(selectedProvider) && Boolean(transactionRefId.trim()));
 
   const isFormValid = Boolean(
     reason.trim() &&
-    selectedProvider &&
-    isReceiptCompleted &&
-    (!isPaid || (refundAmount >= 0 && refundAmount <= totalAmount))
+    (isUnpaid || (selectedProvider && isReceiptCompleted && (!isPaid || (refundAmount >= 0 && refundAmount <= totalAmount))))
   );
 
   const isConfirmDisabled = submitting || !isFormValid;
@@ -197,13 +208,15 @@ export function BookingCancellationModal({
   const validate = (): string[] => {
     const errs: string[] = [];
     if (!reason.trim()) errs.push('Please enter a cancellation reason.');
-    if (!selectedProvider) errs.push('Please select a refund payment method / provider.');
-    if (isPaid && selectedProvider !== 'no_refund' && !transactionRefId.trim()) {
-      errs.push('A transaction / reference ID and receipt scan are required.');
-    }
-    if (isPaid && refundAmount < 0) errs.push('Refund amount cannot be negative.');
-    if (isPaid && refundAmount > totalAmount) {
-      errs.push(`Refund amount cannot exceed the paid amount (${fmt(totalAmount)} ${currency}).`);
+    if (!isUnpaid) {
+      if (!selectedProvider) errs.push('Please select a refund payment method / provider.');
+      if (isPaid && selectedProvider !== 'no_refund' && !transactionRefId.trim()) {
+        errs.push('A transaction / reference ID and receipt scan are required.');
+      }
+      if (isPaid && refundAmount < 0) errs.push('Refund amount cannot be negative.');
+      if (isPaid && refundAmount > totalAmount) {
+        errs.push(`Refund amount cannot exceed the paid amount (${fmt(totalAmount)} ${currency}).`);
+      }
     }
     return errs;
   };
@@ -218,13 +231,15 @@ export function BookingCancellationModal({
     // ── Step 1: Cancel booking ─────────────────────────────────────────────
     setStep('booking');
     try {
-      const provConfig = selectedProvider && selectedProvider !== 'no_refund'
+      const provConfig = !isUnpaid && selectedProvider && selectedProvider !== 'no_refund'
         ? CANCELLATION_PROVIDERS.find((p) => p.id === selectedProvider)
         : null;
 
-      const targetPaymentStatus = selectedProvider === 'no_refund'
+      const targetPaymentStatus = isUnpaid
         ? 'cancelled'
-        : (isPaid ? 'refunded' : 'cancelled');
+        : (selectedProvider === 'no_refund'
+            ? 'cancelled'
+            : (isPaid ? 'refunded' : 'cancelled'));
 
       const cancelBody: Record<string, unknown> = {
         status:         'cancelled',
@@ -319,7 +334,7 @@ export function BookingCancellationModal({
     }
 
     // ── Step 2: Upsert refund payment in booknpay ──────────────────────────
-    if (isPaid && selectedProvider && selectedProvider !== 'no_refund') {
+    if (!isUnpaid && isPaid && selectedProvider && selectedProvider !== 'no_refund') {
       setStep('payment');
       try {
         const refStatus = isPartialRefund ? 'partially_refunded' : 'refunded';
@@ -383,11 +398,11 @@ export function BookingCancellationModal({
       setStep('invoice');
       try {
         const invBody: Record<string, unknown> = {
-          state:         selectedProvider === 'no_refund' ? 'cancelled' : (isPaid ? 'refunded' : 'cancelled'),
+          state:         isUnpaid ? 'cancelled' : (selectedProvider === 'no_refund' ? 'cancelled' : (isPaid ? 'refunded' : 'cancelled')),
           cancel_reason: reason.trim(),
-          refund_method: selectedProvider !== 'no_refund' ? selectedProvider : null,
-          refund_ref:    transactionRefId.trim() || null,
-          refund_amount: selectedProvider !== 'no_refund' ? refundAmount : 0,
+          refund_method: !isUnpaid && selectedProvider !== 'no_refund' ? selectedProvider : null,
+          refund_ref:    !isUnpaid ? (transactionRefId.trim() || null) : null,
+          refund_amount: !isUnpaid && selectedProvider !== 'no_refund' ? refundAmount : 0,
         };
 
         const r = await authedFetch(`/uanr/api/v1/invoices/${encodeURIComponent(invoiceNumber)}/cancel/`, {
@@ -472,7 +487,7 @@ export function BookingCancellationModal({
               <div className="text-center">
                 <h3 className="text-lg font-bold text-foreground">Booking Cancelled</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  {isPaid && selectedProvider !== 'no_refund' && providerConfig
+                  {!isUnpaid && isPaid && selectedProvider !== 'no_refund' && providerConfig
                     ? `${isPartialRefund ? 'Partial refund' : 'Refund'} of ${fmt(refundAmount)} ${currency} via ${providerConfig.label} recorded.`
                     : 'The booking has been cancelled successfully.'}
                 </p>
@@ -501,7 +516,7 @@ export function BookingCancellationModal({
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
               {/* Paid booking info banner */}
-              {isPaid && (
+              {!isUnpaid && isPaid && (
                 <div className="flex items-start gap-3 rounded-xl border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
                   <Info className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                   <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
@@ -528,7 +543,7 @@ export function BookingCancellationModal({
               </div>
 
               {/* Refund amount */}
-              {isPaid && (
+              {!isUnpaid && isPaid && (
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                     <DollarSign className="h-3.5 w-3.5 text-emerald-500" />
@@ -577,128 +592,130 @@ export function BookingCancellationModal({
               )}
 
               {/* ── Step 1: Choose Payment Method / Provider ── */}
-              <div className="border-t border-border/40 pt-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                    <p className="text-xs font-extrabold uppercase tracking-wider text-foreground">
-                      Select Refund Provider <span className="text-destructive">*</span>
-                    </p>
-                  </div>
-                  {selectedProvider ? (
-                    <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                      {providerConfig?.label ?? selectedProvider}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                      Required
-                    </span>
-                  )}
-                </div>
-
-                {/* Provider Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                  {CANCELLATION_PROVIDERS.filter((p) => isPaid ? p.id !== 'no_refund' : true).map((p) => {
-                    const isSel = selectedProvider === p.id;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() => handleSelectProvider(p.id)}
-                        className={cn(
-                          'flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer select-none',
-                          isSel
-                            ? 'border-emerald-500 bg-white dark:bg-card shadow-sm ring-2 ring-emerald-500/20'
-                            : 'border-border/70 bg-card/60 hover:bg-muted/40'
-                        )}
-                      >
-                        <div className="flex items-center justify-between w-full mb-1">
-                          <span className={cn('text-xs font-extrabold', isSel ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground')}>
-                            {p.label}
-                          </span>
-                          {isSel && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                        </div>
-                        <span className="text-[10px] text-muted-foreground leading-tight line-clamp-2">{p.desc}</span>
-                        <span className={cn(
-                          'mt-1.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded',
-                          isSel ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'
-                        )}>
-                          {p.badge}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* ── Step 2: Attached Reference & Receipt Status ── */}
-                {selectedProvider && selectedProvider !== 'no_refund' ? (
-                  <div className="mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-2 animate-in fade-in duration-200">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                        <span className="text-xs font-bold text-foreground">
-                          Refund Reference &amp; Receipt Status
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowPaymentRefModal(true)}
-                        className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
-                      >
-                        {transactionRefId ? 'Edit / Re-scan' : '+ Add Details / Scan'}
-                      </button>
+              {!isUnpaid && (
+                <div className="border-t border-border/40 pt-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      <p className="text-xs font-extrabold uppercase tracking-wider text-foreground">
+                        Select Refund Provider <span className="text-destructive">*</span>
+                      </p>
                     </div>
-
-                    {transactionRefId ? (
-                      <div className="space-y-1.5">
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div className="p-2 rounded-lg bg-card border border-border/60">
-                            <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Ref / Trans ID</span>
-                            <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
-                              {transactionRefId}
-                            </span>
-                          </div>
-                          <div className="p-2 rounded-lg bg-card border border-border/60">
-                            <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Invoice ID</span>
-                            <span className="font-mono font-bold text-foreground truncate block">
-                              {invoiceNumber || 'Auto (INV/...)'}
-                            </span>
-                          </div>
-                        </div>
-                        {receiptImage && (
-                          <div className="flex items-center gap-2.5 pt-1">
-                            <img
-                              src={receiptImage}
-                              alt="Scanned receipt"
-                              className="h-9 w-9 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
-                            />
-                            <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                              ✓ Receipt slip image attached to refund &amp; invoice
-                            </span>
-                          </div>
-                        )}
-                      </div>
+                    {selectedProvider ? (
+                      <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                        {providerConfig?.label ?? selectedProvider}
+                      </span>
                     ) : (
-                      <div className="flex items-center justify-between gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
-                        <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
-                          Please input transaction ID or scan receipt to attach to cancellation record.
-                        </span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
+                        Required
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Provider Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {CANCELLATION_PROVIDERS.filter((p) => isPaid ? p.id !== 'no_refund' : true).map((p) => {
+                      const isSel = selectedProvider === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => handleSelectProvider(p.id)}
+                          className={cn(
+                            'flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer select-none',
+                            isSel
+                              ? 'border-emerald-500 bg-white dark:bg-card shadow-sm ring-2 ring-emerald-500/20'
+                              : 'border-border/70 bg-card/60 hover:bg-muted/40'
+                          )}
+                        >
+                          <div className="flex items-center justify-between w-full mb-1">
+                            <span className={cn('text-xs font-extrabold', isSel ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground')}>
+                              {p.label}
+                            </span>
+                            {isSel && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
+                          </div>
+                          <span className="text-[10px] text-muted-foreground leading-tight line-clamp-2">{p.desc}</span>
+                          <span className={cn(
+                            'mt-1.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded',
+                            isSel ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'
+                          )}>
+                            {p.badge}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* ── Step 2: Attached Reference & Receipt Status ── */}
+                  {selectedProvider && selectedProvider !== 'no_refund' ? (
+                    <div className="mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-2 animate-in fade-in duration-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                          <span className="text-xs font-bold text-foreground">
+                            Refund Reference &amp; Receipt Status
+                          </span>
+                        </div>
                         <button
                           type="button"
                           onClick={() => setShowPaymentRefModal(true)}
-                          className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
+                          className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
                         >
-                          Input / Scan Now
+                          {transactionRefId ? 'Edit / Re-scan' : '+ Add Details / Scan'}
                         </button>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="mt-3 p-3 rounded-xl border border-dashed border-border/80 bg-muted/20 text-xs text-muted-foreground text-center">
-                    Please select a refund provider above to enter transaction details.
-                  </div>
-                )}
-              </div>
+
+                      {transactionRefId ? (
+                        <div className="space-y-1.5">
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="p-2 rounded-lg bg-card border border-border/60">
+                              <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Ref / Trans ID</span>
+                              <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
+                                {transactionRefId}
+                              </span>
+                            </div>
+                            <div className="p-2 rounded-lg bg-card border border-border/60">
+                              <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Invoice ID</span>
+                              <span className="font-mono font-bold text-foreground truncate block">
+                                {invoiceNumber || 'Auto (INV/...)'}
+                              </span>
+                            </div>
+                          </div>
+                          {receiptImage && (
+                            <div className="flex items-center gap-2.5 pt-1">
+                              <img
+                                src={receiptImage}
+                                alt="Scanned receipt"
+                                className="h-9 w-9 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
+                              />
+                              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                                ✓ Receipt slip image attached to refund &amp; invoice
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
+                          <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
+                            Please input transaction ID or scan receipt to attach to cancellation record.
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setShowPaymentRefModal(true)}
+                            className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
+                          >
+                            Input / Scan Now
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-3 p-3 rounded-xl border border-dashed border-border/80 bg-muted/20 text-xs text-muted-foreground text-center">
+                      Please select a refund provider above to enter transaction details.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* What will be updated checklist */}
               <div className="rounded-xl border border-border/40 bg-muted/20 p-3.5 space-y-1.5">
@@ -706,11 +723,13 @@ export function BookingCancellationModal({
                 <ul className="space-y-1">
                   {[
                     'Booking status → Cancelled',
-                    isPaid && selectedProvider && selectedProvider !== 'no_refund'
-                      ? `Payment record → ${isPartialRefund ? 'partially_refunded' : 'refunded'} (${fmt(refundAmount)} ${currency} via ${providerConfig?.label ?? selectedProvider})`
-                      : 'Payment record → Cancelled',
-                    invoiceNumber ? `Invoice ${invoiceNumber} → ${isPaid ? 'Refunded' : 'Cancelled'}` : null,
-                    isPaid && selectedProvider && selectedProvider !== 'no_refund' ? 'reference_id & receipt_image stored on payment record' : null,
+                    !isUnpaid && (
+                      isPaid && selectedProvider && selectedProvider !== 'no_refund'
+                        ? `Payment record → ${isPartialRefund ? 'partially_refunded' : 'refunded'} (${fmt(refundAmount)} ${currency} via ${providerConfig?.label ?? selectedProvider})`
+                        : (selectedProvider === 'no_refund' ? 'Payment record → Cancelled' : null)
+                    ),
+                    (!isUnpaid && invoiceNumber) ? `Invoice ${invoiceNumber} → ${isPaid ? 'Refunded' : 'Cancelled'}` : null,
+                    !isUnpaid && isPaid && selectedProvider && selectedProvider !== 'no_refund' ? 'reference_id & receipt_image stored on payment record' : null,
                     'Appointment slot released for re-booking',
                   ].filter(Boolean).map((item, i) => (
                     <li key={i} className="flex items-start gap-1.5 text-[11px] text-muted-foreground">
