@@ -24,7 +24,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
-import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
+import { CreateCustomerModal, COUNTRY_CODES, type CreatedCustomer } from './CreateCustomerModal';
 import { PaymentReferenceModal, type PaymentReferenceData } from './PaymentReferenceModal';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
@@ -67,6 +67,7 @@ export interface ProductItem {
   image?: string | null;
   description?: string | null;
   sku?: string | null;
+  is_gift_eligible?: boolean;
 }
 
 interface SlimService {
@@ -907,7 +908,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
   // ── Recipient & Sender State ──
   const [recipientName, setRecipientName] = useState('');
+  const [recipientCountryCode, setRecipientCountryCode] = useState('+965');
   const [recipientPhone, setRecipientPhone] = useState('');
+  const [senderName, setSenderName] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [giftMessage, setGiftMessage] = useState('');
   const [giftTemplate, setGiftTemplate] = useState(GIFT_TEMPLATES[0]);
@@ -982,12 +985,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       .finally(() => setCategoriesLoading(false));
   }, [authHeader]);
 
-  // ── 2. Fetch Products if Physical ──
+  // ── 2. Fetch Products if Physical (is_gift_eligible=True only) ──
   useEffect(() => {
     if (!isPhysical) return;
     setProductsLoading(true);
     setProductsError(null);
-    authedFetch('/uauth/api/v1/products/', {
+    authedFetch('/uauth/api/v1/products/?is_gift_eligible=true', {
       headers: { Authorization: authHeader, Accept: 'application/json' },
     })
       .then(async (res) => {
@@ -998,7 +1001,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         else if (Array.isArray(data.data)) list = data.data;
         else if (Array.isArray(data.results)) list = data.results;
 
-        const norm: ProductItem[] = list.map((p) => ({
+        // Ensure only is_gift_eligible=True products are included
+        const eligibleList = list.filter((p) => {
+          const val = p.is_gift_eligible;
+          return val === true || val === 1 || String(val).toLowerCase() === 'true';
+        });
+
+        const norm: ProductItem[] = eligibleList.map((p) => ({
           id: String(p.id ?? ''),
           name: String(p.name ?? p.product_name ?? ''),
           category: String(p.category ?? p.product_category ?? 'Wellness'),
@@ -1008,6 +1017,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
           image: p.image ?? p.image1 ?? p.thumbnail ?? null,
           description: p.description ?? null,
           sku: p.sku ?? p.code ?? null,
+          is_gift_eligible: true,
         }));
         setProducts(norm);
         if (norm.length > 0 && !selectedProduct) {
@@ -1083,7 +1093,16 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const handleSelectRecipient = (c: Customer) => {
     setRecipient(c);
     setRecipientName(customerLabel(c));
-    setRecipientPhone(customerPhone(c));
+    const rawPhone = customerPhone(c);
+    if (rawPhone) {
+      const matched = COUNTRY_CODES.find((item) => rawPhone.startsWith(item.code));
+      if (matched) {
+        setRecipientCountryCode(matched.code);
+        setRecipientPhone(rawPhone.slice(matched.code.length).trim());
+      } else {
+        setRecipientPhone(rawPhone.trim());
+      }
+    }
     if (c.email) setRecipientEmail(c.email);
   };
 
@@ -1157,11 +1176,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const toggleAddon = (addon: AddonItem, checked: boolean) =>
     setSelectedAddons((prev) => (checked ? [...prev, addon] : prev.filter((a) => a.id !== addon.id)));
 
-  // Filtered products
+  // Filtered products (only is_gift_eligible)
   const filteredProducts = useMemo(() => {
-    if (!productSearch.trim()) return products;
+    const eligible = products.filter((p) => p.is_gift_eligible !== false);
+    if (!productSearch.trim()) return eligible;
     const q = productSearch.toLowerCase();
-    return products.filter((p) => p.name.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q)));
+    return eligible.filter((p) => p.name.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q)));
   }, [products, productSearch]);
 
   // Validation
@@ -1224,6 +1244,22 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     const arrName = selectedArrangt?.arrangement_name ?? String(arrRaw?.name ?? 'Room');
 
     const customerId = sender?.id ?? '';
+
+    const cleanPhoneDigits = recipientPhone.replace(/\D/g, '');
+    const cleanCodeDigits = recipientCountryCode.replace(/\D/g, '');
+    let finalRecipientPhone = recipientPhone.trim();
+
+    if (finalRecipientPhone) {
+      if (finalRecipientPhone.startsWith('+')) {
+        finalRecipientPhone = `+${cleanPhoneDigits}`;
+      } else if (cleanPhoneDigits.startsWith(cleanCodeDigits)) {
+        finalRecipientPhone = `+${cleanPhoneDigits}`;
+      } else {
+        finalRecipientPhone = `${recipientCountryCode}${cleanPhoneDigits}`;
+      }
+    }
+
+    const resolvedSenderName = senderName.trim() || (sender ? customerLabel(sender) : '');
 
     const payload = {
       gift_category: (selectedCategory?.code ?? 'DIGITAL').toLowerCase(),
@@ -1302,17 +1338,18 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       total_duration: totalDuration,
       total_amount: totalPrice,
       currency,
-      recipient_phone: recipientPhone,
+      recipient_phone: finalRecipientPhone,
       recipient_id: recipient?.id || null,
       recipient_data: {
-        name: recipientName,
-        phone_number: recipientPhone,
+        name: recipientName.trim(),
+        phone_number: finalRecipientPhone,
         email: recipientEmail,
       },
       sender_id: sender?.id || null,
+      gift_from: resolvedSenderName || null,
       sender_data: {
         id: sender?.id ?? '',
-        name: sender ? customerLabel(sender) : '',
+        name: resolvedSenderName,
         phone_number: sender ? customerPhone(sender) : '',
         email: sender?.email ?? '',
       },
@@ -1559,7 +1596,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <SectionLabel icon={ShoppingBag} label="Choose Wellness Product" />
-                  <span className="text-[11px] text-muted-foreground">{products.length} products available</span>
+                  <span className="text-[11px] text-muted-foreground">{filteredProducts.length} products available</span>
                 </div>
 
                 {/* Search */}
@@ -1848,7 +1885,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 <div className="rounded-2xl border p-4 space-y-3" style={{ borderColor: B.linen, background: B.cardBg }}>
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
-                      Recipient Name <span className="text-red-500">*</span>
+                      To <span className="text-red-500">*</span>
                     </label>
                     <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5" style={{ borderColor: B.linen }}>
                       <User className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -1866,13 +1903,47 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
                       Recipient Phone Number <span className="text-red-500">*</span>
                     </label>
+                    <div className="flex gap-2">
+                      <div className="relative shrink-0 w-[120px]">
+                        <select
+                          value={recipientCountryCode}
+                          onChange={(e) => setRecipientCountryCode(e.target.value)}
+                          className="w-full h-10 rounded-xl border pl-2.5 pr-7 text-xs font-semibold outline-none transition focus:border-primary cursor-pointer appearance-none"
+                          style={{ borderColor: B.linen, background: B.cardBg, color: B.textMain }}
+                          aria-label="Country Code"
+                        >
+                          {COUNTRY_CODES.map((c) => (
+                            <option key={c.code + c.country} value={c.code} className="py-1">
+                              {c.flag} {c.code}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none opacity-60" />
+                      </div>
+                      <div className="relative flex-1 flex items-center gap-2 rounded-xl border px-3.5 h-10" style={{ borderColor: B.linen }}>
+                        <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
+                        <input
+                          type="tel"
+                          value={recipientPhone}
+                          onChange={(e) => setRecipientPhone(e.target.value)}
+                          placeholder="9000 0000"
+                          className="flex-1 bg-transparent text-sm outline-none font-medium"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
+                      From
+                    </label>
                     <div className="flex items-center gap-2 rounded-xl border px-3.5 py-2.5" style={{ borderColor: B.linen }}>
-                      <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <User className="h-4 w-4 text-muted-foreground shrink-0" />
                       <input
-                        type="tel"
-                        value={recipientPhone}
-                        onChange={(e) => setRecipientPhone(e.target.value)}
-                        placeholder="+965 9000 0000"
+                        type="text"
+                        value={senderName}
+                        onChange={(e) => setSenderName(e.target.value)}
+                        placeholder="Sender name"
                         className="flex-1 bg-transparent text-sm outline-none font-medium"
                       />
                     </div>
@@ -1885,8 +1956,14 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       value={sender}
                       onSelect={(c) => {
                         setSender(c);
+                        if (c) {
+                          setSenderName(customerLabel(c));
+                        }
                       }}
-                      onClear={() => setSender(null)}
+                      onClear={() => {
+                        setSender(null);
+                        setSenderName('');
+                      }}
                       onCreateNew={() => {
                         setCreateForRole('sender');
                         setShowCreateCustomer(true);
@@ -1897,9 +1974,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   </div>
                 </div>
 
-                {/* Personal Message */}
+                {/* Gift Message */}
                 <div>
-                  <SectionLabel icon={MessageSquare} label="Personal Message (Optional)" />
+                  <SectionLabel icon={MessageSquare} label="Gift Message (Optional)" />
                   <textarea
                     rows={3}
                     value={giftMessage}
@@ -2240,7 +2317,10 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               avatar: created.avatar as string | undefined,
             };
             setInjectedCustomer(asCustomer);
-            if (createForRole === 'sender') setSender(asCustomer);
+            if (createForRole === 'sender') {
+              setSender(asCustomer);
+              setSenderName(customerLabel(asCustomer));
+            }
             if (createForRole === 'recipient') handleSelectRecipient(asCustomer);
           }}
           onClose={() => setShowCreateCustomer(false)}

@@ -9,7 +9,7 @@ import {
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   KeyRound, Edit3, Sparkles, Star,
   Building, MessageSquare, Pencil, Smartphone,
-  Calendar,
+  Calendar, Timer,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -429,94 +429,171 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
           </div>
 
-          {/* Physical: Ordered Items */}
-          {isPhysical && order.ordered_items && order.ordered_items.length > 0 && (
+          {/* Ordered Items & Services */}
+          {(Boolean(order.ordered_items?.length) || Boolean(order.service_data?.name) || Boolean(order.service_id) || Boolean(isDigital && order.digital_product_data) || Boolean(order.addons?.length)) && (
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
-                <Package className="h-3.5 w-3.5 text-primary" />Ordered Items ({order.ordered_items.length})
+                <Package className="h-3.5 w-3.5 text-primary" />
+                Ordered Items
+                {order.ordered_items && order.ordered_items.length > 0 ? ` (${order.ordered_items.length})` : ''}
               </p>
-              <div className="space-y-2">
-                {order.ordered_items.map((item, i) => (
-                  <div key={i} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
-                    {item.image && (
-                      <img src={item.image} alt={item.name_en} className="h-12 w-12 rounded-lg object-cover shrink-0"
+              <div className="space-y-3">
+                {/* Physical Products */}
+                {order.ordered_items && order.ordered_items.length > 0 && (
+                  <div className="space-y-2">
+                    {order.ordered_items.map((item, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
+                        {item.image && (
+                          <img src={item.image} alt={item.name_en || item.name} className="h-12 w-12 rounded-lg object-cover shrink-0"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
+                          <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || order.currency)}</p>
+                        </div>
+                        <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || order.currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Digital: Product Data */}
+                {isDigital && order.digital_product_data && (
+                  <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-blue-500 mb-1">
+                      <Smartphone className="h-3.5 w-3.5" />Digital Gift Details
+                    </div>
+                    {order.digital_product_data?.image && (
+                      <img src={order.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                     )}
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
-                      <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || order.currency)}</p>
-                    </div>
-                    <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || order.currency)}</span>
+                    <p className="font-bold text-sm text-foreground">{order.digital_product_data?.title || order.digital_product_data?.name || 'Digital Gift Item'}</p>
+                    {order.digital_product_data?.price && (
+                      <p className="text-xs text-muted-foreground">{formatAmount(order.digital_product_data.price, order.digital_product_data.currency || order.currency)}</p>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
+                )}
 
-          {/* Digital: Product Data */}
-          {isDigital && (order.digital_product_data || !isPhysical) && (
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
-                <Smartphone className="h-3.5 w-3.5 text-blue-500" />Digital Gift Details
-              </p>
-              <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
-                {order.digital_product_data?.image && (
-                  <img src={order.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                )}
-                <p className="font-bold text-sm text-foreground">{order.digital_product_data?.title || order.digital_product_data?.name || 'Digital Gift Item'}</p>
-                {order.digital_product_data?.price && (
-                  <p className="text-xs text-muted-foreground">{formatAmount(order.digital_product_data.price, order.digital_product_data.currency || order.currency)}</p>
-                )}
-              </div>
-            </div>
-          )}
+                {/* Service Details (including addons & extratime) */}
+                {(order.service_data?.name || order.service_id) && (
+                  <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+                    {order.service_data?.image && (
+                      <img src={order.service_data.image} alt={order.service_data.name} className="w-full h-28 object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    )}
+                    <div className="p-3.5 space-y-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">
+                            <Sparkles className="h-3 w-3" />Spa Service
+                          </div>
+                          <p className="font-bold text-sm text-foreground">{order.service_data?.name || 'Service'}</p>
+                        </div>
+                        {order.service_data?.base_price && (
+                          <span className="text-xs font-bold text-foreground shrink-0">
+                            {formatAmount(order.service_data.base_price, order.service_data.currency || order.currency)}
+                          </span>
+                        )}
+                      </div>
 
-          {/* Service: Service Data */}
-          {!isPhysical && !isDigital && order.service_data?.name && (
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
-                <Sparkles className="h-3.5 w-3.5 text-violet-500" />Service Details
-              </p>
-              <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-                {order.service_data.image && (
-                  <img src={order.service_data.image} alt={order.service_data.name} className="w-full h-28 object-cover"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        {order.service_data?.duration_minutes && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-primary" />{order.service_data.duration_minutes} min
+                          </span>
+                        )}
+                        {order.branch_data?.name && (
+                          <span className="flex items-center gap-1">
+                            <Building className="h-3 w-3 text-muted-foreground" />{order.branch_data.name}
+                          </span>
+                        )}
+                        {order.service_arrangement_data?.arrangement_name && (
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                            {order.service_arrangement_data.arrangement_name}
+                          </span>
+                        )}
+                      </div>
+
+                      {order.service_data?.service_types && order.service_data.service_types.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {order.service_data.service_types.map((st, idx) => (
+                            <span key={st.id || `st-${idx}`} className="rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+                              {st.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add-ons */}
+                      {order.addons && order.addons.length > 0 && (
+                        <div className="pt-2.5 border-t border-border/50">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+                            <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({order.addons.length})
+                          </p>
+                          <div className="space-y-1.5">
+                            {order.addons.map((addon, idx) => (
+                              <div key={addon.id || addon.addon_id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                                <div>
+                                  <span className="font-medium text-foreground">{addon.name}</span>
+                                  {addon.description && <span className="text-[11px] text-muted-foreground block">{addon.description}</span>}
+                                </div>
+                                <span className="font-semibold text-foreground shrink-0 ml-2">
+                                  {formatAmount(addon.price, addon.currency || order.currency)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Extra Time */}
+                      {Boolean(order.extra_time && Number(order.extra_time) > 0) && (
+                        <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Timer className="h-3.5 w-3.5 text-amber-500" />
+                            <span className="font-medium text-foreground">Extra Time:</span>
+                            <span className="font-semibold text-foreground">+{order.extra_time} min</span>
+                          </div>
+                          {order.price_for_extra_time && Number(order.price_for_extra_time) > 0 ? (
+                            <span className="font-semibold text-foreground">
+                              {formatAmount(order.price_for_extra_time, order.currency)}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
-                <div className="p-3 space-y-1.5">
-                  <p className="font-bold text-sm text-foreground">{order.service_data.name}</p>
-                  {order.service_data.base_price && (
-                    <p className="text-xs text-muted-foreground">Base: {formatAmount(order.service_data.base_price, order.service_data.currency || order.currency)}</p>
-                  )}
-                  {order.service_data.duration_minutes && (
-                    <p className="text-xs text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" />{order.service_data.duration_minutes} min</p>
-                  )}
-                  {order.service_data.service_types && order.service_data.service_types.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {order.service_data.service_types.map((st, idx) => (
-                        <span key={st.id || `st-${idx}`} className="rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">{st.name}</span>
+
+                {/* Fallback Addons if no service_data?.name */}
+                {!(order.service_data?.name || order.service_id) && order.addons && order.addons.length > 0 && (
+                  <div className="rounded-xl border border-border/60 bg-card p-3 space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                      <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({order.addons.length})
+                    </p>
+                    <div className="space-y-1.5">
+                      {order.addons.map((addon, idx) => (
+                        <div key={addon.id || addon.addon_id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                          <span className="font-medium text-foreground">{addon.name}</span>
+                          <span className="font-semibold text-foreground shrink-0 ml-2">
+                            {formatAmount(addon.price, addon.currency || order.currency)}
+                          </span>
+                        </div>
                       ))}
                     </div>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* Addons */}
-          {order.addons && order.addons.length > 0 && (
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2">Add-ons</p>
-              <div className="space-y-1.5">
-                {order.addons.map((addon, idx) => (
-                  <div key={addon.id || addon.addon_id || `addon-${idx}`} className="flex items-center justify-between rounded-xl border border-border/50 bg-background p-2.5 text-xs">
-                    <div>
-                      <p className="font-semibold text-foreground">{addon.name}</p>
-                      {addon.description && <p className="text-[11px] text-muted-foreground">{addon.description}</p>}
-                    </div>
-                    <span className="font-bold text-foreground shrink-0 ml-2">{formatAmount(addon.price, addon.currency || order.currency)}</span>
-                  </div>
-                ))}
+          {/* Under Ordered Items: Gift Message */}
+          {order.gift_message && (
+            <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3">
+              <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Gift Message</p>
+                <p className="text-xs text-foreground leading-relaxed italic">&ldquo;{order.gift_message}&rdquo;</p>
               </div>
             </div>
           )}

@@ -6,14 +6,15 @@ import {
   Gift, Loader2, AlertCircle, RefreshCw, ExternalLink, Eye,
   X, CheckCircle2, Clock, XCircle, ChevronDown,
   User, Scissors, MapPin, Timer, Package, CreditCard,
-  MessageSquare, Hash, Building2, Phone, Mail, Calendar,
+  MessageSquare, Hash, Building2, Building, Smartphone, Truck, Phone, Mail, Calendar, CalendarDays,
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
-  KeyRound, Globe,
+  KeyRound, Globe, Send,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
 import { CreateVoucherModal } from '@/components/bookings/CreateVoucherModal';
+import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,49 @@ interface PersonDetails {
   phone_number?: string;
 }
 
+interface BookingData {
+  id?: string;
+  booking_number?: string;
+  booking_no?: string;
+  status?: string;
+  appointment_date?: string;
+  appointment_start?: string;
+  appointment_end?: string;
+  duration_minutes?: number;
+  total_duration?: number;
+  customer_id?: string;
+  customer_name?: string;
+  customer_phone?: string;
+  customer_data?: {
+    name?: string;
+    phone_number?: string;
+    email?: string;
+    [key: string]: any;
+  };
+  therapist_id?: string;
+  therapist_name?: string;
+  therapist_data?: {
+    name?: string;
+    first_name?: string;
+    last_name?: string;
+    [key: string]: any;
+  };
+  branch_name?: string;
+  branch_data?: {
+    name?: string;
+    [key: string]: any;
+  };
+  arrangement_name?: string;
+  arrangement_type?: string;
+  service_arrangement_data?: {
+    arrangement_name?: string;
+    arrangement_type?: string;
+    [key: string]: any;
+  };
+  created_at?: string;
+  [key: string]: any;
+}
+
 interface PaymentTransaction {
   PaymentGateway: string;
   TransactionStatus: string;
@@ -84,6 +128,31 @@ interface PaymentData {
   paymentUrl?: string;
 }
 
+interface OrderedItem {
+  sku?: string;
+  name?: string;
+  image?: string;
+  price?: number | string;
+  name_ar?: string;
+  name_en?: string;
+  currency?: string;
+  quantity?: number;
+  product_id?: string;
+  total_price?: number | string;
+}
+
+interface DeliveryAddress {
+  area?: string;
+  city?: string;
+  block?: string;
+  street?: string;
+  building?: string;
+  floor?: string;
+  apartment?: string;
+  notes?: string;
+  formatted?: string;
+}
+
 interface Voucher {
   id: string;
   voucher_number?: string | null;
@@ -95,6 +164,7 @@ interface Voucher {
   service_arrangement_data: ArrangementData;
   addons: Addon[];
   extra_time: number;
+  price_for_extra_time?: string | null;
   expire_date: string;
   status: string;
   sender_id: string;
@@ -111,9 +181,18 @@ interface Voucher {
   gift_template: string;
   secret_code: string;
   public_token: string;
+  gift_category?: 'physical' | 'digital' | 'service' | string;
+  digital_product_data?: any;
+  ordered_items?: OrderedItem[] | null;
+  delivery_status?: string | null;
+  delivery_status_label?: string | null;
+  delivery_address?: DeliveryAddress | null;
   redeemed_booking_id: string | null;
   redeemed_at: string | null;
+  redeemed_by?: string | null;
+  redeemed_by_data?: PersonDetails | null;
   booking_id: string | null;
+  booking_data?: BookingData | null;
   payment_id: string | null;
   payment_data: PaymentData | null;
   payment_url: string | null;
@@ -144,6 +223,45 @@ function formatDateTime(iso: string | null | undefined): string {
   });
 }
 
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('en-US', { timeZone: KUWAIT_TZ, month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+}
+
+function formatAmount(amount: string | number | null | undefined, currency = 'KWD'): string {
+  if (amount === null || amount === undefined || amount === '') return '—';
+  const val = typeof amount === 'number' ? amount : parseFloat(String(amount));
+  if (isNaN(val)) return '—';
+  return `${val.toFixed(3)} ${currency}`;
+}
+
+function formatAddressPreview(addr: DeliveryAddress | null | undefined): string {
+  if (!addr) return '—';
+  if (addr.formatted) return addr.formatted;
+  const parts = [
+    addr.area     && `Area: ${addr.area}`,
+    addr.block    && `Block: ${addr.block}`,
+    addr.street   && `Street: ${addr.street}`,
+    addr.building && `Bldg: ${addr.building}`,
+    addr.city     && addr.city,
+  ].filter(Boolean);
+  return parts.join(', ') || 'Address Provided';
+}
+
+function formatTime(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString('en-US', {
+    timeZone: KUWAIT_TZ,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 function initials(name: string | null | undefined): string {
   if (!name) return '?';
   return name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
@@ -152,6 +270,103 @@ function initials(name: string | null | undefined): string {
 function fmtMoney(amount: string, currency: string): string {
   const n = parseFloat(amount ?? '0');
   return `${isNaN(n) ? '0.000' : n.toFixed(3)} ${currency}`;
+}
+
+const GIFT_CATEGORY_CONFIG: Record<string, { label: string; color: string; icon: React.ElementType }> = {
+  physical: { label: 'Physical Gift', color: 'text-rose-600 bg-rose-50 dark:bg-rose-950/40 dark:text-rose-300 border-rose-200 dark:border-rose-800', icon: Package },
+  digital:  { label: 'Digital Gift',  color: 'text-blue-600 bg-blue-50 dark:bg-blue-950/40 dark:text-blue-300 border-blue-200 dark:border-blue-800', icon: Smartphone },
+  service:  { label: 'Service Gift',  color: 'text-violet-600 bg-violet-50 dark:bg-violet-950/40 dark:text-violet-300 border-violet-200 dark:border-violet-800', icon: Sparkles },
+};
+
+function getCategoryConfig(category?: string | null, voucher?: Voucher) {
+  const cat = (category || '').toLowerCase();
+  if (cat === 'digital' || (voucher as any)?.digital_product_data || (voucher as any)?.gift_type === 'digital' || (voucher as any)?.gift_type === 'digital_service') {
+    return GIFT_CATEGORY_CONFIG.digital;
+  }
+  if (cat && GIFT_CATEGORY_CONFIG[cat]) {
+    return GIFT_CATEGORY_CONFIG[cat];
+  }
+  return GIFT_CATEGORY_CONFIG.service;
+}
+
+const DELIVERY_STATUS_CONFIG: Record<
+  string,
+  { label: string; badgeClass: string; dotClass: string }
+> = {
+  ordered: {
+    label: 'Ordered',
+    badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+    dotClass: 'bg-amber-500 animate-pulse',
+  },
+  accepted: {
+    label: 'Accepted',
+    badgeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300',
+    dotClass: 'bg-sky-500',
+  },
+  ready_to_go: {
+    label: 'Ready To Go',
+    badgeClass: 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300',
+    dotClass: 'bg-blue-500',
+  },
+  on_the_way: {
+    label: 'On The Way',
+    badgeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300',
+    dotClass: 'bg-sky-500 animate-pulse',
+  },
+  delivered: {
+    label: 'Delivered',
+    badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300',
+    dotClass: 'bg-emerald-500',
+  },
+  received: {
+    label: 'Received',
+    badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
+    dotClass: 'bg-purple-500',
+  },
+};
+
+const ORDER_STATUS_CONFIG: Record<
+  string,
+  { label: string; badgeClass: string; dotClass: string }
+> = {
+  active: {
+    label: 'Active',
+    badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300',
+    dotClass: 'bg-emerald-500',
+  },
+  redeemed: {
+    label: 'Redeemed',
+    badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
+    dotClass: 'bg-purple-500',
+  },
+  expired: {
+    label: 'Expired',
+    badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300',
+    dotClass: 'bg-rose-500',
+  },
+  pending: {
+    label: 'Pending',
+    badgeClass: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300',
+    dotClass: 'bg-amber-500 animate-pulse',
+  },
+  cancelled: {
+    label: 'Cancelled',
+    badgeClass: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300',
+    dotClass: 'bg-zinc-500',
+  },
+};
+
+function getOrderStatusConfig(status?: string | null) {
+  const s = (status || '').toLowerCase();
+  if (ORDER_STATUS_CONFIG[s]) {
+    return ORDER_STATUS_CONFIG[s];
+  }
+  const label = status ? status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, ' ') : '—';
+  return {
+    label,
+    badgeClass: 'bg-muted text-muted-foreground',
+    dotClass: 'bg-muted-foreground',
+  };
 }
 
 const STATUS_CFG: Record<string, { label: string; pill: string; dot: string; icon: React.ElementType }> = {
@@ -165,9 +380,155 @@ function statusCfg(s: string) {
   return STATUS_CFG[s?.toLowerCase()] ?? STATUS_CFG['pending'];
 }
 
+function getVoucherPublicUrl(voucher: Voucher): string {
+  if (voucher.public_token) {
+    return `https://ushspa.co/gift/${voucher.public_token}`;
+  }
+  if (voucher.payment_url) {
+    return voucher.payment_url;
+  }
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'https://desk.ushspa.co';
+  return `${origin}/appointments/gift-vouchers?code=${encodeURIComponent(voucher.secret_code || voucher.id)}`;
+}
+
+// ── Voucher Share Dropdown ─────────────────────────────────────────────────────
+
+interface VoucherShareDropdownProps {
+  voucher: Voucher;
+  label?: string;
+  className?: string;
+  dropUp?: boolean;
+  onSelectChannel: (voucher: Voucher, channel: 'sms' | 'whatsapp') => void;
+  onCopyUrl?: (voucher: Voucher) => void;
+}
+
+function VoucherShareDropdown({
+  voucher,
+  label = 'Share',
+  className,
+  dropUp = false,
+  onSelectChannel,
+  onCopyUrl,
+}: VoucherShareDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = getVoucherPublicUrl(voucher);
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // fallback
+    }
+    setCopied(true);
+    onCopyUrl?.(voucher);
+    setTimeout(() => {
+      setCopied(false);
+      setOpen(false);
+    }, 1200);
+  };
+
+  const handleChannel = (channel: 'sms' | 'whatsapp') => (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpen(false);
+    onSelectChannel(voucher, channel);
+  };
+
+  return (
+    <div className="relative inline-block text-left" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted hover:border-primary/40 hover:text-primary transition shadow-sm',
+          className
+        )}
+        title={label}
+      >
+        <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
+        <span>{label}</span>
+        <ChevronDown className={cn('h-3 w-3 text-muted-foreground transition-transform duration-200', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className={cn(
+              'absolute right-0 z-50 w-52 rounded-2xl border border-border/80 bg-card p-1.5 shadow-2xl space-y-0.5 animate-in fade-in zoom-in-95 duration-150',
+              dropUp ? 'bottom-full mb-1.5 origin-bottom-right' : 'top-full mt-1.5 origin-top-right'
+            )}
+          >
+            <div className="px-2.5 py-1 border-b border-border/40 mb-1">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Share Options</p>
+            </div>
+            <button
+              type="button"
+              onClick={handleChannel('sms')}
+              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left group"
+            >
+              <div className="grid h-7 w-7 place-items-center rounded-lg bg-blue-500/10 text-blue-500 group-hover:bg-blue-500/20 transition">
+                <MessageSquare className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-foreground leading-none">SMS</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Send reminder via SMS</p>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={handleChannel('whatsapp')}
+              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left group"
+            >
+              <div className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/10 text-emerald-500 group-hover:bg-emerald-500/20 transition">
+                <MessageCircle className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-foreground leading-none">WhatsApp</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Send reminder via WhatsApp</p>
+              </div>
+            </button>
+            <div className="border-t border-border/40 my-1" />
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left group"
+            >
+              <div className="grid h-7 w-7 place-items-center rounded-lg bg-muted text-muted-foreground group-hover:text-foreground transition">
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className={cn('font-semibold leading-none', copied ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-foreground')}>
+                  {copied ? 'Copied URL!' : 'Copy Public URL'}
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Copy link to clipboard</p>
+              </div>
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Voucher Detail Modal ───────────────────────────────────────────────────────
 
-function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: () => void }) {
+function VoucherDetailModal({
+  voucher,
+  token,
+  onClose,
+  onShare,
+  onCopyUrl,
+  onReschedule,
+}: {
+  voucher: Voucher;
+  token?: string | null;
+  onClose: () => void;
+  onShare?: (voucher: Voucher, channel: 'sms' | 'whatsapp') => void;
+  onCopyUrl?: (voucher: Voucher) => void;
+  onReschedule?: (voucher: Voucher, bookingId?: string, bookingData?: any) => void;
+}) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
@@ -177,10 +538,101 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
-  const cfg = statusCfg(voucher.status);
-  const StatusIcon = cfg.icon;
+  const catCfg = getCategoryConfig(voucher.gift_category, voucher);
+  const CatIcon = catCfg.icon;
+  const isPhysical = (voucher.gift_category || '').toLowerCase() === 'physical';
+  const isDigital = (voucher.gift_category || '').toLowerCase() === 'digital' || Boolean(voucher.digital_product_data);
+  const delCfg = DELIVERY_STATUS_CONFIG[voucher.delivery_status || 'ordered'] ?? DELIVERY_STATUS_CONFIG.ordered;
+  const ordStatusCfg = getOrderStatusConfig(voucher.status);
+
   const isExpired = voucher.expire_date && new Date(voucher.expire_date) < new Date();
   const canRedeem = !isExpired && voucher.status?.toLowerCase() === 'active';
+  const isRedeemed = voucher.status?.toLowerCase() === 'redeemed' || !!voucher.redeemed_at;
+  const bookingId = voucher.redeemed_booking_id || voucher.booking_id || voucher.booking_data?.id;
+
+  const [fetchedBooking, setFetchedBooking] = useState<BookingData | null>(null);
+  const [loadingBooking, setLoadingBooking] = useState(false);
+
+  useEffect(() => {
+    if (!isRedeemed || !bookingId) return;
+    if (voucher.booking_data && (voucher.booking_data.appointment_date || voucher.booking_data.appointment_start)) {
+      return;
+    }
+    let active = true;
+    setLoadingBooking(true);
+    fetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && data) {
+          setFetchedBooking(data);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to fetch booking details for redeemed voucher:', err);
+      })
+      .finally(() => {
+        if (active) setLoadingBooking(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [isRedeemed, bookingId, voucher.booking_data, token]);
+
+  const booking = voucher.booking_data || fetchedBooking;
+
+  const redeemedByName =
+    booking?.customer_data?.name ||
+    booking?.customer_name ||
+    voucher.redeemed_by_data?.name ||
+    (typeof voucher.redeemed_by === 'string' && !voucher.redeemed_by.includes('-') ? voucher.redeemed_by : null) ||
+    voucher.recipient_data?.name ||
+    voucher.recipient_details?.name ||
+    'Guest';
+
+  const redeemedByPhone =
+    booking?.customer_data?.phone_number ||
+    booking?.customer_phone ||
+    voucher.redeemed_by_data?.phone_number ||
+    voucher.recipient_phone ||
+    voucher.recipient_data?.phone_number ||
+    voucher.recipient_details?.phone_number ||
+    null;
+
+  const redeemedByEmail =
+    booking?.customer_data?.email ||
+    voucher.redeemed_by_data?.email ||
+    voucher.recipient_data?.email ||
+    voucher.recipient_details?.email ||
+    null;
+
+  const apptDateRaw = booking?.appointment_date || booking?.appointment_start;
+  const apptDateFormatted = apptDateRaw ? fmtDate(apptDateRaw) : null;
+  const apptStartFormatted = booking?.appointment_start ? formatTime(booking.appointment_start) : null;
+  const apptEndFormatted = booking?.appointment_end ? formatTime(booking.appointment_end) : null;
+  const apptTimeWindow =
+    apptStartFormatted && apptEndFormatted
+      ? `${apptStartFormatted} – ${apptEndFormatted}`
+      : apptStartFormatted || (apptDateRaw ? formatDateTime(apptDateRaw) : null);
+
+  const therapistName =
+    booking?.therapist_data?.name ||
+    (booking?.therapist_data?.first_name ? `${booking.therapist_data.first_name} ${booking.therapist_data.last_name || ''}`.trim() : null) ||
+    booking?.therapist_name ||
+    null;
+
+  const bookingBranch = booking?.branch_data?.name || booking?.branch_name || voucher.branch_data?.name;
+  const bookingRoom =
+    booking?.service_arrangement_data?.arrangement_name ||
+    booking?.arrangement_name ||
+    voucher.service_arrangement_data?.arrangement_name;
+
+  const bookingNumber = booking?.booking_number || booking?.booking_no || (bookingId ? `BOK-${bookingId.slice(0, 8).toUpperCase()}` : null);
 
   const publicUrl = voucher.public_token
     ? `https://ushspa.co/gift/${voucher.public_token}`
@@ -208,69 +660,476 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
     }
   };
 
-  const barColor: Record<string, string> = {
-    active:   'from-emerald-500 to-teal-400',
-    redeemed: 'from-violet-500 to-indigo-500',
-    expired:  'from-rose-500 to-red-400',
-    pending:  'from-amber-400 to-orange-400',
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-
-      <div className="relative z-10 w-full max-w-xl max-h-[92vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
-
-        {/* Status gradient bar */}
-        <div className={cn('h-1.5 w-full bg-gradient-to-r shrink-0', barColor[voucher.status?.toLowerCase()] ?? 'from-violet-500 to-indigo-500')} />
-
+      <div className="relative z-10 w-full max-w-xl max-h-[90vh] overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl flex flex-col">
         {/* Header */}
-        <div className="shrink-0 flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <Gift className="h-4 w-4 text-primary shrink-0" />
-              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Gift Voucher</p>
+        <div className="flex items-center justify-between border-b border-border/50 bg-muted/40 px-6 py-4 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Gift className="h-5 w-5" />
             </div>
-            <h2 className="text-base font-extrabold leading-tight">{voucher.service_data?.name ?? 'Voucher Details'}</h2>
-            <div className="mt-2 flex items-center gap-2 flex-wrap">
-              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold', cfg.pill)}>
-                <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
-                {cfg.label}
-              </span>
-              {voucher.payment_data?.isPaid && (
-                <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                  <CreditCard className="h-2.5 w-2.5" /> Paid
-                </span>
-              )}
-              {isExpired && voucher.status === 'active' && (
-                <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
-                  <XCircle className="h-2.5 w-2.5" /> Expired
-                </span>
-              )}
+            <div>
+              <h3 className="font-extrabold text-base text-foreground">Gift Voucher Details</h3>
+              <p className="text-xs text-muted-foreground">
+                {formatDate(voucher.created_at)}
+              </p>
             </div>
           </div>
-          <button onClick={onClose}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition"
-            aria-label="Close">
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition">
             <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Scrollable body */}
-        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4" style={{ scrollbarWidth: 'none' }}>
+        <div className="overflow-y-auto flex-1 p-6 space-y-4">
+          {/* Category & Status */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold', catCfg.color)}>
+              <CatIcon className="h-3.5 w-3.5" />{catCfg.label}
+            </span>
+            {voucher.status && (
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', ordStatusCfg.badgeClass)}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', ordStatusCfg.dotClass)} />
+                {ordStatusCfg.label}
+              </span>
+            )}
+            {voucher.payment_data?.isPaid && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                <CreditCard className="h-3 w-3" /> Paid
+              </span>
+            )}
+            {isExpired && voucher.status === 'active' && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                <XCircle className="h-3 w-3" /> Expired
+              </span>
+            )}
+          </div>
 
-          {/* Voucher Code & Public URL Card */}
-          <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+          {/* Sender → Recipient */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">From (Sender)</p>
+              <p className="font-bold text-sm text-foreground">{voucher.sender_data?.name || voucher.sender_details?.name || '—'}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                <Phone className="h-3 w-3 text-primary" />
+                {voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '—'}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">To (Recipient)</p>
+              <p className="font-bold text-sm text-foreground">{voucher.recipient_data?.name || voucher.recipient_details?.name || '—'}</p>
+              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                <Phone className="h-3 w-3 text-primary" />
+                {voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '—'}
+              </p>
+            </div>
+          </div>
+
+          {/* Ordered Items & Services */}
+          {(Boolean(voucher.ordered_items?.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(isDigital && voucher.digital_product_data) || Boolean(voucher.addons?.length)) && (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
+                <Package className="h-3.5 w-3.5 text-primary" />
+                Ordered Items
+                {voucher.ordered_items && voucher.ordered_items.length > 0 ? ` (${voucher.ordered_items.length})` : ''}
+              </p>
+              <div className="space-y-3">
+                {/* Physical Products */}
+                {voucher.ordered_items && voucher.ordered_items.length > 0 && (
+                  <div className="space-y-2">
+                    {voucher.ordered_items.map((item, i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
+                        {item.image && (
+                          <img src={item.image} alt={item.name_en || item.name} className="h-12 w-12 rounded-lg object-cover shrink-0"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
+                          <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || voucher.currency)}</p>
+                        </div>
+                        <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || voucher.currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Digital: Product Data */}
+                {isDigital && voucher.digital_product_data && (
+                  <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-blue-500 mb-1">
+                      <Smartphone className="h-3.5 w-3.5" />Digital Gift Details
+                    </div>
+                    {voucher.digital_product_data?.image && (
+                      <img src={voucher.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    )}
+                    <p className="font-bold text-sm text-foreground">{voucher.digital_product_data?.title || voucher.digital_product_data?.name || 'Digital Gift Item'}</p>
+                    {voucher.digital_product_data?.price && (
+                      <p className="text-xs text-muted-foreground">{formatAmount(voucher.digital_product_data.price, voucher.digital_product_data.currency || voucher.currency)}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Service Details (including addons & extratime) */}
+                {(voucher.service_data?.name || voucher.service_id) && (
+                  <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+                    {voucher.service_data?.image && (
+                      <img src={voucher.service_data.image} alt={voucher.service_data.name} className="w-full h-28 object-cover"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    )}
+                    <div className="p-3.5 space-y-2.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">
+                            <Sparkles className="h-3 w-3" />Spa Service
+                          </div>
+                          <p className="font-bold text-sm text-foreground">{voucher.service_data?.name || 'Service'}</p>
+                        </div>
+                        {(voucher.service_data?.base_price || voucher.total_amount) && (
+                          <span className="text-xs font-bold text-foreground shrink-0">
+                            {formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        {(voucher.service_data?.duration_minutes || voucher.total_duration) && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="h-3 w-3 text-primary" />{voucher.service_data?.duration_minutes || voucher.total_duration} min
+                          </span>
+                        )}
+                        {voucher.branch_data?.name && (
+                          <span className="flex items-center gap-1">
+                            <Building className="h-3 w-3 text-muted-foreground" />{voucher.branch_data.name}
+                          </span>
+                        )}
+                        {voucher.service_arrangement_data?.arrangement_name && (
+                          <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                            {voucher.service_arrangement_data.arrangement_name}
+                          </span>
+                        )}
+                      </div>
+
+                      {voucher.service_data?.service_types && voucher.service_data.service_types.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {voucher.service_data.service_types.map((st, idx) => (
+                            <span key={st.id || `st-${idx}`} className="rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+                              {st.name}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add-ons */}
+                      {voucher.addons && voucher.addons.length > 0 && (
+                        <div className="pt-2.5 border-t border-border/50">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+                            <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({voucher.addons.length})
+                          </p>
+                          <div className="space-y-1.5">
+                            {voucher.addons.map((addon, idx) => (
+                              <div key={addon.id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                                <div>
+                                  <span className="font-medium text-foreground">{addon.name}</span>
+                                  {addon.duration_minutes ? (
+                                    <span className="text-[11px] text-muted-foreground block">{addon.duration_minutes} min</span>
+                                  ) : null}
+                                </div>
+                                <span className="font-semibold text-foreground shrink-0 ml-2">
+                                  {formatAmount(addon.price, addon.currency || voucher.currency)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Extra Time */}
+                      {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                        <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Timer className="h-3.5 w-3.5 text-amber-500" />
+                            <span className="font-medium text-foreground">Extra Time:</span>
+                            <span className="font-semibold text-foreground">+{voucher.extra_time} min</span>
+                          </div>
+                          {voucher.price_for_extra_time && Number(voucher.price_for_extra_time) > 0 ? (
+                            <span className="font-semibold text-foreground">
+                              {formatAmount(voucher.price_for_extra_time, voucher.currency)}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Fallback Addons if no service_data?.name */}
+                {!(voucher.service_data?.name || voucher.service_id) && voucher.addons && voucher.addons.length > 0 && (
+                  <div className="rounded-xl border border-border/60 bg-card p-3 space-y-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                      <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({voucher.addons.length})
+                    </p>
+                    <div className="space-y-1.5">
+                      {voucher.addons.map((addon, idx) => (
+                        <div key={addon.id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                          <span className="font-medium text-foreground">{addon.name}</span>
+                          <span className="font-semibold text-foreground shrink-0 ml-2">
+                            {formatAmount(addon.price, addon.currency || voucher.currency)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Under Ordered Items: Gift Message */}
+          {voucher.gift_message && (
+            <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3">
+              <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Gift Message</p>
+                <p className="text-xs text-foreground leading-relaxed italic">&ldquo;{voucher.gift_message}&rdquo;</p>
+              </div>
+            </div>
+          )}
+
+          {/* Delivery Status */}
+          {(isPhysical || voucher.delivery_status) && (
+            <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Truck className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Status</span>
+                </div>
+                <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold', delCfg.badgeClass)}>
+                  <span className={cn('h-1.5 w-1.5 rounded-full', delCfg.dotClass)} />
+                  {voucher.delivery_status_label || delCfg.label}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Delivery Address */}
+          {(isPhysical || voucher.delivery_address) && (
+            <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 space-y-2 text-xs">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-primary shrink-0" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
+              </div>
+              {voucher.delivery_address ? (
+                <div className="space-y-2">
+                  <p className="font-semibold text-foreground leading-snug">
+                    {formatAddressPreview(voucher.delivery_address)}
+                  </p>
+                  <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                    {voucher.delivery_address.area && (
+                      <div className="rounded-lg border border-border/50 bg-card p-2">
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Area</span>
+                        <span className="font-medium text-foreground">{voucher.delivery_address.area}</span>
+                      </div>
+                    )}
+                    {voucher.delivery_address.city && (
+                      <div className="rounded-lg border border-border/50 bg-card p-2">
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">City</span>
+                        <span className="font-medium text-foreground">{voucher.delivery_address.city}</span>
+                      </div>
+                    )}
+                    {voucher.delivery_address.block && (
+                      <div className="rounded-lg border border-border/50 bg-card p-2">
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Block</span>
+                        <span className="font-medium text-foreground">{voucher.delivery_address.block}</span>
+                      </div>
+                    )}
+                    {voucher.delivery_address.street && (
+                      <div className="rounded-lg border border-border/50 bg-card p-2">
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Street</span>
+                        <span className="font-medium text-foreground">{voucher.delivery_address.street}</span>
+                      </div>
+                    )}
+                    {voucher.delivery_address.building && (
+                      <div className="rounded-lg border border-border/50 bg-card p-2">
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Building</span>
+                        <span className="font-medium text-foreground">{voucher.delivery_address.building}</span>
+                      </div>
+                    )}
+                    {(voucher.delivery_address.floor || voucher.delivery_address.apartment) && (
+                      <div className="rounded-lg border border-border/50 bg-card p-2">
+                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Floor / Apt</span>
+                        <span className="font-medium text-foreground">
+                          {[voucher.delivery_address.floor && `Fl: ${voucher.delivery_address.floor}`, voucher.delivery_address.apartment && `Apt: ${voucher.delivery_address.apartment}`].filter(Boolean).join(', ')}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {voucher.delivery_address.notes && (
+                    <div className="rounded-lg border border-amber-200/80 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800/40 p-2 text-xs">
+                      <span className="text-[9px] uppercase font-bold text-amber-700 dark:text-amber-400 block">Notes</span>
+                      <p className="text-foreground italic mt-0.5">&ldquo;{voucher.delivery_address.notes}&rdquo;</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground italic">No delivery address set</p>
+              )}
+            </div>
+          )}
+
+          {/* Redeemed Booking Details Card */}
+          {isRedeemed && (
+            <div className="rounded-2xl border border-violet-200/60 dark:border-violet-800/40 bg-gradient-to-br from-violet-50/70 via-card to-indigo-50/50 dark:from-violet-950/30 dark:via-card dark:to-indigo-950/20 p-4 space-y-3.5 shadow-xs">
+              {/* Card Header */}
+              <div className="flex items-center justify-between gap-2 border-b border-violet-200/40 dark:border-violet-800/30 pb-2.5">
+                <div className="flex items-center gap-2.5">
+                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-400">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-extrabold text-foreground tracking-tight">Redeemed Booking Details</h3>
+                    <p className="text-[10px] text-muted-foreground">Voucher has been redeemed for an appointment</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                    <Star className="h-2.5 w-2.5 fill-violet-500 text-violet-500" /> Redeemed
+                  </span>
+                  {booking?.status && (
+                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-primary/10 text-primary capitalize">
+                      {booking.status}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {loadingBooking ? (
+                <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-600" />
+                  Loading appointment details…
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {/* Grid of Key Redemption & Booking Info */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Who Redeemed */}
+                    <div className="flex flex-col gap-1 rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-2.5">
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <User className="h-3 w-3 text-violet-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">Redeemed By</span>
+                      </div>
+                      <p className="text-xs font-bold text-foreground truncate">{redeemedByName}</p>
+                      {redeemedByPhone && (
+                        <p className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
+                          <Phone className="h-2.5 w-2.5" />{redeemedByPhone}
+                        </p>
+                      )}
+                      {redeemedByEmail && (
+                        <p className="text-[10px] text-muted-foreground truncate">
+                          {redeemedByEmail}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Redemption Time */}
+                    <div className="flex flex-col gap-1 rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-2.5">
+                      <div className="flex items-center gap-1.5 text-muted-foreground">
+                        <Clock className="h-3 w-3 text-violet-500" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider">Redeemed At</span>
+                      </div>
+                      <p className="text-xs font-bold text-foreground">
+                        {voucher.redeemed_at ? formatDateTime(voucher.redeemed_at) : '—'}
+                      </p>
+                      {bookingNumber && (
+                        <p className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono mt-auto">
+                          <Hash className="h-2.5 w-2.5" />{bookingNumber}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Appointment Schedule & Therapist Box */}
+                  <div className="rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <div className="grid h-7 w-7 place-items-center rounded-lg bg-primary/10 text-primary">
+                          <Calendar className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Schedule</p>
+                          <p className="text-xs font-extrabold text-foreground">
+                            {apptDateFormatted ?? 'Scheduled Appointment'}
+                          </p>
+                        </div>
+                      </div>
+                      {apptTimeWindow && (
+                        <div className="text-right">
+                          <span className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-2 py-1 text-xs font-bold font-mono">
+                            <Clock className="h-3 w-3" />
+                            {apptTimeWindow}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/40 text-[11px]">
+                      {therapistName && (
+                        <div>
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
+                          <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
+                            <User className="h-3 w-3 text-muted-foreground" /> {therapistName}
+                          </span>
+                        </div>
+                      )}
+                      {(bookingBranch || bookingRoom) && (
+                        <div>
+                          <span className="text-[10px] text-muted-foreground uppercase font-bold block">Location</span>
+                          <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5 truncate">
+                            <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
+                            {[bookingBranch, bookingRoom].filter(Boolean).join(' • ')}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Payment info */}
+          {voucher.payment_data?.data && (
+            <div className="rounded-2xl border border-emerald-200/40 dark:border-emerald-800/30 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3">
+              <div className="flex items-center gap-2 mb-2.5">
+                <CreditCard className="h-3.5 w-3.5 text-emerald-500" />
+                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Payment</p>
+              </div>
+              <div className="space-y-1.5">
+                {[
+                  { label: 'Status',   val: voucher.payment_data.data.InvoiceStatus },
+                  { label: 'Invoice',  val: voucher.payment_data.data.InvoiceId?.toString() },
+                  { label: 'Amount',   val: voucher.payment_data.data.InvoiceValue ? `${voucher.payment_data.data.InvoiceValue} ${voucher.payment_data.data?.InvoiceTransactions?.[0]?.Currency ?? ''}` : null },
+                  { label: 'Gateway',  val: voucher.payment_data.data?.InvoiceTransactions?.[0]?.PaymentGateway },
+                ].filter(r => r.val).map(r => (
+                  <div key={r.label} className="flex items-center justify-between text-[11px]">
+                    <span className="text-muted-foreground">{r.label}</span>
+                    <span className="font-semibold">{r.val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Secret Code & Public URL Card */}
+          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3 text-xs">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                  <KeyRound className="h-5 w-5" />
-                </div>
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Code</p>
-                  <p className="text-lg font-black tracking-widest font-mono text-primary">
-                    {voucher.secret_code || '—'}
-                  </p>
+                <KeyRound className="h-4 w-4 text-primary shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
+                  <p className="font-mono font-extrabold text-base text-primary tracking-widest truncate">{voucher.secret_code || '—'}</p>
                 </div>
               </div>
               {voucher.secret_code && (
@@ -324,199 +1183,26 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
             )}
           </div>
 
-          {/* Service + Branch + Arrangement */}
-          <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-            {/* Service */}
-            <div className="flex items-start gap-3 px-4 py-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10">
-                <Scissors className="h-4 w-4 text-primary" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
-                <p className="text-sm font-bold">{voucher.service_data?.name ?? '—'}</p>
-                {voucher.service_data?.service_types?.[0]?.name && (
-                  <p className="text-[11px] text-muted-foreground">{voucher.service_data.service_types[0].name}</p>
-                )}
-              </div>
-              <div className="text-right shrink-0">
-                <p className="text-sm font-extrabold text-primary">
-                  {fmtMoney(voucher.total_amount, voucher.currency)}
-                </p>
-                <p className="text-[10px] text-muted-foreground">{voucher.total_duration} min</p>
-              </div>
-            </div>
-
-            {/* Arrangement */}
-            {voucher.service_arrangement_data?.arrangement_name && (
-              <div className="flex items-start gap-3 px-4 py-3">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-500/10">
-                  <Building2 className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Room / Arrangement</p>
-                  <p className="text-sm font-semibold">{voucher.service_arrangement_data.arrangement_name}</p>
-                  <span className="inline-flex items-center rounded-full px-2 py-0.5 mt-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">
-                    {voucher.service_arrangement_data.arrangement_type?.replace(/_/g, ' ')}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Branch */}
-            <div className="flex items-center gap-3 px-4 py-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-500/10">
-                <MapPin className="h-4 w-4 text-sky-500" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Branch</p>
-                <p className="text-sm font-semibold">{voucher.branch_data?.name ?? '—'}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Sender & Recipient */}
+          {/* Created & Expires Dates */}
           <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-2 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <User className="h-3.5 w-3.5 text-blue-500" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Sender</p>
-              </div>
-              <div>
-                <p className="text-xs font-bold">{voucher.sender_data?.name || voucher.sender_details?.name || '—'}</p>
-                {(voucher.sender_data?.phone_number || voucher.sender_details?.phone_number) && (
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Phone className="h-2.5 w-2.5" />{voucher.sender_data?.phone_number ?? voucher.sender_details?.phone_number}
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Gift className="h-3.5 w-3.5 text-rose-500" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Recipient</p>
-              </div>
-              <div>
-                <p className="text-xs font-bold">{voucher.recipient_data?.name || voucher.recipient_details?.name || '—'}</p>
-                {(voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number) && (
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                    <Phone className="h-2.5 w-2.5" />{voucher.recipient_data?.phone_number ?? voucher.recipient_details?.phone_number}
-                  </p>
-                )}
-                {(voucher.recipient_data?.email || voucher.recipient_details?.email) && (
-                  <p className="text-[10px] text-muted-foreground flex items-center gap-1">
-                    <Mail className="h-2.5 w-2.5" />{voucher.recipient_data?.email ?? voucher.recipient_details?.email}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Add-ons */}
-          {voucher.addons?.length > 0 && (
-            <div className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="flex items-center gap-2 mb-2.5">
-                <Package className="h-3.5 w-3.5 text-violet-400" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Add-ons ({voucher.addons.length})</p>
-              </div>
-              <div className="space-y-2">
-                {voucher.addons.map((addon, index) => (
-                  <div key={addon.id ?? index} className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-[11px] font-semibold">{addon.name}</p>
-                      {addon.duration_minutes > 0 && (
-                        <p className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
-                          <Timer className="h-2.5 w-2.5" />{addon.duration_minutes} min
-                        </p>
-                      )}
-                    </div>
-                    <p className="text-[11px] font-bold text-violet-600 dark:text-violet-400 shrink-0">
-                      +{fmtMoney(addon.price, addon.currency)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Extra time */}
-          {voucher.extra_time > 0 && (
-            <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-500/10">
-                <Timer className="h-4 w-4 text-indigo-500" />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Extra Time</p>
-                <p className="text-sm font-bold">{voucher.extra_time} min</p>
-              </div>
-            </div>
-          )}
-
-          {/* Dates */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Calendar className="h-3 w-3 text-sky-500" />
+            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+              <Calendar className="h-4 w-4 text-sky-500 shrink-0" />
+              <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created</p>
+                <p className="font-semibold text-foreground truncate">{formatDate(voucher.created_at)}</p>
               </div>
-              <p className="text-xs font-bold">{formatDateTime(voucher.created_at)}</p>
             </div>
-            <div className="flex flex-col gap-1 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-              <div className="flex items-center gap-1.5">
-                <Clock className="h-3 w-3 text-rose-500" />
+
+            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+              <Clock className="h-4 w-4 text-rose-500 shrink-0" />
+              <div className="min-w-0">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expires</p>
+                <p className={cn('font-semibold truncate', isExpired ? 'text-rose-600 dark:text-rose-400' : 'text-foreground')}>
+                  {formatDate(voucher.expire_date)}
+                </p>
               </div>
-              <p className={cn('text-xs font-bold', isExpired ? 'text-rose-600 dark:text-rose-400' : '')}>
-                {formatDateTime(voucher.expire_date)}
-              </p>
             </div>
           </div>
-
-          {/* Redeemed info */}
-          {voucher.redeemed_at && (
-            <div className="flex items-center gap-3 rounded-2xl border border-violet-200/40 dark:border-violet-800/30 bg-violet-50/50 dark:bg-violet-950/20 px-4 py-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-500/15">
-                <CheckCircle2 className="h-4 w-4 text-violet-500" />
-              </div>
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400">Redeemed</p>
-                <p className="text-xs font-bold">{formatDateTime(voucher.redeemed_at)}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Gift message */}
-          {voucher.gift_message && (
-            <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3">
-              <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Gift Message</p>
-                <p className="text-xs text-foreground leading-relaxed italic">"{voucher.gift_message}"</p>
-              </div>
-            </div>
-          )}
-
-          {/* Payment info */}
-          {voucher.payment_data?.data && (
-            <div className="rounded-2xl border border-emerald-200/40 dark:border-emerald-800/30 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3">
-              <div className="flex items-center gap-2 mb-2.5">
-                <CreditCard className="h-3.5 w-3.5 text-emerald-500" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Payment</p>
-              </div>
-              <div className="space-y-1.5">
-                {[
-                  { label: 'Status',   val: voucher.payment_data.data.InvoiceStatus },
-                  { label: 'Invoice',  val: voucher.payment_data.data.InvoiceId?.toString() },
-                  { label: 'Amount',   val: voucher.payment_data.data.InvoiceValue ? `${voucher.payment_data.data.InvoiceValue} ${voucher.payment_data.data?.InvoiceTransactions?.[0]?.Currency ?? ''}` : null },
-                  { label: 'Gateway',  val: voucher.payment_data.data?.InvoiceTransactions?.[0]?.PaymentGateway },
-                ].filter(r => r.val).map(r => (
-                  <div key={r.label} className="flex items-center justify-between text-[11px]">
-                    <span className="text-muted-foreground">{r.label}</span>
-                    <span className="font-semibold">{r.val}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Footer */}
@@ -526,6 +1212,28 @@ function VoucherDetailModal({ voucher, onClose }: { voucher: Voucher; onClose: (
             className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
             Close
           </button>
+          {isRedeemed ? (
+            <button
+              type="button"
+              onClick={() => onReschedule?.(voucher, bookingId || undefined, booking)}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-primary hover:bg-primary/90 shadow-sm transition active:scale-[0.98]"
+            >
+              <RefreshCw className="h-4 w-4" /> Reschedule
+            </button>
+          ) : (
+            onShare && (
+              <div className="flex-1 flex justify-center">
+                <VoucherShareDropdown
+                  voucher={voucher}
+                  label="Share Reminder"
+                  className="w-full justify-center py-2.5 text-sm"
+                  dropUp={true}
+                  onSelectChannel={onShare}
+                  onCopyUrl={onCopyUrl}
+                />
+              </div>
+            )
+          )}
           {voucher.payment_url && (
             <a
               href={voucher.payment_url}
@@ -595,112 +1303,255 @@ function StatusFilter({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
-// ── Share Voucher Dropdown ─────────────────────────────────────────────────────
+// ── Share Voucher Modal ────────────────────────────────────────────────────────
 
-function VoucherShareDropdown({ voucher }: { voucher: Voucher }) {
-  const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+interface ShareVoucherModalProps {
+  voucher: Voucher;
+  channel?: 'sms' | 'whatsapp';
+  onClose: () => void;
+  onSend: (message: string, recipientName: string, channel: 'sms' | 'whatsapp') => void;
+}
 
-  const getShareUrl = () => {
-    if (voucher.payment_url) return voucher.payment_url;
+function ShareVoucherModal({ voucher, channel = 'whatsapp', onClose, onSend }: ShareVoucherModalProps) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const recipientName = voucher.recipient_data?.name || voucher.recipient_details?.name || 'Valued Guest';
+  const recipientPhone = voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '';
+  const senderName = voucher.sender_data?.name || voucher.sender_details?.name || 'USH Spa';
+  const voucherCode = voucher.secret_code || voucher.voucher_number || voucher.id.slice(0, 8);
+  const serviceName = voucher.service_data?.name || 'Spa Service';
+  const branchName = voucher.branch_data?.name || '';
+  const expiryDate = fmtDate(voucher.expire_date);
+
+  const getShareUrl = useCallback(() => {
     if (voucher.public_token) {
       return `https://ushspa.co/gift/${voucher.public_token}`;
     }
+    if (voucher.payment_url) {
+      return voucher.payment_url;
+    }
     const origin = typeof window !== 'undefined' ? window.location.origin : 'https://desk.ushspa.co';
     return `${origin}/appointments/gift-vouchers?code=${encodeURIComponent(voucher.secret_code || voucher.id)}`;
-  };
+  }, [voucher.public_token, voucher.payment_url, voucher.secret_code, voucher.id]);
 
-  const getShareText = () => {
-    const senderName = voucher.sender_data?.name || voucher.sender_details?.name;
-    const recipientName = voucher.recipient_data?.name || voucher.recipient_details?.name;
-    const voucherCode = voucher.secret_code || voucher.voucher_number || voucher.id.slice(0, 8);
+  const buildReminderText = useCallback(() => {
     const url = getShareUrl();
+    const lines = [
+      `Dear ${recipientName},`,
+      '',
+      `This is a friendly reminder from USH Spa regarding your Gift Voucher from ${senderName}.`,
+      '',
+      `• Voucher Code: ${voucherCode}`,
+      `• Service: ${serviceName}`,
+    ];
 
-    return `Hello ${recipientName || 'there'}! You have received a Gift Voucher from ${senderName || 'USH Spa'}.\nVoucher Code: ${voucherCode}\n${url}`.trim();
+    if (branchName) {
+      lines.push(`• Branch: ${branchName}`);
+    }
+    if (expiryDate && expiryDate !== '—') {
+      lines.push(`• Valid Until: ${expiryDate}`);
+    }
+    if (voucher.gift_message && voucher.gift_message.trim()) {
+      lines.push(`• Gift Note: "${voucher.gift_message.trim()}"`);
+    }
+
+    lines.push('');
+    lines.push('You can view and redeem your gift voucher here:');
+    lines.push(url);
+    lines.push('');
+    lines.push('We look forward to welcoming you at USH Spa!');
+
+    return lines.join('\n');
+  }, [recipientName, senderName, voucherCode, serviceName, branchName, expiryDate, voucher.gift_message, getShareUrl]);
+
+  const [message, setMessage] = useState(buildReminderText);
+  const [copied, setCopied] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // fallback
+    }
   };
 
-  const handleSms = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const phone = (voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '').trim();
-    const text = getShareText();
-    const smsUrl = phone ? `sms:${phone}?body=${encodeURIComponent(text)}` : `sms:?body=${encodeURIComponent(text)}`;
-    window.open(smsUrl, '_blank');
-    setOpen(false);
-  };
-
-  const handleWhatsApp = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const rawPhone = voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '';
-    const cleanPhone = rawPhone.replace(/\D/g, '');
-    const text = getShareText();
-    const waUrl = cleanPhone
-      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
-      : `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
-    window.open(waUrl, '_blank');
-    setOpen(false);
-  };
-
-  const handleCopyUrl = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const url = getShareUrl();
-    navigator.clipboard?.writeText(url);
-    setCopied(true);
+  const handleSend = () => {
+    setSending(true);
     setTimeout(() => {
-      setCopied(false);
-      setOpen(false);
-    }, 1200);
+      setSending(false);
+      onSend(message, recipientName, channel);
+    }, 250);
   };
 
   return (
-    <div className="relative inline-block text-left" onClick={(e) => e.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition shadow-sm"
-        title="Share voucher"
-      >
-        <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
-        Share
-        <ChevronDown className={cn('h-3 w-3 text-muted-foreground transition-transform duration-200', open && 'rotate-180')} />
-      </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1.5 z-50 w-44 rounded-2xl border border-border/80 bg-card p-1.5 shadow-2xl space-y-0.5">
-            <button
-              type="button"
-              onClick={handleSms}
-              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left"
-            >
-              <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
-              SMS
-            </button>
-            <button
-              type="button"
-              onClick={handleWhatsApp}
-              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left"
-            >
-              <MessageCircle className="h-3.5 w-3.5 text-emerald-500" />
-              WhatsApp
-            </button>
-            <button
-              type="button"
-              onClick={handleCopyUrl}
-              className="flex items-center gap-2.5 w-full rounded-xl px-3 py-2 text-xs font-medium text-foreground hover:bg-muted transition text-left"
-            >
-              {copied ? (
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-              ) : (
-                <Copy className="h-3.5 w-3.5 text-muted-foreground" />
+      {/* Modal Dialog */}
+      <div className="relative z-10 w-full max-w-lg flex flex-col rounded-3xl border border-border/80 bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        {/* Top Header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-6 py-4.5 bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div
+              className={cn(
+                'grid h-10 w-10 place-items-center rounded-2xl',
+                channel === 'whatsapp'
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
               )}
-              <span className={copied ? 'text-emerald-600 dark:text-emerald-400 font-bold' : ''}>
-                {copied ? 'Copied URL!' : 'Copy URL'}
-              </span>
-            </button>
+            >
+              {channel === 'whatsapp' ? <MessageCircle className="h-5 w-5" /> : <MessageSquare className="h-5 w-5" />}
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-extrabold text-foreground leading-tight">
+                  Share Reminder via {channel === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+                </h3>
+                <span
+                  className={cn(
+                    'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider',
+                    channel === 'whatsapp'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
+                      : 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'
+                  )}
+                >
+                  {channel === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {channel === 'whatsapp'
+                  ? 'Preview template and send reminder message via WhatsApp'
+                  : 'Preview template and send reminder text message via SMS'}
+              </p>
+            </div>
           </div>
-        </>
-      )}
+          <button
+            onClick={onClose}
+            type="button"
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition text-muted-foreground hover:text-foreground"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+          {/* Recipient & Voucher Info Card */}
+          <div className="rounded-2xl border border-border/60 bg-muted/30 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-2 text-xs">
+                <User className="h-3.5 w-3.5 text-primary shrink-0" />
+                <span className="font-semibold text-foreground">{recipientName}</span>
+                {recipientPhone && (
+                  <span className="text-muted-foreground flex items-center gap-1 font-mono text-[11px]">
+                    (<Phone className="h-2.5 w-2.5" />{recipientPhone})
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold bg-primary/10 text-primary font-mono">
+                  <KeyRound className="h-2.5 w-2.5" /> {voucherCode}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/30">
+              <span className="truncate">{serviceName}</span>
+              {expiryDate && expiryDate !== '—' && (
+                <span className="shrink-0 flex items-center gap-1">
+                  <Clock className="h-3 w-3" /> Valid until: {expiryDate}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Textbox Section */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label htmlFor="reminder-message" className="text-xs font-bold text-foreground">
+                Formatted Reminder Message
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMessage(buildReminderText())}
+                  className="text-[11px] text-muted-foreground hover:text-foreground transition flex items-center gap-1"
+                  title="Reset to default formatted message"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="text-[11px] text-primary hover:text-primary/80 font-semibold transition flex items-center gap-1"
+                >
+                  {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+            </div>
+
+            <textarea
+              id="reminder-message"
+              rows={8}
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              className="w-full rounded-2xl border border-border/80 bg-background p-3.5 text-xs text-foreground font-mono leading-relaxed focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition resize-y"
+              placeholder="Enter reminder message..."
+            />
+
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
+              <span>Characters: {message.length}</span>
+              <span>Recipient: {recipientPhone || 'No phone number'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 border-t border-border/40 px-6 py-4 bg-muted/10">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-border/80 bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition shadow-sm"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending || !message.trim()}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-bold text-white shadow-md transition active:scale-[0.98] disabled:opacity-50',
+              channel === 'whatsapp'
+                ? 'bg-emerald-600 hover:bg-emerald-700'
+                : 'bg-blue-600 hover:bg-blue-700'
+            )}
+          >
+            {sending ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Sending...
+              </>
+            ) : (
+              <>
+                {channel === 'whatsapp' ? <MessageCircle className="h-3.5 w-3.5" /> : <Send className="h-3.5 w-3.5" />}
+                Send via {channel === 'whatsapp' ? 'WhatsApp' : 'SMS'}
+              </>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -718,6 +1569,63 @@ export default function GiftVouchersPage() {
   const [showCreate,      setShowCreate]      = useState(false);
 
   const [searchQuery,     setSearchQuery]     = useState<string>('');
+  const [shareVoucher,     setShareVoucher]     = useState<Voucher | null>(null);
+  const [shareChannel,     setShareChannel]     = useState<'sms' | 'whatsapp'>('whatsapp');
+  const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
+  const [rescheduleInitialBooking, setRescheduleInitialBooking] = useState<any>(null);
+  const [successAlert,    setSuccessAlert]    = useState<{
+    recipientName: string;
+    voucherCode: string;
+    channel?: 'sms' | 'whatsapp';
+  } | null>(null);
+  const [copyAlert,       setCopyAlert]       = useState<{
+    voucherCode: string;
+    url: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!successAlert) return;
+    const timer = setTimeout(() => {
+      setSuccessAlert(null);
+    }, 4500);
+    return () => clearTimeout(timer);
+  }, [successAlert]);
+
+  useEffect(() => {
+    if (!copyAlert) return;
+    const timer = setTimeout(() => {
+      setCopyAlert(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [copyAlert]);
+
+  const handleCopyPublicUrl = useCallback((voucher: Voucher) => {
+    const code = voucher.secret_code || voucher.voucher_number || voucher.id.slice(0, 8);
+    const url = getVoucherPublicUrl(voucher);
+    navigator.clipboard?.writeText(url);
+    setCopyAlert({ voucherCode: code, url });
+  }, []);
+
+  const handleSendReminder = useCallback((_msg: string, recipientName: string, channel: 'sms' | 'whatsapp') => {
+    const code = shareVoucher?.secret_code || shareVoucher?.voucher_number || shareVoucher?.id.slice(0, 8) || 'Voucher';
+    setShareVoucher(null);
+    setSuccessAlert({
+      recipientName,
+      voucherCode: code,
+      channel,
+    });
+  }, [shareVoucher]);
+
+  const handleOpenReschedule = useCallback((voucher: Voucher, bookingId?: string, bookingData?: any) => {
+    const bId = bookingId || voucher.redeemed_booking_id || voucher.booking_id || voucher.booking_data?.id;
+    if (bId) {
+      setSelectedVoucher(null);
+      setRescheduleBookingId(bId);
+      setRescheduleInitialBooking(bookingData || voucher.booking_data || null);
+    } else {
+      setSelectedVoucher(voucher);
+    }
+  }, []);
 
   const fetchVouchers = useCallback(async () => {
     setLoading(true);
@@ -855,6 +1763,26 @@ export default function GiftVouchersPage() {
         </div>
       </div>
 
+      {/* ── Success Alert Banner ── */}
+      {successAlert && (
+        <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 px-4.5 py-3.5 text-xs text-emerald-800 dark:text-emerald-200 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div className="flex items-center gap-3 min-w-0">
+            <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="font-medium">
+              Reminder message for voucher <strong className="font-mono font-bold text-emerald-950 dark:text-emerald-100">{successAlert.voucherCode}</strong> has been sent successfully{successAlert.channel ? ` via ${successAlert.channel === 'sms' ? 'SMS' : 'WhatsApp'}` : ''} to <strong className="font-bold text-emerald-950 dark:text-emerald-100">{successAlert.recipientName}</strong>.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSuccessAlert(null)}
+            className="p-1 rounded-lg hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition"
+            aria-label="Dismiss alert banner"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
@@ -962,12 +1890,12 @@ export default function GiftVouchersPage() {
       {!loading && !error && filtered.length > 0 && (
         <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
           <div className="overflow-x-auto min-h-[300px] pb-32">
-            <table className="w-full min-w-[860px] border-collapse text-sm">
+            <table className="w-full min-w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border/60 bg-muted/30">
                   {[
                     'Voucher Code', 'Sender → Recipient', 'Service',
-                    'Duration', 'Total Price', 'Expires', 'Status', 'Action',
+                    'Price & Duration', 'Expires', 'Status', 'Action',
                   ].map(col => (
                     <th
                       key={col}
@@ -1028,26 +1956,22 @@ export default function GiftVouchersPage() {
                       </td>
 
                       {/* Service */}
-                      <td className="px-4 py-3 align-top min-w-[180px]">
+                      <td className="px-4 py-3 align-top min-w-[150px]">
                         <p className="font-semibold text-[13px] line-clamp-2 leading-snug">{v.service_data?.name ?? '—'}</p>
                         {v.service_data?.service_types?.[0]?.name && (
                           <p className="text-[10px] text-muted-foreground mt-0.5">{v.service_data.service_types[0].name}</p>
                         )}
                       </td>
 
-                      {/* Duration */}
+                      {/* Price & Duration */}
                       <td className="px-4 py-3 align-top whitespace-nowrap">
-                        <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-[11px] font-bold">
-                          <Timer className="h-3 w-3 text-muted-foreground" />
-                          {v.total_duration} min
-                        </span>
-                      </td>
-
-                      {/* Total Price */}
-                      <td className="px-4 py-3 align-top whitespace-nowrap">
-                        <p className="text-[13px] font-extrabold text-primary tabular-nums">
+                        <p className="text-[13px] font-extrabold text-primary tabular-nums leading-snug">
                           {fmtMoney(v.total_amount, v.currency)}
                         </p>
+                        <div className="flex items-center gap-1 mt-0.5 text-[11px] font-semibold text-muted-foreground">
+                          <Timer className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <span>{v.total_duration} min</span>
+                        </div>
                       </td>
 
                       {/* Expires */}
@@ -1077,7 +2001,27 @@ export default function GiftVouchersPage() {
                             <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                             View
                           </button>
-                          <VoucherShareDropdown voucher={v} />
+                          {v.status?.toLowerCase() === 'redeemed' || v.redeemed_at ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenReschedule(v)}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary hover:text-primary-foreground transition shadow-sm"
+                              title="Reschedule redeemed booking"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              Reschedule
+                            </button>
+                          ) : (
+                            <VoucherShareDropdown
+                              voucher={v}
+                              label="Share"
+                              onSelectChannel={(voucher, channel) => {
+                                setShareChannel(channel);
+                                setShareVoucher(voucher);
+                              }}
+                              onCopyUrl={handleCopyPublicUrl}
+                            />
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1112,7 +2056,43 @@ export default function GiftVouchersPage() {
       {selectedVoucher && (
         <VoucherDetailModal
           voucher={selectedVoucher}
+          token={token}
           onClose={() => setSelectedVoucher(null)}
+          onShare={(v, channel) => {
+            setSelectedVoucher(null);
+            setShareChannel(channel);
+            setShareVoucher(v);
+          }}
+          onCopyUrl={handleCopyPublicUrl}
+          onReschedule={handleOpenReschedule}
+        />
+      )}
+
+      {/* ── Reschedule Booking Modal ── */}
+      {rescheduleBookingId && (
+        <RescheduleBookingModal
+          bookingId={rescheduleBookingId}
+          initialBooking={rescheduleInitialBooking}
+          token={token || undefined}
+          onClose={() => {
+            setRescheduleBookingId(null);
+            setRescheduleInitialBooking(null);
+          }}
+          onSuccess={() => {
+            setRescheduleBookingId(null);
+            setRescheduleInitialBooking(null);
+            fetchVouchers();
+          }}
+        />
+      )}
+
+      {/* ── Share Reminder Modal ── */}
+      {shareVoucher && (
+        <ShareVoucherModal
+          voucher={shareVoucher}
+          channel={shareChannel}
+          onClose={() => setShareVoucher(null)}
+          onSend={handleSendReminder}
         />
       )}
 
@@ -1123,6 +2103,57 @@ export default function GiftVouchersPage() {
           onClose={() => setShowCreate(false)}
           onSuccess={() => { setShowCreate(false); fetchVouchers(); }}
         />
+      )}
+
+      {/* ── Copy URL Floating Toast ── */}
+      {copyAlert && (
+        <div className="fixed bottom-6 left-6 z-50 flex items-center gap-3.5 rounded-2xl border border-primary/30 bg-card/95 backdrop-blur-md p-4 shadow-2xl max-w-md animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+            <Check className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-bold text-foreground">Public URL Copied to Clipboard</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5 truncate font-mono">
+              {copyAlert.url}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setCopyAlert(null)}
+            className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted transition"
+            aria-label="Dismiss copy alert"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Success Alert Floating Toast ── */}
+      {successAlert && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-3.5 rounded-2xl border border-emerald-500/30 bg-card/95 backdrop-blur-md p-4 shadow-2xl max-w-md animate-in fade-in slide-in-from-bottom-5 duration-300">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-bold text-foreground">
+              Reminder Sent Successfully{successAlert.channel ? ` via ${successAlert.channel === 'sms' ? 'SMS' : 'WhatsApp'}` : ''}
+            </p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Reminder message for voucher{' '}
+              <span className="font-mono font-bold text-foreground">{successAlert.voucherCode}</span>{' '}
+              has been sent to{' '}
+              <span className="font-semibold text-foreground">{successAlert.recipientName}</span>.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSuccessAlert(null)}
+            className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted transition"
+            aria-label="Dismiss alert"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       )}
     </DashboardShell>
   );
