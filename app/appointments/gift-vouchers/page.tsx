@@ -1,6 +1,6 @@
 'use client';
 
-import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, toZonedIsoFromLocal } from '@/lib/datetime';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { CreateVoucherModal } from '@/components/bookings/CreateVoucherModal';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
+import { RedeemVoucherModal } from '@/components/bookings/RedeemVoucherModal';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { paymentLinksApi, whatsappShareUrl, smsShareUrl, type PaymentLink } from '@/lib/paymentLinks';
@@ -597,6 +598,7 @@ function VoucherDetailModal({
   onShare,
   onCopyUrl,
   onReschedule,
+  onRedeem,
   onRefresh,
 }: {
   voucher: Voucher;
@@ -605,6 +607,7 @@ function VoucherDetailModal({
   onShare?: (voucher: Voucher, channel: 'sms' | 'whatsapp') => void;
   onCopyUrl?: (voucher: Voucher) => void;
   onReschedule?: (voucher: Voucher, bookingId?: string, bookingData?: any) => void;
+  onRedeem?: (voucher: Voucher, initialAvailabilitiesPromise?: Promise<any>) => void;
   onRefresh?: () => void;
 }) {
   useEffect(() => {
@@ -643,6 +646,42 @@ function VoucherDetailModal({
 
   const [fetchedBooking, setFetchedBooking] = useState<BookingData | null>(null);
   const [loadingBooking, setLoadingBooking] = useState(false);
+
+  const handleRedeemClick = () => {
+    const serviceId = voucher.service_id || (voucher.service_data as any)?.id;
+    const branchId = voucher.branch_id || voucher.branch_data?.branch_id;
+    const arrangementId = voucher.service_arrangement_id || (voucher.service_arrangement_data as any)?.id;
+    const expireDateWithTz = toZonedIsoFromLocal(voucher.expire_date);
+
+    const promise = authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        service_id: serviceId,
+        branch_id: branchId,
+        service_arrangement_id: arrangementId || null,
+        expire_date: expireDateWithTz,
+      }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.detail || err.message || `HTTP ${r.status}`);
+      }
+      return r.json().catch(() => ({}));
+    });
+
+    onRedeem?.(
+      {
+        ...voucher,
+        invoice_number: invoiceNumber || voucher.invoice_number,
+        payment_number: paymentNumber || voucher.payment_number,
+      },
+      promise
+    );
+  };
 
   useEffect(() => {
     if (!isRedeemed || !bookingId) return;
@@ -1040,7 +1079,7 @@ function VoucherDetailModal({
               </div>
 
               {/* Ordered Items & Services */}
-              {(Boolean(voucher.ordered_items?.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(isDigital && voucher.digital_product_data) || Boolean(voucher.addons?.length)) && (
+              {(Boolean(voucher.ordered_items?.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(voucher.addons?.length)) && (
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
                     <Package className="h-3.5 w-3.5 text-primary" />
@@ -1064,23 +1103,6 @@ function VoucherDetailModal({
                             <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || voucher.currency)}</span>
                           </div>
                         ))}
-                      </div>
-                    )}
-
-                    {/* Digital: Product Data */}
-                    {isDigital && voucher.digital_product_data && (
-                      <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
-                        <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-blue-500 mb-1">
-                          <Smartphone className="h-3.5 w-3.5" />Digital Gift Details
-                        </div>
-                        {voucher.digital_product_data?.image && (
-                          <img src={voucher.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                        )}
-                        <p className="font-bold text-sm text-foreground">{voucher.digital_product_data?.title || voucher.digital_product_data?.name || 'Digital Gift Item'}</p>
-                        {voucher.digital_product_data?.price && (
-                          <p className="text-xs text-muted-foreground">{formatAmount(voucher.digital_product_data.price, voucher.digital_product_data.currency || voucher.currency)}</p>
-                        )}
                       </div>
                     )}
 
@@ -1937,7 +1959,8 @@ function VoucherDetailModal({
               {canRedeem && (
                 <button
                   type="button"
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition active:scale-[0.98]"
+                  onClick={handleRedeemClick}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition active:scale-[0.98] cursor-pointer"
                 >
                   <CheckCircle2 className="h-4 w-4" /> Redeem
                 </button>
@@ -1945,14 +1968,14 @@ function VoucherDetailModal({
             </>
           ) : (
             <>
-              {!isPaid && (
+              {!isPaid && !effectivePaymentUrl && (
                 <button
                   type="button"
                   onClick={() => setShowMakePaymentModal(true)}
                   className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-sm transition active:scale-[0.98]"
                 >
                   <CreditCard className="h-4 w-4" />
-                  <span>{effectivePaymentUrl ? 'Make Payment / Share Link' : 'Generate Payment Link'}</span>
+                  <span>Generate Payment Link</span>
                 </button>
               )}
             </>
@@ -2382,6 +2405,15 @@ export default function GiftVouchersPage() {
     } else {
       setSelectedVoucher(voucher);
     }
+  }, []);
+
+  const [redeemVoucher, setRedeemVoucher] = useState<Voucher | null>(null);
+  const [initialRedeemAvailabilitiesPromise, setInitialRedeemAvailabilitiesPromise] = useState<Promise<any> | null>(null);
+
+  const handleOpenRedeem = useCallback((voucher: Voucher, promise?: Promise<any>) => {
+    setSelectedVoucher(null);
+    setRedeemVoucher(voucher);
+    setInitialRedeemAvailabilitiesPromise(promise || null);
   }, []);
 
   const fetchVouchers = useCallback(async () => {
@@ -2820,7 +2852,28 @@ export default function GiftVouchersPage() {
           }}
           onCopyUrl={handleCopyPublicUrl}
           onReschedule={handleOpenReschedule}
+          onRedeem={handleOpenRedeem}
           onRefresh={fetchVouchers}
+        />
+      )}
+
+      {/* ── Redeem Voucher Modal ── */}
+      {redeemVoucher && (
+        <RedeemVoucherModal
+          voucher={redeemVoucher}
+          invoiceNumber={redeemVoucher.invoice_number || (redeemVoucher.payment_data as any)?.invoice_number || null}
+          paymentNumber={redeemVoucher.payment_number || (redeemVoucher.payment_data as any)?.payment_number || null}
+          token={token || undefined}
+          initialAvailabilitiesPromise={initialRedeemAvailabilitiesPromise}
+          onClose={() => {
+            setRedeemVoucher(null);
+            setInitialRedeemAvailabilitiesPromise(null);
+          }}
+          onSuccess={() => {
+            setRedeemVoucher(null);
+            setInitialRedeemAvailabilitiesPromise(null);
+            fetchVouchers();
+          }}
         />
       )}
 

@@ -571,7 +571,8 @@ export function BookingDetailPopup({
     const isCallCenterOrReceptionist = !isManagerOrAdmin && (isAgent || isRecep);
     const rescheduleDaysCount = isCallCenterOrReceptionist ? 10 : 30;
 
-    const restricted = !isSuperuserOrAdmin && (isAgent || isRecep);
+    // Call Center Agent is permitted to view Payment & Invoices tab; Receptionist remains restricted
+    const restricted = !isSuperuserOrAdmin && !isAgent && isRecep;
 
     return {
       isSuperuserOrAdmin,
@@ -600,6 +601,9 @@ export function BookingDetailPopup({
 
   const rawEnd = (detail as any)?.appointment_end ?? booking?.appointment_end ?? (booking?.raw as any)?.appointment_end;
   const apptEndDateTime = (() => {
+    if (rawEnd instanceof Date && !isNaN(rawEnd.getTime())) {
+      return rawEnd;
+    }
     if (rawEnd && typeof rawEnd === 'string' && rawEnd.trim()) {
       const parsed = getBookingAppointmentDateTime(rawEnd);
       if (parsed) return parsed;
@@ -687,6 +691,11 @@ export function BookingDetailPopup({
       'spa director',
       'spa_director',
       'director',
+      'call center',
+      'call_center',
+      'callcenter',
+      'receptionist',
+      'reception',
     ];
 
     const hasMatch = candidates.some((c) =>
@@ -699,7 +708,11 @@ export function BookingDetailPopup({
       p.includes('admin') ||
       p.includes('branch_manager') ||
       p.includes('finance_manager') ||
-      p.includes('spa_director')
+      p.includes('spa_director') ||
+      p.includes('call_center') ||
+      p.includes('callcenter') ||
+      p.includes('receptionist') ||
+      p.includes('reception')
     );
   }, [user, roleInfo, authPermissions]);
 
@@ -920,9 +933,28 @@ export function BookingDetailPopup({
     (detail?.pricing as any)?.invoice_id ??
     (detail?.payment_data as any)?.invoice_number ??
     (detail?.payment_data as any)?.invoice_id ??
+    (detail?.voucher_data as any)?.invoice_number ??
+    (detail?.voucher_data as any)?.invoice_id ??
     (booking as any)?.invoice_number ??
     (booking as any)?.invoice_id ??
     (booking as any)?.payment_data?.invoice_id ??
+    (booking as any)?.payment_data?.invoice_number ??
+    (booking as any)?.voucher_data?.invoice_number ??
+    (booking?.raw as any)?.invoice_number ??
+    ''
+  ).trim();
+
+  const paymentNumber = String(
+    (detail as any)?.payment_number ??
+    (detail?.payment_data as any)?.payment_number ??
+    (detail?.payment_data as any)?.data?.InvoiceTransactions?.[0]?.PaymentId ??
+    (detail?.voucher_data as any)?.payment_number ??
+    (detail?.voucher_data as any)?.payment_data?.payment_number ??
+    (booking as any)?.payment_number ??
+    (booking as any)?.payment_data?.payment_number ??
+    (booking?.raw as any)?.payment_number ??
+    (booking?.raw as any)?.payment_data?.payment_number ??
+    (booking?.raw as any)?.voucher_data?.payment_number ??
     ''
   ).trim();
 
@@ -947,6 +979,10 @@ export function BookingDetailPopup({
 
   if (!booking) return null;
   const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
+  const normStatus = curStatus.replace(/[\s-]/g, '_');
+  const isNoShow =
+    normStatus === 'no_show' ||
+    String(booking.status ?? '').toLowerCase().replace(/[\s-]/g, '_') === 'no_show';
   const isCompleted = curStatus === 'completed';
   const isCancelled =
     curStatus === 'cancelled' ||
@@ -954,6 +990,8 @@ export function BookingDetailPopup({
     String(booking.status ?? '').toLowerCase() === 'cancelled' ||
     String(booking.status ?? '').toLowerCase() === 'refunded';
   const canChangeTherapist =
+    !isPastApptEnd &&
+    !isNoShow &&
     curStatus !== 'completed' &&
     curStatus !== 'no_show' &&
     curStatus !== 'cancelled' &&
@@ -1019,6 +1057,8 @@ export function BookingDetailPopup({
 
   // When payment_status=success don't show update button because after payment made update is not allowed
   const canUpdateBooking =
+    !isPastApptEnd &&
+    !isNoShow &&
     !isCancelled &&
     !isCompleted &&
     !isPaymentSuccess &&
@@ -1034,7 +1074,7 @@ export function BookingDetailPopup({
   //    i. For (Administrator, Spa Director, Finance Manager) roles cancel button visible until appointment_end time is greater than current time
   //    ii. For all other users roles cancel button is visible until 3 hours before the appointment_start time
   const canShowCancel = (() => {
-    if (isCancelled) return false;
+    if (isPastApptEnd || isNoShow || isCancelled || isCompleted) return false;
     const now = Date.now();
 
     // For a paid booking (payment_status=success), user(employees) can cancel booking at least 3 hours before appointment_start time
@@ -1946,39 +1986,73 @@ export function BookingDetailPopup({
                     ? 'border-[#B8A394] bg-white/40'
                     : 'border-violet-200/60 dark:border-violet-800/40 bg-gradient-to-br from-violet-50/40 via-card to-card dark:from-violet-950/20'
                 )}>
-                  <div className="flex items-start justify-between gap-3 pb-3 border-b border-border/40">
-                    <div className="flex items-center gap-2.5">
-                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
-                        <FileText className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Invoice number</p>
-                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <button
-                            type="button"
-                            onClick={() => setShowInvoiceModal(true)}
-                            className="group/inv inline-flex items-center gap-1.5 text-sm font-mono font-extrabold text-foreground hover:text-violet-600 dark:hover:text-violet-400 transition cursor-pointer text-left"
-                            title="Click to view full invoice details"
-                          >
-                            <span className="underline underline-offset-4 decoration-violet-400/60 group-hover/inv:decoration-violet-600">
-                              {invoiceNumber || 'Pending Generation'}
-                            </span>
-                            <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
-                          </button>
-                          {Boolean(invoiceNumber) && (
+                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-border/40">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      {/* Invoice Number */}
+                      <div className="flex items-center gap-2.5">
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                          <FileText className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Invoice number</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <button
                               type="button"
-                              onClick={() => {
-                                navigator.clipboard.writeText(invoiceNumber);
-                                setCopiedType('invoice');
-                                setTimeout(() => setCopiedType(null), 2000);
-                              }}
-                              className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
-                              title="Copy invoice number"
+                              onClick={() => setShowInvoiceModal(true)}
+                              className="group/inv inline-flex items-center gap-1.5 text-sm font-mono font-extrabold text-foreground hover:text-violet-600 dark:hover:text-violet-400 transition cursor-pointer text-left"
+                              title="Click to view full invoice details"
                             >
-                              {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                              <span className="underline underline-offset-4 decoration-violet-400/60 group-hover/inv:decoration-violet-600">
+                                {invoiceNumber || 'Pending Generation'}
+                              </span>
+                              <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
                             </button>
-                          )}
+                            {Boolean(invoiceNumber) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(invoiceNumber);
+                                  setCopiedType('invoice');
+                                  setTimeout(() => setCopiedType(null), 2000);
+                                }}
+                                className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                                title="Copy invoice number"
+                              >
+                                {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="hidden sm:block h-8 w-px bg-border/60" />
+
+                      {/* Payment Number */}
+                      <div className="flex items-center gap-2.5">
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <CreditCard className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Number</p>
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                            <span className="text-sm font-mono font-extrabold text-foreground">
+                              {paymentNumber || (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? 'Settled' : 'Generated upon settlement')}
+                            </span>
+                            {Boolean(paymentNumber) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(paymentNumber);
+                                  setCopiedType('pmt');
+                                  setTimeout(() => setCopiedType(null), 2000);
+                                }}
+                                className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                                title="Copy payment number"
+                              >
+                                {copiedType === 'pmt' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -2081,14 +2155,18 @@ export function BookingDetailPopup({
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2.5 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Provider / Gateway</p>
                       <p className="font-semibold text-foreground mt-0.5">{paymentProvider}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
-                      <p className="font-semibold text-foreground mt-0.5 capitalize">{booking.payment_method || '—'}</p>
+                      <p className="font-semibold text-foreground mt-0.5 capitalize">{booking.payment_method || (detail as any)?.payment_method || (detail?.voucher_data as any)?.payment_method || '—'}</p>
+                    </div>
+                    <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                      <p className="text-[10px] text-muted-foreground font-medium">Payment Number</p>
+                      <p className="font-semibold font-mono text-foreground mt-0.5 truncate">{paymentNumber || (booking.is_paid ? 'Settled' : 'Generated upon settlement')}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
@@ -2415,13 +2493,14 @@ export function BookingDetailPopup({
             'shrink-0 border-t px-6 py-4 flex flex-col gap-2.5',
             isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
           )}>
-            {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (callCenterCancelBlocked || callCenterRescheduleBlocked) && AGENT_BLOCK_REASON && (
+            {/* Warning when reschedule or cancel is blocked */}
+            {!isNoShow && !isPastApptEnd && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (callCenterCancelBlocked || callCenterRescheduleBlocked) && AGENT_BLOCK_REASON && (
               <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 <span>{AGENT_BLOCK_REASON}</span>
               </div>
             )}
-            {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPastAllowedDaysFromApptStart && !callCenterRescheduleBlocked && (
+            {!isNoShow && !isPastApptEnd && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPastAllowedDaysFromApptStart && !callCenterRescheduleBlocked && (
               <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                 <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
                 <span>{RESCHEDULE_DAYS_REASON}</span>
@@ -2430,80 +2509,87 @@ export function BookingDetailPopup({
             <div className="flex flex-wrap items-center gap-2 justify-between">
               {/* Left side: Cancel, Reschedule, Complete, No Show */}
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Update button for payment_pending before appointment_end or confirmed with pending payment */}
-                {canUpdateBooking && (
-                  <button
-                    type="button"
-                    onClick={handleOpenUpdateBooking}
-                    className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
-                  >
-                    Update
-                  </button>
-                )}
-
-                {/* Cancel Booking: rule-based visibility */}
-                {canShowCancel && (
-                  <button
-                    type="button"
-                    onClick={handleCancel}
-                    className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
-                  >
-                    Cancel Booking
-                  </button>
-                )}
-
-                {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
-                  <>
+                {/* When isNoShow: hide all buttons, only Close */}
+                {isNoShow ? null : isPastApptEnd ? (
+                  // When appointment_end < current date: NO other button should show but ONLY "No Show"
+                  !isCompleted && !isCancelled && canMarkNoShow && (
                     <button
                       type="button"
-                      onClick={handleOpenReschedule}
-                      disabled={!canReschedule}
-                      title={rescheduleBlockReason}
+                      onClick={handleMarkNoShow}
+                      disabled={markingNoShow}
                       className={cn(
-                        'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                        !canReschedule
+                        'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
+                        markingNoShow
                           ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                          : 'border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer'
+                          : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
                       )}
                     >
-                      Reschedule
+                      {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
+                      {markingNoShow ? 'Updating…' : 'Mark No Show'}
                     </button>
-                    {!isCompleteRestrictedForRole && (
+                  )
+                ) : (
+                  <>
+                    {/* Update button for payment_pending before appointment_end or confirmed with pending payment */}
+                    {canUpdateBooking && (
                       <button
                         type="button"
-                        onClick={handleCompleteBooking}
-                        disabled={completing || isPaymentPending}
-                        title={
-                          isPaymentPending
-                            ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
-                            : undefined
-                        }
-                        className={cn(
-                          'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                          isPaymentPending
-                            ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
-                        )}
+                        onClick={handleOpenUpdateBooking}
+                        className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
                       >
-                        {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                        {completing ? 'Completing…' : 'Mark Completed'}
+                        Update
                       </button>
                     )}
-                    {canMarkNoShow && isPastApptEnd && (
+
+                    {/* Cancel Booking: rule-based visibility */}
+                    {canShowCancel && (
                       <button
                         type="button"
-                        onClick={handleMarkNoShow}
-                        disabled={markingNoShow}
-                        className={cn(
-                          'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
-                          markingNoShow
-                            ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                            : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
-                        )}
+                        onClick={handleCancel}
+                        className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
                       >
-                        {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
-                        {markingNoShow ? 'Updating…' : 'Mark No Show'}
+                        Cancel Booking
                       </button>
+                    )}
+
+                    {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleOpenReschedule}
+                          disabled={!canReschedule}
+                          title={rescheduleBlockReason}
+                          className={cn(
+                            'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                            !canReschedule
+                              ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                              : 'border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer'
+                          )}
+                        >
+                          Reschedule
+                        </button>
+                        {!isCompleteRestrictedForRole && (
+                          <button
+                            type="button"
+                            onClick={handleCompleteBooking}
+                            disabled={completing || isPaymentPending}
+                            title={
+                              isPaymentPending
+                                ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
+                                : undefined
+                            }
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                              isPaymentPending
+                                ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
+                            )}
+                          >
+                            {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                            {completing ? 'Completing…' : 'Mark Completed'}
+                          </button>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -2511,8 +2597,8 @@ export function BookingDetailPopup({
 
               {/* Right side: Payment Done, Open Payment, Close */}
               <div className="flex items-center gap-2">
-                {/* Make Payment — shown only when payment is pending and payment_url is not set */}
-                {isPaymentPending && !effectivePaymentUrl && (
+                {/* Make Payment — shown only when appointment has not ended, not no-show, payment is pending and payment_url is not set */}
+                {!isNoShow && !isPastApptEnd && isPaymentPending && !effectivePaymentUrl && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2526,18 +2612,19 @@ export function BookingDetailPopup({
                     Make Payment
                   </button>
                 )}
-                {!isPaymentTabRestricted && !isCancelled && effectivePaymentUrl && (
+                {!isNoShow && !isPastApptEnd && !isPaymentTabRestricted && !isCancelled && effectivePaymentUrl && (
                   <a href={effectivePaymentUrl} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer whitespace-nowrap">
                     <ExternalLink className="h-3.5 w-3.5" /> Open Payment
                   </a>
                 )}
-                {(() => {
+                {!isNoShow && (() => {
                   const rawPaymentStatus = String(detail?.payment_status ?? (detail as any)?.paymentStatus ?? booking.payment_status ?? '').toLowerCase().trim();
                   const isConfirmedAndPaid = curStatus === 'confirmed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
                   const isCompletedAndPaid = curStatus === 'completed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
                   const showPrintReceiptBtn = isConfirmedAndPaid || isCompletedAndPaid;
                   if (!showPrintReceiptBtn) return null;
+                  if (isPastApptEnd && !isCompletedAndPaid) return null;
                   return (
                     <button
                       type="button"
