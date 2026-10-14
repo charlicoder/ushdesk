@@ -89,7 +89,8 @@ export default function LoginPage() {
               alt="USH SPA Logo"
               width={160}
               height={160}
-              className="rounded-2xl"
+              className="rounded-2xl w-[160px] h-[160px] object-cover"
+              style={{ width: '160px', height: '160px' }}
               priority
             />
           </div>
@@ -142,7 +143,8 @@ export default function LoginPage() {
               alt="USH SPA Logo"
               width={80}
               height={80}
-              className="rounded-xl"
+              className="rounded-xl w-[80px] h-[80px] object-cover"
+              style={{ width: '80px', height: '80px' }}
               priority
             />
           </div>

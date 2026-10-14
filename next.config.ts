@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
     API_BOOKNPAY: process.env.API_BOOKNPAY || '/booknpay',
     API_NOTICE: process.env.API_NOTICE || '/unotice',
     API_UANR: process.env.API_UANR || '/uanr',
+    USHWEB: process.env.USHWEB || process.env.NEXT_PUBLIC_USHWEB || 'http://127.0.0.1:3001',
   },
 
   async rewrites() {

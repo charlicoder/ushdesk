@@ -2,19 +2,27 @@
 
 import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import Link from 'next/link';
 import {
   Gift, Loader2, AlertCircle, RefreshCw, ExternalLink, Eye,
   X, CheckCircle2, Clock, XCircle, ChevronDown,
   User, Scissors, MapPin, Timer, Package, CreditCard,
   MessageSquare, Hash, Building2, Building, Smartphone, Truck, Phone, Mail, Calendar, CalendarDays,
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
-  KeyRound, Globe, Send,
+  KeyRound, Globe, Send, QrCode, FileText, ShieldCheck, Receipt,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 import { CreateVoucherModal } from '@/components/bookings/CreateVoucherModal';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
+import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
+import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
+import { paymentLinksApi, whatsappShareUrl, smsShareUrl, type PaymentLink } from '@/lib/paymentLinks';
+import { usePermissions } from '@/hooks/use-permissions';
+import { extractRoleCandidates } from '@/lib/permissions';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -156,6 +164,8 @@ interface DeliveryAddress {
 interface Voucher {
   id: string;
   voucher_number?: string | null;
+  invoice_number?: string | null;
+  invoice_id?: string | null;
   service_id: string;
   service_data: ServiceData;
   branch_id: string;
@@ -194,8 +204,11 @@ interface Voucher {
   booking_id: string | null;
   booking_data?: BookingData | null;
   payment_id: string | null;
+  payment_number?: string | null;
   payment_data: PaymentData | null;
   payment_url: string | null;
+  payment_provider?: string | null;
+  payment_through?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -381,14 +394,77 @@ function statusCfg(s: string) {
 }
 
 function getVoucherPublicUrl(voucher: Voucher): string {
-  if (voucher.public_token) {
-    return `https://ushspa.co/gift/${voucher.public_token}`;
+  const ushwebEnv = (
+    process.env.NEXT_PUBLIC_USHWEB ||
+    process.env.USHWEB ||
+    'http://127.0.0.1:3001'
+  ).trim();
+  const ushwebBase = ushwebEnv.endsWith('/') ? ushwebEnv.slice(0, -1) : ushwebEnv;
+  const token = voucher.public_token || (voucher as any)?.token;
+  if (token) {
+    return `${ushwebBase}/gift/${token}`;
   }
   if (voucher.payment_url) {
     return voucher.payment_url;
   }
   const origin = typeof window !== 'undefined' ? window.location.origin : 'https://desk.ushspa.co';
   return `${origin}/appointments/gift-vouchers?code=${encodeURIComponent(voucher.secret_code || voucher.id)}`;
+}
+
+/**
+ * Format message for SMS, WhatsApp and Copy:
+ *
+ * USHSPA:
+ *
+ * Hi {recipient_name}, you received a gift from {sender_name} !
+ * Message say:
+ * {gift_mesasge}
+ *  🙏🏻
+ *
+ * View the link below to receive your gift
+ *
+ * {gift_voucher_url}
+ */
+export function buildVoucherShareMessage(voucher: Voucher): string {
+  // recipient_name: comes from To
+  const recipientName =
+    voucher.recipient_data?.name ||
+    voucher.recipient_details?.name ||
+    (voucher as any).gift_to ||
+    (voucher as any).recipient_name ||
+    '';
+
+  // sender_name: comes from From field of the form or choosen customer name if From field is null
+  const senderName =
+    (voucher as any).gift_from ||
+    voucher.sender_data?.name ||
+    voucher.sender_details?.name ||
+    (voucher as any).sender_name ||
+    'USH Spa';
+
+  // gift_mesasge: comes from Gift Message box of the form data
+  const giftMessage = (voucher.gift_message ?? (voucher as any).message ?? '').trim();
+
+  // gift_voucher_url: is the generated url
+  const giftVoucherUrl = getVoucherPublicUrl(voucher);
+
+  const lines = [
+    'USHSPA:',
+    '',
+    `Hi ${recipientName || 'Valued Guest'}, you received a gift from ${senderName} !`,
+    'Message say:',
+  ];
+
+  if (giftMessage) {
+    lines.push(giftMessage);
+  }
+  lines.push(' 🙏🏻');
+  lines.push('');
+  lines.push('View the link below to receive your gift');
+  lines.push('');
+  lines.push(giftVoucherUrl);
+
+  return lines.join('\n');
 }
 
 // ── Voucher Share Dropdown ─────────────────────────────────────────────────────
@@ -415,9 +491,9 @@ function VoucherShareDropdown({
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = getVoucherPublicUrl(voucher);
+    const text = buildVoucherShareMessage(voucher);
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(text);
     } catch {
       // fallback
     }
@@ -500,9 +576,9 @@ function VoucherShareDropdown({
               </div>
               <div className="min-w-0 flex-1">
                 <p className={cn('font-semibold leading-none', copied ? 'text-emerald-600 dark:text-emerald-400 font-bold' : 'text-foreground')}>
-                  {copied ? 'Copied URL!' : 'Copy Public URL'}
+                  {copied ? 'Copied Message!' : 'Copy Message'}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">Copy link to clipboard</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Copy formatted gift message</p>
               </div>
             </button>
           </div>
@@ -521,6 +597,7 @@ function VoucherDetailModal({
   onShare,
   onCopyUrl,
   onReschedule,
+  onRefresh,
 }: {
   voucher: Voucher;
   token?: string | null;
@@ -528,6 +605,7 @@ function VoucherDetailModal({
   onShare?: (voucher: Voucher, channel: 'sms' | 'whatsapp') => void;
   onCopyUrl?: (voucher: Voucher) => void;
   onReschedule?: (voucher: Voucher, bookingId?: string, bookingData?: any) => void;
+  onRefresh?: () => void;
 }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -535,8 +613,21 @@ function VoucherDetailModal({
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
+  const [activeTab, setActiveTab] = useState<'details' | 'payments'>('details');
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedType, setCopiedType] = useState<string | null>(null);
+  const [copiedPaymentUrl, setCopiedPaymentUrl] = useState(false);
+
+  // Payment links, payments & invoice state
+  const [paymentLinks, setPaymentLinks] = useState<PaymentLink[]>([]);
+  const [voucherPayments, setVoucherPayments] = useState<Record<string, any>[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const [loadingPayments, setLoadingPayments] = useState(false);
+  const [syncingLink, setSyncingLink] = useState(false);
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [showMakePaymentModal, setShowMakePaymentModal] = useState(false);
+  const [invoiceRecord, setInvoiceRecord] = useState<Record<string, any> | null>(null);
 
   const catCfg = getCategoryConfig(voucher.gift_category, voucher);
   const CatIcon = catCfg.icon;
@@ -583,6 +674,179 @@ function VoucherDetailModal({
       active = false;
     };
   }, [isRedeemed, bookingId, voucher.booking_data, token]);
+
+  // Load payment links for voucher
+  const fetchLinks = useCallback(() => {
+    if (!voucher?.id) return;
+    setLoadingLinks(true);
+    paymentLinksApi.list('gift_voucher', voucher.id)
+      .then((res) => {
+        if (Array.isArray(res)) {
+          setPaymentLinks(res);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load payment links for voucher:', err);
+      })
+      .finally(() => {
+        setLoadingLinks(false);
+      });
+  }, [voucher?.id]);
+
+  useEffect(() => {
+    fetchLinks();
+  }, [fetchLinks]);
+
+  // Load payment records for voucher
+  const fetchPayments = useCallback(() => {
+    if (!voucher?.id) return;
+    setLoadingPayments(true);
+    authedFetch(`/booknpay/api/v1/payments?voucher_id=${voucher.id}`)
+      .then((r) => r.json())
+      .then((res) => {
+        const items =
+          res?.data?.items ??
+          res?.items ??
+          (Array.isArray(res?.data) ? res.data : []);
+        if (Array.isArray(items)) {
+          setVoucherPayments(items);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load payments for voucher:', err);
+      })
+      .finally(() => {
+        setLoadingPayments(false);
+      });
+  }, [voucher?.id]);
+
+  useEffect(() => {
+    fetchPayments();
+  }, [fetchPayments]);
+
+  const latestPayment = voucherPayments[0] || null;
+  const activePaymentLink = paymentLinks[0] || null;
+
+  // Resolve invoice number & fetch invoice record
+  const rawInvoiceNumber =
+    latestPayment?.invoice_number ||
+    voucher.invoice_number ||
+    voucher.invoice_id ||
+    (voucher.payment_data as any)?.invoice_number ||
+    (voucher.payment_data as any)?.invoiceId ||
+    (voucher.payment_data as any)?.data?.InvoiceId ||
+    activePaymentLink?.invoice_number ||
+    activePaymentLink?.invoice_id ||
+    null;
+  const invoiceNumber = rawInvoiceNumber ? String(rawInvoiceNumber) : null;
+
+  // Resolve payment number (e.g. PMT/2026/10/000001)
+  const rawPaymentNumber =
+    latestPayment?.payment_number ||
+    voucher.payment_number ||
+    (voucher.payment_data as any)?.payment_number ||
+    (voucher.payment_data as any)?.data?.InvoiceTransactions?.[0]?.PaymentId ||
+    activePaymentLink?.payment_number ||
+    null;
+  const paymentNumber = rawPaymentNumber ? String(rawPaymentNumber) : null;
+
+  // Resolve transaction ID & auth/trace code
+  const transactionId =
+    latestPayment?.transaction_id ||
+    latestPayment?.track_id ||
+    voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TrackId ||
+    (voucher.payment_data?.data?.InvoiceTransactions?.[0] as any)?.TransactionId ||
+    (voucher.payment_data as any)?.transaction_id ||
+    (voucher.payment_data as any)?.track_id ||
+    (voucher as any)?.payment_id ||
+    null;
+
+  const authCode =
+    latestPayment?.reference_id ||
+    voucher.payment_data?.data?.InvoiceTransactions?.[0]?.AuthorizationId ||
+    (voucher.payment_data as any)?.reference_id ||
+    activePaymentLink?.gateway_invoice_id ||
+    null;
+
+  useEffect(() => {
+    if (!invoiceNumber || invoiceNumber === '—') {
+      setInvoiceRecord(null);
+      return;
+    }
+    let cancelled = false;
+    authedFetch(`/uanr/api/v1/invoices?search=${encodeURIComponent(invoiceNumber)}`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (cancelled) return;
+        const items = res?.data?.items ?? res?.items ?? (Array.isArray(res?.data) ? res.data : []);
+        const found = items.find((i: Record<string, any>) =>
+          i.name === invoiceNumber || i.id === invoiceNumber || i.reference === invoiceNumber
+        ) || items[0];
+        if (found) setInvoiceRecord(found);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [invoiceNumber]);
+
+  const effectivePaymentUrl =
+    activePaymentLink?.payment_url ||
+    latestPayment?.payment_url ||
+    voucher.payment_url ||
+    voucher.payment_data?.paymentUrl ||
+    (voucher as any)?.payment_link_url ||
+    null;
+
+  const isPaid = Boolean(
+    latestPayment?.status === 'success' ||
+    voucher.status === 'active' ||
+    voucher.status === 'redeemed' ||
+    voucher.payment_data?.isPaid ||
+    (voucher.payment_data as any)?.status === 'success' ||
+    (activePaymentLink && (activePaymentLink.status === 'paid' || activePaymentLink.status === 'success')) ||
+    (voucher.payment_data?.data?.InvoiceStatus?.toLowerCase() === 'paid')
+  );
+
+  const isPaymentPending = Boolean(
+    !isPaid &&
+    (voucher.status === 'payment_pending' ||
+      activePaymentLink?.status === 'pending' ||
+      activePaymentLink?.status === 'active' ||
+      (voucher.payment_data?.data?.InvoiceStatus?.toLowerCase() === 'pending'))
+  );
+
+  const handleCopyPaymentUrl = async () => {
+    if (!effectivePaymentUrl) return;
+    try {
+      await navigator.clipboard.writeText(effectivePaymentUrl);
+      setCopiedPaymentUrl(true);
+      setTimeout(() => setCopiedPaymentUrl(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleSyncPaymentLink = async (linkId: string) => {
+    try {
+      setSyncingLink(true);
+      const updated = await paymentLinksApi.sync(linkId);
+      setPaymentLinks((prev) => prev.map((l) => (l.id === linkId ? updated : l)));
+      onRefresh?.();
+    } catch (err) {
+      console.error('Failed to sync payment link:', err);
+    } finally {
+      setSyncingLink(false);
+    }
+  };
+
+  const senderName = voucher.sender_data?.name || voucher.sender_details?.name || 'Customer';
+  const senderPhone = voucher.sender_data?.phone_number || voucher.sender_details?.phone_number;
+  const recipientPhone = voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number;
+  const targetSharePhone = senderPhone || recipientPhone || '';
+  const paymentShareMessage = effectivePaymentUrl
+    ? `Hello ${senderName}, please complete your USH Spa Gift Voucher payment of ${voucher.total_amount} ${voucher.currency} using this secure link: ${effectivePaymentUrl}`
+    : '';
 
   const booking = voucher.booking_data || fetchedBooking;
 
@@ -634,8 +898,15 @@ function VoucherDetailModal({
 
   const bookingNumber = booking?.booking_number || booking?.booking_no || (bookingId ? `BOK-${bookingId.slice(0, 8).toUpperCase()}` : null);
 
-  const publicUrl = voucher.public_token
-    ? `https://ushspa.co/gift/${voucher.public_token}`
+  const ushwebEnv = (
+    process.env.NEXT_PUBLIC_USHWEB ||
+    process.env.USHWEB ||
+    'http://127.0.0.1:3001'
+  ).trim();
+  const ushwebBase = ushwebEnv.endsWith('/') ? ushwebEnv.slice(0, -1) : ushwebEnv;
+  const publicToken = voucher.public_token || (voucher as any)?.token;
+  const trackingUrl = publicToken
+    ? `${ushwebBase}/gift/${publicToken}`
     : (voucher.payment_url || null);
 
   const handleCopyCode = async () => {
@@ -650,9 +921,9 @@ function VoucherDetailModal({
   };
 
   const handleCopyUrl = async () => {
-    if (!publicUrl) return;
+    if (!trackingUrl) return;
     try {
-      await navigator.clipboard.writeText(publicUrl);
+      await navigator.clipboard.writeText(trackingUrl);
       setCopiedUrl(true);
       setTimeout(() => setCopiedUrl(false), 2000);
     } catch {
@@ -663,7 +934,7 @@ function VoucherDetailModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-xl max-h-[90vh] overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl flex flex-col">
+      <div className="relative z-10 w-full max-w-2xl max-h-[90vh] overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border/50 bg-muted/40 px-6 py-4 shrink-0">
           <div className="flex items-center gap-3">
@@ -682,527 +953,954 @@ function VoucherDetailModal({
           </button>
         </div>
 
-        {/* Scrollable body */}
+        {/* Tabs Bar */}
+        <div className="shrink-0 flex items-center border-b border-border/40 bg-muted/20 px-6 gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveTab('details')}
+            className={cn(
+              'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
+              activeTab === 'details'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Gift className="h-3.5 w-3.5" />
+            Voucher Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('payments')}
+            className={cn(
+              'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
+              activeTab === 'payments'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <CreditCard className="h-3.5 w-3.5" />
+            Payment &amp; Invoices
+            {isPaid ? (
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                Paid
+              </span>
+            ) : isPaymentPending ? (
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20">
+                Pending
+              </span>
+            ) : null}
+          </button>
+        </div>
+
+        {/* Scrollable Body */}
         <div className="overflow-y-auto flex-1 p-6 space-y-4">
-          {/* Category & Status */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold', catCfg.color)}>
-              <CatIcon className="h-3.5 w-3.5" />{catCfg.label}
-            </span>
-            {voucher.status && (
-              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', ordStatusCfg.badgeClass)}>
-                <span className={cn('h-1.5 w-1.5 rounded-full', ordStatusCfg.dotClass)} />
-                {ordStatusCfg.label}
-              </span>
-            )}
-            {voucher.payment_data?.isPaid && (
-              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-                <CreditCard className="h-3 w-3" /> Paid
-              </span>
-            )}
-            {isExpired && voucher.status === 'active' && (
-              <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
-                <XCircle className="h-3 w-3" /> Expired
-              </span>
-            )}
-          </div>
+          {activeTab === 'details' ? (
+            <>
+              {/* Category & Status */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold', catCfg.color)}>
+                  <CatIcon className="h-3.5 w-3.5" />{catCfg.label}
+                </span>
+                {voucher.status && (
+                  <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold capitalize', ordStatusCfg.badgeClass)}>
+                    <span className={cn('h-1.5 w-1.5 rounded-full', ordStatusCfg.dotClass)} />
+                    {ordStatusCfg.label}
+                  </span>
+                )}
+                {isPaid && (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                    <CreditCard className="h-3 w-3" /> Paid
+                  </span>
+                )}
+                {isExpired && voucher.status === 'active' && (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                    <XCircle className="h-3 w-3" /> Expired
+                  </span>
+                )}
+              </div>
 
-          {/* Sender → Recipient */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">From (Sender)</p>
-              <p className="font-bold text-sm text-foreground">{voucher.sender_data?.name || voucher.sender_details?.name || '—'}</p>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                <Phone className="h-3 w-3 text-primary" />
-                {voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '—'}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">To (Recipient)</p>
-              <p className="font-bold text-sm text-foreground">{voucher.recipient_data?.name || voucher.recipient_details?.name || '—'}</p>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
-                <Phone className="h-3 w-3 text-primary" />
-                {voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '—'}
-              </p>
-            </div>
-          </div>
+              {/* Sender → Recipient */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">From (Sender)</p>
+                  <p className="font-bold text-sm text-foreground">{voucher.sender_data?.name || voucher.sender_details?.name || '—'}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                    <Phone className="h-3 w-3 text-primary" />
+                    {voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '—'}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">To (Recipient)</p>
+                  <p className="font-bold text-sm text-foreground">{voucher.recipient_data?.name || voucher.recipient_details?.name || '—'}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
+                    <Phone className="h-3 w-3 text-primary" />
+                    {voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '—'}
+                  </p>
+                </div>
+              </div>
 
-          {/* Ordered Items & Services */}
-          {(Boolean(voucher.ordered_items?.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(isDigital && voucher.digital_product_data) || Boolean(voucher.addons?.length)) && (
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
-                <Package className="h-3.5 w-3.5 text-primary" />
-                Ordered Items
-                {voucher.ordered_items && voucher.ordered_items.length > 0 ? ` (${voucher.ordered_items.length})` : ''}
-              </p>
-              <div className="space-y-3">
-                {/* Physical Products */}
-                {voucher.ordered_items && voucher.ordered_items.length > 0 && (
-                  <div className="space-y-2">
-                    {voucher.ordered_items.map((item, i) => (
-                      <div key={i} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
-                        {item.image && (
-                          <img src={item.image} alt={item.name_en || item.name} className="h-12 w-12 rounded-lg object-cover shrink-0"
+              {/* Ordered Items & Services */}
+              {(Boolean(voucher.ordered_items?.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(isDigital && voucher.digital_product_data) || Boolean(voucher.addons?.length)) && (
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
+                    <Package className="h-3.5 w-3.5 text-primary" />
+                    Ordered Items
+                    {voucher.ordered_items && voucher.ordered_items.length > 0 ? ` (${voucher.ordered_items.length})` : ''}
+                  </p>
+                  <div className="space-y-3">
+                    {/* Physical Products */}
+                    {voucher.ordered_items && voucher.ordered_items.length > 0 && (
+                      <div className="space-y-2">
+                        {voucher.ordered_items.map((item, i) => (
+                          <div key={i} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
+                            {item.image && (
+                              <img src={item.image} alt={item.name_en || item.name} className="h-12 w-12 rounded-lg object-cover shrink-0"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                            )}
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
+                              <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || voucher.currency)}</p>
+                            </div>
+                            <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || voucher.currency)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Digital: Product Data */}
+                    {isDigital && voucher.digital_product_data && (
+                      <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-blue-500 mb-1">
+                          <Smartphone className="h-3.5 w-3.5" />Digital Gift Details
+                        </div>
+                        {voucher.digital_product_data?.image && (
+                          <img src={voucher.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                         )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
-                          <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || voucher.currency)}</p>
-                        </div>
-                        <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || voucher.currency)}</span>
+                        <p className="font-bold text-sm text-foreground">{voucher.digital_product_data?.title || voucher.digital_product_data?.name || 'Digital Gift Item'}</p>
+                        {voucher.digital_product_data?.price && (
+                          <p className="text-xs text-muted-foreground">{formatAmount(voucher.digital_product_data.price, voucher.digital_product_data.currency || voucher.currency)}</p>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    )}
 
-                {/* Digital: Product Data */}
-                {isDigital && voucher.digital_product_data && (
-                  <div className="rounded-xl border border-border/60 bg-card p-3 space-y-1.5">
-                    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-blue-500 mb-1">
-                      <Smartphone className="h-3.5 w-3.5" />Digital Gift Details
-                    </div>
-                    {voucher.digital_product_data?.image && (
-                      <img src={voucher.digital_product_data.image} alt="Digital Gift" className="h-28 w-full rounded-lg object-cover mb-2"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                    )}
-                    <p className="font-bold text-sm text-foreground">{voucher.digital_product_data?.title || voucher.digital_product_data?.name || 'Digital Gift Item'}</p>
-                    {voucher.digital_product_data?.price && (
-                      <p className="text-xs text-muted-foreground">{formatAmount(voucher.digital_product_data.price, voucher.digital_product_data.currency || voucher.currency)}</p>
-                    )}
-                  </div>
-                )}
-
-                {/* Service Details (including addons & extratime) */}
-                {(voucher.service_data?.name || voucher.service_id) && (
-                  <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-                    {voucher.service_data?.image && (
-                      <img src={voucher.service_data.image} alt={voucher.service_data.name} className="w-full h-28 object-cover"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                    )}
-                    <div className="p-3.5 space-y-2.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">
-                            <Sparkles className="h-3 w-3" />Spa Service
+                    {/* Service Details (including addons & extratime) */}
+                    {(voucher.service_data?.name || voucher.service_id) && (
+                      <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+                        {voucher.service_data?.image && (
+                          <img src={voucher.service_data.image} alt={voucher.service_data.name} className="w-full h-28 object-cover"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                        )}
+                        <div className="p-3.5 space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">
+                                <Sparkles className="h-3 w-3" />Spa Service
+                              </div>
+                              <p className="font-bold text-sm text-foreground">{voucher.service_data?.name || 'Service'}</p>
+                            </div>
+                            {(voucher.service_data?.base_price || voucher.total_amount) && (
+                              <span className="text-xs font-bold text-foreground shrink-0">
+                                {formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
+                              </span>
+                            )}
                           </div>
-                          <p className="font-bold text-sm text-foreground">{voucher.service_data?.name || 'Service'}</p>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            {(voucher.service_data?.duration_minutes || voucher.total_duration) && (
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3 text-primary" />{voucher.service_data?.duration_minutes || voucher.total_duration} min
+                              </span>
+                            )}
+                            {voucher.branch_data?.name && (
+                              <span className="flex items-center gap-1">
+                                <Building className="h-3 w-3 text-muted-foreground" />{voucher.branch_data.name}
+                              </span>
+                            )}
+                            {voucher.service_arrangement_data?.arrangement_name && (
+                              <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                                {voucher.service_arrangement_data.arrangement_name}
+                              </span>
+                            )}
+                          </div>
+
+                          {voucher.service_data?.service_types && voucher.service_data.service_types.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {voucher.service_data.service_types.map((st, idx) => (
+                                <span key={st.id || `st-${idx}`} className="rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
+                                  {st.name}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Add-ons */}
+                          {voucher.addons && voucher.addons.length > 0 && (
+                            <div className="pt-2.5 border-t border-border/50">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({voucher.addons.length})
+                              </p>
+                              <div className="space-y-1.5">
+                                {voucher.addons.map((addon, idx) => (
+                                  <div key={addon.id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                                    <div>
+                                      <span className="font-medium text-foreground">{addon.name}</span>
+                                      {addon.duration_minutes ? (
+                                        <span className="text-[11px] text-muted-foreground block">{addon.duration_minutes} min</span>
+                                      ) : null}
+                                    </div>
+                                    <span className="font-semibold text-foreground shrink-0 ml-2">
+                                      {formatAmount(addon.price, addon.currency || voucher.currency)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Extra Time */}
+                          {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                            <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-1.5 text-muted-foreground">
+                                <Timer className="h-3.5 w-3.5 text-amber-500" />
+                                <span className="font-medium text-foreground">Extra Time:</span>
+                                <span className="font-semibold text-foreground">+{voucher.extra_time} min</span>
+                              </div>
+                              {voucher.price_for_extra_time && Number(voucher.price_for_extra_time) > 0 ? (
+                                <span className="font-semibold text-foreground">
+                                  {formatAmount(voucher.price_for_extra_time, voucher.currency)}
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
                         </div>
-                        {(voucher.service_data?.base_price || voucher.total_amount) && (
-                          <span className="text-xs font-bold text-foreground shrink-0">
-                            {formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
-                          </span>
-                        )}
                       </div>
+                    )}
 
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        {(voucher.service_data?.duration_minutes || voucher.total_duration) && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3 text-primary" />{voucher.service_data?.duration_minutes || voucher.total_duration} min
-                          </span>
-                        )}
-                        {voucher.branch_data?.name && (
-                          <span className="flex items-center gap-1">
-                            <Building className="h-3 w-3 text-muted-foreground" />{voucher.branch_data.name}
-                          </span>
-                        )}
-                        {voucher.service_arrangement_data?.arrangement_name && (
-                          <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
-                            {voucher.service_arrangement_data.arrangement_name}
-                          </span>
-                        )}
-                      </div>
-
-                      {voucher.service_data?.service_types && voucher.service_data.service_types.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {voucher.service_data.service_types.map((st, idx) => (
-                            <span key={st.id || `st-${idx}`} className="rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[10px] font-semibold text-violet-700 dark:text-violet-300">
-                              {st.name}
-                            </span>
+                    {/* Fallback Addons if no service_data?.name */}
+                    {!(voucher.service_data?.name || voucher.service_id) && voucher.addons && voucher.addons.length > 0 && (
+                      <div className="rounded-xl border border-border/60 bg-card p-3 space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({voucher.addons.length})
+                        </p>
+                        <div className="space-y-1.5">
+                          {voucher.addons.map((addon, idx) => (
+                            <div key={addon.id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                              <span className="font-medium text-foreground">{addon.name}</span>
+                              <span className="font-semibold text-foreground shrink-0 ml-2">
+                                {formatAmount(addon.price, addon.currency || voucher.currency)}
+                              </span>
+                            </div>
                           ))}
                         </div>
-                      )}
-
-                      {/* Add-ons */}
-                      {voucher.addons && voucher.addons.length > 0 && (
-                        <div className="pt-2.5 border-t border-border/50">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
-                            <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({voucher.addons.length})
-                          </p>
-                          <div className="space-y-1.5">
-                            {voucher.addons.map((addon, idx) => (
-                              <div key={addon.id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
-                                <div>
-                                  <span className="font-medium text-foreground">{addon.name}</span>
-                                  {addon.duration_minutes ? (
-                                    <span className="text-[11px] text-muted-foreground block">{addon.duration_minutes} min</span>
-                                  ) : null}
-                                </div>
-                                <span className="font-semibold text-foreground shrink-0 ml-2">
-                                  {formatAmount(addon.price, addon.currency || voucher.currency)}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Extra Time */}
-                      {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
-                        <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-1.5 text-muted-foreground">
-                            <Timer className="h-3.5 w-3.5 text-amber-500" />
-                            <span className="font-medium text-foreground">Extra Time:</span>
-                            <span className="font-semibold text-foreground">+{voucher.extra_time} min</span>
-                          </div>
-                          {voucher.price_for_extra_time && Number(voucher.price_for_extra_time) > 0 ? (
-                            <span className="font-semibold text-foreground">
-                              {formatAmount(voucher.price_for_extra_time, voucher.currency)}
-                            </span>
-                          ) : null}
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                )}
-
-                {/* Fallback Addons if no service_data?.name */}
-                {!(voucher.service_data?.name || voucher.service_id) && voucher.addons && voucher.addons.length > 0 && (
-                  <div className="rounded-xl border border-border/60 bg-card p-3 space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                      <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({voucher.addons.length})
-                    </p>
-                    <div className="space-y-1.5">
-                      {voucher.addons.map((addon, idx) => (
-                        <div key={addon.id || `addon-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
-                          <span className="font-medium text-foreground">{addon.name}</span>
-                          <span className="font-semibold text-foreground shrink-0 ml-2">
-                            {formatAmount(addon.price, addon.currency || voucher.currency)}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Under Ordered Items: Gift Message */}
-          {voucher.gift_message && (
-            <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3">
-              <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
-              <div className="min-w-0 flex-1">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Gift Message</p>
-                <p className="text-xs text-foreground leading-relaxed italic">&ldquo;{voucher.gift_message}&rdquo;</p>
-              </div>
-            </div>
-          )}
-
-          {/* Delivery Status */}
-          {(isPhysical || voucher.delivery_status) && (
-            <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 text-xs">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Truck className="h-4 w-4 text-primary shrink-0" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Status</span>
                 </div>
-                <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold', delCfg.badgeClass)}>
-                  <span className={cn('h-1.5 w-1.5 rounded-full', delCfg.dotClass)} />
-                  {voucher.delivery_status_label || delCfg.label}
-                </span>
-              </div>
-            </div>
-          )}
+              )}
 
-          {/* Delivery Address */}
-          {(isPhysical || voucher.delivery_address) && (
-            <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <MapPin className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
-              </div>
-              {voucher.delivery_address ? (
-                <div className="space-y-2">
-                  <p className="font-semibold text-foreground leading-snug">
-                    {formatAddressPreview(voucher.delivery_address)}
-                  </p>
-                  <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
-                    {voucher.delivery_address.area && (
-                      <div className="rounded-lg border border-border/50 bg-card p-2">
-                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Area</span>
-                        <span className="font-medium text-foreground">{voucher.delivery_address.area}</span>
-                      </div>
-                    )}
-                    {voucher.delivery_address.city && (
-                      <div className="rounded-lg border border-border/50 bg-card p-2">
-                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">City</span>
-                        <span className="font-medium text-foreground">{voucher.delivery_address.city}</span>
-                      </div>
-                    )}
-                    {voucher.delivery_address.block && (
-                      <div className="rounded-lg border border-border/50 bg-card p-2">
-                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Block</span>
-                        <span className="font-medium text-foreground">{voucher.delivery_address.block}</span>
-                      </div>
-                    )}
-                    {voucher.delivery_address.street && (
-                      <div className="rounded-lg border border-border/50 bg-card p-2">
-                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Street</span>
-                        <span className="font-medium text-foreground">{voucher.delivery_address.street}</span>
-                      </div>
-                    )}
-                    {voucher.delivery_address.building && (
-                      <div className="rounded-lg border border-border/50 bg-card p-2">
-                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Building</span>
-                        <span className="font-medium text-foreground">{voucher.delivery_address.building}</span>
-                      </div>
-                    )}
-                    {(voucher.delivery_address.floor || voucher.delivery_address.apartment) && (
-                      <div className="rounded-lg border border-border/50 bg-card p-2">
-                        <span className="text-[9px] uppercase font-bold text-muted-foreground block">Floor / Apt</span>
-                        <span className="font-medium text-foreground">
-                          {[voucher.delivery_address.floor && `Fl: ${voucher.delivery_address.floor}`, voucher.delivery_address.apartment && `Apt: ${voucher.delivery_address.apartment}`].filter(Boolean).join(', ')}
-                        </span>
-                      </div>
-                    )}
+              {/* Under Ordered Items: Gift Message */}
+              {voucher.gift_message && (
+                <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3">
+                  <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Gift Message</p>
+                    <p className="text-xs text-foreground leading-relaxed italic">&ldquo;{voucher.gift_message}&rdquo;</p>
                   </div>
-                  {voucher.delivery_address.notes && (
-                    <div className="rounded-lg border border-amber-200/80 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800/40 p-2 text-xs">
-                      <span className="text-[9px] uppercase font-bold text-amber-700 dark:text-amber-400 block">Notes</span>
-                      <p className="text-foreground italic mt-0.5">&ldquo;{voucher.delivery_address.notes}&rdquo;</p>
+                </div>
+              )}
+
+              {/* Delivery Status */}
+              {(isPhysical || voucher.delivery_status) && (
+                <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Truck className="h-4 w-4 text-primary shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Status</span>
+                    </div>
+                    <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold', delCfg.badgeClass)}>
+                      <span className={cn('h-1.5 w-1.5 rounded-full', delCfg.dotClass)} />
+                      {voucher.delivery_status_label || delCfg.label}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Delivery Address */}
+              {(isPhysical || voucher.delivery_address) && (
+                <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 space-y-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
+                  </div>
+                  {voucher.delivery_address ? (
+                    <div className="space-y-2">
+                      <p className="font-semibold text-foreground leading-snug">
+                        {formatAddressPreview(voucher.delivery_address)}
+                      </p>
+                      <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
+                        {voucher.delivery_address.area && (
+                          <div className="rounded-lg border border-border/50 bg-card p-2">
+                            <span className="text-[9px] uppercase font-bold text-muted-foreground block">Area</span>
+                            <span className="font-medium text-foreground">{voucher.delivery_address.area}</span>
+                          </div>
+                        )}
+                        {voucher.delivery_address.city && (
+                          <div className="rounded-lg border border-border/50 bg-card p-2">
+                            <span className="text-[9px] uppercase font-bold text-muted-foreground block">City</span>
+                            <span className="font-medium text-foreground">{voucher.delivery_address.city}</span>
+                          </div>
+                        )}
+                        {voucher.delivery_address.block && (
+                          <div className="rounded-lg border border-border/50 bg-card p-2">
+                            <span className="text-[9px] uppercase font-bold text-muted-foreground block">Block</span>
+                            <span className="font-medium text-foreground">{voucher.delivery_address.block}</span>
+                          </div>
+                        )}
+                        {voucher.delivery_address.street && (
+                          <div className="rounded-lg border border-border/50 bg-card p-2">
+                            <span className="text-[9px] uppercase font-bold text-muted-foreground block">Street</span>
+                            <span className="font-medium text-foreground">{voucher.delivery_address.street}</span>
+                          </div>
+                        )}
+                        {voucher.delivery_address.building && (
+                          <div className="rounded-lg border border-border/50 bg-card p-2">
+                            <span className="text-[9px] uppercase font-bold text-muted-foreground block">Building</span>
+                            <span className="font-medium text-foreground">{voucher.delivery_address.building}</span>
+                          </div>
+                        )}
+                        {(voucher.delivery_address.floor || voucher.delivery_address.apartment) && (
+                          <div className="rounded-lg border border-border/50 bg-card p-2">
+                            <span className="text-[9px] uppercase font-bold text-muted-foreground block">Floor / Apt</span>
+                            <span className="font-medium text-foreground">
+                              {[voucher.delivery_address.floor && `Fl: ${voucher.delivery_address.floor}`, voucher.delivery_address.apartment && `Apt: ${voucher.delivery_address.apartment}`].filter(Boolean).join(', ')}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {voucher.delivery_address.notes && (
+                        <div className="rounded-lg border border-amber-200/80 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800/40 p-2 text-xs">
+                          <span className="text-[9px] uppercase font-bold text-amber-700 dark:text-amber-400 block">Notes</span>
+                          <p className="text-foreground italic mt-0.5">&ldquo;{voucher.delivery_address.notes}&rdquo;</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground italic">No delivery address set</p>
+                  )}
+                </div>
+              )}
+
+              {/* Redeemed Booking Details Card */}
+              {isRedeemed && (
+                <div className="rounded-2xl border border-violet-200/60 dark:border-violet-800/40 bg-gradient-to-br from-violet-50/70 via-card to-indigo-50/50 dark:from-violet-950/30 dark:via-card dark:to-indigo-950/20 p-4 space-y-3.5 shadow-xs">
+                  {/* Card Header */}
+                  <div className="flex items-center justify-between gap-2 border-b border-violet-200/40 dark:border-violet-800/30 pb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-400">
+                        <CheckCircle2 className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-extrabold text-foreground tracking-tight">Redeemed Booking Details</h3>
+                        <p className="text-[10px] text-muted-foreground">Voucher has been redeemed for an appointment</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
+                        <Star className="h-2.5 w-2.5 fill-violet-500 text-violet-500" /> Redeemed
+                      </span>
+                      {booking?.status && (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-primary/10 text-primary capitalize">
+                          {booking.status}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {loadingBooking ? (
+                    <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-600" />
+                      Loading appointment details…
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Grid of Key Redemption & Booking Info */}
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {/* Who Redeemed */}
+                        <div className="flex flex-col gap-1 rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-2.5">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <User className="h-3 w-3 text-violet-500" />
+                            <span className="text-[10px] font-bold uppercase tracking-wider">Redeemed By</span>
+                          </div>
+                          <p className="text-xs font-bold text-foreground truncate">{redeemedByName}</p>
+                          {redeemedByPhone && (
+                            <p className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
+                              <Phone className="h-2.5 w-2.5" />{redeemedByPhone}
+                            </p>
+                          )}
+                          {redeemedByEmail && (
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {redeemedByEmail}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Redemption Time */}
+                        <div className="flex flex-col gap-1 rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-2.5">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Clock className="h-3 w-3 text-violet-500" />
+                            <span className="text-[10px] font-bold uppercase tracking-wider">Redeemed At</span>
+                          </div>
+                          <p className="text-xs font-bold text-foreground">
+                            {voucher.redeemed_at ? formatDateTime(voucher.redeemed_at) : '—'}
+                          </p>
+                          {bookingNumber && (
+                            <p className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono mt-auto">
+                              <Hash className="h-2.5 w-2.5" />{bookingNumber}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Appointment Schedule & Therapist Box */}
+                      <div className="rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <div className="grid h-7 w-7 place-items-center rounded-lg bg-primary/10 text-primary">
+                              <Calendar className="h-3.5 w-3.5" />
+                            </div>
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Schedule</p>
+                              <p className="text-xs font-extrabold text-foreground">
+                                {apptDateFormatted ?? 'Scheduled Appointment'}
+                              </p>
+                            </div>
+                          </div>
+                          {apptTimeWindow && (
+                            <div className="text-right">
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-2 py-1 text-xs font-bold font-mono">
+                                <Clock className="h-3 w-3" />
+                                {apptTimeWindow}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/40 text-[11px]">
+                          {therapistName && (
+                            <div>
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
+                              <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
+                                <User className="h-3 w-3 text-muted-foreground" /> {therapistName}
+                              </span>
+                            </div>
+                          )}
+                          {(bookingBranch || bookingRoom) && (
+                            <div>
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold block">Location</span>
+                              <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5 truncate">
+                                <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
+                                {[bookingBranch, bookingRoom].filter(Boolean).join(' • ')}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
-              ) : (
-                <p className="text-xs text-muted-foreground italic">No delivery address set</p>
               )}
-            </div>
-          )}
 
-          {/* Redeemed Booking Details Card */}
-          {isRedeemed && (
-            <div className="rounded-2xl border border-violet-200/60 dark:border-violet-800/40 bg-gradient-to-br from-violet-50/70 via-card to-indigo-50/50 dark:from-violet-950/30 dark:via-card dark:to-indigo-950/20 p-4 space-y-3.5 shadow-xs">
-              {/* Card Header */}
-              <div className="flex items-center justify-between gap-2 border-b border-violet-200/40 dark:border-violet-800/30 pb-2.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="grid h-8 w-8 place-items-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-400">
-                    <CheckCircle2 className="h-4 w-4" />
+              {/* Voucher Code & Tracking QR Code in one row (two cards) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                {/* Card 1: Voucher Code */}
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <KeyRound className="h-4 w-4 text-primary shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Code</span>
+                    </div>
+                    {voucher.secret_code && (
+                      <button
+                        type="button"
+                        onClick={handleCopyCode}
+                        className="grid h-7 w-7 place-items-center rounded-lg hover:bg-primary/10 text-primary transition cursor-pointer"
+                        title="Copy Voucher Code"
+                      >
+                        {copiedCode ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                      </button>
+                    )}
+                  </div>
+                  <div className="my-auto py-1">
+                    <p className="font-mono font-extrabold text-base sm:text-lg text-primary tracking-wider break-all">
+                      {voucher.secret_code || '—'}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Redemption &amp; verification code
+                    </p>
+                  </div>
+                </div>
+
+                {/* Card 2: QR Code with Tracking URL copy icon */}
+                <div className="rounded-2xl border border-border/80 bg-muted/20 p-4 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <div className="flex items-center gap-2">
+                      <QrCode className="h-4 w-4 text-primary shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tracking QR Code</span>
+                    </div>
+                    {trackingUrl && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={handleCopyUrl}
+                          className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                          title="Copy Tracking URL"
+                        >
+                          {copiedUrl ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                        </button>
+                        <a
+                          href={trackingUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                          title="Open Tracking Page"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+
+                  {trackingUrl ? (
+                    <div className="flex items-center gap-3 my-auto py-1">
+                      <div className="p-2 bg-white rounded-xl shadow-xs border border-border/50 shrink-0">
+                        <QRCodeSVG
+                          value={trackingUrl}
+                          size={64}
+                          level="M"
+                          includeMargin={false}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="text-xs font-bold text-foreground">Scan or Copy Link</p>
+                        <p className="text-[11px] text-muted-foreground leading-snug">
+                          Click the copy icon to share the tracking link or scan with camera.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="my-auto py-2 text-center text-xs text-muted-foreground">
+                      No tracking token available
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Created & Expires Dates */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+                  <Calendar className="h-4 w-4 text-sky-500 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created</p>
+                    <p className="font-semibold text-foreground truncate">{formatDate(voucher.created_at)}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+                  <Clock className="h-4 w-4 text-rose-500 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expires</p>
+                    <p className={cn('font-semibold truncate', isExpired ? 'text-rose-600 dark:text-rose-400' : 'text-foreground')}>
+                      {formatDate(voucher.expire_date)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            /* ── TAB 2: PAYMENT & INVOICES ── */
+            <div className="space-y-4">
+              {/* 1. Official Invoice Card */}
+              <div className="rounded-2xl border border-violet-200/60 dark:border-violet-800/40 bg-gradient-to-br from-violet-50/40 via-card to-card dark:from-violet-950/20 p-5 space-y-4 shadow-xs">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-border/40">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    {/* Invoice Number */}
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-600/10 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                        <FileText className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Invoice Number</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => setShowInvoiceModal(true)}
+                            className="group/inv inline-flex items-center gap-1.5 text-sm font-mono font-extrabold text-foreground hover:text-violet-600 dark:hover:text-violet-400 transition cursor-pointer text-left"
+                            title="Click to view full invoice details"
+                          >
+                            <span className="underline underline-offset-4 decoration-violet-400/60 group-hover/inv:decoration-violet-600">
+                              {invoiceNumber || 'Pending Generation'}
+                            </span>
+                            <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
+                          </button>
+                          {Boolean(invoiceNumber) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(invoiceNumber!);
+                                setCopiedType('invoice');
+                                setTimeout(() => setCopiedType(null), 2000);
+                              }}
+                              className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                              title="Copy invoice number"
+                            >
+                              {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="hidden sm:block h-8 w-px bg-border/60" />
+
+                    {/* Payment Number */}
+                    <div className="flex items-center gap-2.5">
+                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                        <CreditCard className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Number</p>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <span className="text-sm font-mono font-extrabold text-foreground">
+                            {paymentNumber || (isPaid ? 'Settled' : 'Generated upon settlement')}
+                          </span>
+                          {Boolean(paymentNumber) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(paymentNumber!);
+                                setCopiedType('pmt');
+                                setTimeout(() => setCopiedType(null), 2000);
+                              }}
+                              className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                              title="Copy payment number"
+                            >
+                              {copiedType === 'pmt' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowInvoiceModal(true)}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-violet-600 dark:text-violet-400 hover:bg-violet-500/10 px-2.5 py-1 rounded-lg border border-violet-500/20 transition cursor-pointer"
+                      title="Open invoice details"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      <span>View Invoice</span>
+                    </button>
+                    <span className={cn(
+                      'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
+                      isPaid
+                        ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
+                        : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20'
+                    )}>
+                      {isPaid ? <CheckCircle2 className="h-3 w-3" /> : <Clock className="h-3 w-3" />}
+                      {isPaid ? 'PAID' : 'DRAFT'}
+                    </span>
+                    {Boolean(invoiceNumber) && (
+                      <Link
+                        href={`/finance/invoices?search=${encodeURIComponent(invoiceNumber!)}`}
+                        target="_blank"
+                        className="inline-flex items-center gap-1 text-xs font-bold text-muted-foreground hover:text-foreground hover:underline px-2 py-1 rounded-lg hover:bg-muted/40 transition"
+                      >
+                        <span>Accounting</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    )}
+                  </div>
+                </div>
+
+                {/* Invoice details grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 py-3 border-b border-border/40 text-xs">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Billed To</p>
+                    <p className="font-bold truncate mt-0.5">{voucher.sender_data?.name || voucher.sender_details?.name || voucher.recipient_data?.name || 'Customer'}</p>
                   </div>
                   <div>
-                    <h3 className="text-xs font-extrabold text-foreground tracking-tight">Redeemed Booking Details</h3>
-                    <p className="text-[10px] text-muted-foreground">Voucher has been redeemed for an appointment</p>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Issue Date</p>
+                    <p className="font-medium mt-0.5">{formatDate(voucher.created_at)}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Total Amount</p>
+                    <p className="font-extrabold text-violet-600 dark:text-violet-400 mt-0.5">
+                      {formatAmount(voucher.total_amount, voucher.currency)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Balance Due</p>
+                    <p className="font-bold mt-0.5 text-foreground">
+                      {isPaid ? formatAmount(0, voucher.currency) : formatAmount(voucher.total_amount, voucher.currency)}
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300">
-                    <Star className="h-2.5 w-2.5 fill-violet-500 text-violet-500" /> Redeemed
-                  </span>
-                  {booking?.status && (
-                    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold bg-primary/10 text-primary capitalize">
-                      {booking.status}
+
+                {/* Itemized breakdown in invoice */}
+                <div className="pt-1 space-y-2 pb-1">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground font-semibold">
+                    <span>Description</span>
+                    <span>Amount</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-foreground">
+                      {voucher.service_data?.name || (isDigital ? (voucher.digital_product_data?.title || 'Digital Gift Item') : (isPhysical ? 'Gift Voucher / Physical Products' : 'Gift Voucher'))}
                     </span>
+                    <span className="font-semibold">{formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.currency)}</span>
+                  </div>
+                  {voucher.addons && voucher.addons.map((a, i) => (
+                    <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>+ Add-on: {a.name}</span>
+                      <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
+                    </div>
+                  ))}
+                  {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>+ Extra Minutes (+{voucher.extra_time}m)</span>
+                      <span>+{formatAmount(voucher.price_for_extra_time || 0, voucher.currency)}</span>
+                    </div>
                   )}
                 </div>
               </div>
 
-              {loadingBooking ? (
-                <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-600" />
-                  Loading appointment details…
+              {/* 2. Payment Transaction Record */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CreditCard className="h-4 w-4 text-primary" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Payment Transaction Record
+                    </h4>
+                  </div>
+                  <span className={cn(
+                    'rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase',
+                    isPaid
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                  )}>
+                    {isPaid ? 'PAID' : (voucher.status === 'payment_pending' ? 'PAYMENT PENDING' : 'UNPAID')}
+                  </span>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {/* Grid of Key Redemption & Booking Info */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {/* Who Redeemed */}
-                    <div className="flex flex-col gap-1 rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-2.5">
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <User className="h-3 w-3 text-violet-500" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider">Redeemed By</span>
-                      </div>
-                      <p className="text-xs font-bold text-foreground truncate">{redeemedByName}</p>
-                      {redeemedByPhone && (
-                        <p className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono">
-                          <Phone className="h-2.5 w-2.5" />{redeemedByPhone}
-                        </p>
-                      )}
-                      {redeemedByEmail && (
-                        <p className="text-[10px] text-muted-foreground truncate">
-                          {redeemedByEmail}
-                        </p>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Provider / Gateway</p>
+                    <p className="font-semibold text-foreground mt-0.5">
+                      {latestPayment?.payment_provider || voucher.payment_provider || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway || activePaymentLink?.gateway || activePaymentLink?.provider || 'MyFatoorah'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
+                    <p className="font-semibold text-foreground mt-0.5 capitalize">
+                      {latestPayment?.payment_method || (voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionStatus ? 'Card / Online' : (activePaymentLink ? 'Payment Link' : '—'))}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
+                    <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">
+                      {latestPayment?.payment_through || voucher.payment_through || 'USHDESK'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Amount</p>
+                    <p className="font-bold text-primary mt-0.5 font-mono">{formatAmount(voucher.total_amount, voucher.currency)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  {/* Card 1: Transaction / Ref ID */}
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Transaction / Ref ID</p>
+                      {Boolean(transactionId) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(transactionId!);
+                            setCopiedType('txn');
+                            setTimeout(() => setCopiedType(null), 2000);
+                          }}
+                          className="text-muted-foreground hover:text-foreground transition cursor-pointer p-0.5"
+                          title="Copy transaction ID"
+                        >
+                          {copiedType === 'txn' ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                        </button>
                       )}
                     </div>
+                    <p className="font-mono text-xs font-semibold text-foreground mt-0.5 truncate" title={transactionId || undefined}>
+                      {transactionId || (isPaid ? 'Settled' : 'Generated upon settlement')}
+                    </p>
+                  </div>
 
-                    {/* Redemption Time */}
-                    <div className="flex flex-col gap-1 rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-2.5">
-                      <div className="flex items-center gap-1.5 text-muted-foreground">
-                        <Clock className="h-3 w-3 text-violet-500" />
-                        <span className="text-[10px] font-bold uppercase tracking-wider">Redeemed At</span>
+                  {/* Card 2: Trace / Auth Code */}
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wider">Trace / Auth Code</p>
+                      {Boolean(authCode) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(authCode!);
+                            setCopiedType('trace');
+                            setTimeout(() => setCopiedType(null), 2000);
+                          }}
+                          className="text-muted-foreground hover:text-foreground transition cursor-pointer p-0.5"
+                          title="Copy authorization/trace code"
+                        >
+                          {copiedType === 'trace' ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                        </button>
+                      )}
+                    </div>
+                    <p className="font-mono text-xs font-semibold text-foreground mt-0.5 truncate" title={authCode || undefined}>
+                      {authCode || '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {(latestPayment?.paid_at || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionDate || (voucher as any).paid_at || activePaymentLink?.paid_at) && (
+                  <div className="rounded-xl bg-card border border-border/40 px-3 py-2 text-xs flex items-center justify-between text-muted-foreground">
+                    <span>Paid Timestamp:</span>
+                    <span className="font-medium text-foreground">
+                      {formatDateTime(latestPayment?.paid_at || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionDate || (voucher as any).paid_at || activePaymentLink?.paid_at)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Customer Payment Link */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3 flex flex-col">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <QrCode className="h-4 w-4 text-primary" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Customer Payment Link
+                    </h4>
+                  </div>
+                  {Boolean(effectivePaymentUrl) && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleCopyPaymentUrl}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:bg-primary/10 px-2 py-1 rounded-lg transition cursor-pointer"
+                        title="Copy Payment Link"
+                      >
+                        {copiedPaymentUrl ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copiedPaymentUrl ? 'Copied' : 'Copy URL'}</span>
+                      </button>
+                      <a
+                        href={effectivePaymentUrl!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:bg-primary/10 px-2 py-1 rounded-lg transition cursor-pointer"
+                        title="Open Payment Link"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        <span>Open Link</span>
+                      </a>
+                    </div>
+                  )}
+                </div>
+
+                {effectivePaymentUrl ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3.5 rounded-xl border border-border/40 bg-card/70 p-3">
+                      <div className="p-2 bg-white rounded-xl shadow-xs border border-border/50 shrink-0">
+                        <QRCodeSVG
+                          value={effectivePaymentUrl}
+                          size={72}
+                          level="M"
+                          includeMargin={false}
+                        />
                       </div>
-                      <p className="text-xs font-bold text-foreground">
-                        {voucher.redeemed_at ? formatDateTime(voucher.redeemed_at) : '—'}
-                      </p>
-                      {bookingNumber && (
-                        <p className="text-[10px] text-muted-foreground flex items-center gap-1 font-mono mt-auto">
-                          <Hash className="h-2.5 w-2.5" />{bookingNumber}
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-xs font-bold text-foreground">Scan QR Code to Pay</p>
+                          {activePaymentLink?.status && (
+                            <span className={cn(
+                              'rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase',
+                              activePaymentLink.status === 'paid' || activePaymentLink.status === 'success'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                            )}>
+                              {activePaymentLink.status}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-mono break-all line-clamp-2">
+                          {effectivePaymentUrl}
                         </p>
+                      </div>
+                    </div>
+
+                    {/* Share and status sync actions */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      {targetSharePhone && (
+                        <>
+                          <a
+                            href={whatsappShareUrl(targetSharePhone, paymentShareMessage)}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 transition"
+                          >
+                            <MessageCircle className="h-3.5 w-3.5" />
+                            <span>Share WhatsApp</span>
+                          </a>
+                          <a
+                            href={smsShareUrl(targetSharePhone, paymentShareMessage)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/30 bg-sky-50 dark:bg-sky-950/30 px-3 py-1.5 text-xs font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-100 transition"
+                          >
+                            <MessageSquare className="h-3.5 w-3.5" />
+                            <span>Send SMS</span>
+                          </a>
+                        </>
+                      )}
+                      {activePaymentLink && (
+                        <button
+                          type="button"
+                          onClick={() => handleSyncPaymentLink(activePaymentLink.id)}
+                          disabled={syncingLink}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition disabled:opacity-50 ml-auto cursor-pointer"
+                        >
+                          <RefreshCw className={cn('h-3.5 w-3.5', syncingLink && 'animate-spin text-primary')} />
+                          <span>{syncingLink ? 'Checking...' : 'Check Status'}</span>
+                        </button>
                       )}
                     </div>
                   </div>
-
-                  {/* Appointment Schedule & Therapist Box */}
-                  <div className="rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
-                        <div className="grid h-7 w-7 place-items-center rounded-lg bg-primary/10 text-primary">
-                          <Calendar className="h-3.5 w-3.5" />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Schedule</p>
-                          <p className="text-xs font-extrabold text-foreground">
-                            {apptDateFormatted ?? 'Scheduled Appointment'}
-                          </p>
-                        </div>
-                      </div>
-                      {apptTimeWindow && (
-                        <div className="text-right">
-                          <span className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-2 py-1 text-xs font-bold font-mono">
-                            <Clock className="h-3 w-3" />
-                            {apptTimeWindow}
-                          </span>
-                        </div>
-                      )}
+                ) : (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-dashed border-border/60 bg-card/40 p-4 text-xs">
+                    <div className="flex items-center gap-2.5 text-muted-foreground">
+                      <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                      <span>No customer payment link generated yet for this voucher.</span>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/40 text-[11px]">
-                      {therapistName && (
-                        <div>
-                          <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
-                          <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
-                            <User className="h-3 w-3 text-muted-foreground" /> {therapistName}
-                          </span>
-                        </div>
-                      )}
-                      {(bookingBranch || bookingRoom) && (
-                        <div>
-                          <span className="text-[10px] text-muted-foreground uppercase font-bold block">Location</span>
-                          <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5 truncate">
-                            <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
-                            {[bookingBranch, bookingRoom].filter(Boolean).join(' • ')}
-                          </span>
-                        </div>
-                      )}
-                    </div>
+                    {!isPaid && (
+                      <button
+                        type="button"
+                        onClick={() => setShowMakePaymentModal(true)}
+                        className="inline-flex items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 text-white px-3.5 py-1.5 text-xs font-bold transition shadow-xs shrink-0 cursor-pointer"
+                      >
+                        <CreditCard className="h-3.5 w-3.5" />
+                        <span>Generate Payment Link</span>
+                      </button>
+                    )}
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
           )}
-
-          {/* Payment info */}
-          {voucher.payment_data?.data && (
-            <div className="rounded-2xl border border-emerald-200/40 dark:border-emerald-800/30 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-3">
-              <div className="flex items-center gap-2 mb-2.5">
-                <CreditCard className="h-3.5 w-3.5 text-emerald-500" />
-                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Payment</p>
-              </div>
-              <div className="space-y-1.5">
-                {[
-                  { label: 'Status',   val: voucher.payment_data.data.InvoiceStatus },
-                  { label: 'Invoice',  val: voucher.payment_data.data.InvoiceId?.toString() },
-                  { label: 'Amount',   val: voucher.payment_data.data.InvoiceValue ? `${voucher.payment_data.data.InvoiceValue} ${voucher.payment_data.data?.InvoiceTransactions?.[0]?.Currency ?? ''}` : null },
-                  { label: 'Gateway',  val: voucher.payment_data.data?.InvoiceTransactions?.[0]?.PaymentGateway },
-                ].filter(r => r.val).map(r => (
-                  <div key={r.label} className="flex items-center justify-between text-[11px]">
-                    <span className="text-muted-foreground">{r.label}</span>
-                    <span className="font-semibold">{r.val}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Secret Code & Public URL Card */}
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-3 text-xs">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <KeyRound className="h-4 w-4 text-primary shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
-                  <p className="font-mono font-extrabold text-base text-primary tracking-widest truncate">{voucher.secret_code || '—'}</p>
-                </div>
-              </div>
-              {voucher.secret_code && (
-                <button
-                  type="button"
-                  onClick={handleCopyCode}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-primary/20 bg-background/80 hover:bg-background px-2.5 py-1.5 text-xs font-semibold text-primary shadow-xs transition"
-                  title="Copy Voucher Code"
-                >
-                  {copiedCode ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                  <span>{copiedCode ? 'Copied' : 'Copy'}</span>
-                </button>
-              )}
-            </div>
-
-            {publicUrl && (
-              <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-primary/10">
-                <div className="min-w-0 flex-1 flex items-center gap-2">
-                  <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground shrink-0">Public URL:</span>
-                  <a
-                    href={publicUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-primary hover:underline font-mono truncate"
-                    title={publicUrl}
-                  >
-                    {publicUrl}
-                  </a>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                  <button
-                    type="button"
-                    onClick={handleCopyUrl}
-                    className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition"
-                    title="Copy Public URL"
-                  >
-                    {copiedUrl ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
-                  </button>
-                  <a
-                    href={publicUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="p-1.5 rounded-md hover:bg-primary/10 text-muted-foreground hover:text-primary transition"
-                    title="Open public URL"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                  </a>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Created & Expires Dates */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
-              <Calendar className="h-4 w-4 text-sky-500 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created</p>
-                <p className="font-semibold text-foreground truncate">{formatDate(voucher.created_at)}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
-              <Clock className="h-4 w-4 text-rose-500 shrink-0" />
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Expires</p>
-                <p className={cn('font-semibold truncate', isExpired ? 'text-rose-600 dark:text-rose-400' : 'text-foreground')}>
-                  {formatDate(voucher.expire_date)}
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Footer */}
@@ -1212,48 +1910,111 @@ function VoucherDetailModal({
             className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
             Close
           </button>
-          {isRedeemed ? (
-            <button
-              type="button"
-              onClick={() => onReschedule?.(voucher, bookingId || undefined, booking)}
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-primary hover:bg-primary/90 shadow-sm transition active:scale-[0.98]"
-            >
-              <RefreshCw className="h-4 w-4" /> Reschedule
-            </button>
+          {activeTab === 'details' ? (
+            <>
+              {isRedeemed ? (
+                <button
+                  type="button"
+                  onClick={() => onReschedule?.(voucher, bookingId || undefined, booking)}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-primary hover:bg-primary/90 shadow-sm transition active:scale-[0.98]"
+                >
+                  <RefreshCw className="h-4 w-4" /> Reschedule
+                </button>
+              ) : (
+                onShare && (
+                  <div className="flex-1 flex justify-center">
+                    <VoucherShareDropdown
+                      voucher={voucher}
+                      label="Share Reminder"
+                      className="w-full justify-center py-2.5 text-sm"
+                      dropUp={true}
+                      onSelectChannel={onShare}
+                      onCopyUrl={onCopyUrl}
+                    />
+                  </div>
+                )
+              )}
+              {canRedeem && (
+                <button
+                  type="button"
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition active:scale-[0.98]"
+                >
+                  <CheckCircle2 className="h-4 w-4" /> Redeem
+                </button>
+              )}
+            </>
           ) : (
-            onShare && (
-              <div className="flex-1 flex justify-center">
-                <VoucherShareDropdown
-                  voucher={voucher}
-                  label="Share Reminder"
-                  className="w-full justify-center py-2.5 text-sm"
-                  dropUp={true}
-                  onSelectChannel={onShare}
-                  onCopyUrl={onCopyUrl}
-                />
-              </div>
-            )
-          )}
-          {voucher.payment_url && (
-            <a
-              href={voucher.payment_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-primary hover:bg-primary/90 shadow-sm transition active:scale-[0.98]"
-            >
-              <ExternalLink className="h-3.5 w-3.5" /> View Payment
-            </a>
-          )}
-          {canRedeem && (
-            <button
-              type="button"
-              className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition active:scale-[0.98]"
-            >
-              <CheckCircle2 className="h-4 w-4" /> Redeem
-            </button>
+            <>
+              {!isPaid && (
+                <button
+                  type="button"
+                  onClick={() => setShowMakePaymentModal(true)}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-sm transition active:scale-[0.98]"
+                >
+                  <CreditCard className="h-4 w-4" />
+                  <span>{effectivePaymentUrl ? 'Make Payment / Share Link' : 'Generate Payment Link'}</span>
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
+
+      {/* Invoice Details Modal */}
+      {showInvoiceModal && (
+        <InvoiceDetailModal
+          invoiceNumber={invoiceNumber || `INV-${voucher.voucher_number || voucher.id.slice(0, 8)}`}
+          invoiceRecord={invoiceRecord}
+          bookingData={{
+            customerName: voucher.sender_data?.name || voucher.sender_details?.name || voucher.recipient_data?.name || 'Customer',
+            customerPhone: voucher.sender_data?.phone_number || voucher.sender_details?.phone_number,
+            customerEmail: voucher.sender_data?.email || voucher.sender_details?.email,
+            serviceName: voucher.service_data?.name || (isPhysical ? 'Gift Voucher / Physical Items' : 'Gift Voucher'),
+            servicePrice: voucher.service_data?.base_price || voucher.total_amount,
+            addons: voucher.addons,
+            extraMinutes: voucher.extra_time,
+            extraPrice: voucher.price_for_extra_time ? parseFloat(voucher.price_for_extra_time) : 0,
+            totalPrice: voucher.total_amount,
+            currency: voucher.currency,
+            paymentMethod: latestPayment?.payment_method || (voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionStatus ? 'Card / Online' : 'Payment Link'),
+            paymentProvider: latestPayment?.payment_provider || voucher.payment_provider || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway || activePaymentLink?.gateway || activePaymentLink?.provider || 'MyFatoorah',
+            paymentThrough: latestPayment?.payment_through || voucher.payment_through || 'ushdesk',
+            paymentNumber: paymentNumber,
+            paymentDate: latestPayment?.paid_at || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionDate || (voucher as any).paid_at || activePaymentLink?.paid_at,
+            transactionId: transactionId,
+            traceId: authCode,
+            bookingNumber: voucher.voucher_number || `VOU-${voucher.id.slice(0, 8)}`,
+            branchName: voucher.branch_data?.name,
+            status: isPaid ? 'completed' : 'pending',
+          }}
+          onClose={() => setShowInvoiceModal(false)}
+        />
+      )}
+
+      {/* Make Payment Modal (Step 1: Select Provider -> Step 2: Make Payment Now) */}
+      {showMakePaymentModal && (
+        <MakePaymentModal
+          isOpen={showMakePaymentModal}
+          onClose={() => setShowMakePaymentModal(false)}
+          targetType="voucher"
+          targetId={voucher.id}
+          targetNumber={voucher.voucher_number}
+          targetLabel="Voucher No:"
+          amount={voucher.total_amount}
+          currency={voucher.currency}
+          customerName={voucher.sender_data?.name || voucher.sender_details?.name || voucher.recipient_data?.name || 'Customer'}
+          customerPhone={senderPhone || recipientPhone}
+          onPaymentSuccess={() => {
+            fetchLinks();
+            onRefresh?.();
+          }}
+          onSuccess={() => {
+            fetchLinks();
+            onRefresh?.();
+            setShowMakePaymentModal(false);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1321,56 +2082,22 @@ function ShareVoucherModal({ voucher, channel = 'whatsapp', onClose, onSend }: S
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const recipientName = voucher.recipient_data?.name || voucher.recipient_details?.name || 'Valued Guest';
-  const recipientPhone = voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '';
-  const senderName = voucher.sender_data?.name || voucher.sender_details?.name || 'USH Spa';
+  const recipientName =
+    voucher.recipient_data?.name ||
+    voucher.recipient_details?.name ||
+    (voucher as any).gift_to ||
+    (voucher as any).recipient_name ||
+    'Valued Guest';
+  const recipientPhone =
+    voucher.recipient_phone ||
+    voucher.recipient_data?.phone_number ||
+    voucher.recipient_details?.phone_number ||
+    '';
   const voucherCode = voucher.secret_code || voucher.voucher_number || voucher.id.slice(0, 8);
   const serviceName = voucher.service_data?.name || 'Spa Service';
-  const branchName = voucher.branch_data?.name || '';
   const expiryDate = fmtDate(voucher.expire_date);
 
-  const getShareUrl = useCallback(() => {
-    if (voucher.public_token) {
-      return `https://ushspa.co/gift/${voucher.public_token}`;
-    }
-    if (voucher.payment_url) {
-      return voucher.payment_url;
-    }
-    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://desk.ushspa.co';
-    return `${origin}/appointments/gift-vouchers?code=${encodeURIComponent(voucher.secret_code || voucher.id)}`;
-  }, [voucher.public_token, voucher.payment_url, voucher.secret_code, voucher.id]);
-
-  const buildReminderText = useCallback(() => {
-    const url = getShareUrl();
-    const lines = [
-      `Dear ${recipientName},`,
-      '',
-      `This is a friendly reminder from USH Spa regarding your Gift Voucher from ${senderName}.`,
-      '',
-      `• Voucher Code: ${voucherCode}`,
-      `• Service: ${serviceName}`,
-    ];
-
-    if (branchName) {
-      lines.push(`• Branch: ${branchName}`);
-    }
-    if (expiryDate && expiryDate !== '—') {
-      lines.push(`• Valid Until: ${expiryDate}`);
-    }
-    if (voucher.gift_message && voucher.gift_message.trim()) {
-      lines.push(`• Gift Note: "${voucher.gift_message.trim()}"`);
-    }
-
-    lines.push('');
-    lines.push('You can view and redeem your gift voucher here:');
-    lines.push(url);
-    lines.push('');
-    lines.push('We look forward to welcoming you at USH Spa!');
-
-    return lines.join('\n');
-  }, [recipientName, senderName, voucherCode, serviceName, branchName, expiryDate, voucher.gift_message, getShareUrl]);
-
-  const [message, setMessage] = useState(buildReminderText);
+  const [message, setMessage] = useState(() => buildVoucherShareMessage(voucher));
   const [copied, setCopied] = useState(false);
   const [sending, setSending] = useState(false);
 
@@ -1484,7 +2211,7 @@ function ShareVoucherModal({ voucher, channel = 'whatsapp', onClose, onSend }: S
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setMessage(buildReminderText())}
+                  onClick={() => setMessage(buildVoucherShareMessage(voucher))}
                   className="text-[11px] text-muted-foreground hover:text-foreground transition flex items-center gap-1"
                   title="Reset to default formatted message"
                 >
@@ -1560,6 +2287,22 @@ function ShareVoucherModal({ voucher, channel = 'whatsapp', onClose, onSend }: S
 
 export default function GiftVouchersPage() {
   const token = useAppSelector((s) => s.auth.token);
+  const user = useAppSelector((s) => s.auth.user);
+  const { isAdmin, isSpaDirector, isFinanceManager, isRefundsAndFinancePermitted, roleInfo } = usePermissions();
+
+  const canViewVoucherNumber = useMemo(() => {
+    if (isAdmin || isSpaDirector || isFinanceManager || isRefundsAndFinancePermitted) {
+      return true;
+    }
+    const candidates = extractRoleCandidates(roleInfo, user);
+    return candidates.some((c) =>
+      c.includes('admin') ||
+      c.includes('administrator') ||
+      c.includes('finance') ||
+      c.includes('spa director') ||
+      c.includes('director')
+    );
+  }, [isAdmin, isSpaDirector, isFinanceManager, isRefundsAndFinancePermitted, roleInfo, user]);
 
   const [vouchers,        setVouchers]        = useState<Voucher[]>([]);
   const [loading,         setLoading]         = useState(false);
@@ -1601,13 +2344,27 @@ export default function GiftVouchersPage() {
 
   const handleCopyPublicUrl = useCallback((voucher: Voucher) => {
     const code = voucher.secret_code || voucher.voucher_number || voucher.id.slice(0, 8);
-    const url = getVoucherPublicUrl(voucher);
-    navigator.clipboard?.writeText(url);
-    setCopyAlert({ voucherCode: code, url });
+    const text = buildVoucherShareMessage(voucher);
+    navigator.clipboard?.writeText(text);
+    setCopyAlert({ voucherCode: code, url: text });
   }, []);
 
-  const handleSendReminder = useCallback((_msg: string, recipientName: string, channel: 'sms' | 'whatsapp') => {
+  const handleSendReminder = useCallback((msg: string, recipientName: string, channel: 'sms' | 'whatsapp') => {
     const code = shareVoucher?.secret_code || shareVoucher?.voucher_number || shareVoucher?.id.slice(0, 8) || 'Voucher';
+    const phone =
+      shareVoucher?.recipient_phone ||
+      shareVoucher?.recipient_data?.phone_number ||
+      shareVoucher?.recipient_details?.phone_number ||
+      '';
+
+    if (channel === 'whatsapp') {
+      const waUrl = whatsappShareUrl(phone, msg);
+      window.open(waUrl, '_blank', 'noopener,noreferrer');
+    } else if (channel === 'sms') {
+      const smsUri = smsShareUrl(phone, msg);
+      window.location.href = smsUri;
+    }
+
     setShareVoucher(null);
     setSuccessAlert({
       recipientName,
@@ -1923,15 +2680,22 @@ export default function GiftVouchersPage() {
                       className="transition hover:bg-muted/20"
                     >
                       {/* Voucher Code */}
-                      <td className="px-4 py-3 align-top whitespace-nowrap">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedVoucher(v)}
-                          className="font-bold text-foreground font-mono text-[12px] hover:text-primary hover:underline text-left block cursor-pointer transition-colors"
-                          title="View voucher details"
-                        >
-                          {v.secret_code || '—'}
-                        </button>
+                      <td
+                        onClick={() => setSelectedVoucher(v)}
+                        className="px-4 py-3 align-top whitespace-nowrap cursor-pointer group hover:bg-muted/30 transition-colors"
+                        title="View voucher details"
+                      >
+                        <div className="inline-flex items-center gap-1.5 font-bold text-foreground group-hover:text-primary font-mono text-[12px] transition-colors">
+                          <Eye className="h-3.5 w-3.5 text-primary group-hover:scale-110 transition-transform shrink-0" />
+                          <span className="group-hover:underline underline-offset-2">
+                            {v.secret_code || v.voucher_number || '—'}
+                          </span>
+                        </div>
+                        {canViewVoucherNumber && Boolean(v.voucher_number) && v.voucher_number !== v.secret_code && (
+                          <p className="text-[11px] font-mono font-semibold text-primary/80 mt-0.5 tracking-tight" title="Voucher Number">
+                            {v.voucher_number}
+                          </p>
+                        )}
                         <p className="text-[11px] text-muted-foreground mt-0.5">{formatDateTime(v.created_at)}</p>
                       </td>
 
@@ -1992,15 +2756,6 @@ export default function GiftVouchersPage() {
                       {/* Action */}
                       <td className="py-3 pl-4 pr-5 align-top text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedVoucher(v)}
-                            className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition shadow-sm"
-                            title="View voucher details"
-                          >
-                            <Eye className="h-3.5 w-3.5 text-muted-foreground" />
-                            View
-                          </button>
                           {v.status?.toLowerCase() === 'redeemed' || v.redeemed_at ? (
                             <button
                               type="button"
@@ -2065,6 +2820,7 @@ export default function GiftVouchersPage() {
           }}
           onCopyUrl={handleCopyPublicUrl}
           onReschedule={handleOpenReschedule}
+          onRefresh={fetchVouchers}
         />
       )}
 
@@ -2112,9 +2868,9 @@ export default function GiftVouchersPage() {
             <Check className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold text-foreground">Public URL Copied to Clipboard</p>
+            <p className="text-xs font-bold text-foreground">Gift Voucher Message Copied to Clipboard</p>
             <p className="text-[11px] text-muted-foreground mt-0.5 truncate font-mono">
-              {copyAlert.url}
+              Voucher #{copyAlert.voucherCode}
             </p>
           </div>
           <button

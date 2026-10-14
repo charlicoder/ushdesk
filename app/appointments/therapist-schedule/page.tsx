@@ -1477,8 +1477,13 @@ export default function TherapistSchedulePage() {
           therapistId={bookingModal.therapist.id}
           therapistName={bookingModal.therapist.name}
           therapistPhoto={bookingModal.therapist.photoUrl ?? null}
-          onClose={() => setBookingModal(null)}
-          onSuccess={() => { setBookingModal(null); setScheduleRefreshKey(k => k + 1); }}
+          onClose={() => {
+            setBookingModal(null);
+            setScheduleRefreshKey(k => k + 1);
+          }}
+          onSuccess={() => {
+            setScheduleRefreshKey(k => k + 1);
+          }}
         />
       )}
     </DashboardShell>

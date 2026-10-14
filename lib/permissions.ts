@@ -122,7 +122,7 @@ export function isCustomerType(userType: string | undefined | null): boolean {
 /**
  * Extracts and normalizes role candidate strings from roleInfo and user data.
  */
-function extractRoleCandidates(roleInfo?: RoleInfoLike | null, user?: UserLike | null): string[] {
+export function extractRoleCandidates(roleInfo?: RoleInfoLike | null, user?: UserLike | null): string[] {
   if (!roleInfo && !user && typeof window !== 'undefined') {
     try {
       const stored = loadUser() as (UserLike & { roleInfo?: RoleInfoLike }) | null;

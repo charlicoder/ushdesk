@@ -9,8 +9,9 @@ import {
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   KeyRound, Edit3, Sparkles, Star,
   Building, MessageSquare, Pencil, Smartphone,
-  Calendar, Timer,
+  Calendar, Timer, QrCode, ExternalLink,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { authedFetch } from '@/lib/authedFetch';
@@ -251,17 +252,39 @@ function getCategoryConfig(category?: string | null, order?: GiftOrder) {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function formatAddressPreview(addr: DeliveryAddress | null | undefined): string {
+function formatAddressPreview(addr: any): string {
   if (!addr) return '—';
-  if (addr.formatted) return addr.formatted;
-  const parts = [
-    addr.area     && `Area: ${addr.area}`,
-    addr.block    && `Block: ${addr.block}`,
-    addr.street   && `Street: ${addr.street}`,
-    addr.building && `Bldg: ${addr.building}`,
-    addr.city     && addr.city,
-  ].filter(Boolean);
-  return parts.join(', ') || 'Address Provided';
+  if (typeof addr === 'string') {
+    const trimmed = addr.trim();
+    if (!trimmed || trimmed === '—' || trimmed === '-') return '—';
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return formatAddressPreview(parsed);
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  if (typeof addr === 'object' && addr !== null) {
+    if (addr.formatted && typeof addr.formatted === 'string' && addr.formatted.trim()) {
+      return addr.formatted.trim();
+    }
+    const a = addr as Record<string, any>;
+    const parts = [
+      (a.area || a.district) && `Area: ${a.area || a.district}`,
+      a.block && `Block: ${a.block}`,
+      a.street && `Street: ${a.street}`,
+      a.avenue && `Avenue: ${a.avenue}`,
+      (a.building || a.building_no || a.house || a.villa) && `Bldg: ${a.building || a.building_no || a.house || a.villa}`,
+      a.floor && `Floor: ${a.floor}`,
+      (a.apartment || a.flat) && `Apt: ${a.apartment || a.flat}`,
+      a.city && `City: ${a.city}`,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+  }
+  return '—';
 }
 
 function formatDate(iso: string | null | undefined) {
@@ -366,6 +389,9 @@ function DeliveryAddressModal({ order, isOpen, onClose }: { order: GiftOrder | n
 
 // ── Gift Details Modal ────────────────────────────────────────────────────────
 function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null; isOpen: boolean; onClose: () => void }) {
+  const [copiedVoucherCode, setCopiedVoucherCode] = useState(false);
+  const [copiedTrackingUrl, setCopiedTrackingUrl] = useState(false);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
@@ -379,6 +405,30 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
   const isPhysical = (order.gift_category || '').toLowerCase() === 'physical';
   const isDigital = (order.gift_category || '').toLowerCase() === 'digital' || Boolean(order.digital_product_data);
   const delCfg = DELIVERY_STATUS_CONFIG[order.delivery_status || 'ordered'] ?? DELIVERY_STATUS_CONFIG.ordered;
+
+  const ushwebEnv = (
+    process.env.NEXT_PUBLIC_USHWEB ||
+    process.env.USHWEB ||
+    'https://ushspa.co'
+  ).trim();
+  const ushwebBase = ushwebEnv.endsWith('/') ? ushwebEnv.slice(0, -1) : ushwebEnv;
+  const publicToken = order.public_token || (order as any)?.token;
+  const trackingUrl = publicToken ? `${ushwebBase}/gift/${publicToken}` : '';
+
+  const copyVoucherCode = () => {
+    const code = order.secret_code || order.voucher_number || (order as any)?.voucher_no;
+    if (!code) return;
+    navigator.clipboard.writeText(code).catch(() => undefined);
+    setCopiedVoucherCode(true);
+    setTimeout(() => setCopiedVoucherCode(false), 2000);
+  };
+
+  const copyTrackingUrl = () => {
+    if (!trackingUrl) return;
+    navigator.clipboard.writeText(trackingUrl).catch(() => undefined);
+    setCopiedTrackingUrl(true);
+    setTimeout(() => setCopiedTrackingUrl(false), 2000);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -598,91 +648,152 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
             </div>
           )}
 
-          {/* Delivery Status */}
-          <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 text-xs">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Truck className="h-4 w-4 text-primary shrink-0" />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Status</span>
+          {/* Row 1: Delivery Status and Delivery Address in one row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {/* Delivery Status */}
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Truck className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Status</span>
+                </div>
+                <div className="mt-2">
+                  <span className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold', delCfg.badgeClass)}>
+                    <span className={cn('h-1.5 w-1.5 rounded-full', delCfg.dotClass)} />
+                    {order.delivery_status_label || delCfg.label}
+                  </span>
+                </div>
               </div>
-              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold', delCfg.badgeClass)}>
-                <span className={cn('h-1.5 w-1.5 rounded-full', delCfg.dotClass)} />
-                {order.delivery_status_label || delCfg.label}
-              </span>
+              {order.delivery_address?.notes && (
+                <div className="mt-3 pt-2 border-t border-border/40 text-[11px] text-muted-foreground italic">
+                  Note: &ldquo;{order.delivery_address.notes}&rdquo;
+                </div>
+              )}
+            </div>
+
+            {/* Delivery Address */}
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-primary shrink-0" />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
+                  </div>
+                  {order.delivery_address && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const txt = formatAddressPreview(order.delivery_address);
+                        if (txt && txt !== '—') navigator.clipboard.writeText(txt);
+                      }}
+                      className="grid h-6 w-6 place-items-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      title="Copy address"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                {order.delivery_address ? (
+                  <p className="font-semibold text-foreground leading-snug line-clamp-3">
+                    {formatAddressPreview(order.delivery_address)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">No delivery address set</p>
+                )}
+              </div>
+              {order.delivery_address && (order.delivery_address.area || order.delivery_address.block || order.delivery_address.street || order.delivery_address.city) && (
+                <div className="flex items-center gap-1 flex-wrap pt-2 border-t border-border/40 text-[10px] text-muted-foreground font-mono">
+                  {order.delivery_address.area && <span className="bg-muted/60 px-1.5 py-0.5 rounded">Area: {order.delivery_address.area}</span>}
+                  {order.delivery_address.block && <span className="bg-muted/60 px-1.5 py-0.5 rounded">Block: {order.delivery_address.block}</span>}
+                  {order.delivery_address.street && <span className="bg-muted/60 px-1.5 py-0.5 rounded">Street: {order.delivery_address.street}</span>}
+                  {order.delivery_address.city && <span className="bg-muted/60 px-1.5 py-0.5 rounded">City: {order.delivery_address.city}</span>}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Delivery Address */}
-          <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 space-y-2 text-xs">
-            <div className="flex items-center gap-2">
-              <MapPin className="h-4 w-4 text-primary shrink-0" />
-              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
-            </div>
-            {order.delivery_address ? (
-              <div className="space-y-2">
-                <p className="font-semibold text-foreground leading-snug">
-                  {formatAddressPreview(order.delivery_address)}
-                </p>
-                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px]">
-                  {order.delivery_address.area && (
-                    <div className="rounded-lg border border-border/50 bg-card p-2">
-                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Area</span>
-                      <span className="font-medium text-foreground">{order.delivery_address.area}</span>
-                    </div>
-                  )}
-                  {order.delivery_address.city && (
-                    <div className="rounded-lg border border-border/50 bg-card p-2">
-                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">City</span>
-                      <span className="font-medium text-foreground">{order.delivery_address.city}</span>
-                    </div>
-                  )}
-                  {order.delivery_address.block && (
-                    <div className="rounded-lg border border-border/50 bg-card p-2">
-                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Block</span>
-                      <span className="font-medium text-foreground">{order.delivery_address.block}</span>
-                    </div>
-                  )}
-                  {order.delivery_address.street && (
-                    <div className="rounded-lg border border-border/50 bg-card p-2">
-                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Street</span>
-                      <span className="font-medium text-foreground">{order.delivery_address.street}</span>
-                    </div>
-                  )}
-                  {order.delivery_address.building && (
-                    <div className="rounded-lg border border-border/50 bg-card p-2">
-                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Building</span>
-                      <span className="font-medium text-foreground">{order.delivery_address.building}</span>
-                    </div>
-                  )}
-                  {(order.delivery_address.floor || order.delivery_address.apartment) && (
-                    <div className="rounded-lg border border-border/50 bg-card p-2">
-                      <span className="text-[9px] uppercase font-bold text-muted-foreground block">Floor / Apt</span>
-                      <span className="font-medium text-foreground">
-                        {[order.delivery_address.floor && `Fl: ${order.delivery_address.floor}`, order.delivery_address.apartment && `Apt: ${order.delivery_address.apartment}`].filter(Boolean).join(', ')}
-                      </span>
-                    </div>
-                  )}
+          {/* Row 2: Voucher Code & Tracking QR Code in one row (two cards) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            {/* Card 1: Voucher Code (renamed from Secret Code) */}
+            <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 flex flex-col justify-between">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <KeyRound className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Code</span>
                 </div>
-                {order.delivery_address.notes && (
-                  <div className="rounded-lg border border-amber-200/80 bg-amber-50/50 dark:bg-amber-950/20 dark:border-amber-800/40 p-2 text-xs">
-                    <span className="text-[9px] uppercase font-bold text-amber-700 dark:text-amber-400 block">Notes</span>
-                    <p className="text-foreground italic mt-0.5">&ldquo;{order.delivery_address.notes}&rdquo;</p>
+                {(order.secret_code || order.voucher_number) && (
+                  <button
+                    type="button"
+                    onClick={copyVoucherCode}
+                    className="grid h-7 w-7 place-items-center rounded-lg hover:bg-primary/10 text-primary transition cursor-pointer"
+                    title="Copy Voucher Code"
+                  >
+                    {copiedVoucherCode ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                  </button>
+                )}
+              </div>
+              <div className="my-auto py-1">
+                <p className="font-mono font-extrabold text-base sm:text-lg text-primary tracking-wider break-all">
+                  {order.secret_code || order.voucher_number || '—'}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Redemption &amp; verification code
+                </p>
+              </div>
+            </div>
+
+            {/* Card 2: QR Code with Tracking URL copy icon */}
+            <div className="rounded-2xl border border-border/80 bg-muted/20 p-4 flex flex-col justify-between">
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="flex items-center gap-2">
+                  <QrCode className="h-4 w-4 text-primary shrink-0" />
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tracking QR Code</span>
+                </div>
+                {trackingUrl && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={copyTrackingUrl}
+                      className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      title="Copy Tracking URL"
+                    >
+                      {copiedTrackingUrl ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                    <a
+                      href={trackingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      title="Open Tracking Page"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
                   </div>
                 )}
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">No delivery address set</p>
-            )}
-          </div>
 
-          {/* Secret Code */}
-          <div className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs">
-            <div className="flex items-center gap-3">
-              <KeyRound className="h-4 w-4 text-primary shrink-0" />
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Secret Code</p>
-                <p className="font-mono font-extrabold text-base text-primary tracking-widest truncate">{order.secret_code || '—'}</p>
-              </div>
+              {trackingUrl ? (
+                <div className="flex items-center gap-3 my-auto py-1">
+                  <div className="p-2 bg-white rounded-xl shadow-xs border border-border/50 shrink-0">
+                    <QRCodeSVG
+                      value={trackingUrl}
+                      size={64}
+                      level="M"
+                      includeMargin={false}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="text-xs font-bold text-foreground">Scan or Copy Link</p>
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Click the copy icon to share the tracking link or scan with camera.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="my-auto py-2 text-center text-xs text-muted-foreground">
+                  No public token available
+                </div>
+              )}
             </div>
           </div>
 
@@ -1347,7 +1458,17 @@ export default function GiftOrdersPage() {
                     return (
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors">
                         <td className="py-3 px-4 align-top">
-                          <p className="font-bold text-foreground font-mono text-[11px]">{order.secret_code || '—'}</p>
+                          <button
+                            type="button"
+                            onClick={() => setDetailsModalOrder(order)}
+                            className="group inline-flex items-center gap-1.5 font-bold text-foreground hover:text-primary font-mono text-[11px] transition-colors cursor-pointer text-left"
+                            title="View voucher details"
+                          >
+                            <Eye className="h-3.5 w-3.5 text-primary group-hover:scale-110 transition-transform shrink-0" />
+                            <span className="group-hover:underline underline-offset-2">
+                              {order.secret_code || order.voucher_number || '—'}
+                            </span>
+                          </button>
                           <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
                         </td>
                         <td className="py-3 px-4 align-top">
@@ -1412,11 +1533,7 @@ export default function GiftOrdersPage() {
                         </td>
                         <td className="py-3 px-4 align-top text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                            <button onClick={() => setDetailsModalOrder(order)}
-                              className="inline-flex items-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition">
-                              <Eye className="h-3.5 w-3.5 text-muted-foreground" />Details
-                            </button>
-                            {isPhysical && (
+                            {isPhysical ? (
                               <>
                                 {order.delivery_status === 'ordered' && (
                                   <button onClick={() => handleTransit(order, 'ready_to_go')} disabled={updatingId === order.id}
@@ -1442,7 +1559,7 @@ export default function GiftOrdersPage() {
                                 {order.delivery_status === 'delivered' && (
                                   <button onClick={() => handleTransit(order, 'received')} disabled={updatingId === order.id}
                                     className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition">
-                                    {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                                    {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
                                     Confirm Received
                                   </button>
                                 )}
@@ -1456,6 +1573,8 @@ export default function GiftOrdersPage() {
                                   <Edit3 className="h-3.5 w-3.5 text-muted-foreground" />Update
                                 </button>
                               </>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground italic">—</span>
                             )}
                           </div>
                         </td>
@@ -1484,14 +1603,21 @@ export default function GiftOrdersPage() {
                   <div>
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div>
-                        {voucherNum ? (
-                          <>
-                            <p className="font-extrabold text-sm text-foreground font-mono">{voucherNum}</p>
-                            <p className="text-[10px] text-muted-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
-                          </>
-                        ) : (
-                          <p className="font-extrabold text-sm text-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
+                        <button
+                          type="button"
+                          onClick={() => setDetailsModalOrder(order)}
+                          className="group inline-flex items-center gap-1.5 font-extrabold text-sm text-foreground hover:text-primary font-mono transition-colors cursor-pointer text-left"
+                          title="View voucher details"
+                        >
+                          <Eye className="h-4 w-4 text-primary group-hover:scale-110 transition-transform shrink-0" />
+                          <span className="group-hover:underline underline-offset-2">
+                            {order.secret_code || voucherNum || `#${order.id.slice(0, 8).toUpperCase()}`}
+                          </span>
+                        </button>
+                        {voucherNum && order.secret_code && voucherNum !== order.secret_code && (
+                          <p className="text-[10px] text-muted-foreground font-mono">{voucherNum}</p>
                         )}
+                        <p className="text-[10px] text-muted-foreground font-mono">#{order.id.slice(0, 8).toUpperCase()}</p>
                         <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
                       </div>
                       <div className="flex flex-col items-end gap-1">
@@ -1536,11 +1662,16 @@ export default function GiftOrdersPage() {
                         <span className="text-muted-foreground font-semibold">Total</span>
                         <span className="font-extrabold text-foreground">{formatAmount(order.total_amount, order.currency)}</span>
                       </div>
-                      <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-background p-2.5">
-                        <KeyRound className="h-3.5 w-3.5 text-primary shrink-0" />
-                        <span className="text-muted-foreground">Code:</span>
-                        <span className="font-mono font-extrabold tracking-widest text-foreground">{order.secret_code}</span>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailsModalOrder(order)}
+                        className="w-full flex items-center gap-2 rounded-xl border border-border/50 bg-background p-2.5 hover:bg-muted/40 transition-colors group cursor-pointer text-left"
+                        title="View voucher details"
+                      >
+                        <Eye className="h-3.5 w-3.5 text-primary shrink-0 group-hover:scale-110 transition-transform" />
+                        <span className="text-muted-foreground">Voucher Code:</span>
+                        <span className="font-mono font-extrabold tracking-widest text-foreground group-hover:text-primary group-hover:underline truncate">{order.secret_code || voucherNum || '—'}</span>
+                      </button>
                       {isPhysical && (
                         <div className="rounded-xl border border-border/50 bg-background p-2.5">
                           <div className="flex items-center justify-between gap-1 mb-1">
@@ -1571,49 +1702,43 @@ export default function GiftOrdersPage() {
                   </div>
 
                   {/* Footer Actions */}
-                  <div className="border-t border-border/40 pt-3 flex items-center gap-2 flex-wrap">
-                    <button onClick={() => setDetailsModalOrder(order)}
-                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-border/80 bg-background px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted transition shrink-0">
-                      <Eye className="h-3.5 w-3.5 text-muted-foreground" />Details
-                    </button>
-                    {isPhysical && (
-                      <>
-                        {order.delivery_status === 'ordered' && (
-                          <button onClick={() => handleTransit(order, 'ready_to_go')} disabled={updatingId === order.id}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition flex-1">
-                            {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}Ready To Go
-                          </button>
-                        )}
-                        {order.delivery_status === 'ready_to_go' && (
-                          <button onClick={() => handleTransit(order, 'on_the_way')} disabled={updatingId === order.id}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:opacity-50 transition flex-1">
-                            {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}On The Way
-                          </button>
-                        )}
-                        {order.delivery_status === 'on_the_way' && (
-                          <button onClick={() => handleTransit(order, 'delivered')} disabled={updatingId === order.id}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition flex-1">
-                            {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}Mark Delivered
-                          </button>
-                        )}
-                        {order.delivery_status === 'delivered' && (
-                          <button onClick={() => handleTransit(order, 'received')} disabled={updatingId === order.id}
-                            className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition flex-1">
-                            {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}Confirm Received
-                          </button>
-                        )}
-                        {order.delivery_status === 'received' && (
-                          <div className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-purple-100 dark:bg-purple-950/40 px-3 py-2 text-xs font-bold text-purple-700 dark:text-purple-300">
-                            <Check className="h-3.5 w-3.5 text-purple-600" />Received
-                          </div>
-                        )}
-                        <button onClick={() => setStatusModalOrder(order)} disabled={updatingId === order.id}
-                          className="inline-flex items-center justify-center gap-1 rounded-xl border border-border/80 bg-background px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50 transition shrink-0">
-                          <Edit3 className="h-3.5 w-3.5 text-muted-foreground" />Update
+                  {isPhysical && (
+                    <div className="border-t border-border/40 pt-3 flex items-center gap-2 flex-wrap">
+                      {order.delivery_status === 'ordered' && (
+                        <button onClick={() => handleTransit(order, 'ready_to_go')} disabled={updatingId === order.id}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition flex-1">
+                          {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Package className="h-3.5 w-3.5" />}Ready To Go
                         </button>
-                      </>
-                    )}
-                  </div>
+                      )}
+                      {order.delivery_status === 'ready_to_go' && (
+                        <button onClick={() => handleTransit(order, 'on_the_way')} disabled={updatingId === order.id}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-sky-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-sky-700 disabled:opacity-50 transition flex-1">
+                          {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Truck className="h-3.5 w-3.5" />}On The Way
+                        </button>
+                      )}
+                      {order.delivery_status === 'on_the_way' && (
+                        <button onClick={() => handleTransit(order, 'delivered')} disabled={updatingId === order.id}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-50 transition flex-1">
+                          {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}Mark Delivered
+                        </button>
+                      )}
+                      {order.delivery_status === 'delivered' && (
+                        <button onClick={() => handleTransit(order, 'received')} disabled={updatingId === order.id}
+                          className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-purple-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition flex-1">
+                          {updatingId === order.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}Confirm Received
+                        </button>
+                      )}
+                      {order.delivery_status === 'received' && (
+                        <div className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-purple-100 dark:bg-purple-950/40 px-3 py-2 text-xs font-bold text-purple-700 dark:text-purple-300">
+                          <Check className="h-3.5 w-3.5 text-purple-600" />Received
+                        </div>
+                      )}
+                      <button onClick={() => setStatusModalOrder(order)} disabled={updatingId === order.id}
+                        className="inline-flex items-center justify-center gap-1 rounded-xl border border-border/80 bg-background px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50 transition shrink-0">
+                        <Edit3 className="h-3.5 w-3.5 text-muted-foreground" />Update
+                      </button>
+                    </div>
+                  )}
                 </div>
               );
             })}

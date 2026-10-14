@@ -25,7 +25,7 @@ import {
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { CreateCustomerModal, COUNTRY_CODES, type CreatedCustomer } from './CreateCustomerModal';
-import { PaymentReferenceModal, type PaymentReferenceData } from './PaymentReferenceModal';
+import { MakePaymentModal } from './MakePaymentModal';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
 const B = {
@@ -78,6 +78,8 @@ interface SlimService {
   duration_minutes?: number;
   currency?: string;
   category?: string;
+  image?: string | null;
+  image1?: string | null;
   is_packaged_services?: boolean | string | number;
   is_packaged?: boolean | string | number;
 }
@@ -123,6 +125,8 @@ interface ServiceFullDetail {
   duration_minutes?: number;
   currency?: string;
   category?: string;
+  image?: string | null;
+  image1?: string | null;
   branches?: Branch[];
   service_arrangements?: Arrangement[];
   is_packaged_services?: boolean | string | number;
@@ -164,7 +168,7 @@ export const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
   {
     id: 'PaymentLink',
     name: 'PaymentLink',
-    description: 'SMS / WhatsApp link',
+    description: 'MyFatoorah link via WhatsApp / SMS',
     tag: 'Direct Link',
     tagColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
     borderColor: 'border-blue-500 ring-2 ring-blue-500/20',
@@ -239,6 +243,8 @@ function SearchableDropdown<T>({
   value,
   onSelect,
   labelFn,
+  sublabelFn,
+  imageFn,
   placeholder,
   loading,
   disabled,
@@ -247,6 +253,8 @@ function SearchableDropdown<T>({
   value: T | null;
   onSelect: (item: T) => void;
   labelFn: (item: T) => string;
+  sublabelFn?: (item: T) => string | undefined;
+  imageFn?: (item: T) => string | null | undefined;
   placeholder?: string;
   loading?: boolean;
   disabled?: boolean;
@@ -271,7 +279,7 @@ function SearchableDropdown<T>({
         type="button"
         disabled={disabled || loading}
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition focus:outline-none"
+        className="w-full flex items-center justify-between gap-3 rounded-xl border px-3.5 py-2 text-sm transition focus:outline-none min-h-[46px]"
         style={{
           borderColor: open ? B.espresso : B.linen,
           background: B.cardBg,
@@ -281,9 +289,39 @@ function SearchableDropdown<T>({
           cursor: disabled || loading ? 'not-allowed' : 'pointer',
         }}
       >
-        <span className="flex-1 text-left truncate text-sm">
-          {loading ? 'Loading…' : value ? labelFn(value) : placeholder ?? 'Select…'}
-        </span>
+        <div className="flex-1 min-w-0 flex items-center gap-3 text-left">
+          {value && imageFn && (
+            (() => {
+              const img = imageFn(value);
+              return img ? (
+                <img
+                  src={img}
+                  alt={labelFn(value)}
+                  className="h-8 w-8 rounded-lg object-cover shrink-0 border"
+                  style={{ borderColor: B.linen }}
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              ) : (
+                <div
+                  className="h-8 w-8 rounded-lg grid place-items-center shrink-0 border"
+                  style={{ borderColor: B.linen, background: B.blush, color: B.espresso }}
+                >
+                  <Scissors className="h-4 w-4" />
+                </div>
+              );
+            })()
+          )}
+          <div className="flex-1 min-w-0">
+            <span className="block truncate text-sm font-semibold">
+              {loading ? 'Loading…' : value ? labelFn(value) : placeholder ?? 'Select…'}
+            </span>
+            {value && sublabelFn && sublabelFn(value) && (
+              <span className="block truncate text-[11px]" style={{ color: B.textMuted }}>
+                {sublabelFn(value)}
+              </span>
+            )}
+          </div>
+        </div>
         {loading ? (
           <Loader2 className="h-4 w-4 shrink-0 animate-spin" style={{ color: B.textMuted }} />
         ) : (
@@ -309,7 +347,7 @@ function SearchableDropdown<T>({
               />
             </div>
           </div>
-          <ul className="max-h-52 overflow-y-auto py-1">
+          <ul className="max-h-64 overflow-y-auto py-1">
             {filtered.length === 0 ? (
               <li className="px-4 py-3 text-sm text-center" style={{ color: B.textMuted }}>
                 No results
@@ -318,6 +356,8 @@ function SearchableDropdown<T>({
               filtered.map((item, i) => {
                 const label = labelFn(item);
                 const active = value ? labelFn(value) === label : false;
+                const img = imageFn ? imageFn(item) : null;
+                const sub = sublabelFn ? sublabelFn(item) : undefined;
                 return (
                   <li key={i}>
                     <button
@@ -327,11 +367,10 @@ function SearchableDropdown<T>({
                         setOpen(false);
                         setSearch('');
                       }}
-                      className="w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition"
+                      className="w-full text-left px-3.5 py-2.5 text-sm flex items-center gap-3 transition cursor-pointer"
                       style={{
                         background: active ? B.blush : undefined,
                         color: active ? B.espresso : B.textMain,
-                        fontWeight: active ? 700 : 400,
                       }}
                       onMouseEnter={(e) => {
                         if (!active) (e.currentTarget as HTMLButtonElement).style.background = B.bg;
@@ -340,8 +379,51 @@ function SearchableDropdown<T>({
                         if (!active) (e.currentTarget as HTMLButtonElement).style.background = '';
                       }}
                     >
-                      {active && <Check className="h-3.5 w-3.5 shrink-0" style={{ color: B.espresso }} />}
-                      <span className={cn('flex-1', !active && 'ml-5')}>{label}</span>
+                      {active ? (
+                        <Check className="h-4 w-4 shrink-0" style={{ color: B.espresso }} />
+                      ) : (
+                        <div className="w-4 shrink-0" />
+                      )}
+                      {imageFn && (
+                        img ? (
+                          <div
+                            className="h-10 w-10 rounded-lg overflow-hidden shrink-0 border bg-muted/20"
+                            style={{ borderColor: B.linen }}
+                          >
+                            <img
+                              src={img}
+                              alt={label}
+                              className="h-full w-full object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          </div>
+                        ) : (
+                          <div
+                            className="h-10 w-10 rounded-lg grid place-items-center shrink-0 border"
+                            style={{ borderColor: B.linen, background: B.blush, color: B.espresso }}
+                          >
+                            <Scissors className="h-4 w-4" />
+                          </div>
+                        )
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className="truncate text-sm leading-snug"
+                          style={{
+                            color: active ? B.espresso : B.textMain,
+                            fontWeight: active ? 700 : 500,
+                          }}
+                        >
+                          {label}
+                        </p>
+                        {sub && (
+                          <p className="truncate text-xs mt-0.5" style={{ color: B.textMuted }}>
+                            {sub}
+                          </p>
+                        )}
+                      </div>
                     </button>
                   </li>
                 );
@@ -921,27 +1003,22 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
   const [createForRole, setCreateForRole] = useState<'sender' | 'recipient'>('sender');
 
-  // ── Payment Provider Popup State (Step 1) ──
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState<string>('MyFatoorah');
+  // ── Payment Provider & Link State ──
+  const [showMakePaymentModal, setShowMakePaymentModal] = useState(false);
+  const [createdVoucher, setCreatedVoucher] = useState<{ id: string; voucher_number?: string | null } | null>(null);
   const [paymentSubmitLoading, setPaymentSubmitLoading] = useState(false);
   const [paymentSubmitError, setPaymentSubmitError] = useState<string | null>(null);
-  const [paymentSuccess, setPaymentSuccess] = useState(false);
-
-  // ── Payment Reference & Receipt State (Step 2) ──
-  const [showPaymentRefModal, setShowPaymentRefModal] = useState(false);
-  const [receiptImage, setReceiptImage] = useState<string | null>(null);
-  const [transactionRefId, setTransactionRefId] = useState<string>('');
-  const [paymentNotes, setPaymentNotes] = useState<string>('');
 
   // Close on Escape
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showPaymentRefModal) {
-          setShowPaymentRefModal(false);
-        } else if (showPaymentModal) {
-          setShowPaymentModal(false);
+        if (showMakePaymentModal) {
+          setShowMakePaymentModal(false);
+          if (createdVoucher) {
+            onSuccess?.();
+            onClose();
+          }
         } else {
           onClose();
         }
@@ -949,14 +1026,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, [onClose, showPaymentModal, showPaymentRefModal]);
-
-  const handleSelectProvider = (provId: string) => {
-    setSelectedProvider(provId);
-    setPaymentSubmitError(null);
-    setShowPaymentModal(false);
-    setShowPaymentRefModal(true);
-  };
+  }, [onClose, showMakePaymentModal, createdVoucher, onSuccess]);
 
   // ── 1. Fetch Categories ──
   useEffect(() => {
@@ -1224,42 +1294,32 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     }
   };
 
+  const cleanPhoneDigits = recipientPhone.replace(/\D/g, '');
+  const cleanCodeDigits = recipientCountryCode.replace(/\D/g, '');
+  let computedRecipientPhone = recipientPhone.trim();
+  if (computedRecipientPhone) {
+    if (computedRecipientPhone.startsWith('+')) {
+      computedRecipientPhone = `+${cleanPhoneDigits}`;
+    } else if (cleanPhoneDigits.startsWith(cleanCodeDigits)) {
+      computedRecipientPhone = `+${cleanPhoneDigits}`;
+    } else {
+      computedRecipientPhone = `${recipientCountryCode}${cleanPhoneDigits}`;
+    }
+  }
+  const resolvedSenderName = senderName.trim() || (sender ? customerLabel(sender) : '');
+
   // ── Build Voucher Payload & Submit (Requirement 1.vi) ──
-  const handleConfirmPaymentAndCreateVoucher = async (refData?: PaymentReferenceData) => {
+  const handleConfirmPaymentAndCreateVoucher = async (
+    opts?: { paymentLink?: boolean }
+  ): Promise<{ id: string; voucher_number?: string | null }> => {
+    const isLinkFlow = opts?.paymentLink === true;
     setPaymentSubmitLoading(true);
     setPaymentSubmitError(null);
-
-    const txnId = refData?.transactionId || transactionRefId || '';
-    const rcptImg = refData ? refData.receiptImage : receiptImage;
-    const notes = refData?.notes || paymentNotes || '';
-
-    if (refData) {
-      setTransactionRefId(txnId);
-      setReceiptImage(rcptImg);
-      if (notes) setPaymentNotes(notes);
-    }
 
     const svcCategory = fullDetail?.category ?? selectedService?.category ?? '';
     const arrRaw = selectedArrangt as unknown as Record<string, unknown>;
     const arrName = selectedArrangt?.arrangement_name ?? String(arrRaw?.name ?? 'Room');
-
     const customerId = sender?.id ?? '';
-
-    const cleanPhoneDigits = recipientPhone.replace(/\D/g, '');
-    const cleanCodeDigits = recipientCountryCode.replace(/\D/g, '');
-    let finalRecipientPhone = recipientPhone.trim();
-
-    if (finalRecipientPhone) {
-      if (finalRecipientPhone.startsWith('+')) {
-        finalRecipientPhone = `+${cleanPhoneDigits}`;
-      } else if (cleanPhoneDigits.startsWith(cleanCodeDigits)) {
-        finalRecipientPhone = `+${cleanPhoneDigits}`;
-      } else {
-        finalRecipientPhone = `${recipientCountryCode}${cleanPhoneDigits}`;
-      }
-    }
-
-    const resolvedSenderName = senderName.trim() || (sender ? customerLabel(sender) : '');
 
     const payload = {
       gift_category: (selectedCategory?.code ?? 'DIGITAL').toLowerCase(),
@@ -1338,11 +1398,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       total_duration: totalDuration,
       total_amount: totalPrice,
       currency,
-      recipient_phone: finalRecipientPhone,
+      recipient_phone: computedRecipientPhone,
       recipient_id: recipient?.id || null,
       recipient_data: {
         name: recipientName.trim(),
-        phone_number: finalRecipientPhone,
+        phone_number: computedRecipientPhone,
         email: recipientEmail,
       },
       sender_id: sender?.id || null,
@@ -1355,37 +1415,25 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       },
       gift_message: giftMessage,
       gift_template: giftTemplate,
-      payment_provider: ({
-        MyFatoorah: 'MyFatoorah',
-        PaymentLink: 'DirectLink',
-        Deema: 'Deema',
-        'KNET Card': 'Other',
-        Other: 'Other',
-      } as Record<string, string>)[selectedProvider] ?? 'Other',
-      payment_method: selectedProvider === 'PaymentLink' ? 'DirectLink' : selectedProvider,
+      payment_provider: 'MyFatoorah',
+      payment_method: 'DirectLink',
       payment_through: 'desk',
       source: 'desk',
-      payment_status: 'success',
-      status: 'active',
-      transaction_id: txnId || null,
-      reference_id: txnId || null,
-      receipt_image: rcptImg || null,
-      invoice_id: refData?.invoiceId || null,
-      payment_notes: notes || null,
+      payment_status: isLinkFlow ? 'initiated' : 'success',
+      status: isLinkFlow ? 'payment_pending' : 'active',
+      transaction_id: null,
+      reference_id: null,
+      receipt_image: null,
+      invoice_id: null,
+      payment_notes: null,
       payment_data: {
-        transaction_id: txnId || null,
-        reference_id: txnId || null,
-        receipt_image: rcptImg || null,
-        invoice_id: refData?.invoiceId || null,
-        payment_notes: notes || null,
-        payment_provider: ({
-          MyFatoorah: 'MyFatoorah',
-          PaymentLink: 'DirectLink',
-          Deema: 'Deema',
-          'KNET Card': 'Other',
-          Other: 'Other',
-        } as Record<string, string>)[selectedProvider] ?? 'Other',
-        payment_method: selectedProvider === 'PaymentLink' ? 'DirectLink' : selectedProvider,
+        transaction_id: null,
+        reference_id: null,
+        receipt_image: null,
+        invoice_id: null,
+        payment_notes: null,
+        payment_provider: 'MyFatoorah',
+        payment_method: 'DirectLink',
       },
     };
 
@@ -1427,18 +1475,28 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         throw new Error(detail || `Server error ${res.status}`);
       }
 
-      setPaymentSuccess(true);
-      setTimeout(() => {
-        setShowPaymentRefModal(false);
-        setShowPaymentModal(false);
-        onSuccess?.();
-        onClose();
-      }, 1000);
+      const created = ((data as Record<string, unknown>)?.data ?? data) as Record<string, unknown>;
+      const newId = String(created?.id ?? created?.voucher_id ?? '');
+      if (!newId) throw new Error('Voucher created but its ID was not returned.');
+      const newNumber = (created?.voucher_number as string) || (created?.secret_code as string) || null;
+      return { id: newId, voucher_number: newNumber };
     } catch (err) {
-      setPaymentSubmitError(err instanceof Error ? err.message : 'Failed to create gift voucher');
+      const msg = err instanceof Error ? err.message : 'Failed to create gift voucher';
+      setPaymentSubmitError(msg);
+      throw err;
     } finally {
       setPaymentSubmitLoading(false);
     }
+  };
+
+  const handleCreateVoucherForPaymentLink = async (): Promise<{ targetId: string; targetNumber?: string | null }> => {
+    if (createdVoucher) {
+      return { targetId: createdVoucher.id, targetNumber: createdVoucher.voucher_number };
+    }
+    const created = await handleConfirmPaymentAndCreateVoucher({ paymentLink: true });
+    if (!created?.id) throw new Error('Voucher was not created.');
+    setCreatedVoucher(created);
+    return { targetId: created.id, targetNumber: created.voucher_number };
   };
 
   return (
@@ -1691,6 +1749,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     value={selectedService}
                     onSelect={handleServiceSelect}
                     labelFn={(s) => s.name}
+                    sublabelFn={(s) => {
+                      const parts: string[] = [];
+                      if (s.duration_minutes) parts.push(`${s.duration_minutes} min`);
+                      if (s.base_price || s.price) parts.push(`${s.base_price || s.price} ${s.currency || 'KWD'}`);
+                      return parts.length > 0 ? parts.join(' • ') : undefined;
+                    }}
+                    imageFn={(s) => s.image || s.image1 || null}
                     placeholder="Search and select a spa service…"
                     loading={servicesLoading}
                   />
@@ -2126,7 +2191,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   disabled={!stepRecipientValid}
                   onClick={() => {
                     setPaymentSubmitError(null);
-                    setShowPaymentModal(true);
+                    setShowMakePaymentModal(true);
                   }}
                   className="flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-[0.98] cursor-pointer"
                   style={{
@@ -2143,158 +2208,33 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         </div>
       </div>
 
-      {/* ── Payment Provider Popup (Requirement 1.v: exactly similar to Booking Details) ── */}
-      {showPaymentModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => !paymentSubmitLoading && setShowPaymentModal(false)}
-          />
-          <div className="relative z-10 w-full max-w-lg rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden transition-all duration-200">
-            {/* Accent bar */}
-            <div className="h-1.5 w-full bg-gradient-to-r from-emerald-500 via-teal-500 to-sky-500 shrink-0" />
-
-            {/* Header */}
-            <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-4 border-b border-border/40">
-              <div>
-                <h3 className="text-base font-extrabold text-foreground">Select Payment Provider</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Choose a payment gateway or payment method to issue the voucher.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowPaymentModal(false)}
-                disabled={paymentSubmitLoading}
-                className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition cursor-pointer disabled:opacity-50"
-                aria-label="Close"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* Body */}
-            <div className="p-6 space-y-4">
-              {/* Voucher amount banner */}
-              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20 p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-                    Voucher Total
-                  </p>
-                  <p className="text-sm font-bold truncate text-foreground">{recipientName || 'Gift Voucher'}</p>
-                </div>
-                <p className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">
-                  {fmtPrice(totalPrice, currency)}
-                </p>
-              </div>
-
-              {/* Provider Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                {PAYMENT_PROVIDERS.map((provider) => {
-                  const isSelected = selectedProvider === provider.id;
-                  return (
-                    <button
-                      key={provider.id}
-                      type="button"
-                      onClick={() => handleSelectProvider(provider.id)}
-                      className={cn(
-                        'relative flex flex-col items-start p-3 rounded-2xl border-2 text-left transition cursor-pointer select-none',
-                        isSelected
-                          ? `${provider.borderColor} bg-white dark:bg-card shadow-sm`
-                          : 'border-border/50 bg-card/60 hover:border-border hover:bg-muted/30'
-                      )}
-                    >
-                      <div className="flex items-center justify-between w-full mb-1">
-                        <span
-                          className={cn(
-                            'text-xs font-extrabold',
-                            isSelected ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'
-                          )}
-                        >
-                          {provider.name}
-                        </span>
-                        {isSelected && (
-                          <span className={provider.checkColor}>
-                            <CheckCircle2 className="h-3.5 w-3.5" />
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-[10px] text-muted-foreground leading-tight line-clamp-2">
-                        {provider.description}
-                      </span>
-                      <span
-                        className={cn(
-                          'mt-2 inline-flex items-center rounded-lg px-2 py-0.5 text-[9px] font-bold',
-                          provider.tagColor
-                        )}
-                      >
-                        {provider.tag}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {paymentSubmitError && (
-                <div className="rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{paymentSubmitError}</span>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className="flex items-center justify-between gap-3 border-t border-border/40 px-6 py-4 bg-muted/10">
-              <p className="text-xs text-muted-foreground">
-                Payment mode:{' '}
-                <span className="font-bold text-foreground">{selectedProvider}</span>
-              </p>
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowPaymentModal(false)}
-                  disabled={paymentSubmitLoading}
-                  className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition cursor-pointer disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectProvider(selectedProvider)}
-                  disabled={paymentSubmitLoading}
-                  className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 px-5 py-2 text-xs font-bold text-white shadow-sm transition cursor-pointer disabled:opacity-50 active:scale-[0.98]"
-                >
-                  <span>Continue to Receipt Proof</span>
-                  <ArrowRight className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Payment Reference & Receipt Scan Modal (Step 2 of payment) ── */}
-      {showPaymentRefModal && (
-        <PaymentReferenceModal
-          isOpen={showPaymentRefModal}
+      {/* ── Make Payment Modal (Step 1: Select Payment Provider -> Step 2: Make Payment Now) ── */}
+      {showMakePaymentModal && (
+        <MakePaymentModal
+          isOpen={showMakePaymentModal}
           onClose={() => {
-            setShowPaymentRefModal(false);
-            setPaymentSubmitError(null);
+            setShowMakePaymentModal(false);
+            if (createdVoucher) {
+              onSuccess?.();
+              onClose();
+            }
           }}
-          onBack={() => {
-            setShowPaymentRefModal(false);
-            setShowPaymentModal(true);
-          }}
-          paymentProvider={selectedProvider}
-          totalAmount={totalPrice}
+          targetType="gift_voucher"
+          targetId={createdVoucher?.id}
+          targetNumber={createdVoucher?.voucher_number}
+          targetLabel="Voucher No:"
+          amount={totalPrice.toFixed(3)}
           currency={currency}
-          initialTransactionId={transactionRefId}
-          initialReceiptImage={receiptImage}
-          initialNotes={paymentNotes}
-          onConfirm={handleConfirmPaymentAndCreateVoucher}
-          isSubmitting={paymentSubmitLoading}
-          confirmButtonLabel="Confirm Payment"
-          error={paymentSubmitError}
+          customerName={resolvedSenderName || recipientName.trim()}
+          customerPhone={sender ? customerPhone(sender) : computedRecipientPhone}
+          onBeforeNext={handleCreateVoucherForPaymentLink}
+          onPaymentSuccess={() => {
+            onSuccess?.();
+          }}
+          onSuccess={() => {
+            onSuccess?.();
+            onClose();
+          }}
         />
       )}
 

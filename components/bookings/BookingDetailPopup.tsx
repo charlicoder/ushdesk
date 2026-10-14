@@ -8,8 +8,9 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog,
+  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString, nowWithTimezone } from '@/lib/datetime';
@@ -22,6 +23,7 @@ import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
 import { PaymentReferenceModal, type PaymentReferenceData, type PaymentProviderOption } from '@/components/bookings/PaymentReferenceModal';
+import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface Booking {
@@ -229,17 +231,21 @@ export const STATUS_STYLES: Record<string, string> = {
   confirmed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
   completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   cancelled: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  refunded:  'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
   pending:   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   no_show:   'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
 };
 export const PAYMENT_STYLES: Record<string, string> = {
-  success: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  failed:  'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  success:  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  refunded: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  partially_refunded: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
+  pending:  'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  failed:   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
 };
 export const STATUS_BAR: Record<string, string> = {
   confirmed: 'bg-blue-400', completed: 'bg-emerald-400',
-  cancelled: 'bg-red-400',  pending:   'bg-amber-400', no_show: 'bg-slate-400',
+  cancelled: 'bg-red-400',  refunded:  'bg-purple-400',
+  pending:   'bg-amber-400', no_show: 'bg-slate-400',
 };
 export const statusStyle  = (s: string) => STATUS_STYLES[s]  ?? 'bg-muted text-muted-foreground';
 export const paymentStyle = (s: string) => PAYMENT_STYLES[s] ?? 'bg-muted text-muted-foreground';
@@ -319,18 +325,26 @@ export type ProviderId = typeof PAYMENT_PROVIDERS[number]['id'];
 
 function PaymentProviderModal({
   booking,
+  totalAmount,
+  currency,
   selected,
   onSelect,
   onClose,
   onContinue,
 }: {
   booking: Booking;
+  totalAmount?: number;
+  currency?: string;
   selected: ProviderId;
   onSelect: (p: ProviderId) => void;
   onClose: () => void;
   onContinue: () => void;
 }) {
   const selectedProvider = PAYMENT_PROVIDERS.find((p) => p.id === selected) || PAYMENT_PROVIDERS[0];
+  const displayAmount = (typeof totalAmount === 'number' && !isNaN(totalAmount))
+    ? totalAmount
+    : (parseFloat(booking.total_amount) || 0);
+  const displayCurrency = currency || booking.currency || 'KWD';
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -348,7 +362,7 @@ function PaymentProviderModal({
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Step 1 of 2: Select Payment Method</p>
               <p className="text-sm font-bold text-foreground">
-                {booking.customer_name} — {booking.currency} {parseFloat(booking.total_amount).toFixed(3)}
+                {booking.customer_name} — {displayCurrency} {displayAmount.toFixed(3)}
               </p>
             </div>
           </div>
@@ -411,7 +425,7 @@ function PaymentProviderModal({
             onClick={onContinue}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 px-5 py-2.5 text-xs font-bold text-white shadow-md transition cursor-pointer active:scale-95"
           >
-            <span>Continue to Reference &amp; Receipt</span>
+            <span>{selected === 'paymentlink' ? 'Continue to Create Payment Link' : 'Continue to Reference & Receipt'}</span>
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -433,6 +447,7 @@ export function BookingDetailPopup({
   const [activeTab, setActiveTab] = useState<'details' | 'payment'>('details');
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedType, setCopiedType] = useState<string | null>(null);
   const [receiptZoom, setReceiptZoom] = useState(false);
@@ -441,6 +456,7 @@ export function BookingDetailPopup({
   const [showCancellationModal, setShowCancellationModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showPaymentRefModal, setShowPaymentRefModal] = useState(false);
+  const [showMakePaymentModal, setShowMakePaymentModal] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<ProviderId>('knet');
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
@@ -477,7 +493,14 @@ export function BookingDetailPopup({
   const canCancel = cancellationEligibility.canCancel;
 
   // ── Role detection for Call Center Agent & Receptionist ──────────────
-  const { isSuperuserOrAdmin, isCallCenterAgent, isReceptionist, isPaymentTabRestricted, rescheduleDaysCount } = useMemo(() => {
+  const {
+    isSuperuserOrAdmin,
+    isCallCenterAgent,
+    isReceptionist,
+    isPaymentTabRestricted,
+    rescheduleDaysCount,
+    isPrivilegedCancelRole,
+  } = useMemo(() => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const u = user as any;
     const candidates = [
@@ -533,6 +556,18 @@ export function BookingDetailPopup({
       c.includes('finance')
     );
 
+    const isPrivilegedCancelRole = Boolean(
+      isSuperuserOrAdmin ||
+      candidates.some((c) =>
+        c.includes('admin') ||
+        c.includes('administrator') ||
+        c.includes('spa director') ||
+        c.includes('director') ||
+        c.includes('finance manager') ||
+        c.includes('finance')
+      )
+    );
+
     const isCallCenterOrReceptionist = !isManagerOrAdmin && (isAgent || isRecep);
     const rescheduleDaysCount = isCallCenterOrReceptionist ? 10 : 30;
 
@@ -544,6 +579,7 @@ export function BookingDetailPopup({
       isReceptionist: isRecep,
       isPaymentTabRestricted: restricted,
       rescheduleDaysCount,
+      isPrivilegedCancelRole,
     };
   }, [user, roleInfo, authPermissions]);
 
@@ -824,32 +860,58 @@ export function BookingDetailPopup({
   }, [detail, booking, rescheduleDaysCount]);
 
   // Fetch full booking detail (addons, status_history, pricing breakdown) from backend
-  useEffect(() => {
+  const fetchDetail = useCallback(async (isManualRefresh = false) => {
     if (!booking?.id) {
       setDetail(null);
       return;
     }
-    let active = true;
+    if (isManualRefresh) setRefreshing(true);
     setLoadingDetail(true);
-    authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
-      .then((r) => r.json())
-      .then((res) => {
-        if (!active) return;
-        if (res?.success && res?.data) {
-          setDetail(res.data as Record<string, unknown>);
-        } else if (res?.data) {
-          setDetail(res.data as Record<string, unknown>);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`).then((r) => r.json());
+      const fetchedDetail = (res?.success && res?.data)
+        ? (res.data as Record<string, unknown>)
+        : (res?.data as Record<string, unknown> | null);
+      if (fetchedDetail) {
+        setDetail(fetchedDetail);
+        const invNum = String(
+          fetchedDetail.invoice_number ??
+          fetchedDetail.invoice_id ??
+          (fetchedDetail.pricing as any)?.invoice_number ??
+          (fetchedDetail.pricing as any)?.invoice_id ??
+          (fetchedDetail.payment_data as any)?.invoice_number ??
+          (fetchedDetail.payment_data as any)?.invoice_id ??
+          ''
+        ).trim();
+        if (invNum && invNum !== '—') {
+          authedFetch(`/uanr/api/v1/invoices?search=${encodeURIComponent(invNum)}`)
+            .then((r) => r.json())
+            .then((invRes) => {
+              const items = invRes?.data?.items ?? invRes?.items ?? (Array.isArray(invRes?.data) ? invRes.data : []);
+              const found = items.find((i: Record<string, unknown>) => i.name === invNum || i.id === invNum || i.reference === invNum) || items[0];
+              if (found) setInvoiceRecord(found);
+            })
+            .catch(() => {});
         }
-      })
-      .catch((err) => console.warn('[BookingDetailModal] fetch error:', err))
-      .finally(() => {
-        if (active) setLoadingDetail(false);
-      });
+      }
+      if (isManualRefresh) {
+        onSuccess?.();
+      }
+    } catch (err) {
+      console.warn('[BookingDetailModal] fetch error:', err);
+    } finally {
+      if (isManualRefresh) setRefreshing(false);
+      setLoadingDetail(false);
+    }
+  }, [booking?.id, onSuccess]);
 
-    return () => {
-      active = false;
-    };
-  }, [booking?.id]);
+  useEffect(() => {
+    fetchDetail(false);
+  }, [fetchDetail]);
+
+  const handleRefresh = useCallback(() => {
+    fetchDetail(true);
+  }, [fetchDetail]);
 
   const invoiceNumber = String(
     detail?.invoice_number ??
@@ -886,13 +948,20 @@ export function BookingDetailPopup({
   if (!booking) return null;
   const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
   const isCompleted = curStatus === 'completed';
+  const isCancelled =
+    curStatus === 'cancelled' ||
+    curStatus === 'refunded' ||
+    String(booking.status ?? '').toLowerCase() === 'cancelled' ||
+    String(booking.status ?? '').toLowerCase() === 'refunded';
   const canChangeTherapist =
     curStatus !== 'completed' &&
     curStatus !== 'no_show' &&
     curStatus !== 'cancelled' &&
+    curStatus !== 'refunded' &&
     booking.status !== 'completed' &&
     booking.status !== 'no_show' &&
     booking.status !== 'cancelled' &&
+    booking.status !== 'refunded' &&
     !isCompleted;
   const accentBar = isCompleted ? 'bg-[#7D6453]' : (STATUS_BAR[booking.status] ?? 'bg-slate-400');
 
@@ -916,10 +985,72 @@ export function BookingDetailPopup({
   // Whether payment is pending (not paid yet)
   const isPaymentPending = !isPaid && curStatus !== 'cancelled' && curStatus !== 'completed';
 
+  // Payment is considered success if marked paid, success, or completed
+  const isPaymentSuccess = Boolean(
+    isPaid ||
+    rawPaymentStatus === 'success' ||
+    rawPaymentStatus === 'paid' ||
+    rawPaymentStatus === 'completed' ||
+    String(booking.payment_status ?? '').toLowerCase().trim() === 'success' ||
+    String(booking.payment_status ?? '').toLowerCase().trim() === 'paid' ||
+    String(booking.payment_status ?? '').toLowerCase().trim() === 'completed' ||
+    booking.is_paid === true ||
+    (detail as any)?.is_paid === true
+  );
+
   // 1. If bookings status=payment_pending and appointment_end > current datetime add "Update" button in Booking Details popup window
   const isPaymentPendingStatus = curStatus === 'payment_pending' || booking.status === 'payment_pending';
   const isBeforeApptEnd = Boolean(apptEndDateTime && apptEndDateTime.getTime() > Date.now());
-  const canUpdateBooking = isPaymentPendingStatus && isBeforeApptEnd;
+
+  // Show "Update" button if booking status=confirmed and payment_status=pending for changing booking details
+  const isConfirmedStatus = curStatus === 'confirmed' || String(booking.status ?? '').toLowerCase().trim() === 'confirmed';
+  const isPendingPayment =
+    !isPaid &&
+    !isPaymentSuccess &&
+    (
+      rawPaymentStatus === 'pending' ||
+      rawPaymentStatus === 'payment_pending' ||
+      rawPaymentStatus === 'unpaid' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'pending' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'payment_pending' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'unpaid' ||
+      isPaymentPending
+    );
+
+  // When payment_status=success don't show update button because after payment made update is not allowed
+  const canUpdateBooking =
+    !isCancelled &&
+    !isCompleted &&
+    !isPaymentSuccess &&
+    !isPaid &&
+    (
+      (isPaymentPendingStatus && isBeforeApptEnd) ||
+      (isConfirmedStatus && isPendingPayment)
+    );
+
+  // Cancel button rules:
+  // 1. For a paid booking that is payment_status=success user(employees) can cancel booking at least 3 hours before the appointment_start time to get refund
+  // 2. For unpaid / pending bookings:
+  //    i. For (Administrator, Spa Director, Finance Manager) roles cancel button visible until appointment_end time is greater than current time
+  //    ii. For all other users roles cancel button is visible until 3 hours before the appointment_start time
+  const canShowCancel = (() => {
+    if (isCancelled) return false;
+    const now = Date.now();
+
+    // For a paid booking (payment_status=success), user(employees) can cancel booking at least 3 hours before appointment_start time
+    if (isPaymentSuccess) {
+      if (!apptDateTime) return false;
+      return now < (apptDateTime.getTime() - THREE_HOURS_MS);
+    }
+
+    if (isPrivilegedCancelRole) {
+      if (!apptEndDateTime) return true;
+      return apptEndDateTime.getTime() > now;
+    }
+
+    if (!apptDateTime) return false;
+    return now < (apptDateTime.getTime() - THREE_HOURS_MS);
+  })();
 
   // ── Compute durations & amounts adding service + addons + extra minutes ─────
   const addons = (detail?.addons && Array.isArray(detail.addons) && detail.addons.length > 0)
@@ -1013,7 +1144,8 @@ export function BookingDetailPopup({
 
   const paymentDataObj   = (detail?.payment_data ?? booking.payment_data) as Record<string, unknown> | null;
   const paidTimestamp    = (paymentDataObj?.paid_at ?? paymentDataObj?.transaction_date ?? paymentDataObj?.created_date) as string | undefined;
-  const effectivePaymentUrl = String(detail?.payment_url ?? booking.payment_url ?? paymentDataObj?.payment_url ?? '');
+  const rawPaymentUrl = detail?.payment_url ?? booking.payment_url ?? paymentDataObj?.payment_url;
+  const effectivePaymentUrl = (rawPaymentUrl && rawPaymentUrl !== 'null' && rawPaymentUrl !== 'undefined') ? String(rawPaymentUrl).trim() : '';
 
   const receiptImg = String(
     (paymentDataObj as any)?.receipt_image ??
@@ -1050,12 +1182,11 @@ export function BookingDetailPopup({
 
   // Cancel booking — opens BookingCancellationModal which handles all accounting steps
   const handleCancel = () => {
-    if (!booking || isPastApptEnd) return;
-    if (!effectiveCanCancel) {
+    if (!booking) return;
+    if (!canShowCancel) return;
+    if (callCenterCancelBlocked && !isPastApptEnd) {
       setCancelError(
-        callCenterCancelBlocked
-          ? (AGENT_BLOCK_REASON || 'Call Center Agents cannot cancel bookings within 6 hours of the appointment.')
-          : (cancellationEligibility.reason || 'Cancellations within 12 hours of appointment time require Administrator, Branch Manager, Finance Manager, or Customer Support Manager privileges.')
+        AGENT_BLOCK_REASON || 'Call Center Agents cannot cancel bookings within 6 hours of the appointment.'
       );
       return;
     }
@@ -1396,13 +1527,69 @@ export function BookingDetailPopup({
       {showPaymentModal && (
         <PaymentProviderModal
           booking={booking}
+          totalAmount={computedTotal}
+          currency={currency}
           selected={selectedProviderId}
           onSelect={(id) => setSelectedProviderId(id)}
           onClose={() => setShowPaymentModal(false)}
           onContinue={() => {
             setPaymentError(null);
             setShowPaymentModal(false);
-            setShowPaymentRefModal(true);
+            if (selectedProviderId === 'paymentlink') {
+              setShowMakePaymentModal(true);
+            } else {
+              setShowPaymentRefModal(true);
+            }
+          }}
+        />
+      )}
+
+      {/* Step 2 (Direct): PaymentLink Modal (Make Payment Now) */}
+      {showMakePaymentModal && (
+        <MakePaymentModal
+          isOpen={showMakePaymentModal}
+          onClose={() => setShowMakePaymentModal(false)}
+          bookingId={booking.id}
+          bookingNumber={booking.booking_number}
+          invoiceId={
+            (invoiceRecord?.id ? String(invoiceRecord.id) : null) ||
+            (detail?.invoice_id ? String(detail.invoice_id) : null) ||
+            ((detail?.payment_data as any)?.invoice_id ? String((detail?.payment_data as any)?.invoice_id) : null) ||
+            null
+          }
+          invoiceNumber={invoiceNumber || null}
+          amount={computedTotal.toFixed(3)}
+          currency={currency}
+          customerName={booking.customer_name}
+          customerPhone={
+            String(
+              (detail as any)?.customer_phone ??
+              (detail as any)?.phone ??
+              (booking.raw as any)?.customer_phone ??
+              (booking.raw as any)?.phone ??
+              booking.customer_phone ??
+              ''
+            ).trim() || null
+          }
+          onPaymentSuccess={() => {
+            authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
+              .then((r) => r.json())
+              .then((res) => {
+                if (res?.success && res?.data) setDetail(res.data as Record<string, unknown>);
+                else if (res?.data) setDetail(res.data as Record<string, unknown>);
+              })
+              .catch(() => {});
+          }}
+          onSuccess={() => {
+            setShowMakePaymentModal(false);
+            authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
+              .then((r) => r.json())
+              .then((res) => {
+                if (res?.success && res?.data) setDetail(res.data as Record<string, unknown>);
+                else if (res?.data) setDetail(res.data as Record<string, unknown>);
+              })
+              .catch(() => {});
+            onSuccess?.();
           }}
         />
       )}
@@ -1420,8 +1607,8 @@ export function BookingDetailPopup({
             setShowPaymentModal(true);
           }}
           paymentProvider={selectedPaymentConfig.providerOption}
-          totalAmount={parseFloat(booking.total_amount) || 0}
-          currency={booking.currency || 'KWD'}
+          totalAmount={computedTotal || parseFloat(booking.total_amount) || 0}
+          currency={currency || booking.currency || 'KWD'}
           initialReceiptImage={receiptImg || null}
           initialTransactionId={transactionId || ''}
           onConfirm={handleProcessPayment}
@@ -1520,6 +1707,23 @@ export function BookingDetailPopup({
                   {booking.payment_status}
                 </span>
               )}
+              {/* Refresh button to reload booking details */}
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={loadingDetail || refreshing}
+                className={cn(
+                  'inline-flex items-center gap-1.5 h-8 px-2.5 rounded-xl text-xs font-semibold transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed',
+                  isCompleted
+                    ? 'bg-black/10 hover:bg-black/20 text-[#2D241E]'
+                    : 'bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border border-border/40'
+                )}
+                title="Reload booking details"
+                aria-label="Reload booking details"
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', (loadingDetail || refreshing) && 'animate-spin')} />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
               <button onClick={onClose}
                 className={cn(
                   'grid h-8 w-8 place-items-center rounded-xl transition cursor-pointer',
@@ -1762,29 +1966,18 @@ export function BookingDetailPopup({
                             <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
                           </button>
                           {Boolean(invoiceNumber) && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(invoiceNumber);
-                                  setCopiedType('invoice');
-                                  setTimeout(() => setCopiedType(null), 2000);
-                                }}
-                                className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
-                                title="Copy invoice number"
-                              >
-                                {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                              </button>
-                              <Link
-                                href={`/finance/invoices?search=${encodeURIComponent(invoiceNumber)}`}
-                                target="_blank"
-                                className="inline-flex items-center gap-1 text-xs font-semibold text-violet-600 dark:text-violet-400 hover:underline px-1.5 py-0.5 rounded hover:bg-violet-500/10 transition"
-                                title="Open invoice link"
-                              >
-                                <ExternalLink className="h-3 w-3" />
-                                <span>Link</span>
-                              </Link>
-                            </>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(invoiceNumber);
+                                setCopiedType('invoice');
+                                setTimeout(() => setCopiedType(null), 2000);
+                              }}
+                              className="text-muted-foreground hover:text-foreground transition cursor-pointer p-1"
+                              title="Copy invoice number"
+                            >
+                              {copiedType === 'invoice' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            </button>
                           )}
                         </div>
                       </div>
@@ -2017,40 +2210,58 @@ export function BookingDetailPopup({
                   <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2.5 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <ExternalLink className="h-4 w-4 text-primary" />
+                        <QrCode className="h-4 w-4 text-primary" />
                         <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                           Customer Payment Link
                         </h4>
                       </div>
                       {Boolean(effectivePaymentUrl) && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(effectivePaymentUrl);
-                            setCopiedLink(true);
-                            setTimeout(() => setCopiedLink(false), 2000);
-                          }}
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
-                        >
-                          {copiedLink ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                          {copiedLink ? 'Copied' : 'Copy Link'}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(effectivePaymentUrl);
+                              setCopiedLink(true);
+                              setTimeout(() => setCopiedLink(false), 2000);
+                            }}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:bg-primary/10 px-2 py-1 rounded-lg transition cursor-pointer"
+                            title="Copy Payment Link"
+                          >
+                            {copiedLink ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                            <span>{copiedLink ? 'Copied' : 'Copy URL'}</span>
+                          </button>
+                          {!isCancelled && (
+                            <a
+                              href={effectivePaymentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:bg-primary/10 px-2 py-1 rounded-lg transition cursor-pointer"
+                              title="Redirect to Payment Link"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                              <span>Redirect</span>
+                            </a>
+                          )}
+                        </div>
                       )}
                     </div>
 
                     {effectivePaymentUrl ? (
-                      <div className="space-y-2 flex-1 flex flex-col justify-between">
-                        <p className="font-mono text-xs text-muted-foreground break-all bg-card/70 p-2 rounded-lg border border-border/40 select-all">
-                          {effectivePaymentUrl}
-                        </p>
-                        <a
-                          href={effectivePaymentUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center gap-1.5 w-full rounded-lg bg-primary py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" /> Open Payment Link
-                        </a>
+                      <div className="flex items-center gap-3.5 rounded-xl border border-border/40 bg-card/70 p-3 flex-1">
+                        <div className="p-2 bg-white rounded-xl shadow-xs border border-border/50 shrink-0">
+                          <QRCodeSVG
+                            value={effectivePaymentUrl}
+                            size={64}
+                            level="M"
+                            includeMargin={false}
+                          />
+                        </div>
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <p className="text-xs font-bold text-foreground">Scan QR Code to Pay</p>
+                          <p className="text-[11px] text-muted-foreground leading-snug">
+                            Scan with a camera to open payment gateway, or use the copy and redirect options above.
+                          </p>
+                        </div>
                       </div>
                     ) : (
                       <div className="flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 bg-card/40 p-3 text-xs text-muted-foreground flex-1">
@@ -2216,49 +2427,33 @@ export function BookingDetailPopup({
                 <span>{RESCHEDULE_DAYS_REASON}</span>
               </div>
             )}
-            {!isPastApptEnd && !effectiveCanCancel && !callCenterCancelBlocked && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && cancellationEligibility.reason && (
-              <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                <span>{cancellationEligibility.reason}</span>
-              </div>
-            )}
             <div className="flex flex-wrap items-center gap-2 justify-between">
               {/* Left side: Cancel, Reschedule, Complete, No Show */}
               <div className="flex items-center gap-2 flex-wrap">
+                {/* Update button for payment_pending before appointment_end or confirmed with pending payment */}
+                {canUpdateBooking && (
+                  <button
+                    type="button"
+                    onClick={handleOpenUpdateBooking}
+                    className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
+                  >
+                    Update
+                  </button>
+                )}
+
+                {/* Cancel Booking: rule-based visibility */}
+                {canShowCancel && (
+                  <button
+                    type="button"
+                    onClick={handleCancel}
+                    className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
+                  >
+                    Cancel Booking
+                  </button>
+                )}
+
                 {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
                   <>
-                    {/* Update button for payment_pending before appointment_end */}
-                    {canUpdateBooking && (
-                      <button
-                        type="button"
-                        onClick={handleOpenUpdateBooking}
-                        className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
-                      >
-                        Update
-                      </button>
-                    )}
-                    {!isPastApptEnd && (
-                      <button
-                        type="button"
-                        onClick={handleCancel}
-                        disabled={!effectiveCanCancel}
-                        title={
-                          callCenterCancelBlocked
-                            ? (AGENT_BLOCK_REASON ?? undefined)
-                            : !canCancel
-                            ? (cancellationEligibility.reason ?? undefined)
-                            : undefined
-                        }
-                        className={cn(
-                          'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                          !effectiveCanCancel
-                            ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                            : 'border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer'
-                        )}
-                      >
-                        Cancel Booking
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={handleOpenReschedule}
@@ -2316,8 +2511,8 @@ export function BookingDetailPopup({
 
               {/* Right side: Payment Done, Open Payment, Close */}
               <div className="flex items-center gap-2">
-                {/* Make Payment — shown only when payment is pending */}
-                {isPaymentPending && (
+                {/* Make Payment — shown only when payment is pending and payment_url is not set */}
+                {isPaymentPending && !effectivePaymentUrl && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2331,7 +2526,7 @@ export function BookingDetailPopup({
                     Make Payment
                   </button>
                 )}
-                {!isPaymentTabRestricted && effectivePaymentUrl && (
+                {!isPaymentTabRestricted && !isCancelled && effectivePaymentUrl && (
                   <a href={effectivePaymentUrl} target="_blank" rel="noopener noreferrer"
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer whitespace-nowrap">
                     <ExternalLink className="h-3.5 w-3.5" /> Open Payment
@@ -2405,9 +2600,13 @@ export function BookingDetailPopup({
             authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
               .then((r) => r.json())
               .then((d) => {
-                setDetail(d);
+                const updated = (d?.data && typeof d.data === 'object') ? d.data : d;
+                setDetail(updated);
+                fetchDetail(true);
               })
-              .catch(() => {});
+              .catch(() => {
+                fetchDetail(true);
+              });
           }}
           initialUpdateParams={updateFetchState?.params}
           initialAvailabilitiesPromise={updateFetchState?.promise}
@@ -2576,26 +2775,16 @@ export function BookingDetailPopup({
           bookingId={booking.id}
           bookingNumber={booking.booking_number || null}
           invoiceNumber={invoiceNumber || null}
-          isPaid={
-            (Boolean(booking.is_paid) ||
-            (booking.raw?.is_paid === true) ||
-            (booking.raw?.payments_meta as any)?.is_paid === true ||
-            (booking.raw?.payment_data as any)?.is_paid === true ||
-            rawPaymentStatus === 'success' ||
-            rawPaymentStatus === 'paid' ||
-            rawPaymentStatus === 'completed' ||
-            booking.payment_status === 'success' ||
-            booking.payment_status === 'paid' ||
-            booking.payment_status === 'completed') &&
-            curStatus !== 'payment_pending' &&
-            booking.status !== 'payment_pending'
-          }
+          isPaid={isPaymentSuccess}
           bookingStatus={curStatus || booking.status}
           paymentStatus={rawPaymentStatus || booking.payment_status}
           totalAmount={computedTotal}
           totalDuration={totalDuration}
           currency={currency}
           paymentMethod={paymentProvider !== 'Front Desk' ? paymentProvider : null}
+          customerName={booking.customer_name || (detail as any)?.customer_name || null}
+          customerPhone={booking.customer_phone || (detail as any)?.customer_phone || null}
+          paymentUrl={effectivePaymentUrl || null}
           customerId={
             String(
               (detail as any)?.customer_id ??

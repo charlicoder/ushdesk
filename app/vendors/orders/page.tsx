@@ -8,7 +8,9 @@ import {
   Calendar, Hash, ArrowRight, Filter, ShoppingBag, Truck,
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   ShieldCheck, KeyRound, Building, Navigation, Send, Edit3,
+  ExternalLink, QrCode, Tag, FileText
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { authedFetch } from '@/lib/authedFetch';
@@ -53,7 +55,7 @@ export const DELIVERY_STATUS_CONFIG: Record<
     badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300',
     dotClass: 'bg-emerald-500',
   },
-  received: {
+    received: {
     label: 'Received',
     labelAr: 'تم الاستلام',
     badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
@@ -61,19 +63,72 @@ export const DELIVERY_STATUS_CONFIG: Record<
   },
 };
 
+export const DELIVERY_PROGRESS_STEPS = [
+  { key: 'ordered',     label: 'Ordered',     icon: '📋' },
+  { key: 'ready_to_go', label: 'Ready',       icon: '📦' },
+  { key: 'on_the_way',  label: 'On the Way',  icon: '🚚' },
+  { key: 'delivered',   label: 'Delivered',   icon: '📬' },
+  { key: 'received',    label: 'Received',    icon: '✓'  },
+] as const;
+
+export function getDeliveryStepIndex(status?: string): number {
+  const s = (status ?? '').toLowerCase().trim();
+  if (s === 'received' || s.includes('received') || s.includes('completed')) return 4;
+  if (s === 'delivered' || s.includes('delivered')) return 3;
+  if (
+    s === 'on_the_way' ||
+    s.includes('on_the_way') ||
+    s.includes('on the way') ||
+    s.includes('transit') ||
+    s.includes('shipped') ||
+    s.includes('out_for_delivery')
+  ) return 2;
+  if (
+    s === 'ready_to_go' ||
+    s === 'ready' ||
+    s.includes('ready_to_go') ||
+    s.includes('ready') ||
+    s.includes('confirmed') ||
+    s.includes('processing') ||
+    s.includes('preparing')
+  ) return 1;
+  return 0; // ordered
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function formatAddressPreview(addr: DeliveryAddressObj | string | null | undefined): string {
-  if (!addr) return '—';
-  if (typeof addr === 'string') return addr;
-  if (addr.formatted) return addr.formatted;
-  const parts = [
-    addr.area && `Area: ${addr.area}`,
-    addr.block && `Block: ${addr.block}`,
-    addr.street && `Street: ${addr.street}`,
-    addr.building_no && `Bldg: ${addr.building_no}`,
-    addr.city && addr.city,
-  ].filter(Boolean);
-  return parts.join(', ') || 'Address Provided';
+function formatAddressPreview(addr: any): string {
+  if (!addr) return '';
+  if (typeof addr === 'string') {
+    const trimmed = addr.trim();
+    if (!trimmed || trimmed === '—' || trimmed === '-') return '';
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        return formatAddressPreview(parsed);
+      } catch {
+        return trimmed;
+      }
+    }
+    return trimmed;
+  }
+  if (typeof addr === 'object' && addr !== null) {
+    if (addr.formatted && typeof addr.formatted === 'string' && addr.formatted.trim()) {
+      return addr.formatted.trim();
+    }
+    const a = addr as Record<string, any>;
+    const parts = [
+      (a.area || a.district) && `Area: ${a.area || a.district}`,
+      a.block && `Block: ${a.block}`,
+      a.street && `Street: ${a.street}`,
+      a.avenue && `Avenue: ${a.avenue}`,
+      (a.building_no || a.building || a.house || a.villa) && `Bldg: ${a.building_no || a.building || a.house || a.villa}`,
+      a.floor && `Floor: ${a.floor}`,
+      (a.apartment || a.flat) && `Apt: ${a.apartment || a.flat}`,
+      a.city && `City: ${a.city}`,
+    ].filter(Boolean);
+    if (parts.length > 0) return parts.join(', ');
+  }
+  return '';
 }
 
 function formatDate(iso: string | null | undefined) {
@@ -96,8 +151,21 @@ function initials(name: string) {
 
 // ── Normalise Single Order ────────────────────────────────────────────────────
 function normaliseOrder(raw: Record<string, unknown>, index: number): Order {
-  const addrRaw = raw.delivery_address as DeliveryAddressObj | string | undefined;
-  const formattedAddress = formatAddressPreview(addrRaw);
+  let addrRaw = raw.delivery_address as DeliveryAddressObj | string | undefined;
+  if (!addrRaw && (raw.area || raw.block || raw.street || raw.city || raw.building_no)) {
+    addrRaw = {
+      area: (raw.area as string) || null,
+      block: (raw.block as string) || null,
+      street: (raw.street as string) || null,
+      building_no: (raw.building_no as string) || null,
+      floor: (raw.floor as string) || null,
+      apartment: (raw.apartment as string) || null,
+      city: (raw.city as string) || null,
+      formatted: (raw.formatted_address as string) || null,
+    };
+  }
+
+  const formattedAddress = formatAddressPreview(addrRaw) || (raw.formatted_address as string) || '—';
 
   const rawDelivery = String(raw.delivery_status ?? 'ordered').toLowerCase();
   const cfg = DELIVERY_STATUS_CONFIG[rawDelivery];
@@ -124,7 +192,527 @@ function normaliseOrder(raw: Record<string, unknown>, index: number): Order {
     tracking_code: (raw.tracking_code ?? undefined) as string | undefined,
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: (raw.updated_at ?? null) as string | null,
+    items: (raw.items ?? undefined) as any,
+    status_history: (raw.status_history ?? undefined) as any,
+    payment_method: (raw.payment_method ?? undefined) as string | undefined,
+    payment_through: (raw.payment_through ?? undefined) as string | undefined,
+    payment_provider: (raw.payment_provider ?? undefined) as string | undefined,
+    delivery_notes: (raw.delivery_notes ?? undefined) as string | undefined,
+    subtotal: (raw.subtotal ?? undefined) as string | undefined,
+    discount: (raw.discount ?? undefined) as string | undefined,
   };
+}
+
+// ── Full Order Details Modal ──────────────────────────────────────────────────
+interface OrderDetailsModalProps {
+  order: Order | null;
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+function OrderDetailsModal({ order, isOpen, onClose }: OrderDetailsModalProps) {
+  const [details, setDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedTracking, setCopiedTracking] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen || !order?.id) {
+      setDetails(null);
+      return;
+    }
+    let isMounted = true;
+    setLoading(true);
+    (async () => {
+      try {
+        const res = await authedFetch(`/booknpay/api/v1/orders/${order.id}/`);
+        if (!res.ok) return;
+        const json = await res.json().catch(() => null);
+        const data = json?.data ?? json;
+        if (isMounted && data) {
+          setDetails(data);
+        }
+      } catch {
+        // non-blocking fallback
+      } finally {
+        if (isMounted) setLoading(false);
+      }
+    })();
+    return () => { isMounted = false; };
+  }, [isOpen, order?.id]);
+
+  if (!isOpen || !order) return null;
+
+  const current = details || order;
+  const items: any[] = (details?.items ?? order?.items ?? (Array.isArray(order?.items) ? order.items : []));
+  const trackingCode = details?.tracking_code || order.tracking_code || '—';
+  const ushwebEnv = (
+    process.env.NEXT_PUBLIC_USHWEB ||
+    process.env.USHWEB ||
+    'http://127.0.0.1:3001'
+  ).trim();
+  const ushwebBase = ushwebEnv.endsWith('/') ? ushwebEnv : `${ushwebEnv}/`;
+  const publicToken = details?.public_token || order.public_token || (order as any)?.token || (details as any)?.token;
+  const trackingUrl = publicToken
+    ? `${ushwebBase}order-tracking/${publicToken}`
+    : '';
+
+  const deliveryCfg = DELIVERY_STATUS_CONFIG[current.delivery_status || 'ordered'] ?? DELIVERY_STATUS_CONFIG.ordered;
+
+  // Resolve delivery address from details or order
+  const rawAddr =
+    details?.delivery_address ??
+    order.delivery_address ??
+    (details?.area || details?.block || details?.street || details?.building_no
+      ? {
+          area: details.area,
+          block: details.block,
+          street: details.street,
+          building_no: details.building_no,
+          floor: details.floor,
+          apartment: details.apartment,
+          city: details.city,
+          formatted: details.formatted_address,
+        }
+      : null) ??
+    (order as any)?.address ??
+    (details as any)?.address;
+
+  const resolvedAddressFormatted =
+    formatAddressPreview(rawAddr) ||
+    order.delivery_address_formatted ||
+    (details as any)?.delivery_address_formatted ||
+    (details as any)?.formatted_address ||
+    (typeof rawAddr === 'string' ? rawAddr : '') ||
+    '—';
+
+  const addrObj =
+    typeof rawAddr === 'object' && rawAddr !== null
+      ? (rawAddr as DeliveryAddressObj)
+      : null;
+
+  const copyUrl = () => {
+    if (!trackingUrl) return;
+    navigator.clipboard.writeText(trackingUrl).catch(() => undefined);
+    setCopiedUrl(true);
+    setTimeout(() => setCopiedUrl(false), 2000);
+  };
+
+  const copyTracking = () => {
+    if (!trackingCode || trackingCode === '—') return;
+    navigator.clipboard.writeText(trackingCode).catch(() => undefined);
+    setCopiedTracking(true);
+    setTimeout(() => setCopiedTracking(false), 2000);
+  };
+
+  const copyAddress = () => {
+    if (!resolvedAddressFormatted || resolvedAddressFormatted === '—') return;
+    navigator.clipboard.writeText(resolvedAddressFormatted).catch(() => undefined);
+    setCopiedAddress(true);
+    setTimeout(() => setCopiedAddress(false), 2000);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-2xl overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl max-h-[90vh] flex flex-col animate-fade-in-up">
+        {/* Top Accent Gradient */}
+        <div className="h-1.5 w-full bg-gradient-to-r from-primary via-purple-600 to-primary shrink-0" />
+
+        {/* Modal Header */}
+        <div className="flex items-center justify-between border-b border-border/50 bg-muted/40 px-6 py-4 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
+              <ShoppingBag className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-extrabold text-base text-foreground">Order Details</h3>
+                <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
+                  {trackingCode}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {formatDate(current.created_at)}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="overflow-y-auto flex-1 p-6 space-y-5">
+          {/* Status Badges & Quick Total */}
+          <div className="flex items-center justify-between gap-3 flex-wrap bg-muted/20 p-3.5 rounded-2xl border border-border/60">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold', deliveryCfg.badgeClass)}>
+                <span className={cn('h-1.5 w-1.5 rounded-full', deliveryCfg.dotClass)} />
+                {current.delivery_status_label || deliveryCfg.label}
+              </span>
+              <span className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold capitalize',
+                current.payment_status === 'paid' || current.payment_status === 'success'
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+                  : 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+              )}>
+                Payment: {current.payment_status}
+              </span>
+            </div>
+
+            <div className="text-right">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block">Total Amount</span>
+              <span className="text-base font-black text-primary font-mono">
+                {current.total_amount || '—'} <span className="text-xs font-bold">{current.currency || 'KWD'}</span>
+              </span>
+            </div>
+          </div>
+
+          {/* Key Reference Identifier */}
+          <div className="rounded-2xl border border-border/60 bg-card p-3.5 flex items-center justify-between text-xs">
+            <div>
+              <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">Tracking Code</span>
+              <span className="font-mono font-bold text-sm text-foreground mt-0.5 block">{trackingCode}</span>
+            </div>
+            <button
+              type="button"
+              onClick={copyTracking}
+              className="grid h-8 w-8 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+              title="Copy tracking code"
+            >
+              {copiedTracking ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+            </button>
+          </div>
+
+          {/* Tracking URL & QR Code */}
+          {trackingUrl && (
+            <div className="rounded-2xl border border-border/80 bg-muted/20 p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <QrCode className="h-3.5 w-3.5 text-primary" />
+                  Live Order Tracking URL & QR Code
+                </span>
+                {current.token_expires_at && (
+                  <span className="text-[10px] text-muted-foreground">
+                    Link expires: {formatDate(current.token_expires_at)}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-center gap-4 bg-card rounded-2xl border border-border/60 p-4 shadow-xs">
+                {/* QR Code Container */}
+                <div className="p-2.5 bg-white rounded-xl shadow-xs border border-border/50 shrink-0">
+                  <QRCodeSVG
+                    value={trackingUrl}
+                    size={110}
+                    level="M"
+                    includeMargin={false}
+                  />
+                </div>
+
+                {/* Tracking URL & Actions */}
+                <div className="space-y-2 flex-1 min-w-0 w-full text-center sm:text-left">
+                  <p className="text-xs font-bold text-foreground">Customer Tracking Page</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Scan with any phone camera or share the link with the customer to track real-time delivery progress.
+                  </p>
+                  <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/30 p-1.5 text-xs">
+                    <span className="flex-1 truncate font-mono text-[11px] text-muted-foreground px-1 select-all">
+                      {trackingUrl}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={copyUrl}
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      title="Copy tracking URL"
+                    >
+                      {copiedUrl ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                    </button>
+                    <a
+                      href={trackingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      title="Open tracking URL"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Customer & Address Details */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                <User className="h-3.5 w-3.5 text-primary" /> Recipient Details
+              </p>
+              <p className="font-bold text-sm text-foreground">{current.customer_name}</p>
+              {(current.customer_phone || current.contact_number) && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-1">
+                  <Phone className="h-3.5 w-3.5 text-primary" />
+                  <span>{current.customer_phone || current.contact_number}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-primary" /> Delivery Address
+                </p>
+                {resolvedAddressFormatted !== '—' && (
+                  <button
+                    type="button"
+                    onClick={copyAddress}
+                    className="grid h-6 w-6 place-items-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                    title="Copy delivery address"
+                  >
+                    {copiedAddress ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-foreground font-medium leading-relaxed">
+                {resolvedAddressFormatted}
+              </p>
+              {addrObj && (addrObj.area || addrObj.block || addrObj.street || addrObj.building_no) && (
+                <div className="flex items-center gap-1.5 flex-wrap mt-2.5 pt-2 border-t border-border/40 text-[11px] text-muted-foreground font-mono">
+                  {addrObj.area && <span className="bg-muted/60 px-2 py-0.5 rounded-md">Area: <b className="text-foreground">{addrObj.area}</b></span>}
+                  {addrObj.block && <span className="bg-muted/60 px-2 py-0.5 rounded-md">Block: <b className="text-foreground">{addrObj.block}</b></span>}
+                  {addrObj.street && <span className="bg-muted/60 px-2 py-0.5 rounded-md">Street: <b className="text-foreground">{addrObj.street}</b></span>}
+                  {addrObj.building_no && <span className="bg-muted/60 px-2 py-0.5 rounded-md">Bldg: <b className="text-foreground">{addrObj.building_no}</b></span>}
+                  {(addrObj.floor || addrObj.apartment) && (
+                    <span className="bg-muted/60 px-2 py-0.5 rounded-md">
+                      {[addrObj.floor && `Fl: ${addrObj.floor}`, addrObj.apartment && `Apt: ${addrObj.apartment}`].filter(Boolean).join(', ')}
+                    </span>
+                  )}
+                  {addrObj.city && <span className="bg-muted/60 px-2 py-0.5 rounded-md">City: <b className="text-foreground">{addrObj.city}</b></span>}
+                </div>
+              )}
+              {current.delivery_notes && (
+                <p className="text-[11px] text-muted-foreground mt-2 italic border-t border-border/40 pt-1.5">
+                  <span className="font-semibold not-italic text-foreground">Note:</span> {current.delivery_notes}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Ordered Items with Image & Price */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                <Package className="h-3.5 w-3.5 text-primary" />
+                Ordered Items {items.length > 0 ? `(${items.length})` : ''}
+              </p>
+              {loading && (
+                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                  <RefreshCw className="h-3 w-3 animate-spin" /> Loading items…
+                </span>
+              )}
+            </div>
+
+            {items.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border/80 p-5 text-center text-xs text-muted-foreground bg-muted/10">
+                {loading ? 'Fetching item details…' : 'No product items registered for this order.'}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {items.map((item: any, idx: number) => {
+                  const qty = Number(item.quantity ?? 1);
+                  const price = item.unit_price ? Number(item.unit_price) : 0;
+                  const lineTotal = item.line_total ? Number(item.line_total) : price * qty;
+                  const cur = item.currency || current.currency || 'KWD';
+
+                  return (
+                    <div
+                      key={item.id || idx}
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-muted/15 p-3 hover:bg-muted/30 transition"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        {item.product_image_url ? (
+                          <img
+                            src={item.product_image_url}
+                            alt={item.product_name || 'Product image'}
+                            className="h-12 w-12 rounded-xl object-cover border border-border/50 shrink-0 bg-background"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        ) : (
+                          <div className="grid h-12 w-12 place-items-center rounded-xl bg-muted/60 text-muted-foreground shrink-0 border border-border/40">
+                            <Package className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-foreground truncate">{item.product_name || `Item #${idx + 1}`}</p>
+                          {item.product_name_ar && (
+                            <p className="text-[11px] text-muted-foreground truncate font-arabic">{item.product_name_ar}</p>
+                          )}
+                          <p className="text-[11px] text-muted-foreground mt-0.5 font-mono">
+                            Qty: <span className="font-bold text-foreground">{qty}</span>
+                            {item.unit_price && ` × ${item.unit_price} ${cur}`}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <span className="text-xs font-black text-primary font-mono block">
+                          {lineTotal > 0 ? lineTotal.toFixed(3) : (item.unit_price || '—')} {cur}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Financial Breakdown */}
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-1.5 text-xs">
+            {current.subtotal && (
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>Subtotal</span>
+                <span className="font-mono font-semibold">{current.subtotal} {current.currency || 'KWD'}</span>
+              </div>
+            )}
+            {current.discount && Number(current.discount) > 0 && (
+              <div className="flex items-center justify-between text-emerald-600 font-semibold">
+                <span>Discount</span>
+                <span className="font-mono">-{current.discount} {current.currency || 'KWD'}</span>
+              </div>
+            )}
+            <div className="border-t border-border/50 pt-2 flex items-center justify-between font-bold text-foreground">
+              <span>Total Amount</span>
+              <span className="font-black text-primary font-mono text-sm">
+                {current.total_amount || '—'} {current.currency || 'KWD'}
+              </span>
+            </div>
+          </div>
+
+          {/* Delivery Progress (Matching specification & attached design) */}
+          {(() => {
+            const activeStepIdx = getDeliveryStepIndex(current.delivery_status);
+            const currentStep = DELIVERY_PROGRESS_STEPS[activeStepIdx] || DELIVERY_PROGRESS_STEPS[0];
+
+            return (
+              <div className="rounded-3xl border border-[#E7DFD5] dark:border-[#3D2C22] bg-[#FAF7F2] dark:bg-[#1E1612] p-6 shadow-xs">
+                {/* Header */}
+                <div className="flex items-center gap-3.5 mb-6">
+                  <div className="grid h-11 w-11 place-items-center rounded-full bg-[#362218] text-white shadow-xs shrink-0 text-xl">
+                    🚚
+                  </div>
+                  <h4
+                    className="text-lg font-bold text-[#362218] dark:text-[#F3ECE4]"
+                    style={{ fontFamily: "'Lustria', 'Playfair Display', Georgia, serif" }}
+                  >
+                    Delivery Progress
+                  </h4>
+                </div>
+
+                {/* Stepper with connecting line */}
+                <div className="relative px-2">
+                  {/* Background connecting bar */}
+                  <div
+                    aria-hidden="true"
+                    className="absolute top-[22px] left-[8%] right-[8%] h-[3.5px] rounded-full bg-[#E6DDD2] dark:bg-[#382820]"
+                  />
+
+                  {/* Active filled connecting bar */}
+                  <div
+                    aria-hidden="true"
+                    className="absolute top-[22px] left-[8%] h-[3.5px] rounded-full bg-[#362218] dark:bg-[#C9A887] transition-all duration-500"
+                    style={{
+                      width: `${(activeStepIdx / (DELIVERY_PROGRESS_STEPS.length - 1)) * 84}%`,
+                    }}
+                  />
+
+                  {/* Steps */}
+                  <div className="relative z-10 flex items-start justify-between">
+                    {DELIVERY_PROGRESS_STEPS.map((step, idx) => {
+                      const isCompleted = idx <= activeStepIdx;
+                      const isCurrent = idx === activeStepIdx;
+
+                      return (
+                        <div
+                          key={step.key}
+                          className="flex flex-col items-center flex-1 min-w-0"
+                        >
+                          {/* Circle badge */}
+                          <div
+                            className={cn(
+                              'grid h-11 w-11 place-items-center rounded-full text-base transition-all duration-300 select-none',
+                              isCompleted
+                                ? 'bg-[#362218] text-white'
+                                : 'bg-[#EDE4DA] dark:bg-[#2C2018] text-[#362218]/40 border-2 border-[#D5C2B1] dark:border-[#4A3528] opacity-60',
+                              isCurrent &&
+                                'ring-4 ring-[#CDAF94] ring-offset-2 ring-offset-[#FAF7F2] dark:ring-offset-[#1E1612] shadow-md scale-105 opacity-100'
+                            )}
+                          >
+                            {step.key === 'received' ? (
+                              <Check className="h-5 w-5 text-white stroke-[2.5]" />
+                            ) : (
+                              <span>{step.icon}</span>
+                            )}
+                          </div>
+
+                          {/* Label */}
+                          <span
+                            className={cn(
+                              'text-xs font-bold mt-2.5 text-center leading-tight transition-colors',
+                              isCompleted
+                                ? 'text-[#362218] dark:text-[#F3ECE4]'
+                                : 'text-[#362218]/50 dark:text-[#A8988B]'
+                            )}
+                          >
+                            {step.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Bottom Status Pill Badge */}
+                <div className="flex justify-center mt-7">
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-[#D5C2B1] dark:border-[#523A2B] bg-[#EDE4DA] dark:bg-[#2C1F18] px-6 py-2 shadow-xs">
+                    <Check className="h-3.5 w-3.5 text-[#362218] dark:text-[#F3ECE4] stroke-[3]" />
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-[#362218] dark:text-[#F3ECE4]">
+                      {currentStep.label}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex items-center justify-end border-t border-border/50 bg-muted/20 px-6 py-3 shrink-0">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow hover:opacity-90 transition cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Delivery Address Modal ────────────────────────────────────────────────────
@@ -268,182 +856,6 @@ function DeliveryAddressModal({ order, isOpen, onClose }: AddressModalProps) {
             Close
           </button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Customer Received Confirmation Modal (with tracking_code) ─────────────────
-interface ReceivedModalProps {
-  order: Order | null;
-  isOpen: boolean;
-  onClose: () => void;
-  onConfirmed: (order: Order) => void;
-}
-
-function ReceivedConfirmationModal({ order, isOpen, onClose, onConfirmed }: ReceivedModalProps) {
-  const [trackingCode, setTrackingCode] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      setTrackingCode(order?.tracking_code || '');
-      setError(null);
-    }
-  }, [isOpen, order]);
-
-  if (!isOpen || !order) return null;
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const code = trackingCode.trim();
-    if (!code) {
-      setError('Please provide the tracking code to confirm receipt.');
-      return;
-    }
-
-    setSubmitting(true);
-    setError(null);
-
-    const payload = {
-      status: 'received',
-      delivery_status: 'received',
-      tracking_code: code,
-      note: `Customer confirmed receipt with tracking code: ${code}`,
-    };
-
-    try {
-      // 1. Send status update to order status endpoint
-      const res = await authedFetch(`/booknpay/api/v1/orders/${order.id}/status/`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const json = await res.json().catch(() => null);
-
-      if (!res.ok || json?.success === false) {
-        const msg =
-          json?.error?.message ||
-          json?.detail ||
-          json?.message ||
-          `Failed to update status (${res.status})`;
-        setError(msg);
-        return;
-      }
-
-      // 2. If public token exists, also notify tracking received endpoint
-      if (order.public_token) {
-        try {
-          await authedFetch(`/booknpay/api/v1/track/${order.public_token}/received`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tracking_code: code }),
-          });
-        } catch {
-          // best-effort secondary notification
-        }
-      }
-
-      const data = json?.data && typeof json.data === 'object' ? json.data : json;
-      const updated: Order = {
-        ...order,
-        ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
-        delivery_status: 'received',
-        delivery_status_label: 'Received',
-        delivery_status_label_ar: 'تم الاستلام',
-        tracking_code: code,
-        updated_at: new Date().toISOString(),
-      };
-
-      onConfirmed(updated);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Network error while confirming receipt.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-md overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-fade-in-up">
-        <form onSubmit={handleSubmit}>
-          {/* Header */}
-          <div className="flex items-center justify-between border-b border-border/50 bg-muted/40 px-6 py-4">
-            <div className="flex items-center gap-3">
-              <div className="grid h-10 w-10 place-items-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
-                <KeyRound className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="font-extrabold text-base text-foreground">Confirm Customer Receipt</h3>
-                <p className="text-xs text-muted-foreground">{order.order_number}</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-
-          {/* Body */}
-          <div className="p-6 space-y-4">
-            <div className="rounded-2xl border border-purple-500/30 bg-purple-500/5 p-3.5 text-xs text-purple-900 dark:text-purple-200">
-              <p className="font-semibold flex items-center gap-1.5 mb-1">
-                <ShieldCheck className="h-4 w-4 text-purple-600 dark:text-purple-400 shrink-0" />
-                Customer Verification Required
-              </p>
-              <p className="text-[11px] text-purple-800/80 dark:text-purple-300/80">
-                The <strong>RECEIVED</strong> action requires entering the customer’s tracking code to confirm safe delivery handover.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-foreground mb-1.5">
-                Tracking Code <span className="text-destructive">*</span>
-              </label>
-              <input
-                type="text"
-                autoFocus
-                value={trackingCode}
-                onChange={(e) => setTrackingCode(e.target.value)}
-                placeholder="Enter customer tracking code..."
-                className="w-full rounded-xl border border-border/80 bg-background px-3.5 py-2.5 text-xs font-mono focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
-
-            {error && (
-              <div className="flex items-center gap-2 rounded-xl bg-destructive/10 p-3 text-xs text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-end gap-2 border-t border-border/50 bg-muted/20 px-6 py-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl border border-border/80 px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition"
-            >
-              {submitting && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-              Confirm Received
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   );
@@ -676,8 +1088,8 @@ export default function OrdersPage() {
 
   // Modals
   const [addressModalOrder, setAddressModalOrder] = useState<Order | null>(null);
-  const [receivedModalOrder, setReceivedModalOrder] = useState<Order | null>(null);
   const [statusModalOrder, setStatusModalOrder] = useState<Order | null>(null);
+  const [detailsModalOrder, setDetailsModalOrder] = useState<Order | null>(null);
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -741,14 +1153,8 @@ export default function OrdersPage() {
   }, [fetchOrders, initialized]);
 
   // Transition handler following the strict order:
-  // ordered -> ready_to_go -> on_the_way -> delivered -> received (with tracking code)
+  // ordered -> ready_to_go -> on_the_way -> delivered -> received
   const handleTransit = async (order: Order, nextStatus: DeliveryStatus) => {
-    // If transitioning to received, open the tracking code modal
-    if (nextStatus === 'received') {
-      setReceivedModalOrder(order);
-      return;
-    }
-
     setUpdatingOrderId(order.id);
 
     const cfg = DELIVERY_STATUS_CONFIG[nextStatus];
@@ -809,14 +1215,6 @@ export default function OrdersPage() {
     setToast({
       type: 'success',
       message: `Order ${updated.order_number} status updated to "${updated.delivery_status_label || updated.delivery_status}".`,
-    });
-  };
-
-  const handleReceivedConfirmed = (updated: Order) => {
-    setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
-    setToast({
-      type: 'success',
-      message: `Order ${updated.order_number} confirmed as Received.`,
     });
   };
 
@@ -1089,7 +1487,7 @@ export default function OrdersPage() {
               <table className="w-full text-left text-xs">
                 <thead className="border-b border-border/50 bg-muted/30 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                   <tr>
-                    <th className="py-3 px-4">Order</th>
+                    <th className="py-3 px-4">Order Number</th>
                     <th className="py-3 px-4">Customer</th>
                     <th className="py-3 px-4">Items</th>
                     <th className="py-3 px-4">Delivery Address</th>
@@ -1106,10 +1504,20 @@ export default function OrdersPage() {
 
                     return (
                       <tr key={order.id} className="hover:bg-muted/20 transition-colors">
-                        {/* Order */}
+                        {/* Order Number (tracking_code displayed in place of order_number, clickable to view details) */}
                         <td className="py-3 px-4 align-top">
-                          <p className="font-bold text-foreground">{order.order_number}</p>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
+                          <button
+                            type="button"
+                            onClick={() => setDetailsModalOrder(order)}
+                            className="font-bold text-foreground font-mono text-xs sm:text-sm hover:text-primary hover:underline transition text-left cursor-pointer inline-flex items-center gap-1.5 group"
+                            title={`Click to view full order details (${order.order_number})`}
+                          >
+                            <span>{order.tracking_code || order.order_number}</span>
+                            <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
+                          <p className="text-[11px] text-muted-foreground mt-0.5 cursor-help" title={`Order Number: ${order.order_number}`}>
+                            {formatDate(order.created_at)}
+                          </p>
                         </td>
 
                         {/* Customer */}
@@ -1209,18 +1617,18 @@ export default function OrdersPage() {
                               </button>
                             )}
 
-                            {/* DELIVERED -> RECEIVED (Customer verification with tracking code) */}
+                            {/* DELIVERED -> RECEIVED */}
                             {order.delivery_status === 'delivered' && (
                               <button
                                 onClick={() => handleTransit(order, 'received')}
                                 disabled={updatingOrderId === order.id}
                                 className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition"
-                                title="Customer received confirmation"
+                                title="Confirm Received"
                               >
                                 {updatingOrderId === order.id ? (
                                   <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                                 ) : (
-                                  <KeyRound className="h-3.5 w-3.5" />
+                                  <CheckCircle2 className="h-3.5 w-3.5" />
                                 )}
                                 Confirm Received
                               </button>
@@ -1271,8 +1679,18 @@ export default function OrdersPage() {
                     {/* Header */}
                     <div className="flex items-start justify-between gap-2 mb-3">
                       <div>
-                        <p className="font-extrabold text-sm text-foreground">{order.order_number}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{formatDate(order.created_at)}</p>
+                        <button
+                          type="button"
+                          onClick={() => setDetailsModalOrder(order)}
+                          className="font-extrabold text-sm text-foreground font-mono hover:text-primary hover:underline transition text-left cursor-pointer inline-flex items-center gap-1 group"
+                          title={`Click to view full order details (${order.order_number})`}
+                        >
+                          <span>{order.tracking_code || order.order_number}</span>
+                          <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </button>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 cursor-help" title={`Order Number: ${order.order_number}`}>
+                          {formatDate(order.created_at)}
+                        </p>
                       </div>
                       <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold shrink-0', statusCfg.badgeClass)}>
                         <span className={cn('h-1.5 w-1.5 rounded-full', statusCfg.dotClass)} />
@@ -1371,7 +1789,7 @@ export default function OrdersPage() {
                         {updatingOrderId === order.id ? (
                           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                         ) : (
-                          <KeyRound className="h-3.5 w-3.5" />
+                          <CheckCircle2 className="h-3.5 w-3.5" />
                         )}
                         Confirm Received
                       </button>
@@ -1406,12 +1824,11 @@ export default function OrdersPage() {
           onClose={() => setAddressModalOrder(null)}
         />
 
-        {/* Received Confirmation Modal (with tracking code) */}
-        <ReceivedConfirmationModal
-          order={receivedModalOrder}
-          isOpen={Boolean(receivedModalOrder)}
-          onClose={() => setReceivedModalOrder(null)}
-          onConfirmed={handleReceivedConfirmed}
+        {/* Full Order Details Modal */}
+        <OrderDetailsModal
+          order={detailsModalOrder}
+          isOpen={Boolean(detailsModalOrder)}
+          onClose={() => setDetailsModalOrder(null)}
         />
 
         {/* Update Status Modal (status & note) */}

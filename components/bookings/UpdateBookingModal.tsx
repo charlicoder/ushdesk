@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { paymentLinksApi, type PaymentLink } from '@/lib/paymentLinks';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -99,6 +100,117 @@ function fmtPrice(val: unknown): string {
   if (val === undefined || val === null || val === '') return '0.000';
   const n = parseFloat(String(val));
   return isNaN(n) ? '0.000' : n.toFixed(3);
+}
+
+/**
+ * In Booking Details popup window when update a booking with status=confirmed and payment_status=pending
+ * but paymentlink is created for this booking (means payment_url is not null and also can check paymentlink records)
+ * and updated payment amount is not equal to previous payment amount (current paymentlink amount):
+ * send cancel request to MyFatoorah to cancel previous paymentlink and delete paymentlink record for this booking
+ * and create new paymentlink.
+ */
+async function syncPaymentLinkOnAmountChange(
+  bookingId: string,
+  newAmount: number,
+  bookingObj?: AnyRecord | null
+): Promise<void> {
+  if (!bookingId) return;
+
+  const rawStatus = String(
+    bookingObj?.status ??
+    (bookingObj as any)?.booking_status ??
+    ''
+  ).toLowerCase().trim();
+
+  const rawPaymentStatus = String(
+    bookingObj?.payment_status ??
+    (bookingObj as any)?.paymentStatus ??
+    ''
+  ).toLowerCase().trim();
+
+  const isPaid =
+    bookingObj?.is_paid === true ||
+    (bookingObj as any)?.isPaid === true ||
+    rawPaymentStatus === 'paid' ||
+    rawPaymentStatus === 'success' ||
+    rawPaymentStatus === 'completed';
+
+  // Only proceed if booking is confirmed and payment is pending (not already paid)
+  const isConfirmed = rawStatus === 'confirmed';
+  const isPending = !isPaid && (rawPaymentStatus === 'pending' || rawPaymentStatus === 'unpaid' || rawPaymentStatus === '');
+
+  if (!isConfirmed || !isPending) return;
+
+  const rawPaymentUrl =
+    bookingObj?.payment_url ??
+    (bookingObj?.payment_data as any)?.payment_url ??
+    (bookingObj?.payments_meta as any)?.payment_url;
+
+  const hasPaymentUrlOnBooking = Boolean(
+    rawPaymentUrl &&
+    String(rawPaymentUrl).trim() !== '' &&
+    String(rawPaymentUrl).trim() !== 'null' &&
+    String(rawPaymentUrl).trim() !== 'undefined'
+  );
+
+  try {
+    const links = await paymentLinksApi.list('booking', bookingId).catch(() => []);
+    const linkList: PaymentLink[] = Array.isArray(links) ? links : [];
+
+    // Find any open / pending payment link
+    const openLink = linkList.find(
+      (l) =>
+        (l.status === 'pending' || l.status === 'created' || l.status === 'unpaid') &&
+        !l.paid_at
+    );
+
+    // If neither an open link nor payment_url is available, skip
+    if (!openLink && !hasPaymentUrlOnBooking && linkList.length === 0) {
+      return;
+    }
+
+    // Determine current amount in payment link
+    const currentLinkAmount = openLink?.amount
+      ? parseFloat(String(openLink.amount))
+      : (linkList[0]?.amount
+          ? parseFloat(String(linkList[0].amount))
+          : parseFloat(String(bookingObj?.total_amount || bookingObj?.total_price || '0')));
+
+    // Check if updated payment amount is not equal to previous payment amount
+    const isAmountDifferent = Math.abs(currentLinkAmount - newAmount) > 0.001;
+
+    if (isAmountDifferent) {
+      // 1. Send cancel request to MyFatoorah to cancel previous paymentlink and delete paymentlink record
+      try {
+        await paymentLinksApi.deleteForTarget('booking', bookingId);
+      } catch (delErr) {
+        console.warn('Could not delete previous payment links for target:', delErr);
+        if (openLink?.id) {
+          try {
+            await paymentLinksApi.delete(openLink.id);
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // 2. Create new paymentlink for this booking with the updated amount
+      try {
+        const newLink = await paymentLinksApi.create('booking', bookingId, {
+          amount: newAmount,
+          force_new: true,
+          gateway: openLink?.gateway || 'myfatoorah',
+        });
+        if (bookingObj && newLink?.payment_url) {
+          bookingObj.payment_url = newLink.payment_url;
+        }
+      } catch (createErr) {
+        console.error('Error creating new payment link on amount change:', createErr);
+      }
+    }
+  } catch (err) {
+    console.error('Error syncing payment link on amount change:', err);
+  }
 }
 
 function getInitials(name: string): string {
@@ -869,6 +981,20 @@ export function UpdateBookingModal({
             setSelectedTherapistId(cand.id);
             setSelectedTherapist(cand.therapist);
           }
+
+          // In Booking Details popup window for a Booking when paymentlink/payment_url is available
+          // and payment_status=pending, updating the booking details using update button and if the
+          // updated amount is different then the current amount in paymentlink then cancel that
+          // paymentlink and create new paymentlink for that booking.
+          try {
+            await syncPaymentLinkOnAmountChange(bookingId, totalCalculatedPrice, {
+              ...(initialBooking || {}),
+              ...(booking || {}),
+            });
+          } catch (syncErr) {
+            console.error('Error syncing payment link on amount change:', syncErr);
+          }
+
           setSubmitSuccess(true);
           setTimeout(() => {
             onSuccess?.();

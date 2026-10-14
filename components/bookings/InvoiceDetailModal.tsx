@@ -31,6 +31,7 @@ export interface InvoiceDetailModalProps {
     paymentMethod?: string | null;
     paymentProvider?: string | null;
     paymentThrough?: string | null;
+    paymentNumber?: string | null;
     paymentDate?: string | null;
     transactionId?: string | null;
     traceId?: string | null;
@@ -395,6 +396,12 @@ export function InvoiceDetailModal({
                   <span>Method / Gateway: </span>
                   <strong className="text-foreground capitalize">{bookingData.paymentProvider || bookingData.paymentMethod || 'Front Desk'}</strong>
                 </div>
+                {bookingData.paymentNumber && (
+                  <div>
+                    <span>Payment Number: </span>
+                    <strong className="font-mono text-foreground font-bold">{bookingData.paymentNumber}</strong>
+                  </div>
+                )}
                 {bookingData.transactionId && (
                   <div>
                     <span>Transaction ID: </span>

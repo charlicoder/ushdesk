@@ -10,12 +10,14 @@ import {
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
   CreditCard, Hash, Fingerprint, Calendar, Building2, Wallet,
-  Receipt, Printer,
+  Receipt, Printer, Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PaymentLinkPanel } from '@/components/payments/PaymentLinkPanel';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 import { PaymentReferenceModal } from './PaymentReferenceModal';
 import { BookingReceiptModal } from './BookingReceiptModal';
+import { MakePaymentModal } from './MakePaymentModal';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
@@ -50,7 +52,26 @@ interface ApiService {
   category?: string;
   add_ons?: ApiAddOn[];
   is_packaged_services?: boolean | string | number;
+  image?: string | null;
+  image1?: string | null;
+  thumbnail?: string | null;
+  photo_url?: string | null;
   [key: string]: unknown;
+}
+
+function getServiceImageUrl(s?: ApiService | null): string | null {
+  if (!s) return null;
+  const raw = (s.image || s.image1 || (s as any).thumbnail || (s as any).photo_url) as string | null | undefined;
+  if (!raw || typeof raw !== 'string' || !raw.trim()) return null;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
+  }
+  const base = (process.env.NEXT_PUBLIC_API_BASE_URL || '').replace(/\/+$/, '');
+  if (base) {
+    return `${base}${trimmed.startsWith('/') ? '' : '/'}${trimmed}`;
+  }
+  return trimmed;
 }
 
 interface ApiAddOn {
@@ -160,6 +181,7 @@ interface DropProps<T> {
   isSelected: (item: T) => boolean;
   selectedItem?: T | null;
   icon?: React.ElementType;
+  getImageUrl?: (item: T) => string | null | undefined;
   onSearch: (q: string) => void;
   onSelect: (item: T) => void;
   onClear: () => void;
@@ -168,7 +190,7 @@ interface DropProps<T> {
 
 function SearchDrop<T>({
   value, placeholder, loading, items, getKey, isSelected, selectedItem,
-  icon: Icon, onSearch, onSelect, onClear, renderItem,
+  icon: Icon, getImageUrl, onSearch, onSelect, onClear, renderItem,
 }: DropProps<T>) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -182,15 +204,28 @@ function SearchDrop<T>({
   }, []);
 
   const sel = selectedItem != null;
+  const selImg = sel && getImageUrl ? getImageUrl(selectedItem) : null;
 
   return (
     <div ref={ref} className="relative">
       <div className="relative flex items-center">
-        {Icon && (
+        {sel && selImg ? (
+          <div className="pointer-events-none absolute left-2.5 z-10 h-6 w-6 shrink-0 overflow-hidden rounded-md border border-border/60 bg-muted/20">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={selImg}
+              alt=""
+              className="h-full w-full object-cover"
+              onError={(e) => {
+                (e.target as HTMLElement).style.display = 'none';
+              }}
+            />
+          </div>
+        ) : Icon ? (
           <div className="pointer-events-none absolute left-3 z-10 grid h-5 w-5 place-items-center text-muted-foreground">
             <Icon className="h-3.5 w-3.5" />
           </div>
-        )}
+        ) : null}
         <input
           value={sel ? (value || '— selected —') : value}
           onChange={(e) => { onSearch(e.target.value); setOpen(true); }}
@@ -200,7 +235,7 @@ function SearchDrop<T>({
           className={cn(
             'h-10 w-full rounded-xl border border-border bg-muted/30 pr-8 text-sm outline-none transition',
             'focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50',
-            Icon ? 'pl-9' : 'pl-3',
+            (Icon || (sel && selImg)) ? 'pl-9' : 'pl-3',
             sel ? 'font-medium text-foreground cursor-default bg-emerald-500/5 border-emerald-500/30' : '',
           )}
         />
@@ -249,7 +284,7 @@ function SearchDrop<T>({
   );
 }
 
-type Step = 1 | 2 | 3 | 4;
+type Step = 1 | 2 | 3 | 4 | 5;
 
 interface PaymentForm {
   invoice_id: string;
@@ -297,7 +332,18 @@ export function TherapistScheduleBookingModal({
   });
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch'>('on_branch');
+  const [paymentOption, setPaymentOption] = useState<'pay_on_branch' | 'pay_now'>('pay_on_branch');
+  const [showMakePayment, setShowMakePayment] = useState(false);
+  const [createdBookingInfo, setCreatedBookingInfo] = useState<{
+    id: string;
+    bookingNumber?: string;
+    invoiceId?: string;
+    invoiceNumber?: string;
+    amount: string;
+    customerName?: string;
+    customerPhone?: string;
+  } | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<'completed' | 'on_branch' | 'payment_link'>('on_branch');
   const [paymentProvider, setPaymentProvider] = useState<PaymentProviderOption | null>(null);
   const [transactionRefId, setTransactionRefId] = useState<string>('');
   const [invoiceId, setInvoiceId]               = useState<string>('');
@@ -581,22 +627,12 @@ export function TherapistScheduleBookingModal({
     if (!form.arrangementId) { setSubmitError('Please select an arrangement (room).'); return; }
     setSubmitError(null); setStep(2);
   };
+  const goNextToStep3 = () => {
+    if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
+    setSubmitError(null); setStep(3);
+  };
   const goBack = () => { setSubmitError(null); setStep(1); };
-
-  // Validation for booking confirmation
-  const isPaymentCompletedValid =
-    paymentMethod !== 'completed' ||
-    (Boolean(paymentProvider) && Boolean(transactionRefId.trim()));
-
-  const isAllRequiredFieldsFilled = Boolean(
-    form.serviceId &&
-    form.arrangementId &&
-    (form.therapistId || therapistId) &&
-    form.customerId &&
-    isPaymentCompletedValid
-  );
-
-  const isConfirmDisabled = submitting || !isAllRequiredFieldsFilled;
+  const goBackFromStep3 = () => { setSubmitError(null); setStep(2); };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -605,17 +641,6 @@ export function TherapistScheduleBookingModal({
       return;
     }
     if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
-    if (paymentMethod === 'completed') {
-      if (!paymentProvider) {
-        setSubmitError('Please select a payment provider.');
-        return;
-      }
-      if (!transactionRefId.trim()) {
-        setShowPaymentRefModal(true);
-        setSubmitError('Please enter a Transaction / Ref ID or scan the receipt before confirming payment.');
-        return;
-      }
-    }
     setSubmitting(true); setSubmitError(null);
 
     const svc             = selectedService!;
@@ -744,46 +769,23 @@ export function TherapistScheduleBookingModal({
       total_price:    fmt(totalPrice),
       total_duration: totalDuration,
       currency: 'KWD',
-      status:           paymentMethod === 'on_branch' ? 'payment_pending' : 'confirmed',
-      payment_status:   paymentMethod === 'completed' ? 'success' : 'pending',
+      status:           'confirmed',
+      payment_status:   'pending',
       payment_through:  'ushdesk',
-      payment_provider: paymentMethod === 'completed' ? paymentProvider : null,
-      payment_gateway:  paymentMethod === 'completed' ? (paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider) : null,
-      payment_method:   paymentMethod === 'completed' ? paymentProvider : 'on_branch',
+      payment_provider: null,
+      payment_gateway:  null,
+      payment_method:   paymentOption === 'pay_on_branch' ? 'on_branch' : 'pay_now',
       source:           'ushdesk',
-      transaction_id:   paymentMethod === 'completed' ? transactionRefId : null,
-      reference_id:     paymentMethod === 'completed' ? transactionRefId : null,
-      invoice_id:       paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
-      invoice_number:   paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
-      invoice_reference: paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
-      receipt_image:    paymentMethod === 'completed' ? receiptImage : null,
-      transaction_date: paymentMethod === 'completed' ? paidAtNow : null,
-      paid_at:          paymentMethod === 'completed' ? paidAtNow : null,
-      payment_data: paymentMethod === 'completed' ? {
-        transaction_id:   transactionRefId,
-        reference_id:     transactionRefId,
-        invoice_id:       resolvedInvoiceNumber,
-        invoice_number:   resolvedInvoiceNumber,
-        receipt_image:    receiptImage,
-        payment_provider: paymentProvider,
-        payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
-        paid_at:          paidAtNow,
-        notes:            receiptNotes || null,
-      } : null,
-      payments_data: paymentMethod === 'completed' ? {
-        is_paid:          true,
-        status:           'Paid',
-        transaction_id:   transactionRefId,
-        reference_id:     transactionRefId,
-        invoice_id:       resolvedInvoiceNumber,
-        invoice_number:   resolvedInvoiceNumber,
-        receipt_image:    receiptImage,
-        payment_provider: paymentProvider,
-        payment_gateway:  paymentProvider === 'KNET Card' ? 'KNET' : paymentProvider,
-        transaction_date: paidAtNow,
-        paid_at:          paidAtNow,
-        notes:            receiptNotes || null,
-      } : null,
+      transaction_id:   null,
+      reference_id:     null,
+      invoice_id:       null,
+      invoice_number:   null,
+      invoice_reference: null,
+      receipt_image:    null,
+      transaction_date: null,
+      paid_at:          null,
+      payment_data:     null,
+      payments_data:    null,
     };
 
     try {
@@ -827,7 +829,6 @@ export function TherapistScheduleBookingModal({
         (raw.payments_data as Record<string, unknown>)?.invoice_id ??
         (raw.payment_data as Record<string, unknown>)?.invoice_number ??
         (raw.payment_data as Record<string, unknown>)?.invoice_id ??
-        resolvedInvoiceNumber ??
         ''
       );
       if (returnedInvoice) {
@@ -851,14 +852,36 @@ export function TherapistScheduleBookingModal({
       setBookingResult(raw);
       setBookingId(rid);
 
-      // Note: Payment record is automatically created by backend event consumer (ushnotice)
-      // from BookingConfirmedEvent when booking is confirmed upfront with payment_status='success'.
-      // Creating another payment here causes duplicate payment records for the same booking.
+      const extractedInvoiceNumber = String(
+        raw.invoice_number ??
+        (raw.payment_data as Record<string, unknown>)?.invoice_number ??
+        (raw.payments_data as Record<string, unknown>)?.invoice_number ??
+        ''
+      ).replace('null', '').replace('undefined', '').trim();
 
-      // Show confirmation screen (step 3) so the user can see booking_number and cancel if needed.
-      // onSuccess fires so the schedule grid refreshes, but we keep the modal open at step 3.
-      onSuccess?.();
-      setStep(3);
+      const extractedInvoiceId = String(
+        raw.invoice_id ??
+        (raw.payment_data as Record<string, unknown>)?.invoice_id ??
+        (raw.payments_data as Record<string, unknown>)?.invoice_id ??
+        ''
+      ).replace('null', '').replace('undefined', '').trim();
+
+      if (paymentOption === 'pay_now') {
+        setCreatedBookingInfo({
+          id: rid,
+          bookingNumber: String(raw.booking_number ?? raw.bookings_id ?? rid),
+          invoiceId: extractedInvoiceId || undefined,
+          invoiceNumber: extractedInvoiceNumber || undefined,
+          amount: fmt(totalPrice),
+          customerName: cNameSnap,
+          customerPhone: cSnap?.phone_number ?? '',
+        });
+        setShowMakePayment(true);
+        onSuccess?.();
+      } else {
+        onSuccess?.();
+        onClose();
+      }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
     } finally {
@@ -1175,6 +1198,31 @@ export function TherapistScheduleBookingModal({
     ? ((selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || therapistName)
     : therapistName;
 
+  // If payment modal is opened for "Pay now", close the booking popup window and render MakePaymentModal
+  if (showMakePayment && createdBookingInfo) {
+    return (
+      <MakePaymentModal
+        isOpen={showMakePayment}
+        onClose={() => {
+          setShowMakePayment(false);
+          onClose();
+        }}
+        bookingId={createdBookingInfo.id}
+        bookingNumber={createdBookingInfo.bookingNumber}
+        invoiceId={createdBookingInfo.invoiceId}
+        invoiceNumber={createdBookingInfo.invoiceNumber}
+        amount={createdBookingInfo.amount}
+        customerName={createdBookingInfo.customerName}
+        customerPhone={createdBookingInfo.customerPhone}
+        onSuccess={() => {
+          setShowMakePayment(false);
+          onSuccess?.();
+          onClose();
+        }}
+      />
+    );
+  }
+
   return (
     <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -1191,9 +1239,9 @@ export function TherapistScheduleBookingModal({
             <p className="text-[11px] font-bold uppercase tracking-wider text-primary">
               New Therapist Schedule Booking
             </p>
-            {step <= 2 && (
+            {step <= 3 && (
               <div className="flex items-center gap-1 ml-2">
-                {([1, 2] as const).map((n) => (
+                {([1, 2, 3] as const).map((n) => (
                   <span key={n} className={cn(
                     'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
                     step === n ? 'bg-primary text-white shadow-sm'
@@ -1204,16 +1252,16 @@ export function TherapistScheduleBookingModal({
                   </span>
                 ))}
                 <span className="text-[11px] text-muted-foreground font-medium ml-1">
-                  {step === 1 ? 'Service & Add-ons' : 'Customer & Notes'}
+                  {step === 1 ? 'Service & Add-ons' : step === 2 ? 'Customer & Notes' : 'Payment Option'}
                 </span>
               </div>
             )}
-            {step === 3 && (
+            {step === 4 && (
               <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
                 <CheckCircle2 className="h-3 w-3" /> Booking Created
               </span>
             )}
-            {step === 4 && (
+            {step === 5 && (
               <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-bold text-primary">
                 <CreditCard className="h-3 w-3" /> Confirm Payment
               </span>
@@ -1330,40 +1378,87 @@ export function TherapistScheduleBookingModal({
                     isSelected={(s) => String(s.id ?? '') === form.serviceId}
                     selectedItem={selectedService}
                     icon={Scissors}
+                    getImageUrl={getServiceImageUrl}
                     onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q, serviceId: '' }))}
                     onSelect={selectService}
                     onClear={clearService}
-                    renderItem={(s) => (
-                      <div className="flex items-start gap-3 px-4 py-3">
-                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                          <Scissors className="h-3.5 w-3.5" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <p className="text-sm font-semibold truncate">{s.name}</p>
-                            {(s.is_packaged_services === true || String(s.is_packaged_services).toLowerCase() === 'true') && (
-                              <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
-                                Package
-                              </span>
-                            )}
+                    renderItem={(s) => {
+                      const img = getServiceImageUrl(s);
+                      return (
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-muted/20">
+                            {img ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={img}
+                                alt={s.name}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                  const fallback = (e.target as HTMLElement).parentElement?.querySelector('.svc-img-fallback');
+                                  if (fallback) fallback.classList.remove('hidden');
+                                }}
+                              />
+                            ) : null}
+                            <div className={cn(
+                              "svc-img-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
+                              img ? "hidden" : ""
+                            )}>
+                              <Scissors className="h-4 w-4" />
+                            </div>
                           </div>
-                          <p className="text-[11px] text-muted-foreground">
-                            {s.category && <span className="mr-2">{s.category}</span>}
-                            {s.duration_minutes && <span>{s.duration_minutes} min</span>}
-                          </p>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-semibold truncate">{s.name}</p>
+                              {(s.is_packaged_services === true || String(s.is_packaged_services).toLowerCase() === 'true') && (
+                                <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                                  Package
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {s.category && <span className="mr-2">{s.category}</span>}
+                              {s.duration_minutes && <span>{s.duration_minutes} min</span>}
+                            </p>
+                          </div>
+                          {(s.arrangement_price ?? s.base_price) && (
+                            <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
+                              {fmt(s.arrangement_price ?? s.base_price)} KWD
+                            </p>
+                          )}
+                          {s.id === form.serviceId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
                         </div>
-                        {(s.arrangement_price ?? s.base_price) && (
-                          <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
-                            {fmt(s.arrangement_price ?? s.base_price)} KWD
-                          </p>
-                        )}
-                        {s.id === form.serviceId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
-                      </div>
-                    )}
+                      );
+                    }}
                   />
                   {selectedService && (
                     <div className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
+                      {(() => {
+                        const selImg = getServiceImageUrl(selectedService);
+                        return (
+                          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-primary/20 bg-muted/20">
+                            {selImg ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={selImg}
+                                alt={selectedService.name}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                  const fallback = (e.target as HTMLElement).parentElement?.querySelector('.svc-sel-fallback');
+                                  if (fallback) fallback.classList.remove('hidden');
+                                }}
+                              />
+                            ) : null}
+                            <div className={cn(
+                              "svc-sel-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
+                              selImg ? "hidden" : ""
+                            )}>
+                              <Scissors className="h-4 w-4" />
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
@@ -1724,201 +1819,169 @@ export function TherapistScheduleBookingModal({
                   />
                 </div>
 
-                  {/* Payment Method */}
-                  <div>
-                    <div className="flex items-center gap-2 mb-3">
-                      <CreditCard className="h-4 w-4 text-primary" />
-                      <p className="text-sm font-extrabold">Payment Method</p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      {[
-                        { value: 'on_branch', label: 'Pay on Branch',     desc: 'Pay later at reception',  color: 'amber'   },
-                        { value: 'completed', label: 'Payment Completed', desc: 'Paid now',                color: 'emerald' },
-                      ].map(({ value, label, desc, color }) => (
-                        <label
-                          key={value}
-                          className={`flex items-center gap-3 rounded-xl border-2 px-4 py-3 cursor-pointer transition select-none ${
-                            paymentMethod === value
-                              ? color === 'emerald'
-                                ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30'
-                                : 'border-amber-500 bg-amber-50/60 dark:bg-amber-950/30'
-                              : 'border-border bg-muted/20 hover:bg-muted/40'
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="tsch-payment-method"
-                            value={value}
-                            checked={paymentMethod === value}
-                            onChange={() => {
-                              const next = value as 'completed' | 'on_branch';
-                              setPaymentMethod(next);
-                              if (next === 'completed') {
-                                setPaymentProvider(null);
-                                setTransactionRefId('');
-                                setReceiptImage(null);
-                                setReceiptNotes('');
-                              }
-                            }}
-                            className="sr-only"
-                          />
-                          <span className={`h-4 w-4 shrink-0 rounded-full border-2 flex items-center justify-center ${
-                            paymentMethod === value
-                              ? color === 'emerald' ? 'border-emerald-500' : 'border-amber-500'
-                              : 'border-muted-foreground/40'
-                          }`}>
-                            {paymentMethod === value && (
-                              <span className={`h-2 w-2 rounded-full block ${
-                                color === 'emerald' ? 'bg-emerald-500' : 'bg-amber-500'
-                              }`} />
-                            )}
-                          </span>
-                          <div className="min-w-0">
-                            <p className={`text-xs font-bold ${
-                              paymentMethod === value
-                                ? color === 'emerald' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
-                                : 'text-foreground'
-                            }`}>{label}</p>
-                            <p className="text-[10px] text-muted-foreground">{desc}</p>
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-
-                    {/* Payment Provider Options (Shown when "Payment Completed" is selected) */}
-                    {paymentMethod === 'completed' && (
-                      <div className="mt-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Wallet className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                            <p className="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
-                              Select Payment Provider <span className="text-destructive">*</span>
-                            </p>
-                          </div>
-                          {paymentProvider ? (
-                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
-                              {paymentProvider}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-400 border border-amber-500/20">
-                              Required
-                            </span>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                          {PAYMENT_PROVIDERS.map((p) => {
-                            const isSel = paymentProvider === p.id;
-                            return (
-                              <button
-                                key={p.id}
-                                type="button"
-                                onClick={() => {
-                                  if (paymentProvider !== p.id) {
-                                    setTransactionRefId('');
-                                    setReceiptImage(null);
-                                  }
-                                  setPaymentProvider(p.id);
-                                  setShowPaymentRefModal(true);
-                                }}
-                                className={`flex flex-col items-start p-3 rounded-xl border text-left transition cursor-pointer select-none ${
-                                  isSel
-                                    ? 'border-emerald-500 bg-white dark:bg-card shadow-sm ring-2 ring-emerald-500/20'
-                                    : 'border-border/70 bg-card/60 hover:bg-muted/40'
-                                }`}
-                              >
-                                <div className="flex items-center justify-between w-full mb-1">
-                                  <span className={`text-xs font-extrabold ${isSel ? 'text-emerald-700 dark:text-emerald-300' : 'text-foreground'}`}>
-                                    {p.label}
-                                  </span>
-                                  {isSel && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />}
-                                </div>
-                                <span className="text-[10px] text-muted-foreground leading-tight">{p.desc}</span>
-                                <span className={`mt-1.5 inline-block text-[9px] font-semibold px-1.5 py-0.5 rounded ${
-                                  isSel ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300' : 'bg-muted text-muted-foreground'
-                                }`}>
-                                  {p.badge}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* Invoice & Transaction Reference Attached Box */}
-                        {paymentProvider ? (
-                          <div className="mt-3 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/60 dark:bg-emerald-950/30 space-y-2">
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Receipt className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                                <span className="text-xs font-bold text-foreground">
-                                  Invoice Reference &amp; Receipt Status
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => setShowPaymentRefModal(true)}
-                                className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
-                              >
-                                {transactionRefId ? 'Edit / Re-scan' : '+ Add Details / Scan'}
-                              </button>
-                            </div>
-
-                            {transactionRefId ? (
-                              <div className="space-y-1.5">
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div className="p-2 rounded-lg bg-card border border-border/60">
-                                    <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Ref / Trans ID</span>
-                                    <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300 truncate block">
-                                      {transactionRefId}
-                                    </span>
-                                  </div>
-                                  <div className="p-2 rounded-lg bg-card border border-border/60">
-                                    <span className="text-[10px] text-muted-foreground uppercase font-semibold block">Invoice ID</span>
-                                    <span className="font-mono font-bold text-foreground truncate block">
-                                      {invoiceId || 'Auto (INV/2026/00001)'}
-                                    </span>
-                                  </div>
-                                </div>
-                                {receiptImage && (
-                                  <div className="flex items-center gap-2.5 pt-1">
-                                    <img
-                                      src={receiptImage}
-                                      alt="Scanned receipt"
-                                      className="h-9 w-9 rounded-lg object-cover border border-emerald-500/30 shadow-xs"
-                                    />
-                                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                                      ✓ Receipt slip image attached to invoice for future reference
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="flex items-center justify-between gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs">
-                                <span className="text-[11px] text-amber-800 dark:text-amber-300 font-medium">
-                                  Please input transaction ID or scan receipt to attach to invoice.
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => setShowPaymentRefModal(true)}
-                                  className="shrink-0 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] shadow-xs cursor-pointer transition"
-                                >
-                                  Input / Scan Now
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="mt-3 p-3 rounded-xl border border-dashed border-border/80 bg-muted/20 text-xs text-muted-foreground text-center">
-                            Please select a payment provider above to enter transaction details.
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
               </div>
             )}
 
-            {/* ── STEP 3: Confirmation ── */}
-            {step === 3 && bookingResult && (() => {
+            {/* ── STEP 3: Payment Option ── */}
+            {step === 3 && (
+              <div className="px-6 py-5 space-y-5">
+                <div>
+                  <h3 className="text-sm font-extrabold text-foreground mb-1">Select Payment Option</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Choose how the customer will settle this booking.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <label
+                    className={cn(
+                      'relative flex flex-col justify-between rounded-2xl border-2 p-4 cursor-pointer transition select-none',
+                      paymentOption === 'pay_on_branch'
+                        ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/20 shadow-sm'
+                        : 'border-border bg-muted/20 hover:bg-muted/40'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="ts-payment-option"
+                      value="pay_on_branch"
+                      checked={paymentOption === 'pay_on_branch'}
+                      onChange={() => setPaymentOption('pay_on_branch')}
+                      className="sr-only"
+                    />
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="grid h-8 w-8 place-items-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          <Store className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-extrabold text-foreground">Pay on Branch</p>
+                          <span className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-950/50 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                            In-person payment
+                          </span>
+                        </div>
+                      </div>
+                      <div className={cn(
+                        'h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0',
+                        paymentOption === 'pay_on_branch' ? 'border-amber-500' : 'border-muted-foreground/30'
+                      )}>
+                        {paymentOption === 'pay_on_branch' && (
+                          <div className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Booking will be confirmed immediately. The customer will pay at the branch counter when arriving or completing their appointment.
+                    </p>
+                  </label>
+
+                  <label
+                    className={cn(
+                      'relative flex flex-col justify-between rounded-2xl border-2 p-4 cursor-pointer transition select-none',
+                      paymentOption === 'pay_now'
+                        ? 'border-primary bg-primary/5 dark:bg-primary/10 shadow-sm'
+                        : 'border-border bg-muted/20 hover:bg-muted/40'
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="ts-payment-option"
+                      value="pay_now"
+                      checked={paymentOption === 'pay_now'}
+                      onChange={() => setPaymentOption('pay_now')}
+                      className="sr-only"
+                    />
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="grid h-8 w-8 place-items-center rounded-xl bg-primary/10 text-primary">
+                          <CreditCard className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-extrabold text-foreground">Pay Now</p>
+                          <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                            Payment Link
+                          </span>
+                        </div>
+                      </div>
+                      <div className={cn(
+                        'h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0',
+                        paymentOption === 'pay_now' ? 'border-primary' : 'border-muted-foreground/30'
+                      )}>
+                        {paymentOption === 'pay_now' && (
+                          <div className="h-2.5 w-2.5 rounded-full bg-primary" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Confirm booking and immediately open the payment link creator. Choose provider (MyFatoorah, etc.) and share link with customer.
+                    </p>
+                  </label>
+                </div>
+
+                {/* Summary card before submitting */}
+                <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      {(() => {
+                        const sImg = getServiceImageUrl(selectedService);
+                        return (
+                          <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted/20">
+                            {sImg ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={sImg}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                  const fallback = (e.target as HTMLElement).parentElement?.querySelector('.summary-svc-fallback');
+                                  if (fallback) fallback.classList.remove('hidden');
+                                }}
+                              />
+                            ) : null}
+                            <div className={cn(
+                              "summary-svc-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
+                              sImg ? "hidden" : ""
+                            )}>
+                              <Scissors className="h-3.5 w-3.5" />
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      <div>
+                        <p className="text-xs font-bold text-foreground">{selectedService?.name}</p>
+                        <p className="text-[11px] text-muted-foreground">{selectedService?.category || 'Service'}</p>
+                      </div>
+                    </div>
+                    <p className="text-xs font-bold text-foreground">{fmt(servicePrice)} KWD</p>
+                  </div>
+
+                  <div className="flex items-center justify-between px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <User className="h-3.5 w-3.5 text-violet-500" />
+                      <div>
+                        <p className="text-xs font-bold text-foreground">
+                          {selectedCustomer ? (([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || selectedCustomer.full_name) : 'Customer'}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">{selectedCustomer?.phone_number || 'No phone'}</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-bold text-foreground">{date}</p>
+                      <p className="text-[11px] text-muted-foreground">{timeSlot}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between px-4 py-3 bg-muted/30">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Payable</span>
+                    <span className="text-sm font-black text-primary">{fmt(totalPrice)} KWD</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── STEP 4: Confirmation ── */}
+            {step === 4 && bookingResult && (() => {
               const r            = bookingResult as Record<string, unknown>;
               const bookingNum   = String(r.booking_number ?? '').replace('undefined', '').replace('null', '');
               const ref          = String(r.bookings_id ?? r.reference_number ?? r.booking_number ?? r.id ?? r.booking_id ?? r.pk ?? '—')
@@ -2052,6 +2115,18 @@ export function TherapistScheduleBookingModal({
                     </div>
                   </div>
 
+                  {/* ── Payment link (gateway) ── */}
+                  {paymentMethod === 'payment_link' && bookingId && !cancelBookingDone && (
+                    <PaymentLinkPanel
+                      targetType="booking"
+                      targetId={bookingId}
+                      customerPhone={snapCustomerPhone}
+                      customerName={snapCustomerName}
+                      autoCreate
+                      onPaid={() => onSuccess?.()}
+                    />
+                  )}
+
                   {/* ── Attached Invoice & Transaction Details ── */}
                   {(transactionRefId || invoiceId || (bookingResult as Record<string, any>)?.transaction_id) && (
                     <div className="rounded-2xl border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 p-4 space-y-2">
@@ -2102,8 +2177,8 @@ export function TherapistScheduleBookingModal({
               );
             })()}
 
-            {/* ── STEP 4: Payment Form ── */}
-            {step === 4 && (() => {
+            {/* ── STEP 5: Payment Form ── */}
+            {step === 5 && (() => {
               const payFormValid =
                 paymentForm.invoice_id.trim() !== '' &&
                 paymentForm.transaction_date.trim() !== '' &&
@@ -2283,7 +2358,7 @@ export function TherapistScheduleBookingModal({
                   <div className="flex flex-col min-w-0 flex-1">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Package className="h-2.5 w-2.5" />Add-ons</p>
                     <p className="text-xs font-semibold text-primary">+{fmt(addonTotal)} KWD</p>
-                    <p className="text-[10px] text-muted-foreground">{form.addonIds.length} selected</p>
+                    <p className="text-[10px] text-muted-foreground">{form.addonIds.length + form.arrangementAddonIds.length} selected</p>
                   </div>
                 </>)}
                 {extraMinutesPrice > 0 && (<>
@@ -2309,7 +2384,7 @@ export function TherapistScheduleBookingModal({
             )}
           </div>
           <div className="px-6 py-3 space-y-3">
-            {submitError && step !== 3 && (
+            {submitError && step < 4 && (
               <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
                 <AlertCircle className="h-4 w-4 shrink-0" /><span>{submitError}</span>
               </div>
@@ -2331,32 +2406,36 @@ export function TherapistScheduleBookingModal({
                   className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition cursor-pointer">
                   <ChevronLeft className="h-4 w-4" /> Back
                 </button>
-                <button type="submit" form="ts-booking-form"
-                  disabled={isConfirmDisabled}
-                  title={
-                    !form.customerId
-                      ? 'Please select a customer'
-                      : paymentMethod === 'completed' && !paymentProvider
-                        ? 'Please select a payment provider'
-                        : paymentMethod === 'completed' && !transactionRefId.trim()
-                          ? 'Please complete payment details'
-                          : undefined
-                  }
-                  className={cn(
-                    'flex-1 inline-flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold shadow-sm transition',
-                    isConfirmDisabled
-                      ? 'bg-muted text-muted-foreground/60 border border-border/60 cursor-not-allowed shadow-none'
-                      : 'bg-primary text-white hover:bg-primary/90 cursor-pointer active:scale-[0.98]'
-                  )}>
-                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-                  {submitting ? 'Creating…' : 'Confirm Booking'}
+                <button type="button" onClick={goNextToStep3}
+                  disabled={!form.customerId}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  Next: Payment <ChevronRight className="h-4 w-4" />
                 </button>
               </>)}
               {step === 3 && (<>
+                <button type="button" onClick={goBackFromStep3}
+                  className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition cursor-pointer">
+                  <ChevronLeft className="h-4 w-4" /> Back
+                </button>
+                <button type="submit" form="ts-booking-form"
+                  disabled={submitting}
+                  className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {submitting ? 'Confirming…' : 'Confirm Booking'}
+                </button>
+              </>)}
+              {step === 4 && (<>
                 <button type="button" onClick={onClose}
                   className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">
                   Close
                 </button>
+                {createdBookingInfo && (
+                  <button type="button" onClick={() => setShowMakePayment(true)}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-bold text-primary hover:bg-primary/20 transition cursor-pointer">
+                    <Link2 className="h-4 w-4" />
+                    Payment Link
+                  </button>
+                )}
                 {!cancelBookingDone && (
                   <button
                     type="button"
@@ -2376,26 +2455,16 @@ export function TherapistScheduleBookingModal({
                     {cancellingBooking ? 'Cancelling…' : 'Cancel Booking'}
                   </button>
                 )}
-                {!cancelBookingDone && paymentMethod === 'completed' && (
-                  <button
-                    type="button"
-                    onClick={() => setShowReceiptModal(true)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 hover:bg-muted px-4 py-2.5 text-sm font-bold transition cursor-pointer"
-                  >
-                    <Printer className="h-4 w-4" />
-                    Print Receipt
-                  </button>
-                )}
-                {!cancelBookingDone && paymentMethod === 'on_branch' && (
-                  <button type="button" onClick={() => setStep(4)}
+                {!cancelBookingDone && (
+                  <button type="button" onClick={() => setStep(5)}
                     className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-primary py-2.5 text-sm font-bold text-white shadow-sm hover:bg-primary/90 transition">
                     <CreditCard className="h-4 w-4" />
                     Confirm Payment
                   </button>
                 )}
               </>)}
-              {step === 4 && (<>
-                <button type="button" onClick={() => { setStep(3); setConfirmPaymentError(null); }}
+              {step === 5 && (<>
+                <button type="button" onClick={() => { setStep(4); setConfirmPaymentError(null); }}
                   className="flex items-center gap-1.5 rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-sm font-semibold hover:bg-muted transition">
                   <ChevronLeft className="h-4 w-4" /> Back
                 </button>
@@ -2419,6 +2488,8 @@ export function TherapistScheduleBookingModal({
         </div>
       </div>
     </div>
+
+
 
       {/* ── Quick-add new customer ── */}
       {showCreateCustomer && (

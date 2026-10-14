@@ -40,3 +40,31 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ detail: message }, { status: 502 });
   }
 }
+
+/**
+ * GET /booknpay/api/v1/payments
+ * Proxy to upstream booknpay — lists payment records (supports ?voucher_id=, ?booking_id=, etc.).
+ */
+export async function GET(req: NextRequest) {
+  const qs = req.nextUrl.searchParams.toString();
+  const url = qs ? `${UPSTREAM_URL}?${qs}` : UPSTREAM_URL;
+
+  try {
+    const upstream = await fetch(url, {
+      method: 'GET',
+      headers: getProxyHeaders(req),
+    });
+    const text = await upstream.text();
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+    }
+    return NextResponse.json(data, { status: upstream.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Proxy error';
+    return NextResponse.json({ detail: message }, { status: 502 });
+  }
+}
+

@@ -1307,17 +1307,21 @@ export default function BranchAppointmentsPage() {
     setNewBookingModal({ arrangement, timeSlot, date: selectedDate });
   }, [selectedDate]);
 
-  const handleBookingSuccess = useCallback(() => {
+  const handleBookingSuccess = useCallback((showSpinner = false) => {
     // Reload schedule
     if (!selectedBranchId) return;
-    setScheduleData(null);
-    setLoading(true);
+    if (showSpinner) {
+      setScheduleData(null);
+      setLoading(true);
+    }
     const url = `/api/v1/service-arrangements/schedule?branch_id=${selectedBranchId}&date=${selectedDate}`;
     fetch(url, { headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } })
       .then(r => r.json())
       .then((data: ApiScheduleRecord[]) => setScheduleData(data?.[0] ?? null))
       .catch(() => {})
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (showSpinner) setLoading(false);
+      });
   }, [selectedBranchId, selectedDate, token]);
 
   return (
@@ -1589,7 +1593,10 @@ export default function BranchAppointmentsPage() {
       {newBookingModal && (
         <NewBranchBookingModal
           payload={newBookingModal}
-          onClose={() => setNewBookingModal(null)}
+          onClose={() => {
+            setNewBookingModal(null);
+            handleBookingSuccess();
+          }}
           onSuccess={handleBookingSuccess}
           token={token}
         />

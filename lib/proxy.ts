@@ -113,5 +113,10 @@ export function getProxyHeaders(
     headers['Authorization'] = `Bearer ${cleanAuth}`;
   }
 
+  const mfSig = req.headers.get('myfatoorah-signature');
+  if (mfSig) {
+    headers['MyFatoorah-Signature'] = mfSig;
+  }
+
   return headers;
 }

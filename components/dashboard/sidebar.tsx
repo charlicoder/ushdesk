@@ -96,7 +96,6 @@ export function Sidebar() {
         { href: '/appointments/gift-vouchers',      label: 'Gift Vouchers',       icon: Gift,       permission: PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER },
       ],
     },
-    { href: '/reports', label: t('navReports'), icon: BarChart3 },
     {
       href: '/ushspa',
       label: 'UshSpa',
@@ -218,6 +217,7 @@ export function Sidebar() {
                 src="/ush-spa-logo.png"
                 alt="USH Spa Logo"
                 fill
+                sizes="44px"
                 className="object-cover"
               />
             </div>
