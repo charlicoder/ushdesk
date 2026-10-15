@@ -602,6 +602,7 @@ export function NewBranchBookingModal({
       const raw    = result as Record<string, unknown>;
       const rid    = String(raw.id ?? raw.booking_id ?? raw.bookings_id ?? raw.pk ?? '')
         .replace('undefined', '').replace('null', '');
+      setBookingId(rid);
 
       const tSnap     = selectedTherapist;
       const cSnap     = selectedCustomer;

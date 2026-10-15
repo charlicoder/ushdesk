@@ -169,6 +169,9 @@ export function MakePaymentModal({
       const type: PaymentLinkTarget = resolvedTargetType;
       const link = await paymentLinksApi.create(type, id, {
         gateway: selectedProvider.gatewayKey,
+        amount: amount !== undefined && amount !== null && amount !== '' ? amount : undefined,
+        invoice_id: invoiceId || undefined,
+        invoice_number: invoiceNumber || undefined,
       });
       setPaymentLink(link);
       if (link.status === 'paid' || link.status === 'success') {
