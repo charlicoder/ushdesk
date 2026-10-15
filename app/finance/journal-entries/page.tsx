@@ -250,6 +250,7 @@ export default function JournalEntriesAndItemsPage() {
             >
               <option value="all">All States</option>
               <option value="posted">Posted</option>
+              <option value="paid">Paid</option>
               <option value="draft">Draft</option>
               <option value="reversed">Reversed</option>
             </select>
@@ -370,9 +371,15 @@ export default function JournalEntriesAndItemsPage() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          <span className="inline-block rounded-full bg-emerald-500/10 px-2 py-0.5 text-[9px] font-bold text-emerald-600 uppercase">
-                            {item.entry_state || 'POSTED'}
-                          </span>
+                          {(() => {
+                            const itemBadge = getStateBadge(item.entry_state);
+                            return (
+                              <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[9px] font-bold', itemBadge.bg)}>
+                                <span className={cn('h-1.5 w-1.5 rounded-full', itemBadge.dot)} />
+                                {itemBadge.label}
+                              </span>
+                            );
+                          })()}
                         </td>
                       </tr>
                     ))}
