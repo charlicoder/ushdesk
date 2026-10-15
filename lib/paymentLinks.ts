@@ -138,3 +138,31 @@ export function smsShareUrl(phone: string | null | undefined, text: string): str
   const p = (phone ?? '').replace(/[^\d+]/g, '');
   return `sms:${p}?body=${encodeURIComponent(text)}`;
 }
+
+export interface SendPaymentLinkSmsPayload {
+  phone_number?: string;
+  phone_numbers?: string[];
+  content: string;
+  language?: string;
+}
+
+/** Sends an SMS with the payment link via backend SMS service (ushauth -> ushnotice). */
+export async function sendPaymentLinkSms(payload: SendPaymentLinkSmsPayload): Promise<{ success: boolean; message?: string }> {
+  const res = await authedFetch('/uauth/api/v1/sms/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    const err = json.error as Record<string, unknown> | string | undefined;
+    const nested = err && typeof err === 'object' ? (err.message ?? err.detail) : err;
+    const msg = nested ?? json.detail ?? json.message ?? `Failed to send SMS (${res.status})`;
+    throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
+  }
+  return json as { success: boolean; message?: string };
+}
+

@@ -13,6 +13,7 @@ import {
   paymentLinksApi,
   whatsappShareUrl,
   smsShareUrl,
+  sendPaymentLinkSms,
   type PaymentLink,
   type PaymentLinkTarget,
 } from '@/lib/paymentLinks';
@@ -124,6 +125,9 @@ export function MakePaymentModal({
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [sendingSms, setSendingSms] = useState(false);
+  const [smsSent, setSmsSent] = useState(false);
+  const [smsFeedback, setSmsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   if (!isOpen) return null;
 
@@ -223,6 +227,42 @@ export function MakePaymentModal({
     await navigator.clipboard.writeText(paymentLink.payment_url).catch(() => undefined);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSendSms = async () => {
+    if (!paymentLink?.payment_url) {
+      setSmsFeedback({ type: 'error', message: 'Payment link is not generated yet.' });
+      return;
+    }
+    const phone = customerPhone?.trim();
+    if (!phone) {
+      setSmsFeedback({ type: 'error', message: 'Customer phone number is required to send SMS.' });
+      return;
+    }
+
+    setSendingSms(true);
+    setSmsFeedback(null);
+    try {
+      const smsBody = isVoucher
+        ? `USHSPA: مرحباً${customerName ? ` ${customerName}` : ''}، يرجى استكمال دفع قسيمة الهدايا بمبلغ ${amount} ${currency} عبر هذا الرابط: ${paymentLink.payment_url}`
+        : `USHSPA: مرحباً${customerName ? ` ${customerName}` : ''}، يرجى استكمال دفع حجزك بمبلغ ${amount} ${currency} عبر هذا الرابط: ${paymentLink.payment_url}`;
+
+      await sendPaymentLinkSms({
+        phone_number: phone,
+        content: smsBody,
+        language: 'ar',
+      });
+      setSmsSent(true);
+      setSmsFeedback({ type: 'success', message: 'Payment link SMS sent successfully to customer.' });
+      setTimeout(() => {
+        setSmsSent(false);
+      }, 4000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send SMS.';
+      setSmsFeedback({ type: 'error', message: msg });
+    } finally {
+      setSendingSms(false);
+    }
   };
 
   const isPaid = paymentLink?.status === 'paid' || paymentLink?.status === 'success';
@@ -515,14 +555,60 @@ export function MakePaymentModal({
                           <MessageCircle className="h-4 w-4" />
                           Share WhatsApp
                         </a>
-                        <a
-                          href={smsShareUrl(customerPhone, shareText)}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-border/80 bg-muted/40 py-2.5 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+                        <button
+                          type="button"
+                          onClick={handleSendSms}
+                          disabled={sendingSms}
+                          className={cn(
+                            'inline-flex items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-60',
+                            smsSent
+                              ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                              : 'border-border/80 bg-muted/40 text-foreground hover:bg-muted'
+                          )}
                         >
-                          <MessageSquare className="h-4 w-4" />
-                          Share SMS
-                        </a>
+                          {sendingSms ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              <span>Sending SMS…</span>
+                            </>
+                          ) : smsSent ? (
+                            <>
+                              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                              <span>SMS Sent!</span>
+                            </>
+                          ) : (
+                            <>
+                              <MessageSquare className="h-4 w-4" />
+                              <span>Share SMS</span>
+                            </>
+                          )}
+                        </button>
                       </div>
+
+                      {smsFeedback && (
+                        <div
+                          className={cn(
+                            'flex items-center gap-2 rounded-xl px-3 py-2 text-xs transition',
+                            smsFeedback.type === 'success'
+                              ? 'border border-emerald-300/60 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200'
+                              : 'border border-destructive/30 bg-destructive/10 text-destructive'
+                          )}
+                        >
+                          {smsFeedback.type === 'success' ? (
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                          ) : (
+                            <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                          )}
+                          <span className="flex-1">{smsFeedback.message}</span>
+                          <button
+                            type="button"
+                            onClick={() => setSmsFeedback(null)}
+                            className="text-[10px] underline ml-auto cursor-pointer"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
 
