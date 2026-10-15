@@ -931,6 +931,10 @@ function buildScheduleFromApi(
 
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
+    const rawStatus = String(bk.status ?? (bk as any).booking_status ?? '').toLowerCase().trim();
+    if (rawStatus === 'cancelled' || rawStatus === 'refunded') {
+      continue;
+    }
     if (!bookingMap[bk.arrangement_id]) bookingMap[bk.arrangement_id] = [];
     const s = kuwaitWallClockDate(bk.start);
     const e = kuwaitWallClockDate(bk.end);
@@ -1209,6 +1213,13 @@ export default function BranchAppointmentsPage() {
           } catch {
             // Secondary fetch failure is non-fatal
           }
+        }
+
+        if (record?.bookings?.length) {
+          record.bookings = record.bookings.filter(bk => {
+            const st = String(bk.status ?? (bk as any)?.booking_status ?? '').toLowerCase().trim();
+            return st !== 'cancelled' && st !== 'refunded';
+          });
         }
 
         setScheduleData(record);

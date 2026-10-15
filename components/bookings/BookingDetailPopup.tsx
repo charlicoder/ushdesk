@@ -61,6 +61,7 @@ export interface Booking {
   currency: string;
   created_at: string;
   created_by_user: string | null;
+  customer_notes?: string | null;
   created_by_user_data: Record<string, unknown> | null;
   addons: Array<Record<string, unknown>>;
   pricing: Record<string, unknown> | null;
@@ -122,6 +123,7 @@ export function normalise(raw: Record<string, unknown>): Booking {
     created_at:        String(raw.created_at   ?? ''),
     created_by_user:   raw.created_by_user ? String(raw.created_by_user) : (raw.created_by ? String(raw.created_by) : null),
     created_by_user_data: (raw.created_by_user_data ?? null) as Record<string, unknown> | null,
+    customer_notes:    (raw.customer_notes ?? raw.customer_message ?? raw.notes ?? (raw.customer_data as any)?.customer_notes ?? null) as string | null,
     addons:            rawAddons,
     pricing:           (raw.pricing ?? raw.pricing_details ?? null) as Record<string, unknown> | null,
     raw,
@@ -1920,29 +1922,37 @@ export function BookingDetailPopup({
                   <DRow icon={Home} label="Arrangement / Room">{booking.arrangement_name || '—'}</DRow>
                 </div>
 
-                {/* Therapist */}
-                <DRow icon={User} label="Therapist">
-                  <div className="flex items-center justify-between gap-2">
-                    <span>
-                      {(detail?.therapist_data as any)?.therapist_name ??
-                        (detail?.therapist_data as any)?.name ??
-                        (detail?.therapist_data as any)?.full_name ??
-                        detail?.therapist_name ??
-                        booking.therapist_name ??
-                        '—'}
+                {/* Therapist and Customer Notes in one row */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <DRow icon={User} label="Therapist">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">
+                        {(detail?.therapist_data as any)?.therapist_name ??
+                          (detail?.therapist_data as any)?.name ??
+                          (detail?.therapist_data as any)?.full_name ??
+                          detail?.therapist_name ??
+                          booking.therapist_name ??
+                          '—'}
+                      </span>
+                      {canChangeTherapist && (
+                        <button
+                          type="button"
+                          onClick={() => setShowChangeTherapistModal(true)}
+                          className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer"
+                        >
+                          <UserCog className="h-3.5 w-3.5" />
+                          Change
+                        </button>
+                      )}
+                    </div>
+                  </DRow>
+
+                  <DRow icon={FileText} label="Customer Notes">
+                    <span className="text-foreground text-xs break-words">
+                      {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
                     </span>
-                    {canChangeTherapist && (
-                      <button
-                        type="button"
-                        onClick={() => setShowChangeTherapistModal(true)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer"
-                      >
-                        <UserCog className="h-3.5 w-3.5" />
-                        Change
-                      </button>
-                    )}
-                  </div>
-                </DRow>
+                  </DRow>
+                </div>
 
                 {/* Pricing Summary (Sum of all items: Service + Addons + Extra Minutes) */}
                 <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/30 to-muted/10 p-4 space-y-3">
@@ -2493,167 +2503,181 @@ export function BookingDetailPopup({
             'shrink-0 border-t px-6 py-4 flex flex-col gap-2.5',
             isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/30' : 'border-border/40'
           )}>
-            {/* Warning when reschedule or cancel is blocked */}
-            {!isNoShow && !isPastApptEnd && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (callCenterCancelBlocked || callCenterRescheduleBlocked) && AGENT_BLOCK_REASON && (
-              <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                <span>{AGENT_BLOCK_REASON}</span>
-              </div>
-            )}
-            {!isNoShow && !isPastApptEnd && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPastAllowedDaysFromApptStart && !callCenterRescheduleBlocked && (
-              <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
-                <span>{RESCHEDULE_DAYS_REASON}</span>
-              </div>
-            )}
-            <div className="flex flex-wrap items-center gap-2 justify-between">
-              {/* Left side: Cancel, Reschedule, Complete, No Show */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* When isNoShow: hide all buttons, only Close */}
-                {isNoShow ? null : isPastApptEnd ? (
-                  // When appointment_end < current date: NO other button should show but ONLY "No Show"
-                  !isCompleted && !isCancelled && canMarkNoShow && (
-                    <button
-                      type="button"
-                      onClick={handleMarkNoShow}
-                      disabled={markingNoShow}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
-                        markingNoShow
-                          ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                          : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
-                      )}
-                    >
-                      {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
-                      {markingNoShow ? 'Updating…' : 'Mark No Show'}
-                    </button>
-                  )
-                ) : (
-                  <>
-                    {/* Update button for payment_pending before appointment_end or confirmed with pending payment */}
-                    {canUpdateBooking && (
-                      <button
-                        type="button"
-                        onClick={handleOpenUpdateBooking}
-                        className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
-                      >
-                        Update
-                      </button>
-                    )}
-
-                    {/* Cancel Booking: rule-based visibility */}
-                    {canShowCancel && (
-                      <button
-                        type="button"
-                        onClick={handleCancel}
-                        className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
-                      >
-                        Cancel Booking
-                      </button>
-                    )}
-
-                    {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleOpenReschedule}
-                          disabled={!canReschedule}
-                          title={rescheduleBlockReason}
-                          className={cn(
-                            'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                            !canReschedule
-                              ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                              : 'border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer'
-                          )}
-                        >
-                          Reschedule
-                        </button>
-                        {!isCompleteRestrictedForRole && (
-                          <button
-                            type="button"
-                            onClick={handleCompleteBooking}
-                            disabled={completing || isPaymentPending}
-                            title={
-                              isPaymentPending
-                                ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
-                                : undefined
-                            }
-                            className={cn(
-                              'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
-                              isPaymentPending
-                                ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                                : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
-                            )}
-                          >
-                            {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                            {completing ? 'Completing…' : 'Mark Completed'}
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {/* Right side: Payment Done, Open Payment, Close */}
-              <div className="flex items-center gap-2">
-                {/* Make Payment — shown only when appointment has not ended, not no-show, payment is pending and payment_url is not set */}
-                {!isNoShow && !isPastApptEnd && isPaymentPending && !effectivePaymentUrl && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPaymentError(null);
-                      setShowPaymentRefModal(false);
-                      setShowPaymentModal(true);
-                    }}
-                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer whitespace-nowrap"
-                  >
-                    <CreditCard className="h-4 w-4" />
-                    Make Payment
-                  </button>
-                )}
-                {!isNoShow && !isPastApptEnd && !isPaymentTabRestricted && !isCancelled && effectivePaymentUrl && (
-                  <a href={effectivePaymentUrl} target="_blank" rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer whitespace-nowrap">
-                    <ExternalLink className="h-3.5 w-3.5" /> Open Payment
-                  </a>
-                )}
-                {!isNoShow && (() => {
-                  const rawPaymentStatus = String(detail?.payment_status ?? (detail as any)?.paymentStatus ?? booking.payment_status ?? '').toLowerCase().trim();
-                  const isConfirmedAndPaid = curStatus === 'confirmed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
-                  const isCompletedAndPaid = curStatus === 'completed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
-                  const showPrintReceiptBtn = isConfirmedAndPaid || isCompletedAndPaid;
-                  if (!showPrintReceiptBtn) return null;
-                  if (isPastApptEnd && !isCompletedAndPaid) return null;
-                  return (
-                    <button
-                      type="button"
-                      onClick={handlePrintReceipt}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer whitespace-nowrap',
-                        isCompleted
-                          ? 'bg-[#3D2F27] hover:bg-[#281E18] text-white'
-                          : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white'
-                      )}
-                    >
-                      <Printer className="h-4 w-4" />
-                      Print Receipt
-                    </button>
-                  );
-                })()}
+            {isCancelled ? (
+              <div className="flex items-center justify-end w-full">
                 <button
+                  type="button"
                   onClick={onClose}
-                  className={cn(
-                    'rounded-xl px-4 py-2.5 text-xs font-semibold transition cursor-pointer whitespace-nowrap',
-                    isCompleted
-                      ? 'border border-[#B8A394] bg-white/40 hover:bg-white/60 text-[#2D241E]'
-                      : 'border border-border/60 bg-muted/40 hover:bg-muted text-foreground'
-                  )}
+                  className="rounded-xl border border-border/60 bg-muted/40 hover:bg-muted text-foreground px-4 py-2.5 text-xs font-semibold transition cursor-pointer whitespace-nowrap"
                 >
                   Close
                 </button>
               </div>
-            </div>
+            ) : (
+              <>
+                {/* Warning when reschedule or cancel is blocked */}
+                {!isNoShow && !isPastApptEnd && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (callCenterCancelBlocked || callCenterRescheduleBlocked) && AGENT_BLOCK_REASON && (
+                  <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                    <span>{AGENT_BLOCK_REASON}</span>
+                  </div>
+                )}
+                {!isNoShow && !isPastApptEnd && booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && isPastAllowedDaysFromApptStart && !callCenterRescheduleBlocked && (
+                  <div className="flex items-center gap-2 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                    <span>{RESCHEDULE_DAYS_REASON}</span>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 justify-between">
+                  {/* Left side: Cancel, Reschedule, Complete, No Show */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* When isNoShow: hide all buttons, only Close */}
+                    {isNoShow ? null : isPastApptEnd ? (
+                      // When appointment_end < current date: NO other button should show but ONLY "No Show"
+                      !isCompleted && !isCancelled && canMarkNoShow && (
+                        <button
+                          type="button"
+                          onClick={handleMarkNoShow}
+                          disabled={markingNoShow}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
+                            markingNoShow
+                              ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                              : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
+                          )}
+                        >
+                          {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
+                          {markingNoShow ? 'Updating…' : 'Mark No Show'}
+                        </button>
+                      )
+                    ) : (
+                      <>
+                        {/* Update button for payment_pending before appointment_end or confirmed with pending payment */}
+                        {canUpdateBooking && (
+                          <button
+                            type="button"
+                            onClick={handleOpenUpdateBooking}
+                            className="rounded-xl border border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]"
+                          >
+                            Update
+                          </button>
+                        )}
+
+                        {/* Cancel Booking: rule-based visibility */}
+                        {canShowCancel && (
+                          <button
+                            type="button"
+                            onClick={handleCancel}
+                            className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
+                          >
+                            Cancel Booking
+                          </button>
+                        )}
+
+                        {booking.status !== 'cancelled' && !isCompleted && curStatus !== 'no_show' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={handleOpenReschedule}
+                              disabled={!canReschedule}
+                              title={rescheduleBlockReason}
+                              className={cn(
+                                'rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                                !canReschedule
+                                  ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                                  : 'border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer'
+                              )}
+                            >
+                              Reschedule
+                            </button>
+                            {!isCompleteRestrictedForRole && (
+                              <button
+                                type="button"
+                                onClick={handleCompleteBooking}
+                                disabled={completing || isPaymentPending}
+                                title={
+                                  isPaymentPending
+                                    ? 'Cannot mark as completed while payment is pending. Please complete payment first.'
+                                    : undefined
+                                }
+                                className={cn(
+                                  'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap',
+                                  isPaymentPending
+                                    ? 'border border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                                    : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm cursor-pointer active:scale-[0.98] disabled:opacity-60'
+                                )}
+                              >
+                                {completing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                                {completing ? 'Completing…' : 'Mark Completed'}
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Right side: Payment Done, Open Payment, Close */}
+                  <div className="flex items-center gap-2">
+                    {/* Make Payment — shown only when appointment has not ended, not no-show, payment is pending and payment_url is not set */}
+                    {!isNoShow && !isPastApptEnd && isPaymentPending && !effectivePaymentUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPaymentError(null);
+                          setShowPaymentRefModal(false);
+                          setShowPaymentModal(true);
+                        }}
+                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer whitespace-nowrap"
+                      >
+                        <CreditCard className="h-4 w-4" />
+                        Make Payment
+                      </button>
+                    )}
+                    {!isNoShow && !isPastApptEnd && !isPaymentTabRestricted && !isCancelled && effectivePaymentUrl && (
+                      <a href={effectivePaymentUrl} target="_blank" rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-3.5 py-2.5 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer whitespace-nowrap">
+                        <ExternalLink className="h-3.5 w-3.5" /> Open Payment
+                      </a>
+                    )}
+                    {!isNoShow && (() => {
+                      const rawPaymentStatus = String(detail?.payment_status ?? (detail as any)?.paymentStatus ?? booking.payment_status ?? '').toLowerCase().trim();
+                      const isConfirmedAndPaid = curStatus === 'confirmed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
+                      const isCompletedAndPaid = curStatus === 'completed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
+                      const showPrintReceiptBtn = isConfirmedAndPaid || isCompletedAndPaid;
+                      if (!showPrintReceiptBtn) return null;
+                      if (isPastApptEnd && !isCompletedAndPaid) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={handlePrintReceipt}
+                          className={cn(
+                            'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer whitespace-nowrap',
+                            isCompleted
+                              ? 'bg-[#3D2F27] hover:bg-[#281E18] text-white'
+                              : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white'
+                          )}
+                        >
+                          <Printer className="h-4 w-4" />
+                          Print Receipt
+                        </button>
+                      );
+                    })()}
+                    <button
+                      onClick={onClose}
+                      className={cn(
+                        'rounded-xl px-4 py-2.5 text-xs font-semibold transition cursor-pointer whitespace-nowrap',
+                        isCompleted
+                          ? 'border border-[#B8A394] bg-white/40 hover:bg-white/60 text-[#2D241E]'
+                          : 'border border-border/60 bg-muted/40 hover:bg-muted text-foreground'
+                      )}
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

@@ -58,6 +58,7 @@ export function DaySlotGrid({ date, branch, appointments, intervalMin, onSlotCli
 
       // Find the appointment that covers this slot
       const appt = appointments.find((a) => {
+        if (a.status === 'cancelled') return false;
         const aStart  = new Date(a.start_time);
         const aEnd    = new Date(aStart.getTime() + a.duration_min * 60_000);
         const slotStartMs = new Date(isoStart).getTime();
