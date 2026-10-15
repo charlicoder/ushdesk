@@ -59,7 +59,7 @@ async function resolveCompanyId(
     return cachedCompanyId;
   }
 
-  cachedCompanyId = 'f70caa2a-a435-4928-b7b1-7cb016619848';
+  cachedCompanyId = 'b3056214-f8e9-482a-b551-08e89e4243aa';
   return cachedCompanyId;
 }
 

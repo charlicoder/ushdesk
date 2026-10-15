@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getProxyHeaders } from '@/lib/proxy';
+import { getProxyHeaders, getApiBaseUrl, getBooknpayPath } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
 
-const BASE_URL = process.env['API_BASE_URL'] ?? 'https://apidev.ushspa.co';
+const LOCAL_DIRECT_BASE = 'http://127.0.0.1:8003/api/v1/bookings';
 
 /**
  * GET /booknpay/api/v1/bookings/[id]
@@ -15,11 +15,35 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const url    = `${BASE_URL}/booknpay/api/v1/bookings/${id}/`;
+  const baseUrl = getApiBaseUrl();
+  const booknpay = getBooknpayPath();
+  const url = `${baseUrl}${booknpay}/api/v1/bookings/${id}/`;
+  const directUrl = `${LOCAL_DIRECT_BASE}/${id}/`;
+  const headers = getProxyHeaders(req);
 
   try {
     const upstream = await fetch(url, {
-      headers: getProxyHeaders(req),
+      headers,
+      cache: 'no-store',
+    });
+    if (upstream.status !== 502 && upstream.status !== 504) {
+      const text = await upstream.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+      }
+      return NextResponse.json(data, { status: upstream.status });
+    }
+  } catch {
+    // Gateway down or not responding, fallback to direct local instance
+  }
+
+  // Attempt 2: Direct local fallback
+  try {
+    const upstream = await fetch(directUrl, {
+      headers,
       cache: 'no-store',
     });
     const text = await upstream.text();
@@ -45,14 +69,41 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const body   = await req.json().catch(() => ({}));
-  const url    = `${BASE_URL}/booknpay/api/v1/bookings/${id}/`;
+  const body = await req.json().catch(() => ({}));
+  const bodyStr = JSON.stringify(body);
+  const baseUrl = getApiBaseUrl();
+  const booknpay = getBooknpayPath();
+  const url = `${baseUrl}${booknpay}/api/v1/bookings/${id}/`;
+  const directUrl = `${LOCAL_DIRECT_BASE}/${id}/`;
+  const headers = getProxyHeaders(req);
 
+  // Attempt 1: Gateway proxy
   try {
     const upstream = await fetch(url, {
       method: req.method,
-      headers: getProxyHeaders(req),
-      body: JSON.stringify(body),
+      headers,
+      body: bodyStr,
+    });
+    if (upstream.status !== 502 && upstream.status !== 504) {
+      const text = await upstream.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
+      }
+      return NextResponse.json(data, { status: upstream.status });
+    }
+  } catch {
+    // Gateway down or not responding, fallback to direct local instance
+  }
+
+  // Attempt 2: Direct local fallback
+  try {
+    const upstream = await fetch(directUrl, {
+      method: req.method,
+      headers,
+      body: bodyStr,
     });
     const text = await upstream.text();
     let data: unknown;
