@@ -62,20 +62,28 @@ export interface CreatedCustomer {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /**
- * Shared API method — POST /uauth/api/v1/customers/
+ * Shared API method — POST /uauth/api/v1/customers/get-or-create/
+ * Creates or retrieves a customer without setting up a password.
  * Pass the Authorization header (e.g. "Bearer <token>").
  */
 export async function createCustomerApi(
   payload: CreateCustomerPayload,
   authHeader: string,
 ): Promise<CreatedCustomer> {
-  const res = await authedFetch('/api/v1/customers/', {
+  const fullName = [payload.first_name, payload.last_name].filter(Boolean).join(' ').trim();
+  const res = await authedFetch('/api/v1/customers/get-or-create/', {
     method: 'POST',
     headers: {
       Authorization: authHeader,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      phone_number: payload.phone_number,
+      full_name: fullName,
+      without_password: true,
+      email: payload.email || undefined,
+      gender: payload.gender || undefined,
+    }),
   });
 
   if (!res.ok) {
@@ -99,9 +107,12 @@ export async function createCustomerApi(
     raw?.id ?? raw?.customer_id ?? raw?.pk ??
     Date.now()
   );
-  const firstName = String(item?.first_name ?? raw?.first_name ?? payload.first_name ?? '').trim();
-  const lastName = String(item?.last_name ?? raw?.last_name ?? payload.last_name ?? '').trim();
-  const fullName = String(item?.full_name ?? raw?.full_name ?? [firstName, lastName].filter(Boolean).join(' ')).trim();
+  const resolvedFullName = String(
+    item?.name ?? item?.full_name ?? raw?.name ?? raw?.full_name ?? fullName
+  ).trim();
+  const nameParts = resolvedFullName.split(' ');
+  const firstName = String(item?.first_name ?? raw?.first_name ?? nameParts[0] ?? payload.first_name ?? '').trim();
+  const lastName = String(item?.last_name ?? raw?.last_name ?? nameParts.slice(1).join(' ') ?? payload.last_name ?? '').trim();
   const phoneNumber = String(item?.phone_number ?? item?.phone ?? raw?.phone_number ?? raw?.phone ?? payload.phone_number ?? '').trim();
   const email = (item?.email ?? raw?.email ?? payload.email ?? '').trim();
   const avatar = item?.avatar ?? raw?.avatar;
