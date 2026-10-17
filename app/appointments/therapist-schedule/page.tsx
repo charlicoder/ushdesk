@@ -438,8 +438,8 @@ function SlotDetailModal({
 function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   if (slot.status === 'unavailable') {
     return (
-      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-muted/40 transition hover:bg-muted/60 px-1 text-center">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 truncate">Unavailable</span>
+      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-[darkgrey] px-1 text-center">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-white truncate select-none">Blocked</span>
       </div>
     );
   }
@@ -452,7 +452,7 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
         className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group px-1 text-center">
-        <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground/70 group-hover:text-primary transition truncate">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-muted-foreground/70 group-hover:text-primary transition rotate-90 whitespace-nowrap select-none">
           <Plus className="h-3 w-3 shrink-0" /> Available
         </span>
       </div>
@@ -1343,7 +1343,7 @@ export default function TherapistSchedulePage() {
               { label: 'Paid (Success)',  color: 'bg-emerald-500' },
               { label: 'Pending Payment', color: 'bg-rose-500' },
               { label: 'Available',       color: 'bg-card border border-dashed border-border' },
-              { label: 'Unavailable',     color: 'bg-muted/80' },
+              { label: 'Blocked',         color: 'bg-[darkgrey]' },
             ].map((l) => (
               <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
                 <span className={cn('h-2.5 w-2.5 rounded-full', l.color)} />
