@@ -21,7 +21,7 @@ import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingM
 import { RedeemVoucherModal } from '@/components/bookings/RedeemVoucherModal';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
-import { paymentLinksApi, whatsappShareUrl, smsShareUrl, type PaymentLink } from '@/lib/paymentLinks';
+import { paymentLinksApi, whatsappShareUrl, smsShareUrl, sendPaymentLinkSms, type PaymentLink } from '@/lib/paymentLinks';
 import { usePermissions } from '@/hooks/use-permissions';
 import { extractRoleCandidates } from '@/lib/permissions';
 
@@ -899,6 +899,14 @@ function VoucherDetailModal({
       (voucher.payment_data?.data?.InvoiceStatus?.toLowerCase() === 'pending'))
   );
 
+  const isPending = Boolean(
+    voucher.status?.toLowerCase() === 'pending' ||
+    voucher.status?.toLowerCase() === 'payment_pending' ||
+    voucher.status?.toLowerCase() === 'created' ||
+    voucher.status?.toLowerCase().includes('pending') ||
+    isPaymentPending
+  );
+
   const handleCopyPaymentUrl = async () => {
     if (!effectivePaymentUrl) return;
     try {
@@ -930,6 +938,44 @@ function VoucherDetailModal({
   const paymentShareMessage = effectivePaymentUrl
     ? `Hello ${senderName}, please complete your USH Spa Gift Voucher payment of ${voucher.total_amount} ${voucher.currency} using this secure link: ${effectivePaymentUrl}`
     : '';
+
+  const [sendingSms, setSendingSms] = useState(false);
+  const [smsSent, setSmsSent] = useState(false);
+  const [smsFeedback, setSmsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const handleSendPaymentLinkSms = async () => {
+    if (!effectivePaymentUrl) {
+      setSmsFeedback({ type: 'error', message: 'Payment link is not available yet.' });
+      return;
+    }
+    const phone = (senderPhone || targetSharePhone)?.trim();
+    if (!phone) {
+      setSmsFeedback({ type: 'error', message: 'Sender phone number is required to send payment SMS.' });
+      return;
+    }
+
+    setSendingSms(true);
+    setSmsFeedback(null);
+    try {
+      const smsBody = `USHSPA: مرحباً${senderName ? ` ${senderName}` : ''}، يرجى استكمال دفع قسيمة الهدايا بمبلغ ${voucher.total_amount} ${voucher.currency} عبر هذا الرابط: ${effectivePaymentUrl}`;
+
+      await sendPaymentLinkSms({
+        phone_number: phone,
+        content: smsBody,
+        language: 'ar',
+      });
+      setSmsSent(true);
+      setSmsFeedback({ type: 'success', message: 'Payment link SMS sent successfully to customer.' });
+      setTimeout(() => {
+        setSmsSent(false);
+      }, 4000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to send SMS.';
+      setSmsFeedback({ type: 'error', message: msg });
+    } finally {
+      setSendingSms(false);
+    }
+  };
 
   const vb = (voucher.booking_data && typeof voucher.booking_data === 'object') ? (voucher.booking_data as Record<string, any>) : {};
   const fb = (fetchedBooking && typeof fetchedBooking === 'object') ? (fetchedBooking as Record<string, any>) : {};
@@ -1974,13 +2020,34 @@ function VoucherDetailModal({
                             <MessageCircle className="h-3.5 w-3.5" />
                             <span>Share WhatsApp</span>
                           </a>
-                          <a
-                            href={smsShareUrl(targetSharePhone, paymentShareMessage)}
-                            className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/30 bg-sky-50 dark:bg-sky-950/30 px-3 py-1.5 text-xs font-bold text-sky-700 dark:text-sky-300 hover:bg-sky-100 transition"
+                          <button
+                            type="button"
+                            onClick={handleSendPaymentLinkSms}
+                            disabled={sendingSms}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition shadow-xs cursor-pointer disabled:opacity-60',
+                              smsSent
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : 'border-sky-500/30 bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-300 hover:bg-sky-100'
+                            )}
                           >
-                            <MessageSquare className="h-3.5 w-3.5" />
-                            <span>Send SMS</span>
-                          </a>
+                            {sendingSms ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                <span>Sending SMS…</span>
+                              </>
+                            ) : smsSent ? (
+                              <>
+                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                                <span>SMS Sent!</span>
+                              </>
+                            ) : (
+                              <>
+                                <MessageSquare className="h-3.5 w-3.5" />
+                                <span>Send SMS</span>
+                              </>
+                            )}
+                          </button>
                         </>
                       )}
                       {activePaymentLink && (
@@ -1995,6 +2062,31 @@ function VoucherDetailModal({
                         </button>
                       )}
                     </div>
+
+                    {smsFeedback && (
+                      <div
+                        className={cn(
+                          'flex items-center gap-2 rounded-xl px-3 py-2 text-xs transition mt-2',
+                          smsFeedback.type === 'success'
+                            ? 'border border-emerald-300/60 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-200'
+                            : 'border border-destructive/30 bg-destructive/10 text-destructive'
+                        )}
+                      >
+                        {smsFeedback.type === 'success' ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                        ) : (
+                          <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                        )}
+                        <span className="flex-1">{smsFeedback.message}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSmsFeedback(null)}
+                          className="text-[10px] underline ml-auto cursor-pointer"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col sm:flex-row items-center justify-between gap-3 rounded-xl border border-dashed border-border/60 bg-card/40 p-4 text-xs">
@@ -2037,7 +2129,7 @@ function VoucherDetailModal({
                   <RefreshCw className="h-4 w-4" /> Reschedule
                 </button>
               ) : (
-                onShare && (
+                !isPending && onShare && (
                   <div className="flex-1 flex justify-center">
                     <VoucherShareDropdown
                       voucher={voucher}
@@ -2796,6 +2888,13 @@ export default function GiftVouchersPage() {
                   const senderName = v.sender_data?.name || v.sender_details?.name;
                   const recipientName = v.recipient_data?.name || v.recipient_details?.name;
                   const recipientPhone = v.recipient_phone || v.recipient_data?.phone_number || v.recipient_details?.phone_number;
+                  const isRedeemed = v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at);
+                  const isPending =
+                    v.status?.toLowerCase() === 'pending' ||
+                    v.status?.toLowerCase() === 'payment_pending' ||
+                    v.status?.toLowerCase() === 'created' ||
+                    v.status?.toLowerCase().includes('pending');
+                  const canShare = !isRedeemed && !isPending;
 
                   return (
                     <tr
@@ -2815,7 +2914,7 @@ export default function GiftVouchersPage() {
                               {v.secret_code || v.voucher_number || '—'}
                             </span>
                           </div>
-                          {!(v.status?.toLowerCase() === 'redeemed' || v.redeemed_at) && (
+                          {canShare && (
                             <VoucherShareDropdown
                               voucher={v}
                               iconOnly
