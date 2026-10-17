@@ -1075,9 +1075,17 @@ export function BookingDetailPopup({
   // 2. For unpaid / pending bookings:
   //    i. For (Administrator, Spa Director, Finance Manager) roles cancel button visible until appointment_end time is greater than current time
   //    ii. For all other users roles cancel button is visible until 3 hours before the appointment_start time
+  // 3. If a booking appointment time expired and booking payment_status=pending don't show "no show" button but "cancel" button to cancel the booking. "No Show" button is only for paid booking when expire.
   const canShowCancel = (() => {
-    if (isPastApptEnd || isNoShow || isCancelled || isCompleted) return false;
+    if (isNoShow || isCancelled || isCompleted) return false;
     const now = Date.now();
+
+    // When appointment_end has passed (expired booking):
+    if (isPastApptEnd) {
+      // "No Show" button is only for paid booking when expire.
+      // If booking appointment time expired and booking payment_status=pending, show cancel button.
+      return !isPaymentSuccess;
+    }
 
     // For a paid booking (payment_status=success), user(employees) can cancel booking at least 3 hours before appointment_start time
     if (isPaymentSuccess) {
@@ -1290,7 +1298,7 @@ export function BookingDetailPopup({
   };
 
   const handleMarkNoShow = async () => {
-    if (!booking || markingNoShow) return;
+    if (!booking || markingNoShow || !isPaymentSuccess) return;
     setMarkingNoShow(true);
     setNoShowError(null);
     try {
@@ -2533,22 +2541,38 @@ export function BookingDetailPopup({
                   <div className="flex items-center gap-2 flex-wrap">
                     {/* When isNoShow: hide all buttons, only Close */}
                     {isNoShow ? null : isPastApptEnd ? (
-                      // When appointment_end < current date: NO other button should show but ONLY "No Show"
-                      !isCompleted && !isCancelled && canMarkNoShow && (
-                        <button
-                          type="button"
-                          onClick={handleMarkNoShow}
-                          disabled={markingNoShow}
-                          className={cn(
-                            'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
-                            markingNoShow
-                              ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
-                              : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
-                          )}
-                        >
-                          {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
-                          {markingNoShow ? 'Updating…' : 'Mark No Show'}
-                        </button>
+                      // When appointment_end < current date:
+                      // "No Show" button is only for paid booking when expire.
+                      // If booking appointment time expired and booking payment_status=pending, show "Cancel" button to cancel the booking.
+                      !isCompleted && !isCancelled && (
+                        isPaymentSuccess ? (
+                          canMarkNoShow && (
+                            <button
+                              type="button"
+                              onClick={handleMarkNoShow}
+                              disabled={markingNoShow}
+                              className={cn(
+                                'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
+                                markingNoShow
+                                  ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                                  : 'border-amber-300 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60'
+                              )}
+                            >
+                              {markingNoShow ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <UserX className="h-3.5 w-3.5" />}
+                              {markingNoShow ? 'Updating…' : 'Mark No Show'}
+                            </button>
+                          )
+                        ) : (
+                          canShowCancel && (
+                            <button
+                              type="button"
+                              onClick={handleCancel}
+                              className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
+                            >
+                              Cancel Booking
+                            </button>
+                          )
+                        )
                       )
                     ) : (
                       <>

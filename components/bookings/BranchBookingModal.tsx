@@ -9,12 +9,11 @@ import {
   Store, CalendarDays, CheckCircle2, Clock, AlertCircle, X, Layers,
   Timer, Loader2, Crown, Heart, Sparkles, LayoutGrid,
   Scissors, Package, User, Phone, Mail, DollarSign, FileText,
-  ChevronLeft, ChevronRight, UserPlus, CreditCard, Link2,
+  ChevronLeft, ChevronRight, UserPlus, CreditCard,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { buildAppointmentWindow } from '@/lib/datetime';
-import { PaymentLinkPanel } from '@/components/payments/PaymentLinkPanel';
 import { MakePaymentModal } from './MakePaymentModal';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 
@@ -84,7 +83,7 @@ export interface NewBookingPayload {
   date: string;
 }
 
-export type BookingStep = 1 | 2 | 3 | 4;
+export type BookingStep = 1 | 2 | 3;
 
 export interface BranchBookingForm {
   serviceId: string;
@@ -517,14 +516,36 @@ export function NewBranchBookingModal({
       service_category: svcCategory,
       base_price:       fmtPriceB(svc.base_price),
       baseDuration,
+      service_data: {
+        service_id:       svc.id,
+        service_name:     svc.name,
+        service_category: svcCategory,
+        base_price:       fmtPriceB(svc.base_price),
+        arrangement_price: fmtPriceB(svc.arrangement_price ?? svc.base_price),
+        duration_minutes: svc.duration_minutes ?? baseDuration,
+      },
       branch_id:        arrangement.branchId,
-      branch_data: { branch_name: arrangement.branchName, branch_address: arrangement.branchName },
+      branch_data: {
+        branch_id:      arrangement.branchId,
+        branch_name:    arrangement.branchName,
+        branch_address: arrangement.branchName,
+      },
       ...(arrangement.id ? {
         service_arrangement_id:   arrangement.id,
-        service_arrangement_data: { arrangement_name: arrangement.name, arrangement_type: arrangement.arrangementType },
+        service_arrangement_data: {
+          arrangement_id:   arrangement.id,
+          arrangement_name: arrangement.name,
+          arrangement_type: arrangement.arrangementType,
+          ...(arrangement.capacity ? { capacity: arrangement.capacity } : {}),
+        },
       } : {}),
       therapist_id:   form.therapistId || null,
-      therapist_data: therapistName ? { therapist_name: therapistName } : null,
+      therapist_data: therapistName ? {
+        therapist_id:   form.therapistId || null,
+        therapist_name: therapistName,
+        ...(selectedTherapist?.avatar || selectedTherapist?.photo_url ? { photo_url: selectedTherapist.avatar || selectedTherapist.photo_url } : {}),
+        ...(selectedTherapist?.specialization || selectedTherapist?.specialties?.[0]?.name ? { specialization: selectedTherapist.specialization || selectedTherapist?.specialties?.[0]?.name } : {}),
+      } : null,
       selected_addons: selectedAddons.map((a) => ({
         id: a.id, name: a.name,
         description: (a as unknown as Record<string, string>).description ?? '',
@@ -547,9 +568,11 @@ export function NewBranchBookingModal({
       })(),
       customer_id:      form.customerId,
       customer_data: customerName ? {
+        customer_id:   form.customerId,
         customer_name: customerName,
         phone_number:  selectedCustomer?.phone_number ?? null,
         email:         selectedCustomer?.email ?? null,
+        ...(selectedCustomer?.avatar ? { avatar: selectedCustomer.avatar } : {}),
       } : null,
       customerMessage:  '',
       customer_notes:   form.notes,
@@ -564,11 +587,23 @@ export function NewBranchBookingModal({
         currency: 'KWD',
       },
       total_price: fmtPriceB(totalPrice), total_duration: totalDuration, currency: 'KWD',
-      status:         'confirmed',
-      payment_status: 'pending',
-      payment_through: 'ushdesk',
-      payment_method: paymentOption === 'pay_on_branch' ? 'on_branch' : 'pay_now',
-      source:         'ushdesk',
+      status:           'confirmed',
+      payment_status:   'pending',
+      payment_through:  'ushdesk',
+      payment_provider: null,
+      payment_gateway:  null,
+      payment_method:   paymentOption === 'pay_on_branch' ? 'on_branch' : 'pay_now',
+      source:           'ushdesk',
+      transaction_id:   null,
+      reference_id:     null,
+      invoice_id:       null,
+      invoice_number:   null,
+      invoice_reference: null,
+      receipt_image:    null,
+      transaction_date: null,
+      paid_at:          null,
+      payment_data:     null,
+      payments_data:    null,
     };
 
     try {
@@ -646,8 +681,8 @@ export function NewBranchBookingModal({
         setShowMakePayment(true);
         onSuccess();
       } else {
-        setStep(4);
         onSuccess();
+        onClose();
       }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to create booking');
@@ -706,26 +741,19 @@ export function NewBranchBookingModal({
           <div className="flex items-center gap-2">
             <Store className="h-4 w-4 text-primary" />
             <p className="text-[11px] font-bold uppercase tracking-wider text-primary">New Branch Booking</p>
-            {step < 4 && (
-              <div className="flex items-center gap-1 ml-2">
-                {([1, 2, 3] as const).map((n) => (
-                  <span key={n} className={cn(
-                    'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
-                    step === n ? 'bg-primary text-white shadow-sm' : step > n ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
-                  )}>
-                    {step > n ? <CheckCircle2 className="h-3 w-3" /> : n}
-                  </span>
-                ))}
-                <span className="text-[11px] text-muted-foreground font-medium ml-1">
-                  {step === 1 ? 'Service & Add-ons' : step === 2 ? 'Customer & Notes' : 'Payment Option'}
+            <div className="flex items-center gap-1 ml-2">
+              {([1, 2, 3] as const).map((n) => (
+                <span key={n} className={cn(
+                  'inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-extrabold transition',
+                  step === n ? 'bg-primary text-white shadow-sm' : step > n ? 'bg-emerald-500 text-white' : 'bg-muted text-muted-foreground',
+                )}>
+                  {step > n ? <CheckCircle2 className="h-3 w-3" /> : n}
                 </span>
-              </div>
-            )}
-            {step === 4 && (
-              <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-emerald-100 dark:bg-emerald-950/50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                <CheckCircle2 className="h-3 w-3" /> Booking Confirmed
+              ))}
+              <span className="text-[11px] text-muted-foreground font-medium ml-1">
+                {step === 1 ? 'Service & Add-ons' : step === 2 ? 'Customer & Notes' : 'Payment Option'}
               </span>
-            )}
+            </div>
           </div>
           <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition" aria-label="Close">
             <X className="h-4 w-4" />
@@ -1113,7 +1141,8 @@ export function NewBranchBookingModal({
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                  <label
+                  <div
+                    onClick={() => setPaymentOption('pay_on_branch')}
                     className={cn(
                       'relative flex flex-col justify-between rounded-2xl border-2 p-4 cursor-pointer transition select-none',
                       paymentOption === 'pay_on_branch'
@@ -1153,9 +1182,10 @@ export function NewBranchBookingModal({
                     <p className="text-xs text-muted-foreground leading-relaxed">
                       Booking will be confirmed immediately. The customer will pay at the branch counter when arriving or completing their appointment.
                     </p>
-                  </label>
+                  </div>
 
-                  <label
+                  <div
+                    onClick={() => setPaymentOption('pay_now')}
                     className={cn(
                       'relative flex flex-col justify-between rounded-2xl border-2 p-4 cursor-pointer transition select-none',
                       paymentOption === 'pay_now'
@@ -1195,7 +1225,7 @@ export function NewBranchBookingModal({
                     <p className="text-xs text-muted-foreground leading-relaxed">
                       Confirm booking and immediately open the payment link creator. Choose provider (MyFatoorah, etc.) and share link with customer.
                     </p>
-                  </label>
+                  </div>
                 </div>
 
                 {/* Summary card before submitting */}
@@ -1234,91 +1264,6 @@ export function NewBranchBookingModal({
                 </div>
               </div>
             )}
-
-            {/* STEP 4 */}
-            {step === 4 && bookingResult && (() => {
-              const r       = bookingResult as Record<string, unknown>;
-              const ref     = String(r.bookings_id ?? r.reference_number ?? r.booking_number ?? r.id ?? r.booking_id ?? r.pk ?? '\u2014')
-                .replace('undefined', '\u2014').replace('null', '\u2014');
-              const sName   = (r.service_name  ?? selectedService?.name ?? '\u2014') as string;
-              const bName   = (r.branch_name   ?? arrangement.branchName ?? '\u2014') as string;
-              const arrName = (r.arrangement_name ?? arrangement.name ?? '\u2014') as string;
-              const tName   = snapTherapistName || 'Not assigned';
-              const cName   = snapCustomerName  || '\u2014';
-              return (
-                <div className="px-6 py-5 space-y-4">
-                  <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-emerald-500/10 to-emerald-400/5 border border-emerald-300/40 dark:border-emerald-700/30 px-4 py-3">
-                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-emerald-500/15">
-                      <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-extrabold text-emerald-700 dark:text-emerald-300">Booking Created Successfully</p>
-                      <p className="text-[11px] text-emerald-600/70 dark:text-emerald-400/70 truncate">Ref: {ref}</p>
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-                    <div className="flex items-start gap-3 px-4 py-3">
-                      <Scissors className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
-                        <p className="text-sm font-semibold truncate">{sName}</p>
-                        {selectedService?.category && <p className="text-[11px] text-muted-foreground">{selectedService.category}</p>}
-                      </div>
-                      <p className="shrink-0 text-sm font-extrabold text-primary">{fmtPriceB(servicePrice)} KWD</p>
-                    </div>
-                    <div className="flex items-start gap-3 px-4 py-3">
-                      <Layers className="h-3.5 w-3.5 mt-0.5 shrink-0 text-sky-500" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                          {isDirect ? 'Branch' : 'Arrangement \u00b7 Branch'}
-                        </p>
-                        {!isDirect && <p className="text-sm font-semibold truncate">{arrName}</p>}
-                        <p className="text-[11px] text-muted-foreground truncate">{bName}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      { label: 'Therapist', name: tName, img: snapTherapistImg, grad: 'from-primary/80 to-accent' },
-                      { label: 'Customer',  name: cName, img: snapCustomerImg,  grad: 'from-violet-400 to-purple-600' },
-                    ].map(({ label, name, img, grad }) => (
-                      <div key={label} className="rounded-2xl border border-border/60 bg-muted/20 px-4 py-3 flex items-center gap-3">
-                        <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
-                          {img ? <img src={img} alt={name} className="h-full w-full object-cover" />
-                            : <div className={cn('h-full w-full grid place-items-center bg-gradient-to-br text-white text-xs font-bold', grad)}>{name.slice(0, 2).toUpperCase()}</div>}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{label}</p>
-                          <p className="text-xs font-semibold truncate">{name}</p>
-                          {label === 'Customer' && snapCustomerPhone && <p className="text-[10px] text-muted-foreground">{snapCustomerPhone}</p>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center gap-3 rounded-2xl border border-border/60 bg-muted/20 px-4 py-3">
-                    <CalendarDays className="h-4 w-4 shrink-0 text-violet-500" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold">{date}</p>
-                      <p className="text-[11px] text-muted-foreground">{timeSlot} · {totalDuration} min total</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
-                      <p className="text-base font-black text-primary leading-none">{fmtPriceB(totalPrice)} <span className="text-[10px] font-semibold">KWD</span></p>
-                    </div>
-                  </div>
-                  {bookingId && (
-                    <PaymentLinkPanel
-                      targetType="booking"
-                      targetId={bookingId}
-                      customerPhone={snapCustomerPhone}
-                      customerName={snapCustomerName}
-                      autoCreate
-                      onPaid={onSuccess}
-                    />
-                  )}
-                </div>
-              );
-            })()}
           </form>
         </div>
 
@@ -1367,7 +1312,7 @@ export function NewBranchBookingModal({
             )}
           </div>
           <div className="px-6 py-3 space-y-3">
-            {submitError && step !== 4 && (
+            {submitError && (
               <div className="flex items-center gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm text-destructive">
                 <AlertCircle className="h-4 w-4 shrink-0" /><span>{submitError}</span>
               </div>
@@ -1403,17 +1348,6 @@ export function NewBranchBookingModal({
                   {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
                   {submitting ? 'Confirming…' : 'Confirm Booking'}
                 </button>
-              </>)}
-              {step === 4 && (<>
-                <button type="button" onClick={onClose}
-                  className="rounded-xl border border-border/60 bg-muted/40 px-5 py-2.5 text-sm font-semibold hover:bg-muted transition">Close</button>
-                {createdBookingInfo && (
-                  <button type="button" onClick={() => setShowMakePayment(true)}
-                    className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-primary/40 bg-primary/10 px-4 py-2.5 text-sm font-bold text-primary hover:bg-primary/20 transition cursor-pointer">
-                    <Link2 className="h-4 w-4" />
-                    Payment Link
-                  </button>
-                )}
               </>)}
             </div>
           </div>

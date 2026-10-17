@@ -38,8 +38,10 @@ import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
+import { isRefundsAndFinancePermittedRole, isProcessRefundPermittedRole } from '@/lib/permissions';
 
 // ── Types & Interfaces ─────────────────────────────────────────────────────────
+
 
 interface CustomerData {
   first_name?: string;
@@ -320,12 +322,33 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
 function StatusBadge({ status }: { status: string }) {
   const s = (status || 'pending').toLowerCase();
   switch (s) {
+    case 'requested':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 border border-amber-500/20">
+          <Clock className="h-3 w-3" />
+          Requested
+        </span>
+      );
+    case 'approved':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-2.5 py-0.5 text-[11px] font-bold text-blue-700 dark:text-blue-300 border border-blue-500/20">
+          <CheckCircle2 className="h-3 w-3" />
+          Approved
+        </span>
+      );
     case 'completed':
     case 'success':
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
           <CheckCircle2 className="h-3 w-3" />
           Completed
+        </span>
+      );
+    case 'rejected':
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2.5 py-0.5 text-[11px] font-bold text-rose-700 dark:text-rose-300 border border-rose-500/20">
+          <XCircle className="h-3 w-3" />
+          Rejected
         </span>
       );
     case 'pending':
@@ -354,6 +377,9 @@ function StatusBadge({ status }: { status: string }) {
 function MethodBadge({ method }: { method: string }) {
   const m = (method || 'cash').toLowerCase();
   const map: Record<string, { label: string; cls: string }> = {
+    loyalty_points: { label: 'Loyalty Points', cls: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20' },
+    loyalty: { label: 'Loyalty Points', cls: 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20' },
+    money: { label: 'Money', cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' },
     tap: { label: 'Tap', cls: 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20' },
     knet: { label: 'KNET', cls: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20' },
     card: { label: 'Credit Card', cls: 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20' },
@@ -369,6 +395,7 @@ function MethodBadge({ method }: { method: string }) {
     </span>
   );
 }
+
 
 function TypeBadge({ type }: { type: string }) {
   const t = (type || 'manual').toLowerCase();
@@ -386,9 +413,495 @@ function TypeBadge({ type }: { type: string }) {
   );
 }
 
+// ── Action Modals: Approve, Reject, Process ────────────────────────────────────
+
+function ApproveRefundModal({
+  refund,
+  onClose,
+  onSuccess,
+}: {
+  refund: RefundItem;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const currentUser = useAppSelector((s) => s.auth.user);
+  const [refundMethod, setRefundMethod] = useState<'loyalty_points' | 'money'>('loyalty_points');
+  const [amount, setAmount] = useState<string>(String(refund.requested_amount || refund.refunded_amount || '0'));
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const customerName = getCustomerName(refund);
+  const bookingNumber = getBookingNumber(refund);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const num = parseFloat(amount);
+    if (isNaN(num) || num <= 0) {
+      setError('Please enter a valid positive amount.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/refunds/${refund.id}/approve/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          refund_method: refundMethod,
+          approved_amount: num,
+          notes: notes.trim() || undefined,
+          change_by_user: currentUser?.id || currentUser?.name || 'Staff',
+          change_by_user_data: currentUser
+            ? {
+                id: currentUser.id,
+                name: currentUser.name,
+                email: currentUser.email,
+                role: currentUser.user_type,
+              }
+            : undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || j.message || 'Failed to approve refund.');
+      }
+
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error approving refund.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="relative w-full max-w-md rounded-3xl bg-card border border-border/60 shadow-2xl overflow-hidden p-6 space-y-5 animate-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-blue-100 dark:bg-blue-950/50 flex items-center justify-center text-blue-600 dark:text-blue-400">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Approve Refund</h3>
+              <p className="text-xs text-muted-foreground font-mono">#{refund.refund_number}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/40 hover:bg-muted text-muted-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="rounded-2xl bg-muted/40 p-3.5 space-y-1.5 text-xs">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Customer:</span>
+            <span className="font-semibold text-foreground">{customerName}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Booking Ref:</span>
+            <span className="font-mono font-semibold text-foreground">{bookingNumber || '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Requested Amount:</span>
+            <span className="font-bold text-foreground">{money(refund.requested_amount, refund.currency)}</span>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-foreground">Refund Method</label>
+            <div className="grid grid-cols-2 gap-3">
+              <label
+                className={cn(
+                  'flex items-center gap-3 p-3 rounded-2xl border cursor-pointer transition select-none',
+                  refundMethod === 'loyalty_points'
+                    ? 'border-purple-500 bg-purple-500/10 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/20'
+                    : 'border-border/60 bg-card hover:bg-muted/40 text-foreground'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="refund_method"
+                  value="loyalty_points"
+                  checked={refundMethod === 'loyalty_points'}
+                  onChange={() => setRefundMethod('loyalty_points')}
+                  className="h-4 w-4 text-purple-600 focus:ring-purple-500 cursor-pointer"
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold">Loyalty Points</p>
+                  <p className="text-[10px] text-muted-foreground">Default option</p>
+                </div>
+              </label>
+
+              <label
+                className={cn(
+                  'flex items-center gap-3 p-3 rounded-2xl border cursor-pointer transition select-none',
+                  refundMethod === 'money'
+                    ? 'border-emerald-500 bg-emerald-50/10 text-emerald-700 dark:text-emerald-300 ring-2 ring-emerald-500/20'
+                    : 'border-border/60 bg-card hover:bg-muted/40 text-foreground'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="refund_method"
+                  value="money"
+                  checked={refundMethod === 'money'}
+                  onChange={() => setRefundMethod('money')}
+                  className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-bold">Money</p>
+                  <p className="text-[10px] text-muted-foreground">Provider return</p>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">
+              {refundMethod === 'loyalty_points' ? 'Approved Points Amount' : `Approved Money Amount (${refund.currency})`}
+            </label>
+            <input
+              type="number"
+              step={refundMethod === 'loyalty_points' ? '1' : '0.001'}
+              min="0"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="h-10 w-full rounded-xl border border-border/60 bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
+              required
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {refundMethod === 'loyalty_points'
+                ? 'Loyalty points will be credited to the customer account upon execution.'
+                : 'A credit note will be issued in ushanr. Provider refund will execute upon processing.'}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">Notes (optional)</label>
+            <textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Internal manager approval notes..."
+              className="w-full rounded-xl border border-border/60 bg-background p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none"
+            />
+          </div>
+
+          {error && (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="rounded-xl border border-border/60 bg-muted/30 px-4 py-2 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
+            >
+              {submitting ? 'Approving…' : 'Approve Refund'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function RejectRefundModal({
+  refund,
+  onClose,
+  onSuccess,
+}: {
+  refund: RefundItem;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const currentUser = useAppSelector((s) => s.auth.user);
+  const [reason, setReason] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const customerName = getCustomerName(refund);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/refunds/${refund.id}/reject/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason: reason.trim() || undefined,
+          change_by_user: currentUser?.id || currentUser?.name || 'Staff',
+          change_by_user_data: currentUser
+            ? {
+                id: currentUser.id,
+                name: currentUser.name,
+                email: currentUser.email,
+                role: currentUser.user_type,
+              }
+            : undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || j.message || 'Failed to reject refund.');
+      }
+
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error rejecting refund.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="relative w-full max-w-md rounded-3xl bg-card border border-border/60 shadow-2xl overflow-hidden p-6 space-y-5 animate-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400">
+              <XCircle className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Reject Refund</h3>
+              <p className="text-xs text-muted-foreground font-mono">#{refund.refund_number}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/40 hover:bg-muted text-muted-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          Are you sure you want to reject the refund request for <strong>{customerName}</strong> ({money(refund.requested_amount, refund.currency)})?
+        </p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-foreground">Rejection Reason</label>
+            <textarea
+              rows={3}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="State reason for rejecting refund request..."
+              className="w-full rounded-xl border border-border/60 bg-background p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-rose-500/30 resize-none"
+            />
+          </div>
+
+          {error && (
+            <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="rounded-xl border border-border/60 bg-muted/30 px-4 py-2 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
+            >
+              {submitting ? 'Rejecting…' : 'Confirm Reject'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ProcessRefundModal({
+  refund,
+  onClose,
+  onSuccess,
+}: {
+  refund: RefundItem;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const currentUser = useAppSelector((s) => s.auth.user);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const customerName = getCustomerName(refund);
+  const bookingNumber = getBookingNumber(refund);
+  const isLoyalty = refund.refund_method === 'loyalty_points' || refund.refund_method === 'loyalty';
+
+  const handleConfirm = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/refunds/${refund.id}/process/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notes: `Processed by ${currentUser?.name || 'staff'}`,
+          change_by_user: currentUser?.id || currentUser?.name || 'Staff',
+          change_by_user_data: currentUser
+            ? {
+                id: currentUser.id,
+                name: currentUser.name,
+                email: currentUser.email,
+                role: currentUser.user_type,
+              }
+            : undefined,
+        }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || j.message || 'Failed to process refund.');
+      }
+
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error processing refund.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+      <div className="relative w-full max-w-md rounded-3xl bg-card border border-border/60 shadow-2xl overflow-hidden p-6 space-y-5 animate-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/50 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+              <RotateCcw className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Process Refund</h3>
+              <p className="text-xs text-muted-foreground font-mono">#{refund.refund_number}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/40 hover:bg-muted text-muted-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="rounded-2xl bg-muted/40 p-4 space-y-2 text-xs">
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Customer:</span>
+            <span className="font-semibold text-foreground">{customerName}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Booking Ref:</span>
+            <span className="font-mono font-semibold text-foreground">{bookingNumber || '—'}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Approved Method:</span>
+            <span className="font-bold capitalize text-primary">
+              {isLoyalty ? 'Loyalty Points' : 'Money'}
+            </span>
+          </div>
+          <div className="flex justify-between border-t border-border/40 pt-2">
+            <span className="text-muted-foreground font-medium">Return Amount:</span>
+            <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
+              {isLoyalty ? `${refund.refunded_amount} Points` : money(refund.refunded_amount, refund.currency)}
+            </span>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-50/50 dark:bg-emerald-950/30 p-3.5 text-xs text-emerald-900 dark:text-emerald-200 space-y-1">
+          <p className="font-bold flex items-center gap-1.5">
+            <Info className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            Execution Confirmation:
+          </p>
+          <p className="leading-relaxed">
+            {isLoyalty
+              ? `This will credit ${refund.refunded_amount} points to ${customerName}'s account, set booking payment status back to success, and mark the refund as completed.`
+              : `This will dispatch the refund request of ${money(refund.refunded_amount, refund.currency)} to the payment provider, record outbound payment on the credit note, and mark the refund as completed upon provider settlement.`}
+          </p>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2.5 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-xl border border-border/60 bg-muted/30 px-4 py-2 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={submitting}
+            className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
+          >
+            {submitting ? 'Processing…' : 'Confirm & Process Refund'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Detail Modal ──────────────────────────────────────────────────────────────
 
-function RefundDetailModal({ refund, onClose }: { refund: RefundItem; onClose: () => void }) {
+function RefundDetailModal({
+  refund,
+  onClose,
+  canApproveReject,
+  canProcessRefund,
+  onApprove,
+  onReject,
+  onProcess,
+}: {
+  refund: RefundItem;
+  onClose: () => void;
+  canApproveReject?: boolean;
+  canProcessRefund?: boolean;
+  onApprove?: (r: RefundItem) => void;
+  onReject?: (r: RefundItem) => void;
+  onProcess?: (r: RefundItem) => void;
+}) {
+
   const [detail, setDetail] = useState<RefundItem>(refund);
   const [fetchedStaff, setFetchedStaff] = useState<{ name?: string; phone?: string } | null>(null);
 
@@ -663,11 +1176,41 @@ function RefundDetailModal({ refund, onClose }: { refund: RefundItem; onClose: (
         </div>
 
         {/* Footer */}
-        <div className="flex shrink-0 items-center justify-end border-t border-border/60 px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-t border-border/60 px-6 py-4">
+          <div className="flex items-center gap-2">
+            {detail.status === 'requested' && canApproveReject && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onReject?.(detail)}
+                  className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer"
+                >
+                  Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onApprove?.(detail)}
+                  className="rounded-xl bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-xs font-bold shadow-sm transition cursor-pointer"
+                >
+                  Approve Refund
+                </button>
+              </>
+            )}
+            {detail.status === 'approved' && canProcessRefund && (
+              <button
+                type="button"
+                onClick={() => onProcess?.(detail)}
+                className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-bold shadow-sm transition cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Process Refund
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             type="button"
-            className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow transition hover:opacity-90"
+            className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-primary-foreground shadow transition hover:opacity-90 cursor-pointer"
           >
             Close
           </button>
@@ -683,6 +1226,15 @@ export default function RefundsPage() {
   const token = useAppSelector((s) => s.auth.token);
   const initialized = useAppSelector((s) => s.auth.initialized);
   const locale = useAppSelector((s) => s.ui.locale);
+  const currentUser = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
+
+  const canApproveReject = isRefundsAndFinancePermittedRole(roleInfo, currentUser);
+  const canProcessRefund = isProcessRefundPermittedRole(roleInfo, currentUser);
+
+  const [approveTarget, setApproveTarget] = useState<RefundItem | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<RefundItem | null>(null);
+  const [processTarget, setProcessTarget] = useState<RefundItem | null>(null);
 
   // View state
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -690,7 +1242,7 @@ export default function RefundsPage() {
 
   // Filters state
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'pending' | 'failed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'requested' | 'approved' | 'completed' | 'rejected' | 'pending' | 'failed'>('all');
   const [typeFilter, setTypeFilter] = useState<'all' | 'manual' | 'gateway'>('all');
   const [methodFilter, setMethodFilter] = useState<string>('all');
 
@@ -963,7 +1515,10 @@ export default function RefundsPage() {
             {(
               [
                 ['all', 'All Statuses'],
+                ['requested', 'Requested'],
+                ['approved', 'Approved'],
                 ['completed', 'Completed'],
+                ['rejected', 'Rejected'],
                 ['pending', 'Pending'],
                 ['failed', 'Failed'],
               ] as const
@@ -1054,6 +1609,8 @@ export default function RefundsPage() {
               className="h-9 w-full rounded-xl border border-border/60 bg-background px-3 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
             >
               <option value="all">All Methods</option>
+              <option value="loyalty_points">Loyalty Points</option>
+              <option value="money">Money</option>
               <option value="cash">Cash</option>
               <option value="tap">Tap</option>
               <option value="knet">KNET</option>
@@ -1107,9 +1664,9 @@ export default function RefundsPage() {
                   <th className="px-4 py-3">Customer</th>
                   <th className="px-4 py-3">Booking Ref</th>
                   <th className="px-4 py-3">Type & Method</th>
-                  <th className="px-4 py-3 text-right">Requested</th>
-                  <th className="px-4 py-3 text-right">Net Refunded</th>
-                  <th className="px-4 py-3 text-right">Status</th>
+                  <th className="px-4 py-3 text-right">Requested & Net</th>
+                  <th className="px-4 py-3 text-center">Status</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
@@ -1176,19 +1733,65 @@ export default function RefundsPage() {
                         </div>
                       </td>
 
-                      {/* Requested */}
-                      <td className="px-4 py-3 text-right tabular-nums text-muted-foreground whitespace-nowrap">
-                        {money(r.requested_amount, r.currency)}
-                      </td>
-
-                      {/* Net Refunded */}
-                      <td className="px-4 py-3 text-right tabular-nums font-black text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                        {money(r.refunded_amount, r.currency)}
+                      {/* Requested & Net Refund */}
+                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="font-black text-emerald-600 dark:text-emerald-400">
+                            {money(r.refunded_amount, r.currency)}
+                          </span>
+                          <span className="text-[11px] text-muted-foreground">
+                            Req: {money(r.requested_amount, r.currency)}
+                          </span>
+                        </div>
                       </td>
 
                       {/* Status */}
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <td className="px-4 py-3 text-center whitespace-nowrap">
                         <StatusBadge status={r.status} />
+                      </td>
+
+                      {/* Actions */}
+                      <td
+                        className="px-4 py-3 text-right whitespace-nowrap"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-end gap-1.5">
+                          {r.status === 'requested' && canApproveReject ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setRejectTarget(r)}
+                                className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer"
+                              >
+                                Reject
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setApproveTarget(r)}
+                                className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-xs transition cursor-pointer"
+                              >
+                                Approve
+                              </button>
+                            </>
+                          ) : r.status === 'approved' && canProcessRefund ? (
+                            <button
+                              type="button"
+                              onClick={() => setProcessTarget(r)}
+                              className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-xs transition cursor-pointer flex items-center gap-1"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              Process
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRefund(r)}
+                              className="rounded-lg bg-muted px-2.5 py-1 text-[11px] font-bold text-muted-foreground hover:bg-muted/80 hover:text-foreground transition cursor-pointer"
+                            >
+                              View
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1244,22 +1847,50 @@ export default function RefundsPage() {
                     </div>
                   </div>
 
-                  <div className="border-t border-border/40 pt-3 flex items-center justify-between">
+                  <div className="border-t border-border/40 pt-3 flex items-center justify-between gap-2">
                     <div>
                       <span className="text-[10px] uppercase font-bold text-muted-foreground block">Refunded</span>
                       <span className="font-black text-sm text-emerald-600 dark:text-emerald-400">
                         {money(r.refunded_amount, r.currency)}
                       </span>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedRefund(r);
-                      }}
-                      className="rounded-lg bg-muted px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground transition"
-                    >
-                      Details
-                    </button>
+                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                      {r.status === 'requested' && canApproveReject ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => setRejectTarget(r)}
+                            className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer"
+                          >
+                            Reject
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setApproveTarget(r)}
+                            className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-xs font-bold shadow-xs transition cursor-pointer"
+                          >
+                            Approve
+                          </button>
+                        </>
+                      ) : r.status === 'approved' && canProcessRefund ? (
+                        <button
+                          type="button"
+                          onClick={() => setProcessTarget(r)}
+                          className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 text-xs font-bold shadow-xs transition cursor-pointer flex items-center gap-1"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          Process
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRefund(r)}
+                          className="rounded-lg bg-muted px-3 py-1 text-xs font-bold hover:bg-primary hover:text-primary-foreground transition cursor-pointer"
+                        >
+                          Details
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -1313,9 +1944,60 @@ export default function RefundsPage() {
         )}
       </div>
 
+      {/* Action Modals */}
+      {approveTarget && (
+        <ApproveRefundModal
+          refund={approveTarget}
+          onClose={() => setApproveTarget(null)}
+          onSuccess={() => {
+            refetch();
+            if (selectedRefund?.id === approveTarget.id) setSelectedRefund(null);
+          }}
+        />
+      )}
+
+      {rejectTarget && (
+        <RejectRefundModal
+          refund={rejectTarget}
+          onClose={() => setRejectTarget(null)}
+          onSuccess={() => {
+            refetch();
+            if (selectedRefund?.id === rejectTarget.id) setSelectedRefund(null);
+          }}
+        />
+      )}
+
+      {processTarget && (
+        <ProcessRefundModal
+          refund={processTarget}
+          onClose={() => setProcessTarget(null)}
+          onSuccess={() => {
+            refetch();
+            if (selectedRefund?.id === processTarget.id) setSelectedRefund(null);
+          }}
+        />
+      )}
+
       {/* Detail Modal */}
       {selectedRefund && (
-        <RefundDetailModal refund={selectedRefund} onClose={() => setSelectedRefund(null)} />
+        <RefundDetailModal
+          refund={selectedRefund}
+          onClose={() => setSelectedRefund(null)}
+          canApproveReject={canApproveReject}
+          canProcessRefund={canProcessRefund}
+          onApprove={(r) => {
+            setSelectedRefund(null);
+            setApproveTarget(r);
+          }}
+          onReject={(r) => {
+            setSelectedRefund(null);
+            setRejectTarget(r);
+          }}
+          onProcess={(r) => {
+            setSelectedRefund(null);
+            setProcessTarget(r);
+          }}
+        />
       )}
     </DashboardShell>
   );

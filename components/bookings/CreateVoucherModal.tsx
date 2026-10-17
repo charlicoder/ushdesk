@@ -1163,14 +1163,29 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const handleSelectRecipient = (c: Customer) => {
     setRecipient(c);
     setRecipientName(customerLabel(c));
-    const rawPhone = customerPhone(c);
+    let rawPhone = (customerPhone(c) || '').trim();
     if (rawPhone) {
       const matched = COUNTRY_CODES.find((item) => rawPhone.startsWith(item.code));
       if (matched) {
         setRecipientCountryCode(matched.code);
         setRecipientPhone(rawPhone.slice(matched.code.length).trim());
+      } else if (rawPhone.startsWith('00')) {
+        const without00 = '+' + rawPhone.slice(2);
+        const matched00 = COUNTRY_CODES.find((item) => without00.startsWith(item.code));
+        if (matched00) {
+          setRecipientCountryCode(matched00.code);
+          setRecipientPhone(without00.slice(matched00.code.length).trim());
+        } else {
+          setRecipientPhone(rawPhone);
+        }
       } else {
-        setRecipientPhone(rawPhone.trim());
+        const matchedNoPlus = COUNTRY_CODES.find((item) => rawPhone.startsWith(item.code.replace('+', '')));
+        if (matchedNoPlus) {
+          setRecipientCountryCode(matchedNoPlus.code);
+          setRecipientPhone(rawPhone.slice(matchedNoPlus.code.replace('+', '').length).trim());
+        } else {
+          setRecipientPhone(rawPhone);
+        }
       }
     }
     if (c.email) setRecipientEmail(c.email);
@@ -1258,7 +1273,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const stepCategoryValid = !!selectedCategory;
   const stepProductValid = !isPhysical || !!selectedProduct;
   const stepServiceValid = !!selectedService && !!selectedBranch && !!selectedArrangt && !detailLoading;
-  const stepRecipientValid = recipientName.trim().length > 0 && recipientPhone.trim().length > 0;
+  const effectiveRecipientPhone = recipientPhone.trim() || (recipient ? (customerPhone(recipient) || '').trim() : '');
+  const stepRecipientValid = recipientName.trim().length > 0 && (effectiveRecipientPhone.length > 0 || !!recipient);
 
   // ── Navigation Logic ──
   const serviceStepNumber = isPhysical ? 3 : 2;
@@ -1294,15 +1310,15 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     }
   };
 
-  const cleanPhoneDigits = recipientPhone.replace(/\D/g, '');
+  const cleanPhoneDigits = effectiveRecipientPhone.replace(/\D/g, '');
   const cleanCodeDigits = recipientCountryCode.replace(/\D/g, '');
-  let computedRecipientPhone = recipientPhone.trim();
+  let computedRecipientPhone = effectiveRecipientPhone;
   if (computedRecipientPhone) {
     if (computedRecipientPhone.startsWith('+')) {
       computedRecipientPhone = `+${cleanPhoneDigits}`;
-    } else if (cleanPhoneDigits.startsWith(cleanCodeDigits)) {
+    } else if (cleanCodeDigits && cleanPhoneDigits.startsWith(cleanCodeDigits)) {
       computedRecipientPhone = `+${cleanPhoneDigits}`;
-    } else {
+    } else if (effectiveRecipientPhone) {
       computedRecipientPhone = `${recipientCountryCode}${cleanPhoneDigits}`;
     }
   }
@@ -1964,38 +1980,25 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
-                      Recipient Phone Number <span className="text-red-500">*</span>
-                    </label>
-                    <div className="flex gap-2">
-                      <div className="relative shrink-0 w-[120px]">
-                        <select
-                          value={recipientCountryCode}
-                          onChange={(e) => setRecipientCountryCode(e.target.value)}
-                          className="w-full h-10 rounded-xl border pl-2.5 pr-7 text-xs font-semibold outline-none transition focus:border-primary cursor-pointer appearance-none"
-                          style={{ borderColor: B.linen, background: B.cardBg, color: B.textMain }}
-                          aria-label="Country Code"
-                        >
-                          {COUNTRY_CODES.map((c) => (
-                            <option key={c.code + c.country} value={c.code} className="py-1">
-                              {c.flag} {c.code}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none opacity-60" />
-                      </div>
-                      <div className="relative flex-1 flex items-center gap-2 rounded-xl border px-3.5 h-10" style={{ borderColor: B.linen }}>
-                        <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
-                        <input
-                          type="tel"
-                          value={recipientPhone}
-                          onChange={(e) => setRecipientPhone(e.target.value)}
-                          placeholder="9000 0000"
-                          className="flex-1 bg-transparent text-sm outline-none font-medium"
-                        />
-                      </div>
-                    </div>
+                  {/* Or pick from customer DB for recipient */}
+                  <div className="pt-2 border-t" style={{ borderColor: B.lineMuted }}>
+                    <CustomerPicker
+                      label="Or pick from customer database"
+                      value={recipient}
+                      onSelect={(c) => handleSelectRecipient(c)}
+                      onClear={() => {
+                        setRecipient(null);
+                        setRecipientName('');
+                        setRecipientPhone('');
+                        setRecipientEmail('');
+                      }}
+                      onCreateNew={() => {
+                        setCreateForRole('recipient');
+                        setShowCreateCustomer(true);
+                      }}
+                      authHeader={authHeader}
+                      injectedCustomer={injectedCustomer}
+                    />
                   </div>
 
                   <div>

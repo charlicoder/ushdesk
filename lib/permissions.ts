@@ -206,6 +206,50 @@ export function isRefundsAndFinancePermittedRole(
 }
 
 /**
+ * Checks whether the current user has the Branch Manager role.
+ */
+export function isBranchManagerRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  if (roleInfo?.is_branch_manager === true) return true;
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['branch manager', 'branchmanager'];
+  return candidates.some((c) =>
+    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
+  );
+}
+
+/**
+ * Checks whether the current user has the Customer Support Manager role.
+ */
+export function isCustomerSupportManagerRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['customer support manager', 'customersupportmanager', 'customer support', 'support manager'];
+  return candidates.some((c) =>
+    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
+  );
+}
+
+/**
+ * Checks whether the user is in one of the roles granted access to
+ * Process Refund button:
+ * - Administrator
+ * - Spa Director
+ * - Finance Manager
+ * - Branch Manager
+ * - Customer Support Manager
+ */
+export function isProcessRefundPermittedRole(
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  return (
+    isRefundsAndFinancePermittedRole(roleInfo, user) ||
+    isBranchManagerRole(roleInfo, user) ||
+    isCustomerSupportManagerRole(roleInfo, user)
+  );
+}
+
+
+/**
  * Checks whether a given permission corresponds to the Refunds submenu
  * or any Finance menu / submenu.
  */
