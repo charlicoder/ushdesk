@@ -773,22 +773,28 @@ export function BookingDetailPopup({
 
     const daysCount = rescheduleDaysCount;
 
+    const isUUID = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
+    const canFetch = isUUID(serviceId) && isUUID(branchId);
+
     // Send API request: /uauth/api/v1/find-availabilities-for-reschedule-appointment/?service_id=<service_id>&arrangement_type=<arrangement_type>&branch_id=<branch_id>&date=<current appointment booking date>&days_count=<days_count>
     const qs = new URLSearchParams({
       service_id: serviceId,
       arrangement_type: arrangementType,
       branch_id: branchId,
       date: appointmentDate,
+      day_counts: String(daysCount),
       days_count: String(daysCount),
     });
     const endpoint = `/uauth/api/v1/find-availabilities-for-reschedule-appointment/?${qs.toString()}`;
 
-    const fetchPromise = authedFetch(endpoint)
-      .then((r) => r.json().catch(() => ({})))
-      .catch((err) => {
-        console.error('Error finding availabilities for reschedule:', err);
-        return null;
-      });
+    const fetchPromise = canFetch
+      ? authedFetch(endpoint)
+          .then((r) => r.json().catch(() => ({})))
+          .catch((err) => {
+            console.error('Error finding availabilities for reschedule:', err);
+            return null;
+          })
+      : undefined;
 
     setRescheduleFetchState({
       params: {
@@ -842,22 +848,28 @@ export function BookingDetailPopup({
 
     const daysCount = rescheduleDaysCount;
 
+    const isUUID = (val?: string) => Boolean(val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()));
+    const canFetch = isUUID(serviceId) && isUUID(branchId);
+
     // Send API request: /uauth/api/v1/find-availabilities-for-reschedule-appointment/?service_id=<service_id>&arrangement_type=<arrangement_type>&branch_id=<branch_id>&date=<current appointment booking date>&days_count=<days_count>
     const qs = new URLSearchParams({
       service_id: serviceId,
       arrangement_type: arrangementType,
       branch_id: branchId,
       date: appointmentDate,
+      day_counts: String(daysCount),
       days_count: String(daysCount),
     });
     const endpoint = `/uauth/api/v1/find-availabilities-for-reschedule-appointment/?${qs.toString()}`;
 
-    const fetchPromise = authedFetch(endpoint)
-      .then((r) => r.json().catch(() => ({})))
-      .catch((err) => {
-        console.error('Error finding availabilities for update booking:', err);
-        return null;
-      });
+    const fetchPromise = canFetch
+      ? authedFetch(endpoint)
+          .then((r) => r.json().catch(() => ({})))
+          .catch((err) => {
+            console.error('Error finding availabilities for update booking:', err);
+            return null;
+          })
+      : undefined;
 
     setUpdateFetchState({
       params: {
@@ -1070,13 +1082,28 @@ export function BookingDetailPopup({
       (isConfirmedStatus && isPendingPayment)
     );
 
+  const voucherNumber =
+    (detail as any)?.voucher_number ??
+    (booking as any)?.voucher_number ??
+    (booking?.raw as any)?.voucher_number ??
+    (detail?.voucher_data as any)?.voucher_number ??
+    (booking as any)?.voucher_data?.voucher_number ??
+    (booking?.raw as any)?.voucher_data?.voucher_number ??
+    (detail?.payment_data as any)?.voucher_number ??
+    (booking as any)?.payment_data?.voucher_number ??
+    (booking?.raw as any)?.payment_data?.voucher_number ??
+    null;
+  const isVoucherBooking = Boolean(voucherNumber && String(voucherNumber).trim() !== '' && String(voucherNumber).trim() !== 'null');
+
   // Cancel button rules:
   // 1. For a paid booking that is payment_status=success user(employees) can cancel booking at least 3 hours before the appointment_start time to get refund
   // 2. For unpaid / pending bookings:
   //    i. For (Administrator, Spa Director, Finance Manager) roles cancel button visible until appointment_end time is greater than current time
   //    ii. For all other users roles cancel button is visible until 3 hours before the appointment_start time
   // 3. If a booking appointment time expired and booking payment_status=pending don't show "no show" button but "cancel" button to cancel the booking. "No Show" button is only for paid booking when expire.
+  // 4. If booking is made through voucher redeem (voucher_number is not null), don't show cancel booking because gift vouchers are not refunded.
   const canShowCancel = (() => {
+    if (isVoucherBooking) return false;
     if (isNoShow || isCancelled || isCompleted) return false;
     const now = Date.now();
 
@@ -1233,7 +1260,7 @@ export function BookingDetailPopup({
   // Cancel booking — opens BookingCancellationModal which handles all accounting steps
   const handleCancel = () => {
     if (!booking) return;
-    if (!canShowCancel) return;
+    if (!canShowCancel || isVoucherBooking) return;
     if (callCenterCancelBlocked && !isPastApptEnd) {
       setCancelError(
         AGENT_BLOCK_REASON || 'Call Center Agents cannot cancel bookings within 6 hours of the appointment.'

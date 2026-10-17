@@ -4,7 +4,8 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   CalendarDays, Clock, Building2, MapPin, Scissors,
   AlertCircle, CheckCircle2, Loader2, X, Hash, CreditCard,
-  User, Sparkles, Crown, Heart, LayoutGrid, Layers, Store, RefreshCw, Gift
+  User, Sparkles, Crown, Heart, LayoutGrid, Layers, Store, RefreshCw, Gift,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -138,6 +139,174 @@ function parseTimeToMinutes(str: string): number {
     return parseInt(match24[1], 10) * 60 + parseInt(match24[2], 10);
   }
   return 0;
+}
+
+function VoucherCalendarPicker({
+  value,
+  onChange,
+  minDate,
+  maxDate,
+}: {
+  value: string;
+  onChange: (d: string) => void;
+  minDate?: string;
+  maxDate?: string;
+}) {
+  const todayStr = kuwaitDateString();
+  const initial = value ? new Date(value + 'T00:00:00') : new Date();
+  const [viewYear, setViewYear] = useState(initial.getFullYear());
+  const [viewMonth, setViewMonth] = useState(initial.getMonth());
+
+  useEffect(() => {
+    if (value) {
+      const d = new Date(value + 'T00:00:00');
+      if (!isNaN(d.getTime())) {
+        setViewYear(d.getFullYear());
+        setViewMonth(d.getMonth());
+      }
+    }
+  }, [value]);
+
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const monthName = new Date(viewYear, viewMonth, 1).toLocaleString('en-US', {
+    month: 'long',
+    year: 'numeric',
+  });
+
+  const prevMonth = () => {
+    if (viewMonth === 0) {
+      setViewMonth(11);
+      setViewYear((y) => y - 1);
+    } else {
+      setViewMonth((m) => m - 1);
+    }
+  };
+
+  const nextMonth = () => {
+    if (viewMonth === 11) {
+      setViewMonth(0);
+      setViewYear((y) => y + 1);
+    } else {
+      setViewMonth((m) => m + 1);
+    }
+  };
+
+  const canGoPrev = useMemo(() => {
+    if (!minDate) return true;
+    const minD = new Date(minDate + 'T00:00:00');
+    const firstOfCurrent = new Date(viewYear, viewMonth, 1);
+    return firstOfCurrent > new Date(minD.getFullYear(), minD.getMonth(), 1);
+  }, [minDate, viewYear, viewMonth]);
+
+  const canGoNext = useMemo(() => {
+    if (!maxDate) return true;
+    const maxD = new Date(maxDate + 'T00:00:00');
+    const lastOfCurrent = new Date(viewYear, viewMonth + 1, 0);
+    return lastOfCurrent < maxD;
+  }, [maxDate, viewYear, viewMonth]);
+
+  const blanks = Array.from({ length: firstDay });
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+
+  return (
+    <div className="rounded-2xl border border-border/70 bg-card p-3 sm:p-4 shadow-sm select-none">
+      {/* Month Navigation */}
+      <div className="mb-3 flex items-center justify-between">
+        <button
+          type="button"
+          onClick={prevMonth}
+          disabled={!canGoPrev}
+          className={cn(
+            'grid h-8 w-8 place-items-center rounded-xl border border-border/60 transition cursor-pointer',
+            canGoPrev ? 'hover:bg-muted text-foreground' : 'opacity-25 cursor-not-allowed text-muted-foreground'
+          )}
+          title="Previous month"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+
+        <div className="flex items-center gap-2">
+          <p className="text-xs sm:text-sm font-bold text-foreground">{monthName}</p>
+          {todayStr && (
+            <button
+              type="button"
+              onClick={() => {
+                const t = new Date(todayStr + 'T00:00:00');
+                setViewYear(t.getFullYear());
+                setViewMonth(t.getMonth());
+                onChange(todayStr);
+              }}
+              className="text-[10px] font-semibold text-primary hover:underline px-2 py-0.5 rounded-md bg-primary/10 transition cursor-pointer"
+            >
+              Today
+            </button>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={nextMonth}
+          disabled={!canGoNext}
+          className={cn(
+            'grid h-8 w-8 place-items-center rounded-xl border border-border/60 transition cursor-pointer',
+            canGoNext ? 'hover:bg-muted text-foreground' : 'opacity-25 cursor-not-allowed text-muted-foreground'
+          )}
+          title="Next month"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
+
+      {/* Weekday headers */}
+      <div className="mb-1.5 grid grid-cols-7 text-center">
+        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) => (
+          <span key={d} className="text-[10px] font-bold text-muted-foreground py-0.5">
+            {d}
+          </span>
+        ))}
+      </div>
+
+      {/* Days grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {blanks.map((_, i) => (
+          <span key={`b-${i}`} className="h-8 w-8 mx-auto" />
+        ))}
+        {days.map((d) => {
+          const mm = String(viewMonth + 1).padStart(2, '0');
+          const dd = String(d).padStart(2, '0');
+          const dateStr = `${viewYear}-${mm}-${dd}`;
+
+          const isSel = value === dateStr;
+          const isToday = todayStr === dateStr;
+          const isDisabled =
+            (Boolean(minDate) && dateStr < minDate!) ||
+            (Boolean(maxDate) && dateStr > maxDate!);
+
+          return (
+            <button
+              key={d}
+              type="button"
+              disabled={isDisabled}
+              onClick={() => onChange(dateStr)}
+              className={cn(
+                'h-8 w-8 mx-auto rounded-xl text-xs font-semibold transition flex items-center justify-center',
+                isDisabled
+                  ? 'opacity-25 cursor-not-allowed text-muted-foreground pointer-events-none'
+                  : isSel
+                  ? 'bg-primary text-primary-foreground font-bold shadow-sm'
+                  : isToday
+                  ? 'border border-primary text-primary font-bold hover:bg-primary/10 cursor-pointer'
+                  : 'hover:bg-muted text-foreground cursor-pointer'
+              )}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 export function RedeemVoucherModal({
@@ -787,7 +956,24 @@ export function RedeemVoucherModal({
       const voucherUpdatePayload = {
         status: 'redeemed',
         booking_id: newBookingId,
-        booking_data: newBooking,
+        redeemed_booking_id: newBookingId,
+        booking_data: {
+          ...(newBooking && typeof newBooking === 'object' ? newBooking : {}),
+          id: newBookingId,
+          booking_id: newBookingId,
+          booking_number: newBooking?.booking_number || newBooking?.booking_no,
+          appointment_date: selectedDate,
+          appointment_time: selectedTimeSlot,
+          therapist_id: selectedTherapistId,
+          therapist_name: therapistName,
+          therapist_data: selectedTherapist,
+          branch_id: selectedBranchId,
+          branch_name: branchName,
+          branch_data: { branch_id: selectedBranchId, name: branchName },
+          service_arrangement_id: selectedRoomId,
+          arrangement_name: roomName,
+          service_arrangement_data: selRoom,
+        },
         redeemed_by: currentUser?.id,
       };
 
@@ -1059,35 +1245,13 @@ export function RedeemVoucherModal({
                       </span>
                     </div>
 
-                    {/* Scrollable Horizontal Date Chips */}
-                    <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-                      {dateOptions.map((opt) => {
-                        const isSel = opt.dateStr === selectedDate;
-                        return (
-                          <button
-                            key={opt.dateStr}
-                            type="button"
-                            onClick={() => setSelectedDate(opt.dateStr)}
-                            className={cn(
-                              'flex flex-col items-center justify-center shrink-0 w-16 py-2 px-1 rounded-2xl border transition cursor-pointer text-center',
-                              isSel
-                                ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                                : 'border-border/60 bg-muted/20 hover:bg-muted/40 text-foreground'
-                            )}
-                          >
-                            <span className={cn('text-[10px] font-bold uppercase', isSel ? 'text-primary-foreground/80' : 'text-muted-foreground')}>
-                              {opt.weekday}
-                            </span>
-                            <span className="text-base font-extrabold mt-0.5">{opt.dayNum}</span>
-                            {opt.isToday && (
-                              <span className={cn('text-[9px] font-semibold mt-0.5', isSel ? 'text-primary-foreground/90' : 'text-primary')}>
-                                Today
-                              </span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    {/* Interactive Calendar View */}
+                    <VoucherCalendarPicker
+                      value={selectedDate}
+                      onChange={(d) => setSelectedDate(d)}
+                      minDate={todayStr}
+                      maxDate={expireDateDay || undefined}
+                    />
                   </div>
 
                   {/* Timeslots */}

@@ -29,11 +29,28 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const upstream = await fetch(CUSTOMERS_URL, {
+    let upstream = await fetch(CUSTOMERS_URL, {
       method: 'POST',
       headers: getProxyHeaders(req),
       body: JSON.stringify(body),
     });
+
+    // If upstream rejects and last_name is empty/missing, retry by adding a '.' in last_name
+    if (!upstream.ok && (!body?.last_name || !String(body.last_name).trim())) {
+      const retryBody = {
+        ...body,
+        last_name: '.',
+      };
+      const retryUpstream = await fetch(CUSTOMERS_URL, {
+        method: 'POST',
+        headers: getProxyHeaders(req),
+        body: JSON.stringify(retryBody),
+      });
+      if (retryUpstream.ok) {
+        upstream = retryUpstream;
+      }
+    }
+
     const data = await upstream.json().catch(() => ({}));
     return NextResponse.json(data, { status: upstream.status });
   } catch (err) {

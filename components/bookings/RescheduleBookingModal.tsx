@@ -88,6 +88,10 @@ function firstTruthy(...args: unknown[]): string {
   return '';
 }
 
+function isUUID(val?: unknown): boolean {
+  return typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+}
+
 function fmtPrice(val: unknown): string {
   if (val === undefined || val === null || val === '') return '0.000';
   const n = parseFloat(String(val));
@@ -235,14 +239,39 @@ export function RescheduleBookingModal({
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || err.message || `HTTP ${res.status}`);
+      let msg = '';
+      if (typeof err === 'string' && err.trim()) {
+        msg = err;
+      } else if (err && typeof err === 'object') {
+        if (err.detail && typeof err.detail === 'string') {
+          msg = err.detail;
+        } else if (err.message && typeof err.message === 'string') {
+          msg = err.message;
+        } else if (err.error && typeof err.error === 'object') {
+          if (typeof err.error.message === 'string') msg = err.error.message;
+          if (err.error.details && typeof err.error.details === 'object') {
+            const detailStr = Object.entries(err.error.details)
+              .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+              .join(' | ');
+            if (detailStr) msg = msg ? `${msg} (${detailStr})` : detailStr;
+          }
+        } else {
+          const parts = Object.entries(err)
+            .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : typeof v === 'object' ? JSON.stringify(v) : String(v)}`)
+            .filter(Boolean);
+          if (parts.length > 0) {
+            msg = parts.join(' | ');
+          }
+        }
+      }
+      throw new Error(msg || `HTTP ${res.status}`);
     }
     return res.json().catch(() => ({}));
   }, [authHeader]);
 
   // ── 1. Fetch Booking if needed ────────────────────────────────────────
   useEffect(() => {
-    if (booking || !bookingId) return;
+    if (booking || !bookingId || !isUUID(bookingId)) return;
     setFetchingBooking(true);
     setBookingError(null);
     fetchJson(`/booknpay/api/v1/bookings/${bookingId}/`)
@@ -261,16 +290,16 @@ export function RescheduleBookingModal({
   const ss = statusStyle(status);
   const bookingNum = firstTruthy(bk?.booking_number, bk?.number);
 
-  const svcObj = bk?.service as AnyRecord | undefined;
+  const svcObj = (bk?.service_data || bk?.service || bk?.raw?.service_data || bk?.raw?.service) as AnyRecord | undefined;
   const svcName = firstTruthy(svcObj?.service_name, svcObj?.name, bk?.service_name, 'Spa Service');
   const svcCategory = firstTruthy(svcObj?.service_category, svcObj?.category, bk?.service_category);
   const durationVal = parseInt(String(bk?.total_duration ?? bk?.duration_minutes ?? bk?.duration ?? 60), 10) || 60;
-  const pricing = bk?.pricing_details as AnyRecord | undefined;
+  const pricing = (bk?.pricing_details || bk?.raw?.pricing_details) as AnyRecord | undefined;
   const totalPrice = pricing?.total_price ?? pricing?.total ?? bk?.total_price ?? bk?.price ?? '';
   const currency = firstTruthy(bk?.currency, 'KWD');
 
   // Previously booked arrangement type
-  const prevArrObj = (bk?.service_arrangement_data ?? bk?.arrangement ?? bk?.service_arrangement) as AnyRecord | undefined;
+  const prevArrObj = (bk?.service_arrangement_data ?? bk?.arrangement ?? bk?.service_arrangement ?? bk?.raw?.service_arrangement_data ?? bk?.raw?.arrangement) as AnyRecord | undefined;
   const prevArrType = firstTruthy(
     initialRescheduleParams?.arrangementType,
     prevArrObj?.arrangement_type,
@@ -283,9 +312,10 @@ export function RescheduleBookingModal({
   // Service ID
   const serviceId = firstTruthy(
     initialRescheduleParams?.serviceId,
-    svcObj?.id,
     svcObj?.service_id,
-    bk?.service_id
+    svcObj?.id,
+    bk?.service_id,
+    (bk as any)?.raw?.service_id
   );
 
   // Appointment date
@@ -306,12 +336,13 @@ export function RescheduleBookingModal({
   // Initialize selected branch and date from booking
   useEffect(() => {
     if (!bk) return;
+    const bdObj = (bk?.branch_data || bk?.branch || bk?.raw?.branch_data || bk?.raw?.branch) as AnyRecord | undefined;
     const initialBranchId = firstTruthy(
       initialRescheduleParams?.branchId,
       bk?.branch_id,
-      bk?.branch_data?.branch_id,
-      bk?.branch_data?.id,
-      bk?.branch?.id
+      bdObj?.branch_id,
+      bdObj?.id,
+      (bk as any)?.branch?.id
     );
     setSelectedBranchId((prev) => prev || initialBranchId);
 
@@ -334,6 +365,11 @@ export function RescheduleBookingModal({
     initialAvailabilitiesPromise
       .then((data) => {
         if (!active || !data) return;
+        if (data.success === false || data.error) {
+          const errMsg = data.error?.message || data.message || data.detail || 'Failed to load availability';
+          setAvailabilitiesError(errMsg);
+          return;
+        }
         availabilitiesCache.current[bId] = data;
         setAvailabilitiesData(data);
       })
@@ -351,7 +387,8 @@ export function RescheduleBookingModal({
 
   // ── With change of branch: check cache or send request ──────────────
   const fetchAvailabilitiesForBranch = useCallback(async (branchIdToFetch: string) => {
-    if (!branchIdToFetch) return;
+    if (!branchIdToFetch || !isUUID(branchIdToFetch)) return;
+    if (!serviceId || !isUUID(serviceId)) return;
 
     // 1. Check in-memory cache first!
     if (availabilitiesCache.current[branchIdToFetch]) {
@@ -367,7 +404,7 @@ export function RescheduleBookingModal({
       setAvailabilitiesLoading(true);
       try {
         const data = await activeReq;
-        if (data) {
+        if (data && data.success !== false) {
           availabilitiesCache.current[branchIdToFetch] = data;
           setAvailabilitiesData(data);
         }
@@ -384,24 +421,31 @@ export function RescheduleBookingModal({
     setAvailabilitiesError(null);
 
     const qs = new URLSearchParams({
-      service_id: serviceId || '',
+      service_id: serviceId,
       arrangement_type: prevArrType || 'room',
       branch_id: branchIdToFetch,
       date: appointmentDate || todayStr,
+      day_counts: String(daysCount),
       days_count: String(daysCount),
     });
     const endpoint = `/uauth/api/v1/find-availabilities-for-reschedule-appointment/?${qs.toString()}`;
 
     const promise = fetchJson(endpoint)
       .then((data) => {
-        availabilitiesCache.current[branchIdToFetch] = data;
-        setAvailabilitiesData(data);
+        if (data && data.success !== false) {
+          availabilitiesCache.current[branchIdToFetch] = data;
+          setAvailabilitiesData(data);
+          return data;
+        } else if (data?.error) {
+          const msg = data.error?.message || 'Failed to load availability';
+          setAvailabilitiesError(msg);
+          return null;
+        }
         return data;
       })
       .catch((err) => {
-        console.error('Failed to fetch availabilities on branch change:', err);
         setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load branch availability');
-        throw err;
+        return null;
       })
       .finally(() => {
         delete inFlightRequests.current[branchIdToFetch];

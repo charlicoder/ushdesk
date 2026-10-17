@@ -75,6 +75,7 @@ interface BookingData {
   booking_no?: string;
   status?: string;
   appointment_date?: string;
+  appointment_time?: string;
   appointment_start?: string;
   appointment_end?: string;
   duration_minutes?: number;
@@ -216,10 +217,21 @@ interface Voucher {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+function firstTruthy<T>(...vals: (T | null | undefined | '' | false | 0)[]): T | undefined {
+  for (const v of vals) {
+    if (v !== null && v !== undefined && v !== '' && (v as unknown) !== 'null' && (v as unknown) !== 'undefined') {
+      return v as T;
+    }
+  }
+  return undefined;
+}
+
 function fmtDate(raw: string | null | undefined): string {
   if (!raw) return '—';
-  const d = new Date(raw);
-  if (isNaN(d.getTime())) return raw;
+  const cleanStr = String(raw).includes(' ') && !String(raw).includes('T') ? String(raw).replace(' ', 'T') : String(raw);
+  const parseStr = cleanStr.includes('T') ? cleanStr : cleanStr + 'T00:00:00';
+  const d = new Date(parseStr);
+  if (isNaN(d.getTime())) return String(raw);
   return d.toLocaleDateString('en-GB', { timeZone: KUWAIT_TZ, day: '2-digit', month: 'short', year: 'numeric' });
 }
 
@@ -266,8 +278,17 @@ function formatAddressPreview(addr: DeliveryAddress | null | undefined): string 
 
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
+  const timeMatch = String(iso).match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (timeMatch) {
+    const h = parseInt(timeMatch[1], 10);
+    const m = timeMatch[2];
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    const h12 = h % 12 === 0 ? 12 : h % 12;
+    return `${h12}:${m} ${ampm}`;
+  }
+  const cleanIso = String(iso).includes(' ') && !String(iso).includes('T') ? String(iso).replace(' ', 'T') : String(iso);
+  const d = new Date(cleanIso);
+  if (isNaN(d.getTime())) return String(iso);
   return d.toLocaleTimeString('en-US', {
     timeZone: KUWAIT_TZ,
     hour: 'numeric',
@@ -475,6 +496,8 @@ interface VoucherShareDropdownProps {
   label?: string;
   className?: string;
   dropUp?: boolean;
+  align?: 'left' | 'right';
+  iconOnly?: boolean;
   onSelectChannel: (voucher: Voucher, channel: 'sms' | 'whatsapp') => void;
   onCopyUrl?: (voucher: Voucher) => void;
 }
@@ -484,11 +507,15 @@ function VoucherShareDropdown({
   label = 'Share',
   className,
   dropUp = false,
+  align,
+  iconOnly = false,
   onSelectChannel,
   onCopyUrl,
 }: VoucherShareDropdownProps) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  const effectiveAlign = align ?? (iconOnly ? 'left' : 'right');
 
   const handleCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -516,25 +543,35 @@ function VoucherShareDropdown({
     <div className="relative inline-block text-left" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((prev) => !prev);
+        }}
         className={cn(
-          'inline-flex items-center gap-1.5 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted hover:border-primary/40 hover:text-primary transition shadow-sm',
+          iconOnly
+            ? 'grid h-6 w-6 place-items-center rounded-lg border border-border/80 bg-background/90 text-muted-foreground hover:bg-muted hover:border-primary/50 hover:text-primary transition shadow-xs cursor-pointer'
+            : 'inline-flex items-center gap-1.5 rounded-xl border border-border/80 bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-muted hover:border-primary/40 hover:text-primary transition shadow-sm cursor-pointer',
           className
         )}
-        title={label}
+        title={iconOnly ? 'Share voucher' : label}
       >
-        <Share2 className="h-3.5 w-3.5 text-muted-foreground" />
-        <span>{label}</span>
-        <ChevronDown className={cn('h-3 w-3 text-muted-foreground transition-transform duration-200', open && 'rotate-180')} />
+        <Share2 className={iconOnly ? 'h-3 w-3' : 'h-3.5 w-3.5 text-muted-foreground'} />
+        {!iconOnly && <span>{label}</span>}
+        {!iconOnly && (
+          <ChevronDown className={cn('h-3 w-3 text-muted-foreground transition-transform duration-200', open && 'rotate-180')} />
+        )}
       </button>
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpen(false); }} />
           <div
             className={cn(
-              'absolute right-0 z-50 w-52 rounded-2xl border border-border/80 bg-card p-1.5 shadow-2xl space-y-0.5 animate-in fade-in zoom-in-95 duration-150',
-              dropUp ? 'bottom-full mb-1.5 origin-bottom-right' : 'top-full mt-1.5 origin-top-right'
+              'absolute z-50 w-52 rounded-2xl border border-border/80 bg-card p-1.5 shadow-2xl space-y-0.5 animate-in fade-in zoom-in-95 duration-150',
+              effectiveAlign === 'left' ? 'left-0' : 'right-0',
+              dropUp
+                ? effectiveAlign === 'left' ? 'bottom-full mb-1.5 origin-bottom-left' : 'bottom-full mb-1.5 origin-bottom-right'
+                : effectiveAlign === 'left' ? 'top-full mt-1.5 origin-top-left' : 'top-full mt-1.5 origin-top-right'
             )}
           >
             <div className="px-2.5 py-1 border-b border-border/40 mb-1">
@@ -642,7 +679,14 @@ function VoucherDetailModal({
   const isExpired = voucher.expire_date && new Date(voucher.expire_date) < new Date();
   const canRedeem = !isExpired && voucher.status?.toLowerCase() === 'active';
   const isRedeemed = voucher.status?.toLowerCase() === 'redeemed' || !!voucher.redeemed_at;
-  const bookingId = voucher.redeemed_booking_id || voucher.booking_id || voucher.booking_data?.id;
+  const bookingId =
+    voucher.redeemed_booking_id ||
+    voucher.booking_id ||
+    voucher.booking_data?.id ||
+    (voucher.booking_data as any)?.booking_id ||
+    (voucher as any)?.redeemed_booking?.id ||
+    (voucher as any)?.booking?.id ||
+    null;
 
   const [fetchedBooking, setFetchedBooking] = useState<BookingData | null>(null);
   const [loadingBooking, setLoadingBooking] = useState(false);
@@ -685,22 +729,22 @@ function VoucherDetailModal({
 
   useEffect(() => {
     if (!isRedeemed || !bookingId) return;
-    if (voucher.booking_data && (voucher.booking_data.appointment_date || voucher.booking_data.appointment_start)) {
+    const hasFullAppt = Boolean(
+      voucher.booking_data &&
+      (voucher.booking_data.appointment_date || voucher.booking_data.appointment_start) &&
+      (voucher.booking_data.appointment_time || voucher.booking_data.appointment_end || voucher.booking_data.appointment_start)
+    );
+    if (hasFullAppt && fetchedBooking) {
       return;
     }
     let active = true;
     setLoadingBooking(true);
-    fetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    })
+    authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (active && data) {
-          setFetchedBooking(data);
+          const actualBooking = (data?.success && data?.data) ? data.data : (data?.data ?? data);
+          setFetchedBooking(actualBooking);
         }
       })
       .catch((err) => {
@@ -712,7 +756,7 @@ function VoucherDetailModal({
     return () => {
       active = false;
     };
-  }, [isRedeemed, bookingId, voucher.booking_data, token]);
+  }, [isRedeemed, bookingId, voucher.booking_data]);
 
   // Load payment links for voucher
   const fetchLinks = useCallback(() => {
@@ -887,7 +931,29 @@ function VoucherDetailModal({
     ? `Hello ${senderName}, please complete your USH Spa Gift Voucher payment of ${voucher.total_amount} ${voucher.currency} using this secure link: ${effectivePaymentUrl}`
     : '';
 
-  const booking = voucher.booking_data || fetchedBooking;
+  const vb = (voucher.booking_data && typeof voucher.booking_data === 'object') ? (voucher.booking_data as Record<string, any>) : {};
+  const fb = (fetchedBooking && typeof fetchedBooking === 'object') ? (fetchedBooking as Record<string, any>) : {};
+  const booking: Record<string, any> = {
+    ...vb,
+    ...fb,
+    appointment_date: firstTruthy(fb.appointment_date, vb.appointment_date, fb.date, vb.date, fb.booking_date, vb.booking_date),
+    appointment_start: firstTruthy(fb.appointment_start, vb.appointment_start, fb.appointment_datetime, vb.appointment_datetime),
+    appointment_end: firstTruthy(fb.appointment_end, vb.appointment_end),
+    appointment_time: firstTruthy(fb.appointment_time, vb.appointment_time, fb.time, vb.time, fb.time_slot, vb.time_slot),
+    booking_number: firstTruthy(fb.booking_number, vb.booking_number, fb.booking_no, vb.booking_no),
+    therapist_name: firstTruthy(fb.therapist_name, vb.therapist_name, fb.therapist_data?.name, vb.therapist_data?.name),
+    therapist_data: fb.therapist_data || vb.therapist_data,
+    branch_name: firstTruthy(fb.branch_name, vb.branch_name, fb.branch_data?.name, vb.branch_data?.name, voucher.branch_data?.name),
+    branch_data: fb.branch_data || vb.branch_data || voucher.branch_data,
+    arrangement_name: firstTruthy(
+      fb.service_arrangement_data?.arrangement_name,
+      vb.service_arrangement_data?.arrangement_name,
+      fb.arrangement_name,
+      vb.arrangement_name,
+      voucher.service_arrangement_data?.arrangement_name
+    ),
+    service_arrangement_data: fb.service_arrangement_data || vb.service_arrangement_data || voucher.service_arrangement_data,
+  };
 
   const redeemedByName =
     booking?.customer_data?.name ||
@@ -914,14 +980,34 @@ function VoucherDetailModal({
     voucher.recipient_details?.email ||
     null;
 
-  const apptDateRaw = booking?.appointment_date || booking?.appointment_start;
+  const apptDateRaw = firstTruthy(
+    booking?.appointment_date,
+    booking?.appointment_start ? String(booking.appointment_start).split('T')[0] : null,
+    booking?.appointment_datetime ? String(booking.appointment_datetime).split('T')[0] : null,
+    booking?.date,
+    booking?.booking_date
+  );
   const apptDateFormatted = apptDateRaw ? fmtDate(apptDateRaw) : null;
-  const apptStartFormatted = booking?.appointment_start ? formatTime(booking.appointment_start) : null;
-  const apptEndFormatted = booking?.appointment_end ? formatTime(booking.appointment_end) : null;
+
+  const apptStartRaw = firstTruthy(
+    booking?.appointment_start,
+    booking?.appointment_datetime,
+    booking?.appointment_time,
+    booking?.start_time,
+    booking?.time
+  );
+  const apptEndRaw = firstTruthy(
+    booking?.appointment_end,
+    booking?.end_time
+  );
+
+  const apptStartFormatted = apptStartRaw ? formatTime(apptStartRaw) : null;
+  const apptEndFormatted = apptEndRaw ? formatTime(apptEndRaw) : null;
+
   const apptTimeWindow =
     apptStartFormatted && apptEndFormatted
       ? `${apptStartFormatted} – ${apptEndFormatted}`
-      : apptStartFormatted || (apptDateRaw ? formatDateTime(apptDateRaw) : null);
+      : apptStartFormatted || (apptDateRaw && String(apptDateRaw).includes('T') ? formatTime(apptDateRaw) : null);
 
   const therapistName =
     booking?.therapist_data?.name ||
@@ -1385,22 +1471,22 @@ function VoucherDetailModal({
                       </div>
 
                       {/* Appointment Schedule & Therapist Box */}
-                      <div className="rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-3 space-y-2">
+                      <div className="rounded-xl bg-background/80 dark:bg-background/40 border border-violet-200/30 dark:border-violet-800/30 p-3 space-y-2.5">
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <div className="flex items-center gap-2">
-                            <div className="grid h-7 w-7 place-items-center rounded-lg bg-primary/10 text-primary">
-                              <Calendar className="h-3.5 w-3.5" />
+                            <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
+                              <Calendar className="h-4 w-4" />
                             </div>
                             <div>
                               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Schedule</p>
                               <p className="text-xs font-extrabold text-foreground">
-                                {apptDateFormatted ?? 'Scheduled Appointment'}
+                                {apptDateFormatted || 'Scheduled Appointment'}
                               </p>
                             </div>
                           </div>
                           {apptTimeWindow && (
                             <div className="text-right">
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-2 py-1 text-xs font-bold font-mono">
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-primary/10 text-primary px-2.5 py-1 text-xs font-bold font-mono">
                                 <Clock className="h-3 w-3" />
                                 {apptTimeWindow}
                               </span>
@@ -1408,21 +1494,29 @@ function VoucherDetailModal({
                           )}
                         </div>
 
-                        <div className="grid grid-cols-2 gap-2 pt-2 border-t border-border/40 text-[11px]">
-                          {therapistName && (
-                            <div>
-                              <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
-                              <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5">
-                                <User className="h-3 w-3 text-muted-foreground" /> {therapistName}
-                              </span>
-                            </div>
-                          )}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2 border-t border-border/40 text-[11px]">
+                          <div>
+                            <span className="text-[10px] text-muted-foreground uppercase font-bold block">Date & Time</span>
+                            <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                              <CalendarDays className="h-3.5 w-3.5 text-primary shrink-0" />
+                              {apptDateFormatted || '—'}
+                              {apptTimeWindow ? ` • ${apptTimeWindow}` : ''}
+                            </span>
+                          </div>
                           {(bookingBranch || bookingRoom) && (
                             <div>
                               <span className="text-[10px] text-muted-foreground uppercase font-bold block">Location</span>
-                              <span className="font-semibold text-foreground flex items-center gap-1 mt-0.5 truncate">
-                                <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
+                              <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5 truncate">
+                                <Building2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                                 {[bookingBranch, bookingRoom].filter(Boolean).join(' • ')}
+                              </span>
+                            </div>
+                          )}
+                          {therapistName && (
+                            <div className="col-span-1 sm:col-span-2 pt-1 border-t border-border/20">
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
+                              <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                                <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> {therapistName}
                               </span>
                             </div>
                           )}
@@ -2684,14 +2778,11 @@ export default function GiftVouchersPage() {
                 <tr className="border-b border-border/60 bg-muted/30">
                   {[
                     'Voucher Code', 'Sender → Recipient', 'Service',
-                    'Price & Duration', 'Expires', 'Status', 'Action',
+                    'Price & Duration', 'Expires', 'Status',
                   ].map(col => (
                     <th
                       key={col}
-                      className={cn(
-                        'whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground first:rounded-tl-2xl last:rounded-tr-2xl',
-                        col === 'Action' ? 'text-right' : 'text-left',
-                      )}
+                      className="whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground first:rounded-tl-2xl last:rounded-tr-2xl text-left"
                     >
                       {col}
                     </th>
@@ -2717,11 +2808,24 @@ export default function GiftVouchersPage() {
                         className="px-4 py-3 align-top whitespace-nowrap cursor-pointer group hover:bg-muted/30 transition-colors"
                         title="View voucher details"
                       >
-                        <div className="inline-flex items-center gap-1.5 font-bold text-foreground group-hover:text-primary font-mono text-[12px] transition-colors">
-                          <Eye className="h-3.5 w-3.5 text-primary group-hover:scale-110 transition-transform shrink-0" />
-                          <span className="group-hover:underline underline-offset-2">
-                            {v.secret_code || v.voucher_number || '—'}
-                          </span>
+                        <div className="flex items-center gap-2">
+                          <div className="inline-flex items-center gap-1.5 font-bold text-foreground group-hover:text-primary font-mono text-[12px] transition-colors">
+                            <Eye className="h-3.5 w-3.5 text-primary group-hover:scale-110 transition-transform shrink-0" />
+                            <span className="group-hover:underline underline-offset-2">
+                              {v.secret_code || v.voucher_number || '—'}
+                            </span>
+                          </div>
+                          {!(v.status?.toLowerCase() === 'redeemed' || v.redeemed_at) && (
+                            <VoucherShareDropdown
+                              voucher={v}
+                              iconOnly
+                              onSelectChannel={(voucher, channel) => {
+                                setShareChannel(channel);
+                                setShareVoucher(voucher);
+                              }}
+                              onCopyUrl={handleCopyPublicUrl}
+                            />
+                          )}
                         </div>
                         {canViewVoucherNumber && Boolean(v.voucher_number) && v.voucher_number !== v.secret_code && (
                           <p className="text-[11px] font-mono font-semibold text-primary/80 mt-0.5 tracking-tight" title="Voucher Number">
@@ -2783,33 +2887,6 @@ export default function GiftVouchersPage() {
                           <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
                           {cfg.label}
                         </span>
-                      </td>
-
-                      {/* Action */}
-                      <td className="py-3 pl-4 pr-5 align-top text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {v.status?.toLowerCase() === 'redeemed' || v.redeemed_at ? (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenReschedule(v)}
-                              className="inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary hover:text-primary-foreground transition shadow-sm"
-                              title="Reschedule redeemed booking"
-                            >
-                              <RefreshCw className="h-3.5 w-3.5" />
-                              Reschedule
-                            </button>
-                          ) : (
-                            <VoucherShareDropdown
-                              voucher={v}
-                              label="Share"
-                              onSelectChannel={(voucher, channel) => {
-                                setShareChannel(channel);
-                                setShareVoucher(voucher);
-                              }}
-                              onCopyUrl={handleCopyPublicUrl}
-                            />
-                          )}
-                        </div>
                       </td>
                     </tr>
                   );

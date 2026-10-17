@@ -41,7 +41,7 @@ export const COUNTRY_CODES = [
 export interface CreateCustomerPayload {
   phone_number: string;
   first_name: string;
-  last_name: string;
+  last_name?: string;
   send_sqs_message: boolean;
   email?: string;
   gender?: string;
@@ -70,21 +70,41 @@ export async function createCustomerApi(
   payload: CreateCustomerPayload,
   authHeader: string,
 ): Promise<CreatedCustomer> {
-  const fullName = [payload.first_name, payload.last_name].filter(Boolean).join(' ').trim();
-  const res = await authedFetch('/api/v1/customers/get-or-create/', {
+  const hasLastName = Boolean(payload.last_name && payload.last_name.trim());
+  const primaryFullName = [payload.first_name, payload.last_name].filter(Boolean).join(' ').trim();
+
+  const makeBody = (fullName: string) => JSON.stringify({
+    phone_number: payload.phone_number,
+    full_name: fullName,
+    without_password: true,
+    email: payload.email || undefined,
+    gender: payload.gender || undefined,
+  });
+
+  let res = await authedFetch('/api/v1/customers/get-or-create/', {
     method: 'POST',
     headers: {
       Authorization: authHeader,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      phone_number: payload.phone_number,
-      full_name: fullName,
-      without_password: true,
-      email: payload.email || undefined,
-      gender: payload.gender || undefined,
-    }),
+    body: makeBody(primaryFullName),
   });
+
+  // If backend API does not accept the payload without last_name, retry by adding a '.' in last_name
+  if (!res.ok && !hasLastName) {
+    const dotFullName = `${payload.first_name.trim()} .`.trim();
+    const retryRes = await authedFetch('/api/v1/customers/get-or-create/', {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+      },
+      body: makeBody(dotFullName),
+    });
+    if (retryRes.ok) {
+      res = retryRes;
+    }
+  }
 
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
@@ -108,14 +128,17 @@ export async function createCustomerApi(
     Date.now()
   );
   const resolvedFullName = String(
-    item?.name ?? item?.full_name ?? raw?.name ?? raw?.full_name ?? fullName
+    item?.name ?? item?.full_name ?? raw?.name ?? raw?.full_name ?? primaryFullName
   ).trim();
   const nameParts = resolvedFullName.split(' ');
   const firstName = String(item?.first_name ?? raw?.first_name ?? nameParts[0] ?? payload.first_name ?? '').trim();
-  const lastName = String(item?.last_name ?? raw?.last_name ?? nameParts.slice(1).join(' ') ?? payload.last_name ?? '').trim();
+  const rawLastName = String(item?.last_name ?? raw?.last_name ?? nameParts.slice(1).join(' ') ?? payload.last_name ?? '').trim();
+  const lastName = (!hasLastName && rawLastName === '.') ? '' : rawLastName;
   const phoneNumber = String(item?.phone_number ?? item?.phone ?? raw?.phone_number ?? raw?.phone ?? payload.phone_number ?? '').trim();
   const email = (item?.email ?? raw?.email ?? payload.email ?? '').trim();
   const avatar = item?.avatar ?? raw?.avatar;
+
+  const displayFullName = [firstName, lastName].filter(Boolean).join(' ').trim() || firstName;
 
   return {
     ...raw,
@@ -123,7 +146,7 @@ export async function createCustomerApi(
     id,
     first_name: firstName,
     last_name: lastName,
-    full_name: fullName,
+    full_name: displayFullName,
     phone_number: phoneNumber,
     phone: phoneNumber,
     email: email || undefined,
@@ -167,7 +190,6 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
     setError(null);
 
     if (!firstName.trim()) { setError('First name is required.'); return; }
-    if (!lastName.trim())  { setError('Last name is required.'); return; }
     if (!phone.trim())     { setError('Phone number is required.'); return; }
 
     const rawPhone = phone.trim();
@@ -187,7 +209,7 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
     const payload: CreateCustomerPayload = {
       phone_number:     fullPhoneNumber,
       first_name:       firstName.trim(),
-      last_name:        lastName.trim(),
+      last_name:        lastName.trim() || undefined,
       send_sqs_message: true,
       ...(email.trim() ? { email: email.trim() } : {}),
       ...(gender        ? { gender }               : {}),
@@ -310,14 +332,13 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
               </div>
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">
-                  Last Name *
+                  Last Name
                 </label>
                 <input
                   type="text"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   placeholder="Rashid"
-                  required
                   className="w-full rounded-xl border border-border bg-muted/30 px-3.5 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
                 />
               </div>
