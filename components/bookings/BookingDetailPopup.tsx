@@ -1625,6 +1625,8 @@ export function BookingDetailPopup({
       {showMakePaymentModal && (
         <MakePaymentModal
           isOpen={showMakePaymentModal}
+          initialStep={2}
+          initialProviderId="myfatoorah"
           onClose={() => setShowMakePaymentModal(false)}
           bookingId={booking.id}
           bookingNumber={booking.booking_number}

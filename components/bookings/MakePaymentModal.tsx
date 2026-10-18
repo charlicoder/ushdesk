@@ -91,6 +91,15 @@ const PROVIDERS: PaymentProvider[] = [
   },
 ];
 
+export function generateKnetAuthCode(): string {
+  // Generate random 5 to 6 digits (e.g. KENT-84920 or KENT-984210)
+  const isSixDigit = Math.random() > 0.5;
+  const num = isSixDigit
+    ? Math.floor(100000 + Math.random() * 900000)
+    : Math.floor(10000 + Math.random() * 90000);
+  return `KENT-${num}`;
+}
+
 export function MakePaymentModal({
   isOpen,
   onClose,
@@ -146,9 +155,11 @@ export function MakePaymentModal({
   const [smsSent, setSmsSent] = useState(false);
   const [smsFeedback, setSmsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // KNET POS terminal states
+  // KNET POS terminal states - auto generates KENT-[random 5-6 digit]
   const [knetMode, setKnetMode] = useState<'pos' | 'link'>('pos');
-  const [knetRefCode, setKnetRefCode] = useState('');
+  const [knetRefCode, setKnetRefCode] = useState(() =>
+    selectedProvider.id === 'knet_card' ? generateKnetAuthCode() : ''
+  );
   const [knetNotes, setKnetNotes] = useState('');
   const [confirmingKnet, setConfirmingKnet] = useState(false);
   const [knetConfirmed, setKnetConfirmed] = useState(false);
@@ -443,7 +454,11 @@ export function MakePaymentModal({
                 {step === 1 ? 'Select Payment Provider' : 'Make Payment Now'}
               </h2>
               <p className="text-[11px] text-muted-foreground font-medium">
-                {step === 1 ? 'Step 1: Select Payment Provider' : 'Step 2: Create & Share Payment Link'}
+                {step === 1
+                  ? 'Step 1: Select Payment Provider'
+                  : initialStep === 2
+                  ? 'Create & Share Payment Link'
+                  : 'Step 2: Create & Share Payment Link'}
               </p>
             </div>
           </div>
@@ -502,6 +517,9 @@ export function MakePaymentModal({
                         onClick={() => {
                           if (isInactive) return;
                           setSelectedProvider(provider);
+                          if (provider.id === 'knet_card' && !knetRefCode) {
+                            setKnetRefCode(generateKnetAuthCode());
+                          }
                         }}
                         className={cn(
                           'relative flex items-center justify-between gap-3 rounded-2xl border-2 p-3.5 transition select-none',
@@ -593,13 +611,15 @@ export function MakePaymentModal({
                   <span className="text-muted-foreground">Provider:</span>
                   <span className="font-bold text-foreground">{selectedProvider.name}</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleBack}
-                  className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
-                >
-                  Change Provider
-                </button>
+                {initialStep !== 2 && (
+                  <button
+                    type="button"
+                    onClick={handleBack}
+                    className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
+                  >
+                    Change Provider
+                  </button>
+                )}
               </div>
 
               {/* If knetConfirmed, show success banner directly */}
@@ -674,16 +694,36 @@ export function MakePaymentModal({
                       </div>
 
                       <div className="space-y-1.5">
-                        <label className="text-xs font-bold text-foreground">
-                          Transaction / Auth Code <span className="text-muted-foreground font-normal">(Optional)</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={knetRefCode}
-                          onChange={(e) => setKnetRefCode(e.target.value)}
-                          placeholder="e.g. KNET-984210 or RRN from POS receipt"
-                          className="w-full h-10 rounded-xl border border-border bg-muted/20 px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                        />
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-foreground">
+                            Transaction / Auth Code <span className="text-muted-foreground font-normal">(Auto-generated)</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setKnetRefCode(generateKnetAuthCode())}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                          >
+                            <RefreshCw className="h-3 w-3" />
+                            Regenerate
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            value={knetRefCode}
+                            onChange={(e) => setKnetRefCode(e.target.value)}
+                            placeholder="e.g. KENT-984210"
+                            className="w-full h-10 rounded-xl border border-border bg-muted/20 pl-3 pr-10 text-xs font-mono font-bold outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setKnetRefCode(generateKnetAuthCode())}
+                            title="Generate new code"
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-primary transition rounded-lg cursor-pointer"
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <div className="space-y-1.5">

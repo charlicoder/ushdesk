@@ -12,6 +12,14 @@ import type { PaymentProviderOption } from './TherapistScheduleBookingModal';
 
 export type { PaymentProviderOption };
 
+function generateKnetAuthCode(): string {
+  const isSixDigit = Math.random() > 0.5;
+  const num = isSixDigit
+    ? Math.floor(100000 + Math.random() * 900000)
+    : Math.floor(10000 + Math.random() * 90000);
+  return `KENT-${num}`;
+}
+
 export interface PaymentReferenceData {
   transactionId: string;
   invoiceId?: string;
@@ -69,13 +77,17 @@ export function PaymentReferenceModal({
   // Sync initial values when modal opens
   useEffect(() => {
     if (isOpen) {
-      setTransactionId(initialTransactionId);
+      if (!initialTransactionId && String(paymentProvider).toLowerCase().includes('knet')) {
+        setTransactionId(generateKnetAuthCode());
+      } else {
+        setTransactionId(initialTransactionId);
+      }
       setReceiptImage(initialReceiptImage);
       setNotes(initialNotes);
       setScanExtractedCode(null);
       setCameraError(null);
     }
-  }, [isOpen, initialTransactionId, initialReceiptImage, initialNotes]);
+  }, [isOpen, initialTransactionId, initialReceiptImage, initialNotes, paymentProvider]);
 
   // Stop camera stream cleanly
   const stopCamera = useCallback(() => {
@@ -328,23 +340,35 @@ export function PaymentReferenceModal({
           {activeTab === 'manual' && (
             <div className="space-y-4 animate-in fade-in duration-150">
               <div>
-                <label className="block mb-1.5 text-xs font-extrabold text-foreground">
-                  Transaction / Reference ID <span className="text-destructive">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-extrabold text-foreground">
+                    Transaction / Reference ID <span className="text-destructive">*</span>
+                  </label>
+                  {String(paymentProvider).toLowerCase().includes('knet') && (
+                    <button
+                      type="button"
+                      onClick={() => setTransactionId(generateKnetAuthCode())}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+                    >
+                      <RefreshCw className="h-3 w-3" />
+                      Regenerate
+                    </button>
+                  )}
+                </div>
                 <div className="relative flex items-center">
                   <Hash className="pointer-events-none absolute left-3.5 h-4 w-4 text-muted-foreground/60" />
                   <input
                     type="text"
                     value={transactionId}
                     onChange={(e) => setTransactionId(e.target.value)}
-                    placeholder={`e.g. ${paymentProvider === 'KNET Card' ? 'KNET-984210' : 'TXN-849204'}`}
+                    placeholder={`e.g. ${paymentProvider === 'KNET Card' ? 'KENT-984210' : 'TXN-849204'}`}
                     className="h-11 w-full rounded-2xl border border-border bg-muted/20 pl-10 pr-4 text-sm font-mono outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 placeholder:text-muted-foreground/40 font-semibold"
                   />
                   {transactionId && (
                     <button
                       type="button"
                       onClick={() => setTransactionId('')}
-                      className="absolute right-3 p-1 text-muted-foreground hover:text-foreground"
+                      className="absolute right-3 p-1 text-muted-foreground hover:text-foreground cursor-pointer"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
