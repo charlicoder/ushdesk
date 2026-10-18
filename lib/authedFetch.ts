@@ -145,10 +145,33 @@ export async function authedFetch(
     headers.set('Accept-Language', getStoredLocale());
   }
 
+  // Attach USHSPA application token if available
+  const appToken =
+    process.env.API_APP_TOKEN ||
+    process.env.NEXT_PUBLIC_API_APP_TOKEN ||
+    'hello-world';
+  if (appToken) {
+    if (!headers.has('X-USHSPA-TOKEN')) headers.set('X-USHSPA-TOKEN', appToken);
+    if (!headers.has('USHSPA-TOKEN')) headers.set('USHSPA-TOKEN', appToken);
+  }
+
   const res = await fetch(input, { ...init, headers });
 
   // 2. Not a 401 — return as-is
   if (res.status !== 401) return res;
+
+  // 2b. If 401 is due to application token (UNAUTHORIZED_APPLICATION), refreshing user token will not help
+  // and will trigger a continuous refresh storm / loop. Return response as-is.
+  try {
+    const clone = res.clone();
+    const errJson = await clone.json().catch(() => null);
+    if (errJson?.error?.code === 'UNAUTHORIZED_APPLICATION') {
+      console.warn('authedFetch: application token rejected, skipping user token refresh.');
+      return res;
+    }
+  } catch {
+    // Ignore clone inspection errors
+  }
 
   // 3. Got a 401 — check whether we have a refresh token to attempt with
   const storedRefresh = getStoredRefreshToken();
@@ -178,6 +201,10 @@ export async function authedFetch(
   if (!retryHeaders.has('Content-Type')) retryHeaders.set('Content-Type', 'application/json');
   if (!retryHeaders.has('Accept-Language') || !retryHeaders.get('Accept-Language')) {
     retryHeaders.set('Accept-Language', getStoredLocale());
+  }
+  if (appToken) {
+    if (!retryHeaders.has('X-USHSPA-TOKEN')) retryHeaders.set('X-USHSPA-TOKEN', appToken);
+    if (!retryHeaders.has('USHSPA-TOKEN')) retryHeaders.set('USHSPA-TOKEN', appToken);
   }
 
   return fetch(input, { ...init, headers: retryHeaders });

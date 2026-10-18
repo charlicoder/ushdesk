@@ -6,14 +6,17 @@ import {
   Search, Plus, ChevronDown, Store, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, User, Scissors,
   Timer, Hash, MapPin, ChevronLeft, ChevronRight, Loader2,
+  CalendarOff, Coffee, GripVertical,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
 import {
   TherapistScheduleBookingModal,
 } from '@/components/bookings/TherapistScheduleBookingModal';
 import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
+import { TherapistDayWorkingHoursModal } from '@/components/employees/DaySlotDetailModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -93,7 +96,7 @@ interface ApiScheduleRecord {
 
 // ── Slot model ─────────────────────────────────────────────────────────────────
 
-type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress' | 'completed';
+type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress' | 'completed' | 'on_leave' | 'break_time';
 
 interface Slot {
   status: SlotStatus;
@@ -105,6 +108,7 @@ interface Slot {
   end?: string;
   duration?: string;
   reference?: string;
+  booking_type?: string;
 }
 
 // ── Therapist model used in UI ─────────────────────────────────────────────────
@@ -197,6 +201,18 @@ const STATUS_CFG = {
     btnCls:   'bg-violet-500 hover:bg-violet-600',
     btnLabel: 'View Details',
     Icon:     Clock,
+  },
+  on_leave: {
+    label:    'On Leave',
+    badge:    'ON LEAVE',
+    dot:      'bg-amber-500',
+    cardCls:  'border-2 border-amber-300 dark:border-amber-700/60 bg-amber-100/90 dark:bg-amber-950/60 shadow-sm',
+    badgeCls: 'text-amber-800 dark:text-amber-200 font-extrabold',
+    pillCls:  'bg-amber-200 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200',
+    iconCls:  'text-amber-700 dark:text-amber-400',
+    btnCls:   'bg-amber-500 hover:bg-amber-600',
+    btnLabel: 'On Leave',
+    Icon:     CalendarOff,
   },
 } as const;
 
@@ -435,11 +451,89 @@ function SlotDetailModal({
 }
 
 // ── Slot Cell ──────────────────────────────────────────────────────────────────
-function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
+function SlotCell({
+  slot,
+  onClick,
+  isDraggable,
+  onDragStart,
+  onDragEnd,
+  isDragging,
+}: {
+  slot: Slot;
+  onClick?: () => void;
+  isDraggable?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
+  isDragging?: boolean;
+}) {
   if (slot.status === 'unavailable') {
     return (
       <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-[darkgrey] px-1 text-center">
         <span className="text-[10px] font-bold uppercase tracking-wider text-white truncate select-none">Blocked</span>
+      </div>
+    );
+  }
+
+  if (slot.status === 'on_leave') {
+    return (
+      <div className="flex h-full min-h-[82px] flex-col items-center justify-center rounded-xl border border-amber-300 dark:border-amber-700/60 bg-amber-100/90 dark:bg-amber-950/60 p-1 text-center select-none cursor-not-allowed">
+        <div className="flex flex-col items-center justify-center gap-1 w-full">
+          <CalendarOff className="h-4 w-4 text-amber-700 dark:text-amber-400 shrink-0" />
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-900 dark:text-amber-200 leading-tight">
+            On Leave
+          </span>
+          {slot.start && slot.end && (
+            <span className="text-[8px] font-semibold text-amber-800/80 dark:text-amber-300/80 tabular-nums leading-tight">
+              {slot.start}
+              <br />
+              {slot.end}
+            </span>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (slot.status === 'break_time') {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        draggable={isDraggable ?? true}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onClick={onClick}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
+        className={cn(
+          "flex h-full min-h-[82px] flex-col items-center justify-between rounded-xl border border-teal-300 dark:border-teal-700/60 bg-teal-50/90 dark:bg-teal-950/50 p-1.5 text-center select-none transition group shadow-xs cursor-grab active:cursor-grabbing hover:border-teal-500 hover:bg-teal-100 dark:hover:bg-teal-900/60 hover:shadow-md",
+          isDragging && "opacity-40 border-dashed border-teal-500 scale-95"
+        )}
+        title="Break Time — Drag vertically to move, or click to view working hours"
+      >
+        <div className="w-full flex items-center justify-between text-teal-600/70 dark:text-teal-400/70 px-0.5">
+          <GripVertical className="h-3 w-3 shrink-0 cursor-grab active:cursor-grabbing text-teal-600 dark:text-teal-400" />
+          <span className="text-[9px] font-extrabold uppercase tracking-wider text-teal-900 dark:text-teal-200">
+            Break
+          </span>
+          <Coffee className="h-3.5 w-3.5 shrink-0 group-hover:scale-110 transition-transform text-teal-600 dark:text-teal-400" />
+        </div>
+        <div className="flex flex-col items-center justify-center gap-0.5 w-full my-auto">
+          {slot.start && slot.end && (
+            <span className="text-[8px] font-bold text-teal-900 dark:text-teal-100 tabular-nums leading-tight">
+              {slot.start}
+              <br />
+              {slot.end}
+            </span>
+          )}
+          {slot.duration && (
+            <span className="text-[8px] font-medium text-teal-700/80 dark:text-teal-300/80">
+              ({slot.duration})
+            </span>
+          )}
+        </div>
+        <div className="text-[7.5px] text-teal-600/80 dark:text-teal-400/80 font-bold uppercase tracking-tight">
+          Drag to move
+        </div>
       </div>
     );
   }
@@ -768,6 +862,25 @@ function slotToMinutes(label: string): number {
   return h * 60 + m;
 }
 
+function minutesToTime24(min: number): string {
+  const clamped = Math.max(0, Math.min(24 * 60 - 1, Math.round(min)));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+}
+
+function getBreakDurationMinutes(slot: Slot): number {
+  if (slot.start && slot.end) {
+    const diff = slotToMinutes(slot.end) - slotToMinutes(slot.start);
+    if (diff > 0) return diff;
+  }
+  if (slot.duration) {
+    const num = parseInt(slot.duration, 10);
+    if (!isNaN(num) && num > 0) return num;
+  }
+  return 60;
+}
+
 function isSlotInPast(selectedDate: string, slotLabel: string): boolean {
   if (!selectedDate || !slotLabel) return false;
   const current = getCurrentKuwaitDateTime();
@@ -808,6 +921,7 @@ function buildScheduleFromApi(
     reference?: string;
     status: string;
     payment_status?: string;
+    booking_type?: string;
   };
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
@@ -837,6 +951,7 @@ function buildScheduleFromApi(
       bk.service_name ||
       undefined;
     const paymentStatus = (bk.payment_status ?? (bk as any).paymentStatus ?? '').toString().toLowerCase().trim();
+    const bookingType = String(bk.booking_type ?? (bk as any).type ?? '').toLowerCase().trim();
 
     bookingMap[bk.therapist_id].push({
       startMin:   sm,
@@ -849,7 +964,79 @@ function buildScheduleFromApi(
       reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
       status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
       payment_status: paymentStatus || undefined,
+      booking_type: bookingType || undefined,
     });
+  }
+
+  const therapistBreakMap: Record<string, { startMin: number; endMin: number; startLabel: string; endLabel: string }[]> = {};
+  for (const av of availability) {
+    const rawBreaks = (av as any).break_intervals ?? (av as any).break_times;
+    if (Array.isArray(rawBreaks)) {
+      if (!therapistBreakMap[av.therapist_id]) therapistBreakMap[av.therapist_id] = [];
+      for (const brk of rawBreaks) {
+        if (brk.start && brk.end) {
+          const s = kuwaitWallClockDate(brk.start);
+          const e = kuwaitWallClockDate(brk.end);
+          const sm = s.getUTCHours() * 60 + s.getUTCMinutes();
+          const em = e.getUTCHours() * 60 + e.getUTCMinutes();
+          const fmt = (h: number, m: number) => {
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            const hd = h % 12 === 0 ? 12 : h % 12;
+            return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+          };
+          therapistBreakMap[av.therapist_id].push({
+            startMin: sm,
+            endMin: em,
+            startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
+            endLabel: fmt(e.getUTCHours(), e.getUTCMinutes()),
+          });
+        } else if (brk.start_time && brk.end_time) {
+          const sm = slotToMinutes(brk.start_time);
+          const em = slotToMinutes(brk.end_time);
+          therapistBreakMap[av.therapist_id].push({
+            startMin: sm,
+            endMin: em,
+            startLabel: brk.start_time,
+            endLabel: brk.end_time,
+          });
+        }
+      }
+    }
+  }
+
+  for (const t of therapists) {
+    const rawBreaks = (t as any).break_intervals ?? (t as any).break_times;
+    if (Array.isArray(rawBreaks)) {
+      if (!therapistBreakMap[t.id]) therapistBreakMap[t.id] = [];
+      for (const brk of rawBreaks) {
+        if (brk.start && brk.end) {
+          const s = kuwaitWallClockDate(brk.start);
+          const e = kuwaitWallClockDate(brk.end);
+          const sm = s.getUTCHours() * 60 + s.getUTCMinutes();
+          const em = e.getUTCHours() * 60 + e.getUTCMinutes();
+          const fmt = (h: number, m: number) => {
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            const hd = h % 12 === 0 ? 12 : h % 12;
+            return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+          };
+          therapistBreakMap[t.id].push({
+            startMin: sm,
+            endMin: em,
+            startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
+            endLabel: fmt(e.getUTCHours(), e.getUTCMinutes()),
+          });
+        } else if (brk.start_time && brk.end_time) {
+          const sm = slotToMinutes(brk.start_time);
+          const em = slotToMinutes(brk.end_time);
+          therapistBreakMap[t.id].push({
+            startMin: sm,
+            endMin: em,
+            startLabel: brk.start_time,
+            endLabel: brk.end_time,
+          });
+        }
+      }
+    }
   }
 
   for (const therapist of therapists) {
@@ -863,6 +1050,50 @@ function buildScheduleFromApi(
 
       const bk = bkSlots.find(b => b.startMin < slotEnd && b.endMin > slotStart);
       if (bk) {
+        const isLeave =
+          bk.booking_type === 'leave' ||
+          bk.booking_type === 'on_leave' ||
+          bk.status.toLowerCase() === 'leave' ||
+          bk.status.toLowerCase() === 'on_leave' ||
+          (bk.service ?? '').toLowerCase() === 'leave' ||
+          (bk.service ?? '').toLowerCase() === 'on leave';
+
+        if (isLeave) {
+          sched[therapist.id][slotLabel] = {
+            status: 'on_leave',
+            booking_status: bk.status,
+            service: 'On Leave',
+            start: bk.startLabel,
+            end: bk.endLabel,
+            duration: bk.duration,
+            reference: bk.reference,
+            booking_type: 'leave',
+          };
+          continue;
+        }
+
+        const isBreak =
+          bk.booking_type === 'break_time' ||
+          bk.status.toLowerCase() === 'break_time' ||
+          bk.status.toLowerCase() === 'break' ||
+          (bk as any).is_break ||
+          (bk.service ?? '').toLowerCase() === 'break time' ||
+          (bk.service ?? '').toLowerCase() === 'break';
+
+        if (isBreak) {
+          sched[therapist.id][slotLabel] = {
+            status: 'break_time',
+            booking_status: 'break_time',
+            service: 'Break Time',
+            start: bk.startLabel,
+            end: bk.endLabel,
+            duration: bk.duration,
+            reference: bk.reference,
+            booking_type: 'break_time',
+          };
+          continue;
+        }
+
         let st: SlotStatus = 'scheduled';
         const bkStatusLower = (bk.status ?? '').toLowerCase();
         if (bkStatusLower === 'completed') st = 'completed';
@@ -880,6 +1111,22 @@ function buildScheduleFromApi(
           duration:  bk.duration,
           reference: bk.reference,
           payment_status: bk.payment_status,
+          booking_type: bk.booking_type,
+        };
+        continue;
+      }
+
+      // Check if slot falls in break intervals
+      const brk = therapistBreakMap[therapist.id]?.find(b => b.startMin < slotEnd && b.endMin > slotStart);
+      if (brk) {
+        sched[therapist.id][slotLabel] = {
+          status: 'break_time',
+          booking_status: 'break_time',
+          service: 'Break Time',
+          start: brk.startLabel,
+          end: brk.endLabel,
+          duration: `${brk.endMin - brk.startMin}m`,
+          booking_type: 'break_time',
         };
         continue;
       }
@@ -919,6 +1166,20 @@ export default function TherapistSchedulePage() {
   const [modal,            setModal]             = useState<ModalPayload | null>(null);
   const [detailBookingId,  setDetailBookingId]   = useState<string | null>(null);
   const [bookingModal,     setBookingModal]      = useState<{ therapist: Therapist; timeSlot: string } | null>(null);
+  const [selectedBreakTherapist, setSelectedBreakTherapist] = useState<{ therapist: Therapist; slot: Slot; date: string } | null>(null);
+
+  // Drag-and-drop state for break times
+  const [draggedBreak, setDraggedBreak] = useState<{
+    therapistId: string;
+    therapistName: string;
+    originalTimeSlot: string;
+    durationMinutes: number;
+  } | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<{ therapistId: string; time: string } | null>(null);
+  const [updatingBreak, setUpdatingBreak] = useState(false);
+  const [breakToast, setBreakToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const dragJustEndedRef = useRef(false);
+
   const [showBranchDrop,   setShowBranchDrop]    = useState(false);
   const [showCalendar,     setShowCalendar]      = useState(false);
 
@@ -929,6 +1190,23 @@ export default function TherapistSchedulePage() {
 
   const headerScrollRef = useRef<HTMLDivElement>(null);
   const bodyScrollRef   = useRef<HTMLDivElement>(null);
+
+  // Preserve both vertical window scroll and horizontal therapist schedule scroll
+  const preserveScroll = useCallback(() => {
+    const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+    const scrollX = bodyScrollRef.current ? bodyScrollRef.current.scrollLeft : 0;
+    return () => {
+      requestAnimationFrame(() => {
+        if (typeof window !== 'undefined' && window.scrollY !== scrollY) {
+          window.scrollTo({ top: scrollY, behavior: 'instant' as ScrollBehavior });
+        }
+        if (bodyScrollRef.current && bodyScrollRef.current.scrollLeft !== scrollX) {
+          bodyScrollRef.current.scrollLeft = scrollX;
+        }
+      });
+    };
+  }, []);
+
   const onBodyScroll = useCallback(() => {
     if (headerScrollRef.current && bodyScrollRef.current) {
       headerScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft;
@@ -991,8 +1269,13 @@ export default function TherapistSchedulePage() {
     const controller = new AbortController();
 
     (async () => {
-      setLoading(true);
+      // Only set loading to true on initial load (when scheduleData is not yet loaded)
+      // This prevents unmounting the schedule grid on refreshes and prevents scrolling to top
+      if (!scheduleData) {
+        setLoading(true);
+      }
       setError(null);
+      const restoreScroll = preserveScroll();
       try {
         const url = `/api/v1/therapists/schedule/?branch_id=${selectedBranchId}&date=${selectedDate}`;
         const res = await fetch(url, {
@@ -1110,17 +1393,20 @@ export default function TherapistSchedulePage() {
         }
 
         setScheduleData(record);
+        restoreScroll();
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
         setError(err instanceof Error ? err.message : 'Failed to load schedule');
-        setScheduleData(null);
+        if (!scheduleData) {
+          setScheduleData(null);
+        }
       } finally {
         setLoading(false);
       }
     })();
 
     return () => controller.abort();
-  }, [selectedBranchId, selectedDate, token, locale, scheduleRefreshKey]);
+  }, [selectedBranchId, selectedDate, token, locale, scheduleRefreshKey, preserveScroll]);
 
   // Derived data — use branch opening/closing as authoritative grid bounds
   const selectedBranchInfo = useMemo(
@@ -1167,7 +1453,7 @@ export default function TherapistSchedulePage() {
     : therapists;
 
   const allSlots    = therapists.flatMap(t => Object.values(schedule[t.id] ?? {}));
-  const bookedCount = allSlots.filter(s => s.status !== 'unavailable' && s.status !== 'available').length;
+  const bookedCount = allSlots.filter(s => s.status !== 'unavailable' && s.status !== 'available' && s.status !== 'on_leave').length;
   const availCount  = allSlots.filter(s => s.status === 'available').length;
   const occupancy   = Math.round((bookedCount / (bookedCount + availCount)) * 100) || 0;
 
@@ -1209,6 +1495,164 @@ export default function TherapistSchedulePage() {
     if (isSlotInPast(selectedDate, timeSlot)) return;
     setBookingModal({ therapist, timeSlot });
   }, [selectedDate]);
+
+  const handleDropBreak = useCallback(async (
+    therapist: Therapist,
+    targetTimeSlot: string,
+    breakData: {
+      therapistId: string;
+      therapistName: string;
+      originalTimeSlot: string;
+      durationMinutes: number;
+    }
+  ) => {
+    setDraggedBreak(null);
+    setDragOverSlot(null);
+
+    // If dropped on the same starting slot, do nothing
+    if (breakData.originalTimeSlot === targetTimeSlot) {
+      return;
+    }
+
+    const restoreScroll = preserveScroll();
+
+    const startMin = slotToMinutes(targetTimeSlot);
+    const endMin = startMin + breakData.durationMinutes;
+
+    const breakStartStr = minutesToTime24(startMin);
+    const breakEndStr = minutesToTime24(endMin);
+
+    const format12h = (min: number) => {
+      const h = Math.floor(min / 60);
+      const m = min % 60;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hd = h % 12 === 0 ? 12 : h % 12;
+      return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+    const newStartLabel = format12h(startMin);
+    const newEndLabel = format12h(endMin);
+
+    // Save previous schedule data for potential rollback
+    const previousScheduleData = scheduleData;
+
+    // 1. Optimistic Local Update — move break immediately with 0ms delay
+    const newBreakObj = {
+      start_time: newStartLabel,
+      end_time: newEndLabel,
+      start: `${selectedDate}T${breakStartStr}`,
+      end: `${selectedDate}T${breakEndStr}`,
+    };
+
+    setScheduleData(prev => {
+      if (!prev) return prev;
+
+      const newTherapists: ApiTherapist[] = prev.therapists.map(t => {
+        if (t.id !== therapist.id) return t;
+        return {
+          ...t,
+          break_times: [newBreakObj],
+          break_intervals: [newBreakObj],
+        } as unknown as ApiTherapist;
+      });
+
+      let foundAv = false;
+      const newAvailability: ApiAvailability[] = prev.availability.map(av => {
+        if (av.therapist_id !== therapist.id) return av;
+        foundAv = true;
+        return {
+          ...av,
+          break_times: [newBreakObj],
+          break_intervals: [newBreakObj],
+        } as unknown as ApiAvailability;
+      });
+      if (!foundAv) {
+        newAvailability.push({
+          therapist_id: therapist.id,
+          intervals: [],
+          break_times: [newBreakObj],
+          break_intervals: [newBreakObj],
+        } as unknown as ApiAvailability);
+      }
+
+      const newBookings: ApiBooking[] = prev.bookings.map(bk => {
+        if (bk.therapist_id !== therapist.id) return bk;
+        const svcName = (typeof bk.service === 'string' ? bk.service : (bk.service?.name ?? bk.service?.service_name ?? bk.service_name ?? '')).toLowerCase();
+        const isBkBreak =
+          bk.booking_type === 'break_time' ||
+          (bk.status ?? '').toLowerCase() === 'break_time' ||
+          (bk.status ?? '').toLowerCase() === 'break' ||
+          (bk as any).is_break ||
+          svcName.includes('break');
+        if (!isBkBreak) return bk;
+        return {
+          ...bk,
+          start: `${selectedDate}T${breakStartStr}`,
+          end: `${selectedDate}T${breakEndStr}`,
+          booking_type: 'break_time',
+          status: 'break_time',
+          service: { name: 'Break Time', service_name: 'Break Time' },
+          service_name: 'Break Time',
+        };
+      });
+
+      return {
+        ...prev,
+        therapists: newTherapists,
+        availability: newAvailability,
+        bookings: newBookings,
+      };
+    });
+
+    restoreScroll();
+
+    // 2. Send backend API request in background
+    const d = new Date(selectedDate + 'T00:00:00');
+    const djangoDay = (d.getDay() + 6) % 7;
+
+    setUpdatingBreak(true);
+    try {
+      const payload: Record<string, unknown> = {
+        therapist_id: therapist.id,
+        break_start_time: breakStartStr,
+        break_end_time: breakEndStr,
+        break_duration: breakData.durationMinutes,
+        day_of_week: djangoDay,
+      };
+
+      const res = await authedFetch('/uauth/api/v1/therapists/break-time/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || 'Failed to update break time on server');
+      }
+
+      setBreakToast({
+        type: 'success',
+        message: `Break for ${therapist.name} moved to ${targetTimeSlot} (${breakData.durationMinutes}m)`,
+      });
+
+      // 3. Silent refresh in background without unmounting grid or scrolling
+      setScheduleRefreshKey((k) => k + 1);
+      restoreScroll();
+    } catch (err) {
+      // Rollback optimistic update on error
+      if (previousScheduleData) {
+        setScheduleData(previousScheduleData);
+      }
+      setBreakToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update break time',
+      });
+      restoreScroll();
+    } finally {
+      setUpdatingBreak(false);
+      setTimeout(() => setBreakToast(null), 4000);
+    }
+  }, [selectedDate, scheduleData, preserveScroll]);
 
   return (
     <DashboardShell>
@@ -1318,24 +1762,24 @@ export default function TherapistSchedulePage() {
         ))}
       </div>
 
-      {/* ── Loading ── */}
-      {loading && (
+      {/* ── Loading (only shown on initial load when no schedule data exists) ── */}
+      {loading && !scheduleData && (
         <div className="flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card py-20">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <span className="text-sm font-semibold text-muted-foreground">Loading schedule…</span>
         </div>
       )}
 
-      {/* ── Error ── */}
-      {!loading && error && (
+      {/* ── Error (only shown when no schedule data exists) ── */}
+      {!loading && !scheduleData && error && (
         <div className="rounded-2xl border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
           <AlertCircle className="mx-auto h-8 w-8 text-destructive mb-3" />
           <p className="text-sm font-semibold text-destructive">{error}</p>
         </div>
       )}
 
-      {/* ── Main schedule grid ── */}
-      {!loading && !error && (
+      {/* ── Main schedule grid (stays mounted whenever scheduleData exists) ── */}
+      {scheduleData && (
         <div className="rounded-2xl border border-border/80 bg-card shadow-sm">
           {/* Legend */}
           <div className="flex items-center justify-end gap-4 border-b border-border/40 px-4 py-3 bg-muted/20 rounded-t-2xl overflow-hidden">
@@ -1343,6 +1787,7 @@ export default function TherapistSchedulePage() {
               { label: 'Paid (Success)',  color: 'bg-emerald-500' },
               { label: 'Pending Payment', color: 'bg-rose-500' },
               { label: 'Available',       color: 'bg-card border border-dashed border-border' },
+              { label: 'On Leave',        color: 'bg-amber-400' },
               { label: 'Blocked',         color: 'bg-[darkgrey]' },
             ].map((l) => (
               <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
@@ -1419,6 +1864,8 @@ export default function TherapistSchedulePage() {
                         const time = timeSlots[rowIdx];
                         const slot = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
                         const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress' || slot.status === 'completed';
+                        const isOnLeave = slot.status === 'on_leave';
+                        const isBreak = slot.status === 'break_time';
                         let span = 1;
                         if (isBooked && slot.reference) {
                           while (rowIdx + span < timeSlots.length) {
@@ -1430,13 +1877,122 @@ export default function TherapistSchedulePage() {
                             const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
                             if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress' || nextSlot.status === 'completed') && nextSlot.start === slot.start && nextSlot.end === slot.end) { span++; } else { break; }
                           }
+                        } else if (isOnLeave) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                            if (nextSlot && nextSlot.status === 'on_leave' &&
+                              ((slot.reference && nextSlot.reference === slot.reference) ||
+                               (slot.start && slot.end && nextSlot.start === slot.start && nextSlot.end === slot.end) ||
+                               (!slot.reference && !slot.start))) {
+                              span++;
+                            } else {
+                              break;
+                            }
+                          }
+                        } else if (isBreak) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                            if (nextSlot && nextSlot.status === 'break_time' &&
+                                ((slot.start && slot.end && nextSlot.start === slot.start && nextSlot.end === slot.end) ||
+                                 (!slot.start && !slot.end))) {
+                              span++;
+                            } else {
+                              break;
+                            }
+                          }
                         }
+                        const isThisSlotDragging =
+                          draggedBreak?.therapistId === t.id &&
+                          draggedBreak?.originalTimeSlot === time;
+                        const isThisSlotDragOver =
+                          dragOverSlot?.therapistId === t.id &&
+                          dragOverSlot?.time === time;
+                        const isSameTherapistCol =
+                          Boolean(draggedBreak && draggedBreak.therapistId === t.id);
+
                         cells.push(
-                          <div key={`${t.id}-${time}`}
-                            style={{ gridColumn: tIdx + 1, gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1 }}
-                            className={cn('p-2 border-t border-l border-border/30 transition-colors first:border-l-0', COL_TINTS[tIdx % COL_TINTS.length])}
+                          <div
+                            key={`${t.id}-${time}`}
+                            style={{
+                              gridColumn: tIdx + 1,
+                              gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
+                            }}
+                            onDragOver={(e) => {
+                              if (isSameTherapistCol) {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'move';
+                                if (dragOverSlot?.therapistId !== t.id || dragOverSlot?.time !== time) {
+                                  setDragOverSlot({ therapistId: t.id, time });
+                                }
+                              }
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverSlot?.therapistId === t.id && dragOverSlot?.time === time) {
+                                setDragOverSlot(null);
+                              }
+                            }}
+                            onDrop={(e) => {
+                              if (isSameTherapistCol && draggedBreak) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDragOverSlot(null);
+                                handleDropBreak(t, time, draggedBreak);
+                              }
+                            }}
+                            className={cn(
+                              'p-2 border-t border-l border-border/30 transition-all first:border-l-0 relative',
+                              COL_TINTS[tIdx % COL_TINTS.length],
+                              isThisSlotDragOver && !isThisSlotDragging && 'ring-2 ring-teal-500 ring-inset bg-teal-100/70 dark:bg-teal-900/50'
+                            )}
                           >
-                            <SlotCell slot={slot} onClick={isBooked ? () => openModal(slot, t, time) : slot.status === 'available' ? () => openBookingModal(t, time) : undefined} />
+                            {isThisSlotDragOver && !isThisSlotDragging && (
+                              <div className="absolute inset-1 pointer-events-none rounded-lg border-2 border-dashed border-teal-500 bg-teal-500/10 flex items-center justify-center z-10">
+                                <span className="text-[10px] font-extrabold text-teal-800 dark:text-teal-200 bg-white/95 dark:bg-slate-900/95 px-2 py-0.5 rounded shadow-sm border border-teal-300">
+                                  Move break to {time}
+                                </span>
+                              </div>
+                            )}
+                            <SlotCell
+                              slot={slot}
+                              isDraggable={isBreak}
+                              isDragging={isThisSlotDragging}
+                              onDragStart={(e) => {
+                                if (isBreak) {
+                                  const dur = getBreakDurationMinutes(slot);
+                                  setDraggedBreak({
+                                    therapistId: t.id,
+                                    therapistName: t.name,
+                                    originalTimeSlot: time,
+                                    durationMinutes: dur,
+                                  });
+                                  e.dataTransfer.setData('text/plain', t.id);
+                                  e.dataTransfer.effectAllowed = 'move';
+                                }
+                              }}
+                              onDragEnd={() => {
+                                dragJustEndedRef.current = true;
+                                setTimeout(() => {
+                                  dragJustEndedRef.current = false;
+                                }, 150);
+                                setDraggedBreak(null);
+                                setDragOverSlot(null);
+                              }}
+                              onClick={
+                                isBreak
+                                  ? () => {
+                                      if (dragJustEndedRef.current) {
+                                        dragJustEndedRef.current = false;
+                                        return;
+                                      }
+                                      setSelectedBreakTherapist({ therapist: t, slot, date: selectedDate });
+                                    }
+                                  : isBooked
+                                  ? () => openModal(slot, t, time)
+                                  : slot.status === 'available'
+                                  ? () => openBookingModal(t, time)
+                                  : undefined
+                              }
+                            />
                           </div>,
                         );
                         rowIdx += span;
@@ -1496,6 +2052,54 @@ export default function TherapistSchedulePage() {
             setScheduleRefreshKey(k => k + 1);
           }}
         />
+      )}
+
+      {/* ── Working Hours & Break Details Modal for Break Slots ── */}
+      {selectedBreakTherapist && (
+        <TherapistDayWorkingHoursModal
+          therapistId={selectedBreakTherapist.therapist.id}
+          therapistName={selectedBreakTherapist.therapist.name}
+          branchId={selectedBreakTherapist.therapist.branchId || selectedBranchId}
+          branchName={selectedBreakTherapist.therapist.branchName || branchLabel}
+          date={selectedBreakTherapist.date}
+          onClose={() => setSelectedBreakTherapist(null)}
+          onUpdated={() => {
+            setScheduleRefreshKey((k) => k + 1);
+          }}
+          token={token}
+        />
+      )}
+
+      {/* ── Break Moving Indicator & Toast ── */}
+      {updatingBreak && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl bg-teal-600 text-white px-4 py-2.5 shadow-xl text-sm font-semibold animate-in fade-in slide-in-from-bottom-2">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          <span>Updating break time on server...</span>
+        </div>
+      )}
+
+      {breakToast && (
+        <div
+          className={cn(
+            'fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl px-4 py-2.5 shadow-xl text-sm font-semibold animate-in fade-in slide-in-from-bottom-2',
+            breakToast.type === 'success'
+              ? 'bg-emerald-600 text-white'
+              : 'bg-rose-600 text-white'
+          )}
+        >
+          {breakToast.type === 'success' ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <AlertCircle className="h-4 w-4 shrink-0" />
+          )}
+          <span>{breakToast.message}</span>
+          <button
+            onClick={() => setBreakToast(null)}
+            className="ml-2 hover:opacity-80 rounded p-0.5 cursor-pointer"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
     </DashboardShell>
   );
