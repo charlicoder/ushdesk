@@ -1873,7 +1873,9 @@ function VoucherDetailModal({
                   <div className="rounded-xl bg-card border border-border/40 p-2.5">
                     <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
                     <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">
-                      {latestPayment?.payment_through || voucher.payment_through || 'USHDESK'}
+                      {(voucher.payment_through && voucher.payment_through.toLowerCase() !== 'other')
+                        ? voucher.payment_through
+                        : (latestPayment?.payment_through || voucher.payment_through || 'USHDESK')}
                     </p>
                   </div>
                   <div className="rounded-xl bg-card border border-border/40 p-2.5">
@@ -2187,7 +2189,9 @@ function VoucherDetailModal({
             currency: voucher.currency,
             paymentMethod: latestPayment?.payment_method || (voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionStatus ? 'Card / Online' : 'Payment Link'),
             paymentProvider: latestPayment?.payment_provider || voucher.payment_provider || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway || activePaymentLink?.gateway || activePaymentLink?.provider || 'MyFatoorah',
-            paymentThrough: latestPayment?.payment_through || voucher.payment_through || 'ushdesk',
+            paymentThrough: (voucher.payment_through && voucher.payment_through.toLowerCase() !== 'other')
+              ? voucher.payment_through
+              : (latestPayment?.payment_through || voucher.payment_through || 'ushdesk'),
             paymentNumber: paymentNumber,
             paymentDate: latestPayment?.paid_at || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionDate || (voucher as any).paid_at || activePaymentLink?.paid_at,
             transactionId: transactionId,
