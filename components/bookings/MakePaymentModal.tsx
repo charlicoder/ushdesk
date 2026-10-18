@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
+import { nowWithTimezone } from '@/lib/datetime';
 import {
   paymentLinksApi,
   whatsappShareUrl,
@@ -36,6 +38,7 @@ export interface MakePaymentModalProps {
   customerName?: string | null;
   customerPhone?: string | null;
   initialStep?: 1 | 2;
+  initialProviderId?: string;
   onBeforeNext?: () => Promise<{ targetId: string; targetNumber?: string | null } | boolean>;
   onPaymentSuccess?: (link: PaymentLink) => void;
   onSuccess?: () => void;
@@ -53,12 +56,21 @@ interface PaymentProvider {
 
 const PROVIDERS: PaymentProvider[] = [
   {
+    id: 'knet_card',
+    name: 'KNET Card',
+    gatewayKey: 'knet',
+    badge: 'Active · KNET',
+    description: 'In-branch KNET card terminal or payment link',
+    isDefault: true,
+    inactive: false,
+  },
+  {
     id: 'myfatoorah',
     name: 'MyFatoorah',
     gatewayKey: 'myfatoorah',
-    badge: 'Default · Active',
+    badge: 'Active',
     description: 'Create & share payment link via SMS or WhatsApp',
-    isDefault: true,
+    isDefault: false,
     inactive: false,
   },
   {
@@ -67,14 +79,6 @@ const PROVIDERS: PaymentProvider[] = [
     gatewayKey: 'deema',
     badge: 'Inactive',
     description: 'BNPL payment split',
-    inactive: true,
-  },
-  {
-    id: 'knet_card',
-    name: 'KNET Card',
-    gatewayKey: 'knet',
-    badge: 'Inactive',
-    description: 'In-branch KNET card terminal or payment link',
     inactive: true,
   },
   {
@@ -105,6 +109,7 @@ export function MakePaymentModal({
   customerName,
   customerPhone,
   initialStep = 1,
+  initialProviderId,
   onBeforeNext,
   onPaymentSuccess,
   onSuccess,
@@ -113,7 +118,19 @@ export function MakePaymentModal({
   const resolvedTargetType: PaymentLinkTarget = isVoucher ? 'gift_voucher' : 'booking';
 
   const [step, setStep] = useState<1 | 2>(initialStep);
-  const [selectedProvider, setSelectedProvider] = useState<PaymentProvider>(PROVIDERS[0]);
+  const [selectedProvider, setSelectedProvider] = useState<PaymentProvider>(() => {
+    if (initialProviderId) {
+      const match = PROVIDERS.find(
+        (p) =>
+          !p.inactive &&
+          (p.id.toLowerCase() === initialProviderId.toLowerCase() ||
+            p.gatewayKey.toLowerCase() === initialProviderId.toLowerCase() ||
+            p.name.toLowerCase() === initialProviderId.toLowerCase())
+      );
+      if (match) return match;
+    }
+    return PROVIDERS.find((p) => p.id === 'knet_card' && !p.inactive) || PROVIDERS[0];
+  });
   const [effectiveTargetId, setEffectiveTargetId] = useState<string>(
     targetId || (isVoucher ? (voucherId ?? '') : (bookingId ?? ''))
   );
@@ -128,6 +145,13 @@ export function MakePaymentModal({
   const [sendingSms, setSendingSms] = useState(false);
   const [smsSent, setSmsSent] = useState(false);
   const [smsFeedback, setSmsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // KNET POS terminal states
+  const [knetMode, setKnetMode] = useState<'pos' | 'link'>('pos');
+  const [knetRefCode, setKnetRefCode] = useState('');
+  const [knetNotes, setKnetNotes] = useState('');
+  const [confirmingKnet, setConfirmingKnet] = useState(false);
+  const [knetConfirmed, setKnetConfirmed] = useState(false);
 
   if (!isOpen) return null;
 
@@ -171,8 +195,9 @@ export function MakePaymentModal({
     setError(null);
     try {
       const type: PaymentLinkTarget = resolvedTargetType;
+      const gw = selectedProvider.gatewayKey === 'knet' ? 'myfatoorah' : selectedProvider.gatewayKey;
       const link = await paymentLinksApi.create(type, id, {
-        gateway: selectedProvider.gatewayKey,
+        gateway: gw,
         amount: amount !== undefined && amount !== null && amount !== '' ? amount : undefined,
         invoice_id: invoiceId || undefined,
         invoice_number: invoiceNumber || undefined,
@@ -186,6 +211,138 @@ export function MakePaymentModal({
       setError(err instanceof Error ? err.message : 'Failed to create payment link');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConfirmKnetPosPayment = async () => {
+    const id = effectiveTargetId || targetId || (isVoucher ? voucherId : bookingId);
+    if (!id) {
+      setError(`${isVoucher ? 'Voucher' : 'Booking'} ID is missing.`);
+      return;
+    }
+    setConfirmingKnet(true);
+    setError(null);
+    try {
+      const paidAtNow = nowWithTimezone();
+      const ref = knetRefCode.trim() || `KNET-${Date.now().toString().slice(-6)}`;
+
+      if (!isVoucher) {
+        // 1. Update booking status
+        const patchPayload = {
+          status: 'confirmed',
+          payment_status: 'success',
+          payment_provider: 'KNET Card',
+          payment_method: 'card',
+          payment_gateway: 'KNET',
+          transaction_id: ref,
+          reference_id: ref,
+          notes: knetNotes.trim() || 'Paid via KNET Card at branch',
+          reason: 'Paid via KNET Card at branch',
+          source: 'ushdesk',
+          payment_data: {
+            transaction_id: ref,
+            reference_id: ref,
+            payment_provider: 'KNET Card',
+            payment_method: 'card',
+            payment_gateway: 'KNET',
+            total_amount: amount,
+            currency: currency,
+            paid_at: paidAtNow,
+          },
+          payments_data: {
+            is_paid: true,
+            status: 'Paid',
+            transaction_id: ref,
+            reference_id: ref,
+            payment_provider: 'KNET Card',
+            payment_method: 'card',
+            payment_gateway: 'KNET',
+            paid_at: paidAtNow,
+          },
+        };
+
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${id}/status/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(patchPayload),
+        });
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.detail || errJson.message || `Failed to update booking status (${res.status})`);
+        }
+
+        // 2. Record in payments service
+        try {
+          await authedFetch('/booknpay/api/v1/payments/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+              booking_id: id,
+              amount: parseFloat(String(amount)) || 0,
+              currency: currency || 'KWD',
+              status: 'success',
+              payment_method: 'card',
+              payment_provider: 'KNET Card',
+              payment_gateway: 'KNET',
+              payment_through: 'ushdesk',
+              payment_for: 'branch_service',
+              reference_id: ref,
+              transaction_id: ref,
+              invoice_number: invoiceNumber || null,
+              invoice_id: invoiceId || null,
+              notes: knetNotes.trim() || null,
+              paid_at: paidAtNow,
+            }),
+          });
+        } catch (payErr) {
+          console.warn('Payment record warning:', payErr);
+        }
+      } else {
+        // Voucher status update
+        try {
+          await authedFetch(`/booknpay/api/v1/vouchers/${id}/status/`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+              status: 'active',
+              payment_status: 'paid',
+              payment_method: 'KNET Card',
+              payment_gateway: 'KNET',
+              reference_id: ref,
+            }),
+          });
+        } catch (vErr) {
+          console.warn('Voucher status warning:', vErr);
+        }
+      }
+
+      setKnetConfirmed(true);
+      onPaymentSuccess?.({
+        id: ref,
+        status: 'paid',
+        amount: String(amount),
+        currency: currency || 'KWD',
+        provider: 'KNET Card',
+        payment_url: null,
+        invoice_id: invoiceId || null,
+        invoice_number: invoiceNumber || null,
+        amount_refunded: '0',
+        target_type: resolvedTargetType,
+        target_id: id,
+        is_expired: false,
+        paid_at: paidAtNow,
+        expires_at: null,
+      });
+
+      setTimeout(() => {
+        onSuccess?.();
+        onClose();
+      }, 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to confirm KNET payment');
+    } finally {
+      setConfirmingKnet(false);
     }
   };
 
@@ -265,7 +422,7 @@ export function MakePaymentModal({
     }
   };
 
-  const isPaid = paymentLink?.status === 'paid' || paymentLink?.status === 'success';
+  const isPaid = knetConfirmed || paymentLink?.status === 'paid' || paymentLink?.status === 'success';
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -293,7 +450,7 @@ export function MakePaymentModal({
           <button
             type="button"
             onClick={onClose}
-            className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition"
+            className="grid h-8 w-8 place-items-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -427,7 +584,7 @@ export function MakePaymentModal({
             </div>
           )}
 
-          {/* STEP 2: Create & Share Payment Link */}
+          {/* STEP 2: Make Payment Now */}
           {step === 2 && (
             <div className="space-y-4">
               <div className="flex items-center justify-between rounded-xl bg-muted/30 px-3.5 py-2 border border-border/50 text-xs">
@@ -445,7 +602,149 @@ export function MakePaymentModal({
                 </button>
               </div>
 
-              {!paymentLink && (
+              {/* If knetConfirmed, show success banner directly */}
+              {knetConfirmed && (
+                <div className="rounded-2xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/30 p-6 text-center space-y-3">
+                  <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
+                    <CheckCircle2 className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-emerald-800 dark:text-emerald-200">
+                      Payment Confirmed via KNET Card!
+                    </h3>
+                    <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-1">
+                      KNET payment of {amount} {currency} has been recorded and booking is confirmed.
+                    </p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleDone}
+                      className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* If KNET Card selected and not yet paid or payment link created */}
+              {!knetConfirmed && !paymentLink && selectedProvider.id === 'knet_card' && (
+                <div className="space-y-4">
+                  {/* Mode toggle */}
+                  <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-muted/40 border border-border/60">
+                    <button
+                      type="button"
+                      onClick={() => setKnetMode('pos')}
+                      className={cn(
+                        'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer',
+                        knetMode === 'pos'
+                          ? 'bg-card text-foreground shadow-sm border border-border'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      <CreditCard className="h-3.5 w-3.5 text-primary" />
+                      In-Branch POS Terminal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setKnetMode('link')}
+                      className={cn(
+                        'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer',
+                        knetMode === 'link'
+                          ? 'bg-card text-foreground shadow-sm border border-border'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      <Link2 className="h-3.5 w-3.5 text-primary" />
+                      KNET Payment Link
+                    </button>
+                  </div>
+
+                  {knetMode === 'pos' ? (
+                    <div className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary">
+                          <CreditCard className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-extrabold text-foreground">In-Branch KNET POS Terminal</h3>
+                          <p className="text-xs text-muted-foreground">Swipe, insert, or tap card on the branch KNET machine.</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-foreground">
+                          Transaction / Auth Code <span className="text-muted-foreground font-normal">(Optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={knetRefCode}
+                          onChange={(e) => setKnetRefCode(e.target.value)}
+                          placeholder="e.g. KNET-984210 or RRN from POS receipt"
+                          className="w-full h-10 rounded-xl border border-border bg-muted/20 px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-foreground">
+                          Notes <span className="text-muted-foreground font-normal">(Optional)</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={knetNotes}
+                          onChange={(e) => setKnetNotes(e.target.value)}
+                          placeholder="e.g. Paid at reception counter via KNET"
+                          className="w-full h-10 rounded-xl border border-border bg-muted/20 px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleConfirmKnetPosPayment}
+                        disabled={confirmingKnet}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 py-3 text-xs font-extrabold text-white shadow-md transition disabled:opacity-60 cursor-pointer"
+                      >
+                        {confirmingKnet ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Confirming Payment…</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-4 w-4" />
+                            <span>Confirm KNET Payment ({amount} {currency})</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border-2 border-dashed border-border/80 p-6 text-center space-y-4 bg-muted/10">
+                      <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-primary/10 text-primary">
+                        <Link2 className="h-6 w-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-extrabold text-foreground">Create KNET Payment Link</h3>
+                        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                          Generate a secure KNET payment link to share with customer via SMS, WhatsApp, or QR code.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleCreatePaymentLink}
+                        disabled={loading}
+                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-extrabold text-white hover:bg-emerald-700 transition disabled:opacity-60 shadow-sm cursor-pointer"
+                      >
+                        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                        {loading ? 'Creating KNET Link…' : 'Create and Share KNET Link'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Standard Payment Link generation for other providers */}
+              {!knetConfirmed && !paymentLink && selectedProvider.id !== 'knet_card' && (
                 <div className="rounded-2xl border-2 border-dashed border-border/80 p-6 text-center space-y-4 bg-muted/10">
                   <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-primary/10 text-primary">
                     <Link2 className="h-6 w-6" />

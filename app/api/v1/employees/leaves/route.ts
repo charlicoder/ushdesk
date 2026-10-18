@@ -26,3 +26,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ detail: message }, { status: 502 });
   }
 }
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const upstream = await fetch(UPSTREAM_URL, {
+      method: 'POST',
+      headers: getProxyHeaders(req),
+      body: JSON.stringify(body),
+    });
+    const data = await upstream.json().catch(() => ({}));
+    return NextResponse.json(data, { status: upstream.status });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Proxy error';
+    return NextResponse.json({ detail: message }, { status: 502 });
+  }
+}

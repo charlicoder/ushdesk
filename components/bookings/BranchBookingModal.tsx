@@ -720,6 +720,7 @@ export function NewBranchBookingModal({
         amount={createdBookingInfo.amount}
         customerName={createdBookingInfo.customerName}
         customerPhone={createdBookingInfo.customerPhone}
+        initialProviderId="knet_card"
         onSuccess={() => {
           setShowMakePayment(false);
           onSuccess();

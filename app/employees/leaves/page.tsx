@@ -5,11 +5,12 @@ import { useMemo, useState } from 'react';
 import {
   CalendarOff, Search, ChevronDown, RefreshCw, AlertCircle,
   CheckCircle2, Clock, XCircle, LayoutGrid, List,
-  Calendar, UserCheck, Briefcase, Phone, Mail,
+  Calendar, UserCheck, Briefcase, Phone, Mail, Plus,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
-import { PageHeader } from '@/components/dashboard/page-header';
+import { PageHeader, PageHeaderButton } from '@/components/dashboard/page-header';
+import { AddLeaveModal } from '@/components/employees/AddLeaveModal';
 import { cn } from '@/lib/utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -146,6 +147,7 @@ export default function EmployeeLeavesPage() {
   const [typeFilter,   setTypeFilter]   = useState('');
   const [deptFilter,   setDeptFilter]   = useState('');
   const [viewMode,     setViewMode]     = useState<'list' | 'grid'>('list');
+  const [showAddModal, setShowAddModal] = useState(false);
 
   const { data: rawLeaves, loading, error, refetch } = useApiList<Record<string, unknown>>(
     '/api/v1/employees/leaves',
@@ -212,7 +214,11 @@ export default function EmployeeLeavesPage() {
       <PageHeader
         title="Employee Leaves"
         subtitle={loading ? 'Loading…' : `${leaves.length} total leave records`}
-      />
+      >
+        <PageHeaderButton onClick={() => setShowAddModal(true)}>
+          <Plus className="h-4 w-4" /> Add Leave
+        </PageHeaderButton>
+      </PageHeader>
 
       {/* Error banner */}
       {error && !loading && (
@@ -538,6 +544,23 @@ export default function EmployeeLeavesPage() {
             );
           })}
         </div>
+      )}
+
+      {showAddModal && (
+        <AddLeaveModal
+          onClose={() => setShowAddModal(false)}
+          onSuccess={() => {
+            refetch();
+          }}
+          fallbackEmployees={leaves.map((l) => ({
+            id: l.employee.id,
+            name: l.employee.name,
+            employee_code: l.employee.employee_code,
+            role_name: l.employee.role_name,
+            department_name: l.employee.department_name,
+            avatar: l.employee.avatar,
+          }))}
+        />
       )}
     </DashboardShell>
   );
