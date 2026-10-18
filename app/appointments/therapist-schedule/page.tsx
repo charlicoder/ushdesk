@@ -454,6 +454,8 @@ function SlotDetailModal({
 function SlotCell({
   slot,
   onClick,
+  onContextMenu,
+  isSelected,
   isDraggable,
   onDragStart,
   onDragEnd,
@@ -461,6 +463,8 @@ function SlotCell({
 }: {
   slot: Slot;
   onClick?: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
+  isSelected?: boolean;
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: (e: React.DragEvent) => void;
@@ -468,8 +472,26 @@ function SlotCell({
 }) {
   if (slot.status === 'unavailable') {
     return (
-      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-[darkgrey] px-1 text-center">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-white truncate select-none">Blocked</span>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        className={cn(
+          "flex h-full min-h-[82px] flex-col items-center justify-center rounded-xl border transition-all select-none cursor-pointer p-1 text-center relative",
+          isSelected
+            ? "border-emerald-500 bg-emerald-500/20 dark:bg-emerald-500/30 ring-2 ring-emerald-500 shadow-md scale-[0.98]"
+            : "border-border/60 dark:border-white/10 bg-[#707070]/25 dark:bg-white/5 hover:bg-[#707070]/40 hover:border-emerald-500/50"
+        )}
+        title={isSelected ? "Selected slot. Right-click to add as extra time" : "Unavailable slot — Click to select for extra hours, or right-click to add"}
+      >
+        {isSelected && (
+          <div className="flex flex-col items-center justify-center gap-0.5 animate-in fade-in zoom-in-90">
+            <span className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="h-2.5 w-2.5" /> Selected
+            </span>
+          </div>
+        )}
       </div>
     );
   }
@@ -1180,6 +1202,20 @@ export default function TherapistSchedulePage() {
   const [breakToast, setBreakToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const dragJustEndedRef = useRef(false);
 
+  // State for selecting contiguous unavailable slots & adding extra hours
+  const [selectedUnavailable, setSelectedUnavailable] = useState<{
+    therapistId: string;
+    therapistName: string;
+    slotTimes: string[];
+  } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    therapist: Therapist;
+    slotTimes: string[];
+  } | null>(null);
+  const [addingExtraHours, setAddingExtraHours] = useState(false);
+
   const [showBranchDrop,   setShowBranchDrop]    = useState(false);
   const [showCalendar,     setShowCalendar]      = useState(false);
 
@@ -1654,6 +1690,239 @@ export default function TherapistSchedulePage() {
     }
   }, [selectedDate, scheduleData, preserveScroll]);
 
+  // Handle clicking an unavailable slot (supports selecting multiple contiguous slots)
+  const handleUnavailableClick = useCallback((therapist: Therapist, time: string) => {
+    setContextMenu(null);
+    const timeIdx = timeSlots.indexOf(time);
+    if (timeIdx === -1) return;
+
+    setSelectedUnavailable((prev) => {
+      // If switching therapists or starting fresh, select this slot
+      if (!prev || prev.therapistId !== therapist.id || prev.slotTimes.length === 0) {
+        return {
+          therapistId: therapist.id,
+          therapistName: therapist.name,
+          slotTimes: [time],
+        };
+      }
+
+      // If clicking the only selected slot, toggle off (deselect)
+      if (prev.slotTimes.length === 1 && prev.slotTimes[0] === time) {
+        return null;
+      }
+
+      const prevIndices = prev.slotTimes
+        .map((t) => timeSlots.indexOf(t))
+        .filter((i) => i !== -1)
+        .sort((a, b) => a - b);
+
+      const minIdx = prevIndices[0];
+      const maxIdx = prevIndices[prevIndices.length - 1];
+
+      // If clicking the start boundary of a multi-slot selection, shrink by one
+      if (timeIdx === minIdx) {
+        const remaining = prev.slotTimes.filter((t) => t !== time);
+        return { ...prev, slotTimes: remaining };
+      }
+
+      // If clicking the end boundary of a multi-slot selection, shrink by one
+      if (timeIdx === maxIdx) {
+        const remaining = prev.slotTimes.filter((t) => t !== time);
+        return { ...prev, slotTimes: remaining };
+      }
+
+      // Contiguous range extension
+      const rangeStart = Math.min(minIdx, timeIdx);
+      const rangeEnd = Math.max(maxIdx, timeIdx);
+
+      // Verify all slots in the range are unavailable for this therapist
+      const allUnavailable = timeSlots
+        .slice(rangeStart, rangeEnd + 1)
+        .every((t) => (schedule[therapist.id]?.[t]?.status ?? 'unavailable') === 'unavailable');
+
+      if (allUnavailable) {
+        const newSlots = timeSlots.slice(rangeStart, rangeEnd + 1);
+        return {
+          therapistId: therapist.id,
+          therapistName: therapist.name,
+          slotTimes: newSlots,
+        };
+      }
+
+      // If not contiguous or crosses booked/break slots, start fresh with clicked slot
+      return {
+        therapistId: therapist.id,
+        therapistName: therapist.name,
+        slotTimes: [time],
+      };
+    });
+  }, [timeSlots, schedule]);
+
+  // Handle right-click context menu on an unavailable slot
+  const handleUnavailableContextMenu = useCallback((
+    e: React.MouseEvent,
+    therapist: Therapist,
+    time: string
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    let targetSlots: string[];
+    if (
+      selectedUnavailable &&
+      selectedUnavailable.therapistId === therapist.id &&
+      selectedUnavailable.slotTimes.includes(time)
+    ) {
+      targetSlots = selectedUnavailable.slotTimes;
+    } else {
+      targetSlots = [time];
+      setSelectedUnavailable({
+        therapistId: therapist.id,
+        therapistName: therapist.name,
+        slotTimes: [time],
+      });
+    }
+
+    const x = Math.min(e.clientX, typeof window !== 'undefined' ? window.innerWidth - 270 : e.clientX);
+    const y = Math.min(e.clientY, typeof window !== 'undefined' ? window.innerHeight - 200 : e.clientY);
+
+    setContextMenu({
+      x,
+      y,
+      therapist,
+      slotTimes: targetSlots,
+    });
+  }, [selectedUnavailable]);
+
+  // Add extra working hours for selected contiguous slots
+  const handleAddExtraTime = useCallback(async (therapist: Therapist, slotTimes: string[]) => {
+    if (slotTimes.length === 0) return;
+    setContextMenu(null);
+
+    const sorted = [...slotTimes].sort((a, b) => timeSlots.indexOf(a) - timeSlots.indexOf(b));
+    const firstSlot = sorted[0];
+    const lastSlot = sorted[sorted.length - 1];
+
+    const startMin = slotToMinutes(firstSlot);
+    const endMin = slotToMinutes(lastSlot) + grid.slot_duration_minutes;
+
+    const startStr = minutesToTime24(startMin);
+    const endStr = minutesToTime24(endMin);
+
+    const format12h = (min: number) => {
+      const h = Math.floor(min / 60);
+      const m = min % 60;
+      const ampm = h >= 12 ? 'PM' : 'AM';
+      const hd = h % 12 === 0 ? 12 : h % 12;
+      return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+    };
+
+    const timeRangeLabel = `${format12h(startMin)} – ${format12h(endMin)}`;
+    const restoreScroll = preserveScroll();
+
+    // Snapshot current schedule data for potential rollback
+    const previousScheduleData = scheduleData;
+
+    // 1. Optimistic update: immediately add working interval so slots turn available with 0ms delay
+    setScheduleData((prev) => {
+      if (!prev) return prev;
+      const newInterval = {
+        start: `${selectedDate}T${startStr}`,
+        end: `${selectedDate}T${endStr}`,
+      };
+
+      let found = false;
+      const newAvailability = prev.availability.map((av) => {
+        if (av.therapist_id !== therapist.id) return av;
+        found = true;
+        return {
+          ...av,
+          intervals: [...(av.intervals ?? []), newInterval],
+        };
+      });
+
+      if (!found) {
+        newAvailability.push({
+          therapist_id: therapist.id,
+          intervals: [newInterval],
+        });
+      }
+
+      return {
+        ...prev,
+        availability: newAvailability,
+      };
+    });
+
+    restoreScroll();
+    setSelectedUnavailable(null);
+    setAddingExtraHours(true);
+
+    try {
+      const payload: Record<string, unknown> = {
+        therapist_id: therapist.id,
+        date: selectedDate,
+        start_time: startStr,
+        end_time: endStr,
+        status: 'approved',
+        reason: 'Extra working hours',
+        notes: `Added from schedule: ${timeRangeLabel}`,
+      };
+      if (therapist.branchId) {
+        payload.branch_id = therapist.branchId;
+      }
+
+      const res = await authedFetch('/uauth/api/v1/therapists/extra-hours/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || 'Failed to add extra hours');
+      }
+
+      setBreakToast({
+        type: 'success',
+        message: `Extra time added for ${therapist.name}: ${timeRangeLabel} (${endMin - startMin}m)`,
+      });
+
+      // Silently refresh schedule in background to confirm server record
+      setScheduleRefreshKey((k) => k + 1);
+      restoreScroll();
+    } catch (err) {
+      if (previousScheduleData) {
+        setScheduleData(previousScheduleData);
+      }
+      setBreakToast({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Error adding extra hours',
+      });
+      restoreScroll();
+    } finally {
+      setAddingExtraHours(false);
+      setTimeout(() => setBreakToast(null), 4000);
+    }
+  }, [timeSlots, grid.slot_duration_minutes, preserveScroll, scheduleData, selectedDate]);
+
+  // Close context menu on outside click or Escape key
+  useEffect(() => {
+    const handleGlobalClick = () => setContextMenu(null);
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setContextMenu(null);
+        setSelectedUnavailable(null);
+      }
+    };
+    window.addEventListener('click', handleGlobalClick);
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener('click', handleGlobalClick);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, []);
+
   return (
     <DashboardShell>
       {/* ── Page header ── */}
@@ -1788,7 +2057,7 @@ export default function TherapistSchedulePage() {
               { label: 'Pending Payment', color: 'bg-rose-500' },
               { label: 'Available',       color: 'bg-card border border-dashed border-border' },
               { label: 'On Leave',        color: 'bg-amber-400' },
-              { label: 'Blocked',         color: 'bg-[darkgrey]' },
+              { label: 'Unavailable',     color: 'bg-[#707070]/30 border border-border/40' },
             ].map((l) => (
               <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
                 <span className={cn('h-2.5 w-2.5 rounded-full', l.color)} />
@@ -1910,6 +2179,13 @@ export default function TherapistSchedulePage() {
                         const isSameTherapistCol =
                           Boolean(draggedBreak && draggedBreak.therapistId === t.id);
 
+                        const isThisSlotUnavailable = slot.status === 'unavailable';
+                        const isSlotSelected = Boolean(
+                          isThisSlotUnavailable &&
+                          selectedUnavailable?.therapistId === t.id &&
+                          selectedUnavailable.slotTimes.includes(time)
+                        );
+
                         cells.push(
                           <div
                             key={`${t.id}-${time}`}
@@ -1917,6 +2193,11 @@ export default function TherapistSchedulePage() {
                               gridColumn: tIdx + 1,
                               gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
                             }}
+                            onContextMenu={
+                              isThisSlotUnavailable
+                                ? (e) => handleUnavailableContextMenu(e, t, time)
+                                : undefined
+                            }
                             onDragOver={(e) => {
                               if (isSameTherapistCol) {
                                 e.preventDefault();
@@ -1942,7 +2223,8 @@ export default function TherapistSchedulePage() {
                             className={cn(
                               'p-2 border-t border-l border-border/30 transition-all first:border-l-0 relative',
                               COL_TINTS[tIdx % COL_TINTS.length],
-                              isThisSlotDragOver && !isThisSlotDragging && 'ring-2 ring-teal-500 ring-inset bg-teal-100/70 dark:bg-teal-900/50'
+                              isThisSlotDragOver && !isThisSlotDragging && 'ring-2 ring-teal-500 ring-inset bg-teal-100/70 dark:bg-teal-900/50',
+                              isSlotSelected && 'ring-2 ring-emerald-500 ring-inset bg-emerald-100/50 dark:bg-emerald-950/40'
                             )}
                           >
                             {isThisSlotDragOver && !isThisSlotDragging && (
@@ -1956,6 +2238,7 @@ export default function TherapistSchedulePage() {
                               slot={slot}
                               isDraggable={isBreak}
                               isDragging={isThisSlotDragging}
+                              isSelected={isSlotSelected}
                               onDragStart={(e) => {
                                 if (isBreak) {
                                   const dur = getBreakDurationMinutes(slot);
@@ -1990,6 +2273,13 @@ export default function TherapistSchedulePage() {
                                   ? () => openModal(slot, t, time)
                                   : slot.status === 'available'
                                   ? () => openBookingModal(t, time)
+                                  : isThisSlotUnavailable
+                                  ? () => handleUnavailableClick(t, time)
+                                  : undefined
+                              }
+                              onContextMenu={
+                                isThisSlotUnavailable
+                                  ? (e) => handleUnavailableContextMenu(e, t, time)
                                   : undefined
                               }
                             />
@@ -2068,6 +2358,133 @@ export default function TherapistSchedulePage() {
           }}
           token={token}
         />
+      )}
+
+      {/* ── Context Menu for Unavailable Slots to Add Extra Time ── */}
+      {contextMenu && (
+        <div
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+          className="fixed z-50 w-64 rounded-2xl border border-border/80 bg-card/95 backdrop-blur-md shadow-2xl p-3 animate-in fade-in zoom-in-95 duration-150"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-border/50 pb-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
+                Extra Hours
+              </span>
+              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/60 px-1.5 py-0.5 rounded">
+                {contextMenu.slotTimes.length * grid.slot_duration_minutes}m
+              </span>
+            </div>
+            <p className="text-sm font-extrabold text-foreground truncate mt-0.5">
+              {contextMenu.therapist.name}
+            </p>
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground mt-1">
+              <Clock className="h-3.5 w-3.5 text-primary shrink-0" />
+              <span>
+                {(() => {
+                  const sorted = [...contextMenu.slotTimes].sort((a, b) => timeSlots.indexOf(a) - timeSlots.indexOf(b));
+                  const startMin = slotToMinutes(sorted[0]);
+                  const endMin = slotToMinutes(sorted[sorted.length - 1]) + grid.slot_duration_minutes;
+                  const format12h = (min: number) => {
+                    const h = Math.floor(min / 60);
+                    const m = min % 60;
+                    const ampm = h >= 12 ? 'PM' : 'AM';
+                    const hd = h % 12 === 0 ? 12 : h % 12;
+                    return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+                  };
+                  return `${format12h(startMin)} – ${format12h(endMin)}`;
+                })()}
+              </span>
+            </div>
+          </div>
+          <div className="pt-2.5">
+            <button
+              type="button"
+              disabled={addingExtraHours}
+              onClick={() => handleAddExtraTime(contextMenu.therapist, contextMenu.slotTimes)}
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white py-2 px-3 text-xs font-bold shadow transition cursor-pointer active:scale-[0.98] disabled:opacity-50"
+            >
+              {addingExtraHours ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Adding Extra Time…</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Add Extra Time</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Floating Bar for Selected Unavailable Slots ── */}
+      {selectedUnavailable && selectedUnavailable.slotTimes.length > 0 && !contextMenu && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl bg-slate-900/95 dark:bg-card/95 text-white dark:text-foreground px-5 py-3 shadow-2xl border border-white/10 backdrop-blur-md animate-in fade-in slide-in-from-bottom-3">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-emerald-400">
+                {selectedUnavailable.slotTimes.length} slot{selectedUnavailable.slotTimes.length > 1 ? 's' : ''} selected
+              </span>
+              <span className="text-xs text-white/50">·</span>
+              <span className="text-xs font-semibold text-white/90 truncate max-w-[140px]">
+                {selectedUnavailable.therapistName}
+              </span>
+            </div>
+            <span className="text-[11px] text-white/70 tabular-nums">
+              {(() => {
+                const sorted = [...selectedUnavailable.slotTimes].sort((a, b) => timeSlots.indexOf(a) - timeSlots.indexOf(b));
+                const startMin = slotToMinutes(sorted[0]);
+                const endMin = slotToMinutes(sorted[sorted.length - 1]) + grid.slot_duration_minutes;
+                const format12h = (min: number) => {
+                  const h = Math.floor(min / 60);
+                  const m = min % 60;
+                  const ampm = h >= 12 ? 'PM' : 'AM';
+                  const hd = h % 12 === 0 ? 12 : h % 12;
+                  return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+                };
+                return `${format12h(startMin)} – ${format12h(endMin)} (${endMin - startMin}m)`;
+              })()}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 ml-2">
+            <button
+              type="button"
+              disabled={addingExtraHours}
+              onClick={() => {
+                const t = filteredTherapists.find(th => th.id === selectedUnavailable.therapistId);
+                if (t) handleAddExtraTime(t, selectedUnavailable.slotTimes);
+              }}
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white px-3.5 py-2 text-xs font-bold shadow transition cursor-pointer active:scale-95 disabled:opacity-50"
+            >
+              {addingExtraHours ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Adding…</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Add Extra Time</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedUnavailable(null);
+                setContextMenu(null);
+              }}
+              className="text-white/60 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition cursor-pointer"
+              title="Deselect"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── Break Moving Indicator & Toast ── */}
