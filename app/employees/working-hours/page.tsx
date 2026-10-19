@@ -256,14 +256,25 @@ function DaySlotDetailModal({
   const [loadingExtra, setLoadingExtra] = useState(true);
 
   // Sub-forms toggles
+  const [showShiftForm, setShowShiftForm] = useState(false);
   const [showBreakForm, setShowBreakForm] = useState(false);
   const [showExtraForm, setShowExtraForm] = useState(false);
 
   // Loading & status alerts
+  const [savingShift, setSavingShift] = useState(false);
   const [savingBreak, setSavingBreak] = useState(false);
   const [savingExtra, setSavingExtra] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Shift / Duty form fields
+  const [shiftStart, setShiftStart] = useState(
+    currentRecord.start_time ? currentRecord.start_time.slice(0, 5) : '10:00'
+  );
+  const [shiftEnd, setShiftEnd] = useState(
+    currentRecord.end_time ? currentRecord.end_time.slice(0, 5) : '22:00'
+  );
+  const [applyAllDaysShift, setApplyAllDaysShift] = useState(false);
 
   // Break form fields
   const [breakStart, setBreakStart] = useState(
@@ -319,6 +330,59 @@ function DaySlotDetailModal({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
+
+  // Save shift / duty time
+  const handleSaveShift = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!shiftStart || !shiftEnd) {
+      setActionError('Please specify both shift start and shift end times.');
+      return;
+    }
+    if (shiftStart >= shiftEnd) {
+      setActionError('Shift start time must be strictly before shift end time.');
+      return;
+    }
+    setSavingShift(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const formattedStart = shiftStart.length === 5 ? `${shiftStart}:00` : shiftStart;
+      const formattedEnd = shiftEnd.length === 5 ? `${shiftEnd}:00` : shiftEnd;
+      const payload: Record<string, unknown> = {
+        therapist_id: currentRecord.therapist_id,
+        employee_id: currentRecord.employee_id,
+        start_time: formattedStart,
+        end_time: formattedEnd,
+      };
+      if (!applyAllDaysShift) {
+        payload.day_of_week = currentRecord.day_of_week;
+      }
+      const res = await authedFetch('/uauth/api/v1/therapists/duty-time/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || 'Failed to update duty / shift hours');
+      }
+      setActionSuccess('Duty status start & end times updated successfully!');
+      setCurrentRecord((prev) => ({
+        ...prev,
+        start_time: formattedStart,
+        end_time: formattedEnd,
+      }));
+      setShowShiftForm(false);
+      onRecordUpdated();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Error updating shift duty hours');
+    } finally {
+      setSavingShift(false);
+    }
+  };
 
   // Save break time
   const handleSaveBreak = async (e?: React.FormEvent) => {
@@ -567,74 +631,155 @@ function DaySlotDetailModal({
           {/* ── SECTION 1: WORKING HOURS & SHIFT DETAILS ── */}
           <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
             <div className="flex items-center justify-between pb-3 border-b border-border/40">
-              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Duty Status</span>
-              {currentRecord.is_weekend_off ? (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-xs px-2.5 py-0.5">
-                  Weekend Off / Rest Day
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-xs px-2.5 py-0.5">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                  Active Scheduled Shift
-                </span>
-              )}
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Duty Status</span>
+                {currentRecord.is_weekend_off ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-xs px-2.5 py-0.5">
+                    Weekend Off / Rest Day
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-xs px-2.5 py-0.5">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                    Active Scheduled Shift
+                  </span>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowShiftForm((prev) => !prev);
+                  setShowBreakForm(false);
+                  setShowExtraForm(false);
+                  setActionError(null);
+                  setActionSuccess(null);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-primary/15 border border-primary/30 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/25 transition cursor-pointer"
+              >
+                <Edit2 className="h-3 w-3" />
+                {showShiftForm ? 'Cancel' : 'Update Duty Time'}
+              </button>
             </div>
 
-            {!currentRecord.is_weekend_off && (
-              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div className="rounded-xl border border-border/60 bg-card p-3">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground block">Shift Start</span>
-                  <span className="mt-1 font-mono text-sm font-bold text-foreground block">
-                    {formatTime12(currentRecord.start_time)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {currentRecord.start_time?.slice(0, 5)}
-                  </span>
+            {showShiftForm ? (
+              <form onSubmit={handleSaveShift} className="pt-3 space-y-3 animate-fade-in">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Shift Start Time
+                    </label>
+                    <input
+                      type="time"
+                      value={shiftStart}
+                      onChange={(e) => setShiftStart(e.target.value)}
+                      required
+                      className="h-9 w-full rounded-xl border border-border bg-card px-3 text-xs font-mono text-foreground outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-foreground block mb-1">
+                      Shift End Time
+                    </label>
+                    <input
+                      type="time"
+                      value={shiftEnd}
+                      onChange={(e) => setShiftEnd(e.target.value)}
+                      required
+                      className="h-9 w-full rounded-xl border border-border bg-card px-3 text-xs font-mono text-foreground outline-none focus:ring-2 focus:ring-primary/20"
+                    />
+                  </div>
                 </div>
 
-                <div className="rounded-xl border border-border/60 bg-card p-3">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground block">Shift End</span>
-                  <span className="mt-1 font-mono text-sm font-bold text-foreground block">
-                    {formatTime12(currentRecord.end_time)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground font-mono">
-                    {currentRecord.end_time?.slice(0, 5)}
-                  </span>
-                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <label className="flex items-center gap-2 text-xs font-medium text-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={applyAllDaysShift}
+                      onChange={(e) => setApplyAllDaysShift(e.target.checked)}
+                      className="rounded border-border text-primary focus:ring-primary h-4 w-4 cursor-pointer"
+                    />
+                    <span>Apply shift hours to all 7 days for this therapist</span>
+                  </label>
 
-                <div className="rounded-xl border border-border/60 bg-card p-3">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground block">Shift Duration</span>
-                  <span className="mt-1 text-sm font-bold text-foreground block">
-                    {calcShiftHours(currentRecord.start_time, currentRecord.end_time, 0)} hrs
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">Gross working time</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowShiftForm(false)}
+                      className="rounded-xl border border-border bg-muted/60 px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingShift}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-primary hover:opacity-90 px-4 py-1.5 text-xs font-bold text-primary-foreground shadow-xs transition cursor-pointer disabled:opacity-50"
+                    >
+                      {savingShift && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Save Shift Time
+                    </button>
+                  </div>
                 </div>
+              </form>
+            ) : (
+              <>
+                {!currentRecord.is_weekend_off && (
+                  <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="rounded-xl border border-border/60 bg-card p-3">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Shift Start</span>
+                      <span className="mt-1 font-mono text-sm font-bold text-foreground block">
+                        {formatTime12(currentRecord.start_time)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {currentRecord.start_time?.slice(0, 5)}
+                      </span>
+                    </div>
 
-                <div className="rounded-xl border border-border/60 bg-card p-3">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground block">Net Working</span>
-                  <span className="mt-1 text-sm font-bold text-primary flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5" />
-                    {calcShiftHours(currentRecord.start_time, currentRecord.end_time, currentRecord.break_duration)} hrs
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">Excl. breaks</span>
+                    <div className="rounded-xl border border-border/60 bg-card p-3">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Shift End</span>
+                      <span className="mt-1 font-mono text-sm font-bold text-foreground block">
+                        {formatTime12(currentRecord.end_time)}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {currentRecord.end_time?.slice(0, 5)}
+                      </span>
+                    </div>
+
+                    <div className="rounded-xl border border-border/60 bg-card p-3">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Shift Duration</span>
+                      <span className="mt-1 text-sm font-bold text-foreground block">
+                        {calcShiftHours(currentRecord.start_time, currentRecord.end_time, 0)} hrs
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">Gross working time</span>
+                    </div>
+
+                    <div className="rounded-xl border border-border/60 bg-card p-3">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground block">Net Working</span>
+                      <span className="mt-1 text-sm font-bold text-primary flex items-center gap-1">
+                        <Clock className="h-3.5 w-3.5" />
+                        {calcShiftHours(currentRecord.start_time, currentRecord.end_time, currentRecord.break_duration)} hrs
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">Excl. breaks</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3 pt-3 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className="flex items-center justify-between sm:justify-start gap-2">
+                    <span className="text-muted-foreground">Effective Range:</span>
+                    <span className="font-semibold text-foreground">
+                      {currentRecord.effective_from || 'Always'} → {currentRecord.effective_to || 'Ongoing'}
+                    </span>
+                  </div>
+                  {currentRecord.timezone && (
+                    <div className="flex items-center justify-between sm:justify-start gap-2">
+                      <span className="text-muted-foreground">Timezone:</span>
+                      <span className="font-mono text-foreground">{currentRecord.timezone}</span>
+                    </div>
+                  )}
                 </div>
-              </div>
+              </>
             )}
-
-            <div className="mt-3 pt-3 border-t border-border/40 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-              <div className="flex items-center justify-between sm:justify-start gap-2">
-                <span className="text-muted-foreground">Effective Range:</span>
-                <span className="font-semibold text-foreground">
-                  {currentRecord.effective_from || 'Always'} → {currentRecord.effective_to || 'Ongoing'}
-                </span>
-              </div>
-              {currentRecord.timezone && (
-                <div className="flex items-center justify-between sm:justify-start gap-2">
-                  <span className="text-muted-foreground">Timezone:</span>
-                  <span className="font-mono text-foreground">{currentRecord.timezone}</span>
-                </div>
-              )}
-            </div>
           </div>
 
           {/* ── SECTION 2: BREAK TIMES ── */}
@@ -658,6 +803,7 @@ function DaySlotDetailModal({
                 type="button"
                 onClick={() => {
                   setShowBreakForm((prev) => !prev);
+                  setShowShiftForm(false);
                   setShowExtraForm(false);
                   setActionError(null);
                   setActionSuccess(null);
@@ -793,6 +939,7 @@ function DaySlotDetailModal({
                 type="button"
                 onClick={() => {
                   setShowExtraForm((prev) => !prev);
+                  setShowShiftForm(false);
                   setShowBreakForm(false);
                   setActionError(null);
                   setActionSuccess(null);
