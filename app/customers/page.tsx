@@ -7,7 +7,9 @@ import {
   LayoutGrid, List, CheckCircle2, XCircle, ChevronDown,
   MessageCircle, ShieldCheck, User, Send, X, CheckCheck,
   MessageSquare, Loader2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Check, Eye, Copy,
+  Check, Eye, Copy, Award, Gift, DollarSign, TrendingUp, Clock,
+  Sparkles, ShoppingBag, Receipt, Star, Tag, Activity, BarChart3,
+  MapPin, UserCheck, Heart,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -390,6 +392,105 @@ function SuccessToast({
   );
 }
 
+// ── Customer Analytics Type ───────────────────────────────────────────────────
+interface CustomerAnalytics {
+  success: boolean;
+  customer_id: string;
+  phone?: string | null;
+  loyalty: {
+    is_enrolled: boolean;
+    balance_points: number;
+    total_earned: number;
+    total_redeemed: number;
+    points_expire_at: string | null;
+    is_expired: boolean;
+    points_value_kwd: number;
+    recent_transactions: Array<{
+      id: string;
+      transaction_type: string;
+      points: number;
+      booking_id?: string | null;
+      booking_number?: string | null;
+      description?: string | null;
+      created_at?: string | null;
+    }>;
+  };
+  gift_vouchers: {
+    total_count: number;
+    sent_count: number;
+    received_count: number;
+    active_count: number;
+    redeemed_count: number;
+    total_spent_on_vouchers: number;
+    currency: string;
+    sent_vouchers: Array<{
+      id: string;
+      voucher_number?: string | null;
+      recipient_name?: string | null;
+      recipient_phone?: string | null;
+      sender_name?: string | null;
+      total_amount: number;
+      status: string;
+      created_at?: string | null;
+      redeemed_at?: string | null;
+    }>;
+    received_vouchers: Array<{
+      id: string;
+      voucher_number?: string | null;
+      recipient_name?: string | null;
+      recipient_phone?: string | null;
+      sender_name?: string | null;
+      total_amount: number;
+      status: string;
+      created_at?: string | null;
+      redeemed_at?: string | null;
+    }>;
+  };
+  financials: {
+    total_spent: number;
+    total_spent_bookings: number;
+    total_spent_vouchers: number;
+    total_refunded: number;
+    net_revenue: number;
+    average_order_value: number;
+    currency: string;
+    total_transactions: number;
+  };
+  sales_and_bookings: {
+    total_bookings: number;
+    completed_bookings: number;
+    upcoming_bookings: number;
+    cancelled_bookings: number;
+    cancellation_rate_pct: number;
+    first_booking_date: string | null;
+    last_visit_date: string | null;
+    days_since_last_visit: number | null;
+    recent_bookings: Array<{
+      id: string;
+      booking_number?: string | null;
+      invoice_number?: string | null;
+      service_name?: string | null;
+      branch_name?: string | null;
+      therapist_name?: string | null;
+      appointment_date?: string | null;
+      total_amount: number;
+      status: string;
+      payment_status: string;
+    }>;
+  };
+  marketing_analytics: {
+    customer_tier: string;
+    favorite_service?: string | null;
+    favorite_service_count: number;
+    preferred_branch?: string | null;
+    preferred_therapist?: string | null;
+    preferred_day_of_week?: string | null;
+    preferred_time_slot?: string | null;
+    total_treatment_hours: number;
+    lifecycle_status: string;
+  };
+}
+
 // ── Customer Details Modal ───────────────────────────────────────────────────
 function CustomerDetailsModal({
   customer,
@@ -401,6 +502,10 @@ function CustomerDetailsModal({
   onSendMessage: (customer: Customer) => void;
 }) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'overview' | 'finance' | 'vouchers' | 'loyalty' | 'marketing'>('overview');
+  const [analytics, setAnalytics] = useState<CustomerAnalytics | null>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState<boolean>(true);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
   const handleCopy = (text: string, field: string) => {
     navigator.clipboard?.writeText(text);
@@ -410,16 +515,49 @@ function CustomerDetailsModal({
 
   const signupDateFormatted = formatCustomerDateTime(customer.created_at);
 
+  useEffect(() => {
+    let isMounted = true;
+    setLoadingAnalytics(true);
+    setAnalyticsError(null);
+
+    const query = customer.phone ? `?phone=${encodeURIComponent(customer.phone)}` : '';
+    fetch(`/api/v1/customers/${encodeURIComponent(customer.id)}/analytics${query}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to load customer analytics');
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted) {
+          if (data && data.success) {
+            setAnalytics(data);
+          }
+          setLoadingAnalytics(false);
+        }
+      })
+      .catch((err) => {
+        if (isMounted) {
+          setAnalyticsError(err instanceof Error ? err.message : 'Unable to load analytics');
+          setLoadingAnalytics(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [customer.id, customer.phone]);
+
+  const tier = analytics?.marketing_analytics?.customer_tier || 'Customer';
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card shadow-2xl overflow-hidden animate-fade-in-up">
-        {/* Header with avatar & basic info */}
-        <div className="relative border-b border-border/60 bg-gradient-to-r from-primary/10 via-primary/5 to-accent/10 p-6">
+      <div className="w-full max-w-3xl rounded-3xl border border-border bg-card shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-fade-in-up">
+        {/* Header with avatar, basic info & VIP status */}
+        <div className="relative shrink-0 border-b border-border/60 bg-gradient-to-r from-primary/15 via-primary/5 to-teal-500/10 p-5 sm:p-6">
           <button
             type="button"
             onClick={onClose}
@@ -436,7 +574,7 @@ function CustomerDetailsModal({
                 <h3 className="text-lg font-bold text-foreground truncate">{customer.name}</h3>
                 <span
                   className={cn(
-                    'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize',
+                    'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize',
                     customer.account_status === 'active'
                       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
                       : 'bg-muted text-muted-foreground',
@@ -450,136 +588,834 @@ function CustomerDetailsModal({
                   />
                   {customer.account_status}
                 </span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5 font-mono">
-                ID: {customer.id}
-              </p>
-              {customer.gender && (
-                <p className="text-xs text-muted-foreground capitalize mt-0.5">
-                  Gender: <span className="text-foreground font-medium">{customer.gender}</span>
-                </p>
-              )}
-            </div>
-          </div>
-        </div>
 
-        {/* Body content */}
-        <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
-          {/* Contact Details */}
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
-              Contact Information
-            </h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/20">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Phone className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Phone</p>
-                    <p className="text-xs font-medium text-foreground truncate">
-                      {customer.phone || 'Not provided'}
-                    </p>
-                  </div>
-                </div>
-                {customer.phone && (
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(customer.phone!, 'phone')}
-                    title="Copy phone"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
-                  >
-                    {copiedField === 'phone' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                  </button>
+                {tier && (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    <Sparkles className="h-3 w-3" />
+                    {tier}
+                  </span>
                 )}
               </div>
 
-              <div className="flex items-center justify-between p-3 rounded-xl border border-border bg-muted/20">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Mail className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-[10px] text-muted-foreground uppercase font-semibold">Email</p>
-                    <p className="text-xs font-medium text-foreground truncate" title={customer.email || undefined}>
-                      {customer.email || 'Not provided'}
-                    </p>
-                  </div>
-                </div>
-                {customer.email && (
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(customer.email!, 'email')}
-                    title="Copy email"
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
-                  >
-                    {copiedField === 'email' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                  </button>
+              <div className="flex items-center gap-3 text-xs text-muted-foreground mt-1 flex-wrap font-mono">
+                <span>ID: {customer.id}</span>
+                {customer.gender && (
+                  <span className="font-sans capitalize">
+                    Gender: <strong className="text-foreground">{customer.gender}</strong>
+                  </span>
                 )}
               </div>
             </div>
           </div>
 
-          {/* Account & Profile Details */}
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
-              Profile & Sign Up
-            </h4>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <div className="p-3 rounded-xl border border-border bg-muted/20">
-                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Date of Birth</p>
-                <p className="text-xs font-semibold text-foreground mt-1 flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  {formatDob(customer.dob) || '—'}
-                </p>
+          {/* Quick Analytics Summary Strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5">
+            {/* Total Spent */}
+            <div className="p-2.5 rounded-2xl bg-card/70 border border-border/70 backdrop-blur-xs flex items-center gap-2.5 shadow-xs">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <DollarSign className="h-4.5 w-4.5" />
               </div>
-
-              <div className="p-3 rounded-xl border border-border bg-muted/20">
-                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Signup Date</p>
-                <p className="text-xs font-semibold text-foreground mt-1 flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
-                  {signupDateFormatted || '—'}
-                </p>
-              </div>
-
-              <div className="p-3 rounded-xl border border-border bg-muted/20">
-                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Loyalty Program</p>
-                <p className="text-xs font-semibold text-foreground mt-1">
-                  {customer.is_loyalty_enrolled ? (
-                    <span className="text-emerald-600 dark:text-emerald-400 font-bold">Enrolled</span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Spent</p>
+                <p className="text-xs font-black text-foreground truncate">
+                  {loadingAnalytics ? (
+                    <span className="inline-block h-3 w-12 animate-pulse bg-muted rounded" />
                   ) : (
-                    <span className="text-muted-foreground">Not Enrolled</span>
+                    `${(analytics?.financials?.total_spent ?? 0).toFixed(3)} KWD`
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Loyalty Points */}
+            <div className="p-2.5 rounded-2xl bg-card/70 border border-border/70 backdrop-blur-xs flex items-center gap-2.5 shadow-xs">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                <Award className="h-4.5 w-4.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Loyalty Points</p>
+                <p className="text-xs font-black text-foreground truncate">
+                  {loadingAnalytics ? (
+                    <span className="inline-block h-3 w-12 animate-pulse bg-muted rounded" />
+                  ) : (
+                    `${analytics?.loyalty?.balance_points ?? 0} pts`
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Gift Vouchers */}
+            <div className="p-2.5 rounded-2xl bg-card/70 border border-border/70 backdrop-blur-xs flex items-center gap-2.5 shadow-xs">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                <Gift className="h-4.5 w-4.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Gift Vouchers</p>
+                <p className="text-xs font-black text-foreground truncate">
+                  {loadingAnalytics ? (
+                    <span className="inline-block h-3 w-14 animate-pulse bg-muted rounded" />
+                  ) : (
+                    `${analytics?.gift_vouchers?.sent_count ?? 0} sent · ${analytics?.gift_vouchers?.received_count ?? 0} rcvd`
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {/* Visits & Bookings */}
+            <div className="p-2.5 rounded-2xl bg-card/70 border border-border/70 backdrop-blur-xs flex items-center gap-2.5 shadow-xs">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                <Calendar className="h-4.5 w-4.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Completed Visits</p>
+                <p className="text-xs font-black text-foreground truncate">
+                  {loadingAnalytics ? (
+                    <span className="inline-block h-3 w-10 animate-pulse bg-muted rounded" />
+                  ) : (
+                    `${analytics?.sales_and_bookings?.completed_bookings ?? 0} of ${analytics?.sales_and_bookings?.total_bookings ?? 0}`
                   )}
                 </p>
               </div>
             </div>
           </div>
+        </div>
 
-          {/* Verification Statuses */}
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
-              Verification Status
-            </h4>
-            <div className="flex flex-wrap gap-2">
-              <VerifiedBadge ok={customer.is_whatsapp_verified} label="WhatsApp Verified" />
-              <VerifiedBadge ok={customer.is_email_verified} label="Email Verified" />
-              <VerifiedBadge ok={customer.is_mobile_verified} label="Mobile Phone Verified" />
+        {/* Navigation Tabs */}
+        <div className="shrink-0 border-b border-border/50 bg-muted/40 px-5 pt-2 flex items-center gap-1 overflow-x-auto no-scrollbar">
+          <button
+            type="button"
+            onClick={() => setActiveTab('overview')}
+            className={cn(
+              'flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer',
+              activeTab === 'overview'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <User className="h-3.5 w-3.5" />
+            <span>Overview & Profile</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('finance')}
+            className={cn(
+              'flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer',
+              activeTab === 'finance'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <DollarSign className="h-3.5 w-3.5" />
+            <span>Finance & Spend</span>
+            {analytics?.financials && (
+              <span className="ml-1 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.2 text-[10px] font-extrabold">
+                {analytics.financials.total_spent.toFixed(1)} KWD
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('vouchers')}
+            className={cn(
+              'flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer',
+              activeTab === 'vouchers'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Gift className="h-3.5 w-3.5" />
+            <span>Gift Vouchers</span>
+            {analytics?.gift_vouchers && (
+              <span className="ml-1 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 px-1.5 py-0.2 text-[10px] font-extrabold">
+                {analytics.gift_vouchers.total_count}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('loyalty')}
+            className={cn(
+              'flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer',
+              activeTab === 'loyalty'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Award className="h-3.5 w-3.5" />
+            <span>Loyalty Points</span>
+            {analytics?.loyalty?.balance_points !== undefined && (
+              <span className="ml-1 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.2 text-[10px] font-extrabold">
+                {analytics.loyalty.balance_points} pts
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('marketing')}
+            className={cn(
+              'flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-bold border-b-2 transition whitespace-nowrap cursor-pointer',
+              activeTab === 'marketing'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            <span>Marketing & CRM</span>
+          </button>
+        </div>
+
+        {/* Body content based on active tab */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* TAB 1: OVERVIEW & PROFILE */}
+          {activeTab === 'overview' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              {/* Contact Information */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+                  Contact Information
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex items-center justify-between p-3.5 rounded-2xl border border-border bg-muted/20 shadow-xs">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <Phone className="h-4.5 w-4.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold">Phone Number</p>
+                        <p className="text-xs font-bold text-foreground truncate">
+                          {customer.phone || 'Not provided'}
+                        </p>
+                      </div>
+                    </div>
+                    {customer.phone && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(customer.phone!, 'phone')}
+                        title="Copy phone"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      >
+                        {copiedField === 'phone' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between p-3.5 rounded-2xl border border-border bg-muted/20 shadow-xs">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <Mail className="h-4.5 w-4.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[10px] text-muted-foreground uppercase font-bold">Email Address</p>
+                        <p className="text-xs font-bold text-foreground truncate" title={customer.email || undefined}>
+                          {customer.email || 'Not provided'}
+                        </p>
+                      </div>
+                    </div>
+                    {customer.email && (
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(customer.email!, 'email')}
+                        title="Copy email"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-border hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                      >
+                        {copiedField === 'email' ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Profile & Account Details */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+                  Profile & Registration
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold">Date of Birth</p>
+                    <p className="text-xs font-bold text-foreground mt-1 flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      {formatDob(customer.dob) || '—'}
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold">Signup Date</p>
+                    <p className="text-xs font-bold text-foreground mt-1 flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5 text-primary shrink-0" />
+                      {signupDateFormatted || '—'}
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                    <p className="text-[10px] text-muted-foreground uppercase font-bold">Loyalty Enrollment</p>
+                    <p className="text-xs font-bold text-foreground mt-1 flex items-center gap-1.5">
+                      {customer.is_loyalty_enrolled || analytics?.loyalty?.is_enrolled ? (
+                        <span className="text-emerald-600 dark:text-emerald-400 font-extrabold flex items-center gap-1">
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Enrolled
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground font-semibold">Not Enrolled</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Verification Badges */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+                  Verification Status
+                </h4>
+                <div className="flex flex-wrap gap-2">
+                  <VerifiedBadge ok={customer.is_whatsapp_verified} label="WhatsApp Verified" />
+                  <VerifiedBadge ok={customer.is_email_verified} label="Email Verified" />
+                  <VerifiedBadge ok={customer.is_mobile_verified} label="Mobile Phone Verified" />
+                </div>
+              </div>
+
+              {customer.notification_channel && (
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20 flex items-center justify-between">
+                  <span className="text-xs font-bold text-muted-foreground uppercase">Preferred Notification Channel</span>
+                  <span className="text-xs font-extrabold text-foreground capitalize bg-card px-3 py-1 rounded-xl border border-border">
+                    {customer.notification_channel}
+                  </span>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
-          {customer.notification_channel && (
-            <div className="p-3 rounded-xl border border-border bg-muted/20">
-              <p className="text-[10px] text-muted-foreground uppercase font-semibold">Preferred Notification Channel</p>
-              <p className="text-xs font-semibold text-foreground mt-1 capitalize">
-                {customer.notification_channel}
-              </p>
+          {/* TAB 2: FINANCE & SPEND */}
+          {activeTab === 'finance' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              {/* Financial Metrics Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="p-4 rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-transparent">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                    Total Customer Revenue (LTV)
+                  </p>
+                  <p className="text-xl font-black text-foreground mt-1">
+                    {(analytics?.financials?.total_spent ?? 0).toFixed(3)} <span className="text-xs font-bold text-muted-foreground">KWD</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Net revenue: {(analytics?.financials?.net_revenue ?? 0).toFixed(3)} KWD
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Direct Appointments Spend
+                  </p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {(analytics?.financials?.total_spent_bookings ?? 0).toFixed(3)} <span className="text-xs font-bold text-muted-foreground">KWD</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    From {analytics?.sales_and_bookings?.completed_bookings ?? 0} completed visits
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Gift Vouchers Spend
+                  </p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {(analytics?.financials?.total_spent_vouchers ?? 0).toFixed(3)} <span className="text-xs font-bold text-muted-foreground">KWD</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    From {analytics?.gift_vouchers?.sent_count ?? 0} purchased vouchers
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Average Order Value (AOV)
+                  </p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {(analytics?.financials?.average_order_value ?? 0).toFixed(3)} <span className="text-xs font-bold text-muted-foreground">KWD</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Per booking / gift transaction</p>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Total Refunded
+                  </p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {(analytics?.financials?.total_refunded ?? 0).toFixed(3)} <span className="text-xs font-bold text-muted-foreground">KWD</span>
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Processed refund amount</p>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-muted-foreground">
+                    Total Completed Orders
+                  </p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {analytics?.financials?.total_transactions ?? 0}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-1">Services & vouchers purchased</p>
+                </div>
+              </div>
+
+              {/* Recent Bookings Table */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center justify-between">
+                  <span>Recent Bookings & Appointments</span>
+                  <span className="text-[11px] font-semibold lowercase text-muted-foreground">
+                    showing latest {analytics?.sales_and_bookings?.recent_bookings?.length ?? 0}
+                  </span>
+                </h4>
+
+                {analytics?.sales_and_bookings?.recent_bookings && analytics.sales_and_bookings.recent_bookings.length > 0 ? (
+                  <div className="rounded-2xl border border-border overflow-hidden">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-muted/40 border-b border-border text-[10px] font-bold uppercase text-muted-foreground">
+                        <tr>
+                          <th className="p-3">Booking Ref</th>
+                          <th className="p-3">Service / Branch</th>
+                          <th className="p-3">Date</th>
+                          <th className="p-3">Amount</th>
+                          <th className="p-3 text-right">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border/60">
+                        {analytics.sales_and_bookings.recent_bookings.map((b) => (
+                          <tr key={b.id} className="hover:bg-muted/20 transition">
+                            <td className="p-3 font-mono font-bold text-primary">
+                              {b.booking_number || b.id.slice(0, 8)}
+                              {b.invoice_number && (
+                                <span className="block text-[10px] font-mono text-muted-foreground font-normal">
+                                  {b.invoice_number}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3">
+                              <p className="font-bold text-foreground">{b.service_name || 'Service appointment'}</p>
+                              <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                {b.branch_name && <span>{b.branch_name}</span>}
+                                {b.therapist_name && <span>· {b.therapist_name}</span>}
+                              </p>
+                            </td>
+                            <td className="p-3 text-muted-foreground whitespace-nowrap">
+                              {b.appointment_date ? formatCustomerDateTime(b.appointment_date) : '—'}
+                            </td>
+                            <td className="p-3 font-bold text-foreground whitespace-nowrap">
+                              {b.total_amount.toFixed(3)} KWD
+                            </td>
+                            <td className="p-3 text-right whitespace-nowrap">
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded-lg px-2 py-0.5 text-[10px] font-bold capitalize',
+                                  b.status === 'completed'
+                                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                    : b.status === 'cancelled'
+                                    ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300'
+                                    : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+                                )}
+                              >
+                                {b.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-6 text-center rounded-2xl border border-dashed border-border bg-muted/10 text-muted-foreground text-xs">
+                    No booking records found for this customer.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: GIFT VOUCHERS */}
+          {activeTab === 'vouchers' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              {/* Voucher Metrics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase text-muted-foreground">Sent by Customer</p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {analytics?.gift_vouchers?.sent_count ?? 0} vouchers
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Spend: {(analytics?.gift_vouchers?.total_spent_on_vouchers ?? 0).toFixed(3)} KWD
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase text-muted-foreground">Received as Gift</p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {analytics?.gift_vouchers?.received_count ?? 0} vouchers
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">Gifted by others to this customer</p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase text-muted-foreground">Active Vouchers</p>
+                  <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                    {analytics?.gift_vouchers?.active_count ?? 0}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">Ready for redemption</p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase text-muted-foreground">Redeemed Vouchers</p>
+                  <p className="text-lg font-black text-foreground mt-1">
+                    {analytics?.gift_vouchers?.redeemed_count ?? 0}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">Successfully used</p>
+                </div>
+              </div>
+
+              {/* Sent Vouchers List */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+                  <Send className="h-3.5 w-3.5 text-primary" />
+                  <span>Vouchers Sent to Friends / Family ({analytics?.gift_vouchers?.sent_vouchers?.length ?? 0})</span>
+                </h4>
+                {analytics?.gift_vouchers?.sent_vouchers && analytics.gift_vouchers.sent_vouchers.length > 0 ? (
+                  <div className="space-y-2">
+                    {analytics.gift_vouchers.sent_vouchers.map((v) => (
+                      <div key={v.id} className="p-3 rounded-2xl border border-border bg-card hover:bg-muted/20 transition flex items-center justify-between gap-3 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-mono font-bold text-foreground flex items-center gap-2">
+                            <span>{v.voucher_number || `VOU-${v.id.slice(0, 8)}`}</span>
+                            <span className="text-[10px] font-normal text-muted-foreground">
+                              {v.created_at ? formatCustomerDate(v.created_at) : ''}
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            To: <strong className="text-foreground">{v.recipient_name || v.recipient_phone || 'Recipient'}</strong>
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-black text-foreground">{v.total_amount.toFixed(3)} KWD</p>
+                          <span
+                            className={cn(
+                              'inline-block mt-0.5 rounded-md px-2 py-0.2 text-[10px] font-bold capitalize',
+                              v.status === 'redeemed'
+                                ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                : v.status === 'active'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+                            )}
+                          >
+                            {v.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-5 text-center rounded-2xl border border-dashed border-border bg-muted/10 text-muted-foreground text-xs">
+                    No vouchers sent by this customer.
+                  </div>
+                )}
+              </div>
+
+              {/* Received Vouchers List */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+                  <Gift className="h-3.5 w-3.5 text-purple-500" />
+                  <span>Vouchers Received ({analytics?.gift_vouchers?.received_vouchers?.length ?? 0})</span>
+                </h4>
+                {analytics?.gift_vouchers?.received_vouchers && analytics.gift_vouchers.received_vouchers.length > 0 ? (
+                  <div className="space-y-2">
+                    {analytics.gift_vouchers.received_vouchers.map((v) => (
+                      <div key={v.id} className="p-3 rounded-2xl border border-border bg-card hover:bg-muted/20 transition flex items-center justify-between gap-3 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-mono font-bold text-foreground flex items-center gap-2">
+                            <span>{v.voucher_number || `VOU-${v.id.slice(0, 8)}`}</span>
+                            <span className="text-[10px] font-normal text-muted-foreground">
+                              {v.created_at ? formatCustomerDate(v.created_at) : ''}
+                            </span>
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            From: <strong className="text-foreground">{v.sender_name || 'Generous Friend'}</strong>
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="font-black text-foreground">{v.total_amount.toFixed(3)} KWD</p>
+                          <span
+                            className={cn(
+                              'inline-block mt-0.5 rounded-md px-2 py-0.2 text-[10px] font-bold capitalize',
+                              v.status === 'redeemed'
+                                ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                : v.status === 'active'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+                            )}
+                          >
+                            {v.status}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-5 text-center rounded-2xl border border-dashed border-border bg-muted/10 text-muted-foreground text-xs">
+                    No vouchers received by this customer.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: LOYALTY POINTS */}
+          {activeTab === 'loyalty' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              {/* Loyalty Balance Card */}
+              <div className="p-5 rounded-2xl border border-amber-500/20 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                    <Award className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-black uppercase tracking-wider text-muted-foreground">Current Balance</p>
+                      {analytics?.loyalty?.is_enrolled && (
+                        <span className="text-[10px] font-bold px-2 py-0.2 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          Active Account
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-2xl font-black text-foreground mt-0.5">
+                      {analytics?.loyalty?.balance_points ?? 0} <span className="text-sm font-bold text-amber-600 dark:text-amber-400">Points</span>
+                    </p>
+                    <p className="text-xs font-semibold text-muted-foreground mt-0.5">
+                      Cash redemption value: <strong className="text-foreground">{(analytics?.loyalty?.points_value_kwd ?? 0).toFixed(3)} KWD</strong>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="text-left sm:text-right border-t sm:border-t-0 pt-3 sm:pt-0 border-border/40">
+                  <p className="text-[10px] font-bold uppercase text-muted-foreground">Points Expiry Date</p>
+                  <p className="text-xs font-bold text-foreground mt-0.5">
+                    {analytics?.loyalty?.points_expire_at ? formatCustomerDate(analytics.loyalty.points_expire_at) : 'Rolling 180 Days'}
+                  </p>
+                  {analytics?.loyalty?.is_expired && (
+                    <span className="inline-block mt-1 text-[10px] font-bold text-rose-500 bg-rose-500/10 px-2 py-0.5 rounded-full">
+                      Expired
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Lifetime Stats */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase text-muted-foreground">Lifetime Points Earned</p>
+                  <p className="text-lg font-black text-emerald-600 dark:text-emerald-400 mt-1">
+                    +{analytics?.loyalty?.total_earned ?? 0} pts
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">Cumulative earned points</p>
+                </div>
+
+                <div className="p-3.5 rounded-2xl border border-border bg-muted/20">
+                  <p className="text-[10px] font-extrabold uppercase text-muted-foreground">Lifetime Points Redeemed</p>
+                  <p className="text-lg font-black text-primary mt-1">
+                    -{analytics?.loyalty?.total_redeemed ?? 0} pts
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">Points used towards booking payments</p>
+                </div>
+              </div>
+
+              {/* Recent Loyalty Transactions */}
+              <div>
+                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3">
+                  Recent Points History
+                </h4>
+
+                {analytics?.loyalty?.recent_transactions && analytics.loyalty.recent_transactions.length > 0 ? (
+                  <div className="space-y-2">
+                    {analytics.loyalty.recent_transactions.map((t) => (
+                      <div key={t.id} className="p-3 rounded-2xl border border-border bg-card flex items-center justify-between gap-3 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-bold text-foreground flex items-center gap-1.5 capitalize">
+                            <span
+                              className={cn(
+                                'h-2 w-2 rounded-full shrink-0',
+                                t.transaction_type === 'earn'
+                                  ? 'bg-emerald-500'
+                                  : t.transaction_type === 'redeem'
+                                  ? 'bg-primary'
+                                  : 'bg-amber-500',
+                              )}
+                            />
+                            {t.transaction_type}
+                            {t.booking_number && (
+                              <span className="font-mono text-[10px] text-muted-foreground font-normal">
+                                ({t.booking_number})
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                            {t.description || `${t.points} points ${t.transaction_type}ed`}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p
+                            className={cn(
+                              'font-black text-xs font-mono',
+                              t.transaction_type === 'earn' ? 'text-emerald-600 dark:text-emerald-400' : 'text-foreground',
+                            )}
+                          >
+                            {t.transaction_type === 'earn' ? `+${t.points}` : `-${t.points}`} pts
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {t.created_at ? formatCustomerDate(t.created_at) : ''}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-6 text-center rounded-2xl border border-dashed border-border bg-muted/10 text-muted-foreground text-xs">
+                    No points transactions on record yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: MARKETING & CRM */}
+          {activeTab === 'marketing' && (
+            <div className="space-y-5 animate-in fade-in duration-150">
+              {/* Segment & Lifecycle Banner */}
+              <div className="p-4 rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 via-primary/5 to-transparent flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/20 text-primary">
+                    <Star className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Customer Segment Tier</p>
+                    <p className="text-base font-black text-foreground">
+                      {analytics?.marketing_analytics?.customer_tier || 'New Customer'}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Lifecycle State</p>
+                  <span className="inline-block mt-0.5 rounded-full bg-card px-2.5 py-0.5 text-xs font-bold text-foreground border border-border">
+                    {analytics?.marketing_analytics?.lifecycle_status || 'Active'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Customer Preferences Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-4 rounded-2xl border border-border bg-muted/20 flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                    <Heart className="h-4.5 w-4.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Favorite Service</p>
+                    <p className="text-xs font-bold text-foreground mt-0.5 truncate">
+                      {analytics?.marketing_analytics?.favorite_service || 'None yet'}
+                    </p>
+                    {analytics?.marketing_analytics?.favorite_service_count ? (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Booked {analytics.marketing_analytics.favorite_service_count} times
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20 flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <MapPin className="h-4.5 w-4.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Preferred Branch</p>
+                    <p className="text-xs font-bold text-foreground mt-0.5 truncate">
+                      {analytics?.marketing_analytics?.preferred_branch || 'Any branch'}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Primary treatment location</p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20 flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400">
+                    <UserCheck className="h-4.5 w-4.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Preferred Therapist</p>
+                    <p className="text-xs font-bold text-foreground mt-0.5 truncate">
+                      {analytics?.marketing_analytics?.preferred_therapist || 'No preference'}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">Frequently requested therapist</p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl border border-border bg-muted/20 flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                    <Clock className="h-4.5 w-4.5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase text-muted-foreground">Preferred Day & Time</p>
+                    <p className="text-xs font-bold text-foreground mt-0.5 truncate">
+                      {analytics?.marketing_analytics?.preferred_day_of_week
+                        ? `${analytics.marketing_analytics.preferred_day_of_week}`
+                        : 'Flexible days'}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {analytics?.marketing_analytics?.preferred_time_slot || 'Flexible hours'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Engagement & Retention Metrics */}
+              <div className="p-4 rounded-2xl border border-border bg-muted/20 space-y-3">
+                <h5 className="text-[11px] font-extrabold uppercase text-foreground">
+                  Retention & Engagement Metrics
+                </h5>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block font-bold uppercase">First Visit</span>
+                    <strong className="text-foreground">
+                      {analytics?.sales_and_bookings?.first_booking_date
+                        ? formatCustomerDate(analytics.sales_and_bookings.first_booking_date)
+                        : '—'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block font-bold uppercase">Last Visit</span>
+                    <strong className="text-foreground">
+                      {analytics?.sales_and_bookings?.last_visit_date
+                        ? formatCustomerDate(analytics.sales_and_bookings.last_visit_date)
+                        : '—'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block font-bold uppercase">Recency (Days)</span>
+                    <strong className="text-foreground">
+                      {analytics?.sales_and_bookings?.days_since_last_visit !== null && analytics?.sales_and_bookings?.days_since_last_visit !== undefined
+                        ? `${analytics.sales_and_bookings.days_since_last_visit} days ago`
+                        : '—'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-muted-foreground block font-bold uppercase">Treatment Time</span>
+                    <strong className="text-foreground">
+                      {analytics?.marketing_analytics?.total_treatment_hours ?? 0} hrs
+                    </strong>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
 
         {/* Footer actions */}
-        <div className="flex items-center justify-between border-t border-border/60 bg-muted/20 px-6 py-4">
+        <div className="shrink-0 flex items-center justify-between border-t border-border/60 bg-muted/20 px-6 py-4">
           <button
             type="button"
             onClick={onClose}

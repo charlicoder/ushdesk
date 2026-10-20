@@ -1,70 +1,86 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getProxyHeaders } from '@/lib/proxy';
+import { getProxyHeaders, getApiBaseUrl, getBooknpayPath } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
 
-const BASE_URL = process.env['API_BASE_URL'] ?? 'https://apidev.ushspa.co';
+function getUpstreamUrls(endpointPath: string, queryString: string = ''): string[] {
+  const baseUrl = getApiBaseUrl();
+  const booknpay = getBooknpayPath();
+  const qs = queryString ? (queryString.startsWith('?') ? queryString : `?${queryString}`) : '';
 
-const UPSTREAM_URL = `${BASE_URL}/booknpay/api/v1/payments/`;
+  const urls: string[] = [];
+
+  // 1. Primary gateway URL (e.g. http://127.0.0.1:8000/booknpay/api/v1/payments/)
+  urls.push(`${baseUrl}${booknpay}${endpointPath}${qs}`);
+
+  // 2. Direct booknpay service URL fallback
+  const directBase = (process.env['BOOKNPAY_DIRECT_URL'] || 'http://127.0.0.1:8003').replace(/\/+$/, '');
+  urls.push(`${directBase}${endpointPath}${qs}`);
+
+  return urls;
+}
+
+async function proxyWithFallback(
+  urls: string[],
+  init: RequestInit,
+): Promise<NextResponse> {
+  let lastStatus = 502;
+  let lastData: unknown = { detail: 'Upstream gateway error' };
+
+  for (const url of urls) {
+    try {
+      const upstream = await fetch(url, {
+        ...init,
+        cache: 'no-store',
+      });
+
+      const text = await upstream.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = text ? { detail: text } : { detail: upstream.statusText || 'Error' };
+      }
+
+      if (upstream.status < 500) {
+        return NextResponse.json(parsed, { status: upstream.status });
+      }
+
+      lastStatus = upstream.status;
+      lastData = parsed;
+    } catch {
+      // Network failure on this target, try next
+    }
+  }
+
+  return NextResponse.json(lastData, { status: lastStatus });
+}
 
 /**
  * POST /booknpay/api/v1/payments
- * Proxy to upstream booknpay — creates a payment record for a voucher.
- * Forwards all query params (e.g. customer_id) to the upstream.
- * Requires employee auth token (Authorization: Bearer <token>).
  */
 export async function POST(req: NextRequest) {
-  const body = await req.json().catch(() => ({}));
+  const body = await req.text();
+  const qs   = req.nextUrl.searchParams.toString();
+  const urls = getUpstreamUrls('/api/v1/payments/', qs);
 
-  // Forward query params (e.g. customer_id required by app-token auth)
-  const qs  = req.nextUrl.searchParams.toString();
-  const url = qs ? `${UPSTREAM_URL}?${qs}` : UPSTREAM_URL;
-
-  try {
-    const upstream = await fetch(url, {
-      method: 'POST',
-      headers: getProxyHeaders(req),
-      body: JSON.stringify(body),
-    });
-    const text = await upstream.text();
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
-    }
-    return NextResponse.json(data, { status: upstream.status });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Proxy error';
-    return NextResponse.json({ detail: message }, { status: 502 });
-  }
+  return proxyWithFallback(urls, {
+    method: 'POST',
+    headers: getProxyHeaders(req),
+    body,
+  });
 }
 
 /**
  * GET /booknpay/api/v1/payments
- * Proxy to upstream booknpay — lists payment records (supports ?voucher_id=, ?booking_id=, etc.).
  */
 export async function GET(req: NextRequest) {
   const qs = req.nextUrl.searchParams.toString();
-  const url = qs ? `${UPSTREAM_URL}?${qs}` : UPSTREAM_URL;
+  const urls = getUpstreamUrls('/api/v1/payments/', qs);
 
-  try {
-    const upstream = await fetch(url, {
-      method: 'GET',
-      headers: getProxyHeaders(req),
-    });
-    const text = await upstream.text();
-    let data: unknown;
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text ? { detail: text } : { detail: upstream.statusText || 'Upstream error' };
-    }
-    return NextResponse.json(data, { status: upstream.status });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Proxy error';
-    return NextResponse.json({ detail: message }, { status: 502 });
-  }
+  return proxyWithFallback(urls, {
+    method: 'GET',
+    headers: getProxyHeaders(req),
+  });
 }
-
