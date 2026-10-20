@@ -48,6 +48,7 @@ export interface Booking {
   booking_type: string;
   status: string;
   payment_status: string;
+  payment_number?: string | null;
   payment_gateway: string | null;
   payment_provider: string | null;
   payment_method: string | null;
@@ -87,40 +88,47 @@ export function normalise(raw: Record<string, unknown>): Booking {
 
   const rawAddons = (Array.isArray(raw.addons) ? raw.addons : Array.isArray(raw.selected_addons) ? raw.selected_addons : []) as Array<Record<string, unknown>>;
 
-  return {
-    id:                String(raw.id ?? ''),
-    booking_number:    raw.booking_number ? String(raw.booking_number) : null,
-    customer_name:     [firstName, lastName].filter(Boolean).join(' ') || 'Unknown Customer',
-    customer_phone:    (cd.phone_number ?? null) as string | null,
-    customer_email:    (cd.email        ?? null) as string | null,
-    branch_name:       String(bd.branch_name ?? bd.name ?? raw.branch_id ?? ''),
-    service_name:      String(sd.name ?? sd.service_name ?? ''),
-    service_category:  String(sd.category ?? sd.service_category ?? ''),
-    service_price:     String(sd.base_price ?? sd.arrangement_price ?? raw.base_price ?? '0'),
-    arrangement_name:  (sad.arrangement_name ?? sad.room_name ?? null) as string | null,
-    therapist_name:    String(td.therapist_name ?? td.name ?? '—'),
-    appointment_start: String(raw.appointment_start ?? ''),
-    appointment_end:   String(raw.appointment_end   ?? ''),
-    duration_minutes:  durSvc,
-    addons_duration:   durAddons,
-    extra_minutes:     durExtra,
-    total_duration:    totalDur,
-    price_for_extra_minutes: String(raw.price_for_extra_minutes ?? raw.extra_price ?? '0'),
-    booking_type:      String(raw.booking_type      ?? 'branch'),
-    status:            String(raw.status            ?? 'pending').toLowerCase(),
-    payment_status:    String(raw.payment_status    ?? '').toLowerCase(),
-    payment_gateway:   (pm.payment_gateway ?? pd.payment_gateway ?? raw.payment_gateway ?? null) as string | null,
-    payment_provider:  (raw.payment_provider ?? pd.payment_provider ?? null) as string | null,
-    payment_method:    (raw.payment_method ?? null) as string | null,
-    payment_url:       (pd.payment_url     ?? pm.payment_url     ?? raw.payment_url ?? null) as string | null,
-    payment_data:      (raw.payment_data ?? null) as Record<string, unknown> | null,
-    channel:           String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || 'ushdesk').trim(),
-    source:            String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || 'ushdesk').trim(),
-    payment_through:   String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || 'ushdesk').trim(),
-    is_paid:           pm.is_paid === true || pd.is_paid === true || pd.status === 'success' || raw.payment_status === 'success',
-    total_amount:      String(raw.total_amount ?? '0'),
-    currency:          String(raw.currency     ?? 'KWD'),
-    created_at:        String(raw.created_at   ?? ''),
+    const isLoyaltyRaw = Boolean(
+      String(raw.booking_type ?? '').toLowerCase() === 'loyalty' ||
+      (raw.loyalty_data != null && Object.keys(raw.loyalty_data).length > 0)
+    );
+    const defaultChannel = isLoyaltyRaw ? 'ushspa' : 'ushdesk';
+
+    return {
+      id:                String(raw.id ?? ''),
+      booking_number:    raw.booking_number ? String(raw.booking_number) : null,
+      payment_number:    (raw.payment_number ?? pd.payment_number ?? pm.payment_number ?? null) as string | null,
+      customer_name:     [firstName, lastName].filter(Boolean).join(' ') || 'Unknown Customer',
+      customer_phone:    (cd.phone_number ?? null) as string | null,
+      customer_email:    (cd.email        ?? null) as string | null,
+      branch_name:       String(bd.branch_name ?? bd.name ?? raw.branch_id ?? ''),
+      service_name:      String(sd.name ?? sd.service_name ?? ''),
+      service_category:  String(sd.category ?? sd.service_category ?? ''),
+      service_price:     String(sd.base_price ?? sd.arrangement_price ?? raw.base_price ?? '0'),
+      arrangement_name:  (sad.arrangement_name ?? sad.room_name ?? null) as string | null,
+      therapist_name:    String(td.therapist_name ?? td.name ?? '—'),
+      appointment_start: String(raw.appointment_start ?? ''),
+      appointment_end:   String(raw.appointment_end   ?? ''),
+      duration_minutes:  durSvc,
+      addons_duration:   durAddons,
+      extra_minutes:     durExtra,
+      total_duration:    totalDur,
+      price_for_extra_minutes: String(raw.price_for_extra_minutes ?? raw.extra_price ?? '0'),
+      booking_type:      String(raw.booking_type      ?? 'branch'),
+      status:            String(raw.status            ?? 'pending').toLowerCase(),
+      payment_status:    String(raw.payment_status    ?? '').toLowerCase(),
+      payment_gateway:   (pm.payment_gateway ?? pd.payment_gateway ?? raw.payment_gateway ?? null) as string | null,
+      payment_provider:  (raw.payment_provider ?? pd.payment_provider ?? null) as string | null,
+      payment_method:    (raw.payment_method ?? null) as string | null,
+      payment_url:       (pd.payment_url     ?? pm.payment_url     ?? raw.payment_url ?? null) as string | null,
+      payment_data:      (raw.payment_data ?? null) as Record<string, unknown> | null,
+      channel:           String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || defaultChannel).trim(),
+      source:            String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || defaultChannel).trim(),
+      payment_through:   String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || defaultChannel).trim(),
+      is_paid:           pm.is_paid === true || pd.is_paid === true || pd.status === 'success' || raw.payment_status === 'success' || raw.payment_status === 'rewarded' || raw.payment_status === 'paid',
+      total_amount:      String(raw.total_amount ?? '0'),
+      currency:          String(raw.currency     ?? 'KWD'),
+      created_at:        String(raw.created_at   ?? ''),
     created_by_user:   raw.created_by_user ? String(raw.created_by_user) : (raw.created_by ? String(raw.created_by) : null),
     created_by_user_data: (raw.created_by_user_data ?? null) as Record<string, unknown> | null,
     customer_notes:    (raw.customer_notes ?? raw.customer_message ?? raw.notes ?? (raw.customer_data as any)?.customer_notes ?? null) as string | null,
@@ -484,6 +492,7 @@ export function BookingDetailPopup({
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceRecord, setInvoiceRecord] = useState<Record<string, unknown> | null>(null);
+  const [fetchedPaymentNumber, setFetchedPaymentNumber] = useState<string>('');
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [markingNoShow, setMarkingNoShow] = useState(false);
@@ -902,6 +911,9 @@ export function BookingDetailPopup({
         : (res?.data as Record<string, unknown> | null);
       if (fetchedDetail) {
         setDetail(fetchedDetail);
+        if (fetchedDetail.payment_number) {
+          setFetchedPaymentNumber(String(fetchedDetail.payment_number));
+        }
         const invNum = String(
           fetchedDetail.invoice_number ??
           fetchedDetail.invoice_id ??
@@ -960,6 +972,7 @@ export function BookingDetailPopup({
   ).trim();
 
   const paymentNumber = String(
+    (fetchedPaymentNumber || null) ??
     (detail as any)?.payment_number ??
     (detail?.payment_data as any)?.payment_number ??
     (detail?.payment_data as any)?.data?.InvoiceTransactions?.[0]?.PaymentId ??
@@ -969,9 +982,28 @@ export function BookingDetailPopup({
     (booking as any)?.payment_data?.payment_number ??
     (booking?.raw as any)?.payment_number ??
     (booking?.raw as any)?.payment_data?.payment_number ??
+    (booking?.raw as any)?.payments_meta?.payment_number ??
     (booking?.raw as any)?.voucher_data?.payment_number ??
     ''
   ).trim();
+
+  // Load payment detail from backend if payment number is not yet present
+  useEffect(() => {
+    if (paymentNumber || !booking?.id) return;
+    let cancelled = false;
+    authedFetch(`/booknpay/api/v1/payments/?booking_id=${booking.id}`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (cancelled) return;
+        const items = res?.data?.items ?? res?.items ?? (Array.isArray(res?.data) ? res.data : []);
+        const pmt = items[0];
+        if (pmt?.payment_number) {
+          setFetchedPaymentNumber(String(pmt.payment_number));
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [booking?.id, paymentNumber]);
 
   // Load invoice detail from backend if invoice number exists
   useEffect(() => {
@@ -1026,6 +1058,22 @@ export function BookingDetailPopup({
     ''
   ).toLowerCase().trim();
 
+  // Bookings using loyalty points cannot be cancelled or refunded
+  const isLoyaltyBooking = Boolean(
+    String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase() === 'loyalty' ||
+    Boolean(
+      (detail?.loyalty_data && Object.keys(detail.loyalty_data).length > 0) ||
+      ((booking.raw as any)?.loyalty_data && Object.keys((booking.raw as any).loyalty_data).length > 0) ||
+      ((booking as any)?.loyalty_data && Object.keys((booking as any).loyalty_data).length > 0)
+    )
+  );
+
+  const isRewarded = Boolean(
+    rawPaymentStatus === 'rewarded' ||
+    String(booking.payment_status ?? '').toLowerCase().trim() === 'rewarded' ||
+    isLoyaltyBooking
+  );
+
   const isRefunded =
     rawPaymentStatus === 'refunded' ||
     rawPaymentStatus === 'refunded_with_points' ||
@@ -1041,11 +1089,12 @@ export function BookingDetailPopup({
       (booking.raw?.payment_data as any)?.is_paid === true ||
       rawPaymentStatus === 'success' ||
       rawPaymentStatus === 'paid' ||
-      rawPaymentStatus === 'completed'
+      rawPaymentStatus === 'completed' ||
+      isRewarded
     );
 
   // Whether payment is pending (not paid yet)
-  const isPaymentPending = !isPaid && !isRefunded && curStatus !== 'cancelled' && curStatus !== 'completed';
+  const isPaymentPending = !isPaid && !isRefunded && !isRewarded && curStatus !== 'cancelled' && curStatus !== 'completed';
 
   // Payment is considered success if marked paid, success, or completed
   const isPaymentSuccess = Boolean(
@@ -1054,9 +1103,12 @@ export function BookingDetailPopup({
       rawPaymentStatus === 'success' ||
       rawPaymentStatus === 'paid' ||
       rawPaymentStatus === 'completed' ||
+      rawPaymentStatus === 'rewarded' ||
+      isRewarded ||
       String(booking.payment_status ?? '').toLowerCase().trim() === 'success' ||
       String(booking.payment_status ?? '').toLowerCase().trim() === 'paid' ||
       String(booking.payment_status ?? '').toLowerCase().trim() === 'completed' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'rewarded' ||
       booking.is_paid === true ||
       (detail as any)?.is_paid === true
     )
@@ -1114,8 +1166,9 @@ export function BookingDetailPopup({
   //    ii. For all other users roles cancel button is visible until 3 hours before the appointment_start time
   // 3. If a booking appointment time expired and booking payment_status=pending don't show "no show" button but "cancel" button to cancel the booking. "No Show" button is only for paid booking when expire.
   // 4. If booking is made through voucher redeem (voucher_number is not null), don't show cancel booking because gift vouchers are not refunded.
+  // 5. Booking using loyalty point cannot cancel and refunded so remove cancel button from bookings with loyalty points only reschedule is available.
   const canShowCancel = (() => {
-    if (isVoucherBooking) return false;
+    if (isVoucherBooking || isLoyaltyBooking) return false;
     if (isNoShow || isCancelled || isCompleted) return false;
     const now = Date.now();
 
@@ -1272,7 +1325,7 @@ export function BookingDetailPopup({
   // Cancel booking — opens BookingCancellationModal which handles all accounting steps
   const handleCancel = () => {
     if (!booking) return;
-    if (!canShowCancel || isVoucherBooking) return;
+    if (!canShowCancel || isVoucherBooking || isLoyaltyBooking) return;
     if (callCenterCancelBlocked && !isPastApptEnd) {
       setCancelError(
         AGENT_BLOCK_REASON || 'Call Center Agents cannot cancel bookings within 6 hours of the appointment.'
@@ -1857,15 +1910,19 @@ export function BookingDetailPopup({
               >
                 <CreditCard className="h-3.5 w-3.5" />
                 Payment &amp; Invoices
-                {booking.payment_status === 'refunded_with_points' ? (
+                {booking.payment_status === 'refunded_with_points' || rawPaymentStatus === 'refunded_with_points' ? (
                   <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20">
                     Refunded (Points)
                   </span>
-                ) : booking.payment_status === 'refunded' ? (
+                ) : booking.payment_status === 'refunded' || rawPaymentStatus === 'refunded' ? (
                   <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20">
                     Refunded
                   </span>
-                ) : booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
+                ) : isRewarded ? (
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                    Rewarded
+                  </span>
+                ) : isPaid || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
                   <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
                     Paid
                   </span>
@@ -2103,7 +2160,7 @@ export function BookingDetailPopup({
                           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Number</p>
                           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <span className="text-sm font-mono font-extrabold text-foreground">
-                              {paymentNumber || (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? 'Settled' : 'Generated upon settlement')}
+                              {paymentNumber || (isRewarded || isPaid || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? 'Settled' : 'Generated upon settlement')}
                             </span>
                             {Boolean(paymentNumber) && (
                               <button
@@ -2134,31 +2191,22 @@ export function BookingDetailPopup({
                         <Eye className="h-3.5 w-3.5" />
                         <span>View Invoice</span>
                       </button>
-                      <span className={cn(
-                        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
-                        (booking.payment_status === 'refunded_with_points' || booking.payment_status === 'refunded')
-                          ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20'
-                          : (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
-                          ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
-                          : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20'
-                      )}>
-                        {booking.payment_status === 'refunded_with_points' ? (
+                      {(booking.payment_status === 'refunded_with_points' || rawPaymentStatus === 'refunded_with_points') ? (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20">
                           <RotateCcw className="h-3 w-3" />
-                        ) : booking.payment_status === 'refunded' ? (
+                          REFUNDED (POINTS)
+                        </span>
+                      ) : (booking.payment_status === 'refunded' || rawPaymentStatus === 'refunded') ? (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20">
                           <RotateCcw className="h-3 w-3" />
-                        ) : (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid') ? (
+                          REFUNDED
+                        </span>
+                      ) : (isPaid || booking.is_paid || rawPaymentStatus === 'success' || rawPaymentStatus === 'paid' || booking.payment_status === 'success' || booking.payment_status === 'paid') && !isRewarded ? (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
                           <CheckCircle2 className="h-3 w-3" />
-                        ) : (
-                          <Clock className="h-3 w-3" />
-                        )}
-                        {booking.payment_status === 'refunded_with_points'
-                          ? 'REFUNDED (POINTS)'
-                          : booking.payment_status === 'refunded'
-                          ? 'REFUNDED'
-                          : (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
-                          ? 'PAID'
-                          : 'DRAFT'}
-                      </span>
+                          PAID
+                        </span>
+                      ) : null}
                       {Boolean(invoiceNumber) && (
                         <Link
                           href={`/finance/invoices?search=${encodeURIComponent(invoiceNumber)}`}
@@ -2191,7 +2239,7 @@ export function BookingDetailPopup({
                     <div>
                       <p className="text-[10px] text-muted-foreground uppercase font-semibold">Balance Due</p>
                       <p className="font-bold mt-0.5 text-foreground">
-                        {(booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
+                        {(isPaid || isRewarded || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
                           ? `0.000 ${currency}`
                           : `${computedTotal.toFixed(3)} ${currency}`}
                       </p>
@@ -2245,11 +2293,11 @@ export function BookingDetailPopup({
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Payment Number</p>
-                      <p className="font-semibold font-mono text-foreground mt-0.5 truncate">{paymentNumber || (booking.is_paid ? 'Settled' : 'Generated upon settlement')}</p>
+                      <p className="font-semibold font-mono text-foreground mt-0.5 truncate">{paymentNumber || (isRewarded || isPaid || booking.is_paid ? 'Settled' : 'Generated upon settlement')}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
-                      <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? 'ushdesk')}</p>
+                      <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? (isLoyaltyBooking ? 'ushspa' : 'ushdesk'))}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Amount</p>
@@ -2705,7 +2753,7 @@ export function BookingDetailPopup({
                   {/* Right side: Payment Done, Open Payment, Close */}
                   <div className="flex items-center gap-2">
                     {/* Make Payment — shown only when appointment has not ended, not no-show, payment is pending and payment_url is not set */}
-                    {!isNoShow && !isPastApptEnd && isPaymentPending && !effectivePaymentUrl && (
+                    {!isNoShow && !isPastApptEnd && isPaymentPending && !isPaid && !isRewarded && !effectivePaymentUrl && (
                       <button
                         type="button"
                         onClick={() => {

@@ -271,6 +271,21 @@ export function checkBookingCancellationEligibility(
   user?: UserLike | null,
   nowMs: number = Date.now(),
 ): CancellationEligibility {
+  // Bookings made using loyalty points cannot be cancelled or refunded
+  const b = booking as any;
+  const isLoyalty = Boolean(
+    String(b?.booking_type ?? '').toLowerCase() === 'loyalty' ||
+    Boolean(b?.loyalty_data && Object.keys(b.loyalty_data).length > 0)
+  );
+  if (isLoyalty) {
+    return {
+      canCancel: false,
+      isPrivileged: false,
+      hoursUntilAppointment: null,
+      reason: 'Bookings made using loyalty points cannot be cancelled or refunded. Only reschedule is available.',
+    };
+  }
+
   const isPrivileged = canCancelBookingAnytime(roleInfo, user);
   if (isPrivileged) {
     return {
