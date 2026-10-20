@@ -8,7 +8,7 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode,
+  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -240,6 +240,7 @@ export const STATUS_STYLES: Record<string, string> = {
 export const PAYMENT_STYLES: Record<string, string> = {
   success:  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   refunded: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  refunded_with_points: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
   partially_refunded: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300',
   pending:  'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   failed:   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
@@ -1025,29 +1026,40 @@ export function BookingDetailPopup({
     ''
   ).toLowerCase().trim();
 
+  const isRefunded =
+    rawPaymentStatus === 'refunded' ||
+    rawPaymentStatus === 'refunded_with_points' ||
+    rawPaymentStatus === 'partially_refunded' ||
+    booking.status === 'refunded' ||
+    curStatus === 'refunded';
+
   const isPaid =
-    booking.is_paid === true ||
-    (detail as any)?.is_paid === true ||
-    (booking.raw?.payments_meta as any)?.is_paid === true ||
-    (booking.raw?.payment_data as any)?.is_paid === true ||
-    rawPaymentStatus === 'success' ||
-    rawPaymentStatus === 'paid' ||
-    rawPaymentStatus === 'completed';
+    !isRefunded && (
+      booking.is_paid === true ||
+      (detail as any)?.is_paid === true ||
+      (booking.raw?.payments_meta as any)?.is_paid === true ||
+      (booking.raw?.payment_data as any)?.is_paid === true ||
+      rawPaymentStatus === 'success' ||
+      rawPaymentStatus === 'paid' ||
+      rawPaymentStatus === 'completed'
+    );
 
   // Whether payment is pending (not paid yet)
-  const isPaymentPending = !isPaid && curStatus !== 'cancelled' && curStatus !== 'completed';
+  const isPaymentPending = !isPaid && !isRefunded && curStatus !== 'cancelled' && curStatus !== 'completed';
 
   // Payment is considered success if marked paid, success, or completed
   const isPaymentSuccess = Boolean(
-    isPaid ||
-    rawPaymentStatus === 'success' ||
-    rawPaymentStatus === 'paid' ||
-    rawPaymentStatus === 'completed' ||
-    String(booking.payment_status ?? '').toLowerCase().trim() === 'success' ||
-    String(booking.payment_status ?? '').toLowerCase().trim() === 'paid' ||
-    String(booking.payment_status ?? '').toLowerCase().trim() === 'completed' ||
-    booking.is_paid === true ||
-    (detail as any)?.is_paid === true
+    !isRefunded && (
+      isPaid ||
+      rawPaymentStatus === 'success' ||
+      rawPaymentStatus === 'paid' ||
+      rawPaymentStatus === 'completed' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'success' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'paid' ||
+      String(booking.payment_status ?? '').toLowerCase().trim() === 'completed' ||
+      booking.is_paid === true ||
+      (detail as any)?.is_paid === true
+    )
   );
 
   // 1. If bookings status=payment_pending and appointment_end > current datetime add "Update" button in Booking Details popup window
@@ -1783,7 +1795,7 @@ export function BookingDetailPopup({
                     : paymentStyle(booking.payment_status)
                 )}>
                   <CreditCard className="h-3 w-3" />
-                  {booking.payment_status}
+                  {booking.payment_status.replace(/_/g, ' ')}
                 </span>
               )}
               {/* Refresh button to reload booking details */}
@@ -1845,7 +1857,15 @@ export function BookingDetailPopup({
               >
                 <CreditCard className="h-3.5 w-3.5" />
                 Payment &amp; Invoices
-                {booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
+                {booking.payment_status === 'refunded_with_points' ? (
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20">
+                    Refunded (Points)
+                  </span>
+                ) : booking.payment_status === 'refunded' ? (
+                  <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20">
+                    Refunded
+                  </span>
+                ) : booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
                   <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
                     Paid
                   </span>
@@ -2116,16 +2136,28 @@ export function BookingDetailPopup({
                       </button>
                       <span className={cn(
                         'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold',
-                        (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
+                        (booking.payment_status === 'refunded_with_points' || booking.payment_status === 'refunded')
+                          ? 'bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-500/20'
+                          : (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
                           ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20'
                           : 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-500/20'
                       )}>
-                        {booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? (
+                        {booking.payment_status === 'refunded_with_points' ? (
+                          <RotateCcw className="h-3 w-3" />
+                        ) : booking.payment_status === 'refunded' ? (
+                          <RotateCcw className="h-3 w-3" />
+                        ) : (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid') ? (
                           <CheckCircle2 className="h-3 w-3" />
                         ) : (
                           <Clock className="h-3 w-3" />
                         )}
-                        {(booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid') ? 'PAID' : 'DRAFT'}
+                        {booking.payment_status === 'refunded_with_points'
+                          ? 'REFUNDED (POINTS)'
+                          : booking.payment_status === 'refunded'
+                          ? 'REFUNDED'
+                          : (booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
+                          ? 'PAID'
+                          : 'DRAFT'}
                       </span>
                       {Boolean(invoiceNumber) && (
                         <Link
@@ -2198,7 +2230,7 @@ export function BookingDetailPopup({
                       <CreditCard className="h-3.5 w-3.5 text-primary" /> Transaction &amp; Gateway Details
                     </p>
                     <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize', paymentStyle(booking.payment_status))}>
-                      {booking.payment_status || 'unpaid'}
+                      {(booking.payment_status || 'unpaid').replace(/_/g, ' ')}
                     </span>
                   </div>
 

@@ -296,7 +296,7 @@ export default function BookingListPage() {
               <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-3">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <CreditCard className="h-3 w-3 text-muted-foreground" />
-                  <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize', paymentStyle(b.payment_status))}>{b.payment_status || 'unpaid'}</span>
+                  <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold capitalize', paymentStyle(b.payment_status))}>{(b.payment_status || 'unpaid').replace(/_/g, ' ')}</span>
                   {b.payment_gateway && <span className="text-[11px] text-muted-foreground">via {b.payment_gateway}</span>}
                   {b.channel && (
                     <span className={cn(
@@ -398,7 +398,7 @@ export default function BookingListPage() {
                   </td>
                   <td className="px-4 py-3 hidden md:table-cell text-center">
                     <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', paymentStyle(b.payment_status))}>
-                      {b.payment_status || '—'}
+                      {b.payment_status ? b.payment_status.replace(/_/g, ' ') : '—'}
                     </span>
                   </td>
                   <td className="pl-4 pr-6 sm:pr-8 py-3 text-right">

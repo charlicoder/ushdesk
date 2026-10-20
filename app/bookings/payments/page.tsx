@@ -340,6 +340,7 @@ const STATUS_STYLES: Record<string, string> = {
   pending:   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   cancelled: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400',
   refunded:  'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  refunded_with_points: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
 };
 
 const DEPOSIT_STATUS_STYLES: Record<string, string> = {
@@ -357,7 +358,7 @@ function StatusBadge({ status }: { status: string }) {
       {lower === 'success' && <CheckCircle2 className="h-3 w-3" />}
       {lower === 'failed' && <XCircle className="h-3 w-3" />}
       {lower === 'pending' && <Clock className="h-3 w-3" />}
-      {status || '—'}
+      {status ? status.replace(/_/g, ' ') : '—'}
     </span>
   );
 }
