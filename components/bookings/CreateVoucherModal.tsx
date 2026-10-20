@@ -167,7 +167,7 @@ export const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
   },
   {
     id: 'PaymentLink',
-    name: 'PaymentLink',
+    name: 'MyFatoorah PaymentLink',
     description: 'MyFatoorah link via WhatsApp / SMS',
     tag: 'Direct Link',
     tagColor: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',

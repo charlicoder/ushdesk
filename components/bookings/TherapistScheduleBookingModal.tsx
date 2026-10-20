@@ -33,7 +33,7 @@ export interface PaymentProviderConfig {
 }
 
 export const PAYMENT_PROVIDERS: PaymentProviderConfig[] = [
-  { id: 'PaymentLink', label: 'PaymentLink', badge: 'Direct Link',    desc: 'SMS / WhatsApp link' },
+  { id: 'PaymentLink', label: 'MyFatoorah PaymentLink', badge: 'Direct Link',    desc: 'SMS / WhatsApp link' },
   { id: 'Deema',       label: 'Deema',       badge: 'Installments',   desc: 'BNPL payment split' },
   { id: 'KNET Card',   label: 'KNET Card',   badge: 'POS Terminal',   desc: 'In-branch card machine' },
   { id: 'Other',       label: 'Other',       badge: 'Alternative',    desc: 'Cash or other method' },

@@ -5,7 +5,7 @@ import {
   X, Camera, Upload, Receipt, CheckCircle2,
   AlertCircle, RotateCcw, Sparkles, Hash, CreditCard,
   Eye, RefreshCw, Smartphone, Image as ImageIcon, Check,
-  ChevronLeft, Loader2,
+  ChevronLeft, Loader2, Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { PaymentProviderOption } from './TherapistScheduleBookingModal';
@@ -301,7 +301,10 @@ export function PaymentReferenceModal({
 
         {/* Tabs: Input Ref ID vs Scan Receipt */}
         <div className="shrink-0 px-6 pt-4">
-          <div className="grid grid-cols-2 gap-2 p-1 rounded-2xl bg-muted/60 border border-border/50">
+          <div className={cn(
+            'grid gap-2 p-1 rounded-2xl bg-muted/60 border border-border/50',
+            String(paymentProvider).toLowerCase().includes('knet') ? 'grid-cols-3' : 'grid-cols-2'
+          )}>
             <button
               type="button"
               onClick={() => {
@@ -320,17 +323,26 @@ export function PaymentReferenceModal({
             </button>
             <button
               type="button"
-              onClick={() => setActiveTab('scan')}
-              className={cn(
-                'flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold transition cursor-pointer',
-                activeTab === 'scan'
-                  ? 'bg-card text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
+              disabled
+              title="Scan Receipt is currently inactive"
+              className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold opacity-40 cursor-not-allowed text-muted-foreground select-none"
             >
-              <Camera className="h-3.5 w-3.5 text-emerald-500" />
-              2. Scan Receipt
+              <Camera className="h-3.5 w-3.5 text-muted-foreground" />
+              <span>2. Scan Receipt</span>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground">Inactive</span>
             </button>
+            {String(paymentProvider).toLowerCase().includes('knet') && (
+              <button
+                type="button"
+                disabled
+                title="KNET Payment Link is currently inactive"
+                className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl text-xs font-bold opacity-40 cursor-not-allowed text-muted-foreground select-none"
+              >
+                <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
+                <span>KNET Payment Link</span>
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground">Inactive</span>
+              </button>
+            )}
           </div>
         </div>
 

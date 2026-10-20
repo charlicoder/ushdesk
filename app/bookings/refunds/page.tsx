@@ -425,8 +425,11 @@ function ApproveRefundModal({
   onSuccess: () => void;
 }) {
   const currentUser = useAppSelector((s) => s.auth.user);
+  const requestedAmount = Math.max(0, parseFloat(String(refund.requested_amount || refund.refunded_amount || '0')) || 0);
+  const maxPoints = Math.round(requestedAmount * 10);
+
   const [refundMethod, setRefundMethod] = useState<'loyalty_points' | 'money'>('loyalty_points');
-  const [amount, setAmount] = useState<string>(String(refund.requested_amount || refund.refunded_amount || '0'));
+  const [amount, setAmount] = useState<string>(() => String(maxPoints));
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -434,12 +437,107 @@ function ApproveRefundModal({
   const customerName = getCustomerName(refund);
   const bookingNumber = getBookingNumber(refund);
 
+  const handleMethodChange = (newMethod: 'loyalty_points' | 'money') => {
+    setRefundMethod(newMethod);
+    setError(null);
+    if (newMethod === 'loyalty_points') {
+      setAmount(String(maxPoints));
+    } else {
+      setAmount(String(requestedAmount));
+    }
+  };
+
+  const handleAmountChange = (raw: string) => {
+    setError(null);
+    if (raw === '') {
+      setAmount('');
+      return;
+    }
+
+    // Do not allow negative sign or exponent
+    if (raw.includes('-') || raw.includes('+') || raw.toLowerCase().includes('e')) {
+      return;
+    }
+
+    if (refundMethod === 'loyalty_points') {
+      // Loyalty points must be non-negative integers up to maxPoints
+      const cleaned = raw.replace(/[^0-9]/g, '');
+      if (cleaned === '') {
+        setAmount('');
+        return;
+      }
+      const val = parseInt(cleaned, 10);
+      if (isNaN(val)) return;
+
+      if (val > maxPoints) {
+        setAmount(String(maxPoints));
+        setError(`Approved Points cannot exceed ${maxPoints} (10 × requested amount).`);
+        return;
+      }
+      setAmount(String(val));
+    } else {
+      // Money: cannot exceed requested amount, cannot be negative
+      const parts = raw.split('.');
+      if (parts.length > 2) return;
+      if (parts[1] && parts[1].length > 3) return;
+
+      const val = parseFloat(raw);
+      if (isNaN(val)) {
+        if (raw === '.' || raw === '0.') {
+          setAmount(raw);
+          return;
+        }
+        return;
+      }
+
+      if (val > requestedAmount) {
+        setAmount(String(requestedAmount));
+        setError(`Approved Money cannot exceed the requested amount of ${requestedAmount.toFixed(3)} ${refund.currency}.`);
+        return;
+      }
+      setAmount(raw);
+    }
+  };
+
+  const handleAmountBlur = () => {
+    const num = parseFloat(amount);
+    if (isNaN(num) || num <= 0) {
+      if (refundMethod === 'money') {
+        setError(`Amount must be greater than 0 and up to ${requestedAmount.toFixed(3)} ${refund.currency}.`);
+      } else {
+        setError(`Approved Points must be greater than 0 and up to ${maxPoints}.`);
+      }
+    } else if (refundMethod === 'money' && num > requestedAmount) {
+      setAmount(String(requestedAmount));
+      setError(`Approved Money cannot exceed ${requestedAmount.toFixed(3)} ${refund.currency}.`);
+    } else if (refundMethod === 'loyalty_points' && num > maxPoints) {
+      setAmount(String(maxPoints));
+      setError(`Approved Points cannot exceed ${maxPoints}.`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const num = parseFloat(amount);
     if (isNaN(num) || num <= 0) {
-      setError('Please enter a valid positive amount.');
+      setError(
+        refundMethod === 'loyalty_points'
+          ? 'Please enter valid Approved Points greater than 0.'
+          : 'Please enter a valid positive Money amount greater than 0.'
+      );
       return;
+    }
+
+    if (refundMethod === 'loyalty_points') {
+      if (num > maxPoints) {
+        setError(`Approved Points cannot exceed ${maxPoints} (10 × requested amount).`);
+        return;
+      }
+    } else {
+      if (num > requestedAmount) {
+        setError(`Approved Money cannot exceed the requested amount of ${requestedAmount.toFixed(3)} ${refund.currency}.`);
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -531,7 +629,7 @@ function ApproveRefundModal({
                   name="refund_method"
                   value="loyalty_points"
                   checked={refundMethod === 'loyalty_points'}
-                  onChange={() => setRefundMethod('loyalty_points')}
+                  onChange={() => handleMethodChange('loyalty_points')}
                   className="h-4 w-4 text-purple-600 focus:ring-purple-500 cursor-pointer"
                 />
                 <div className="min-w-0">
@@ -553,7 +651,7 @@ function ApproveRefundModal({
                   name="refund_method"
                   value="money"
                   checked={refundMethod === 'money'}
-                  onChange={() => setRefundMethod('money')}
+                  onChange={() => handleMethodChange('money')}
                   className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
                 />
                 <div className="min-w-0">
@@ -565,22 +663,34 @@ function ApproveRefundModal({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-foreground">
-              {refundMethod === 'loyalty_points' ? 'Approved Points Amount' : `Approved Money Amount (${refund.currency})`}
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-foreground">
+                {refundMethod === 'loyalty_points' ? 'Approved Points' : `Approved Money Amount (${refund.currency})`}
+              </label>
+              <span className="text-[11px] font-mono text-muted-foreground">
+                Max: {refundMethod === 'loyalty_points' ? `${maxPoints} pts` : `${requestedAmount.toFixed(3)} ${refund.currency}`}
+              </span>
+            </div>
             <input
               type="number"
               step={refundMethod === 'loyalty_points' ? '1' : '0.001'}
-              min="0"
+              min={refundMethod === 'loyalty_points' ? '1' : '0.001'}
+              max={refundMethod === 'loyalty_points' ? maxPoints : requestedAmount}
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => handleAmountChange(e.target.value)}
+              onBlur={handleAmountBlur}
+              onKeyDown={(e) => {
+                if (e.key === '-' || e.key === 'e' || e.key === 'E' || e.key === '+') {
+                  e.preventDefault();
+                }
+              }}
               className="h-10 w-full rounded-xl border border-border/60 bg-background px-3 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30"
               required
             />
             <p className="text-[11px] text-muted-foreground">
               {refundMethod === 'loyalty_points'
-                ? 'Loyalty points will be credited to the customer account upon execution.'
-                : 'A credit note will be issued in ushanr. Provider refund will execute upon processing.'}
+                ? `Loyalty points will be credited to customer account (max ${maxPoints} points).`
+                : `Provider refund will execute upon processing (max ${requestedAmount.toFixed(3)} ${refund.currency}, strictly > 0).`}
             </p>
           </div>
 

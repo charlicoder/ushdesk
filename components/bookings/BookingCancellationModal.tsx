@@ -160,7 +160,7 @@ export function BookingCancellationModal({
 
   // Form states
   const [reason, setReason] = useState('');
-  const [requestRefund, setRequestRefund] = useState(false); // Unchecked by default
+  const [requestRefund, setRequestRefund] = useState(true); // Default to selected (locked)
   const [selectedProvider, setSelectedProvider] = useState<RefundProviderOption | null>(null);
   const [refundAmount, setRefundAmount] = useState<number>(totalAmount);
   const [customAmountEnabled, setCustomAmountEnabled] = useState(false);
@@ -423,22 +423,19 @@ export function BookingCancellationModal({
               />
             </div>
 
-            {/* 2. Checkbox: Ask for Refund (Unchecked by default) */}
+            {/* 2. Checkbox: Ask for Refund (Selected by default & locked) */}
             {isPaymentSuccess && (
               <div className="space-y-3">
-                <label
-                  className={cn(
-                    'flex items-start gap-3 p-3.5 rounded-2xl border transition cursor-pointer select-none',
-                    requestRefund
-                      ? 'border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs'
-                      : 'border-border/70 bg-card hover:bg-muted/30'
-                  )}
+                <div
+                  className="flex items-start gap-3 p-3.5 rounded-2xl border border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs select-none cursor-default"
                 >
                   <input
                     type="checkbox"
-                    checked={requestRefund}
-                    onChange={(e) => setRequestRefund(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                    checked={true}
+                    disabled={true}
+                    readOnly={true}
+                    aria-readonly="true"
+                    className="mt-0.5 h-4 w-4 rounded border-border text-emerald-600 focus:ring-emerald-500 cursor-not-allowed opacity-90"
                   />
                   <div className="flex-1 space-y-0.5">
                     <div className="flex items-center justify-between">
@@ -450,17 +447,15 @@ export function BookingCancellationModal({
                       </span>
                     </div>
                     <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Check this box to submit a refund request for management review (Money or Loyalty Points).
+                      A refund request is automatically submitted for management review (Money or Loyalty Points).
                     </p>
                   </div>
-                </label>
+                </div>
 
-                {requestRefund && (
-                  <div className="flex items-center gap-2 rounded-2xl border border-emerald-500/25 bg-emerald-50/60 dark:bg-emerald-950/30 px-3.5 py-2.5 text-xs text-emerald-900 dark:text-emerald-200 animate-in fade-in duration-150">
-                    <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    <span>Send refund request for approval.</span>
-                  </div>
-                )}
+                <div className="flex items-center gap-2 rounded-2xl border border-emerald-500/25 bg-emerald-50/60 dark:bg-emerald-950/30 px-3.5 py-2.5 text-xs text-emerald-900 dark:text-emerald-200 animate-in fade-in duration-150">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>Send refund request for approval.</span>
+                </div>
               </div>
             )}
 

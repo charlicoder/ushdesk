@@ -74,7 +74,8 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
   const totalAmountNum = parseFloat(String(data.totalAmount ?? '0')) || 0;
   const servicePriceNum = parseFloat(String(data.servicePrice ?? '0')) || 0;
   const extraPriceNum = parseFloat(String(data.extraPrice ?? '0')) || 0;
-  const refCode = data.bookingNumber || data.reference || 'RECEIPT';
+  const receiptRefNumber = data.invoiceNumber || data.reference || data.bookingNumber || 'RECEIPT';
+  const bookingNumber = data.bookingNumber || (data.reference !== receiptRefNumber ? data.reference : null);
 
   // Format date helper
   const formatDate = (val?: string | null) => {
@@ -146,7 +147,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
       <html lang="en">
       <head>
         <meta charset="utf-8" />
-        <title>Receipt - ${refCode}</title>
+        <title>Receipt - ${receiptRefNumber}</title>
         <style>
           @page {
             size: 80mm auto;
@@ -245,7 +246,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             </div>
             <div>
               <h3 className="text-sm font-black text-foreground">Receipt Preview</h3>
-              <p className="text-[11px] font-mono text-muted-foreground">{refCode}</p>
+              <p className="text-[11px] font-mono text-muted-foreground">{receiptRefNumber}</p>
             </div>
           </div>
 
@@ -306,8 +307,14 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="py-3 border-b border-dashed border-slate-300 space-y-1 text-[11px]">
               <div className="flex justify-between">
                 <span className="text-slate-500">Receipt / Ref #:</span>
-                <span className="font-mono font-bold text-slate-900">{refCode}</span>
+                <span className="font-mono font-bold text-slate-900">{receiptRefNumber}</span>
               </div>
+              {bookingNumber && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Booking #:</span>
+                  <span className="font-mono font-bold text-slate-900">{bookingNumber}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-500">Issue Date:</span>
                 <span className="font-medium text-slate-800">
@@ -421,7 +428,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               </div>
               <div className="flex justify-between text-slate-600">
                 <span>Tax / VAT (0%):</span>
-                <span className="font-mono">Included</span>
+                <span className="font-mono">0.000 {currency}</span>
               </div>
               <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200">
                 <span className="text-sm font-extrabold text-slate-900 uppercase">Total Paid:</span>
@@ -474,7 +481,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   />
                 ))}
               </div>
-              <p className="font-mono text-[9px] text-slate-500 tracking-widest">{refCode}</p>
+              <p className="font-mono text-[9px] text-slate-500 tracking-widest">{receiptRefNumber}</p>
 
               <div className="pt-2 text-[10px] text-slate-500 space-y-1">
                 <p className="font-semibold text-slate-700">Thank you for visiting USH Spa!</p>

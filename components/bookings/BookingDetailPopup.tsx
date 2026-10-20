@@ -294,7 +294,7 @@ export const PAYMENT_PROVIDERS = [
   {
     id: 'paymentlink',
     providerOption: 'PaymentLink' as PaymentProviderOption,
-    name: 'PaymentLink',
+    name: 'MyFatoorah PaymentLink',
     description: 'SMS / WhatsApp link',
     tag: 'Direct Link',
     tagColor: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
@@ -2822,6 +2822,7 @@ export function BookingDetailPopup({
           data={{
             bookingNumber: booking.booking_number,
             reference: booking.booking_number || booking.id,
+            invoiceNumber: invoiceNumber || (booking as any)?.invoice_number || (detail as any)?.invoice_number || null,
             customerName: booking.customer_name,
             customerPhone: booking.customer_phone,
             customerEmail: booking.customer_email,

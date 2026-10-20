@@ -60,7 +60,7 @@ const PROVIDERS: PaymentProvider[] = [
     name: 'KNET Card',
     gatewayKey: 'knet',
     badge: 'Active · KNET',
-    description: 'In-branch KNET card terminal or payment link',
+    description: 'In-branch KNET card terminal (POS)',
     isDefault: true,
     inactive: false,
   },
@@ -668,16 +668,13 @@ export function MakePaymentModal({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setKnetMode('link')}
-                      className={cn(
-                        'flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer',
-                        knetMode === 'link'
-                          ? 'bg-card text-foreground shadow-sm border border-border'
-                          : 'text-muted-foreground hover:text-foreground'
-                      )}
+                      disabled
+                      title="KNET Payment Link is currently inactive"
+                      className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-extrabold transition opacity-40 cursor-not-allowed text-muted-foreground select-none"
                     >
-                      <Link2 className="h-3.5 w-3.5 text-primary" />
-                      KNET Payment Link
+                      <Link2 className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>KNET Payment Link</span>
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground">Inactive</span>
                     </button>
                   </div>
 
