@@ -317,99 +317,200 @@ export default function BookingListPage() {
       )}
 
       {/* ── LIST VIEW ── */}
+      {/* ── LIST VIEW ── */}
       {!loading && filtered.length > 0 && viewMode === 'list' && (
-        <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-sm">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border/50 bg-muted/40">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Customer</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden sm:table-cell">Service</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden md:table-cell">Branch/Therapist</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden xl:table-cell">Date &amp; Time</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground hidden sm:table-cell">Type</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Status</th>
-                <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground hidden md:table-cell">Payment</th>
-                <th className="pl-4 pr-6 sm:pr-8 py-3 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((b, i) => (
-                <tr key={b.id} onClick={() => setSelectedBooking(b)}
-                  className={cn('border-b border-border/30 transition hover:bg-primary/5 cursor-pointer', i % 2 !== 0 && 'bg-muted/10')}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <CustomerAvatar name={b.customer_name} size="sm" />
-                      <div>
-                        <p className="font-semibold text-sm leading-tight">{b.customer_name}</p>
-                        {b.booking_number && <p className="text-[11px] font-mono font-bold text-primary">{b.booking_number}</p>}
-                        {b.customer_phone && <p className="text-[11px] text-muted-foreground">{b.customer_phone}</p>}
+        <>
+          {/* Mobile view: Beautiful responsive cards */}
+          <div className="block sm:hidden space-y-3">
+            {filtered.map((b) => (
+              <div
+                key={b.id}
+                onClick={() => setSelectedBooking(b)}
+                className="group rounded-2xl border border-border/60 bg-card p-4 shadow-xs transition-all active:scale-[0.99] hover:border-primary/40 hover:shadow-md cursor-pointer"
+              >
+                {/* Header: Avatar, Name, Booking #, Status */}
+                <div className="flex items-start justify-between gap-2.5 mb-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <CustomerAvatar name={b.customer_name} size="sm" />
+                    <div className="min-w-0">
+                      <p className="font-bold text-sm text-foreground truncate">{b.customer_name}</p>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {b.booking_number && (
+                          <span className="font-mono text-[10px] font-extrabold text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                            {b.booking_number}
+                          </span>
+                        )}
+                        {b.customer_phone && (
+                          <span className="text-[11px] text-muted-foreground truncate">{b.customer_phone}</span>
+                        )}
                       </div>
                     </div>
-                  </td>
-                  <td className="px-4 py-3 hidden sm:table-cell">
-                    <p className="text-xs font-semibold text-foreground max-w-[160px] truncate">{b.service_name}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {b.total_duration || b.duration_minutes} min
-                      {(b.addons_duration > 0 || b.extra_minutes > 0) && (
-                        <span className="ml-1 text-[10px] text-primary font-medium">
-                          ({b.duration_minutes}m{b.addons_duration > 0 ? `+${b.addons_duration}m` : ''}{b.extra_minutes > 0 ? `+${b.extra_minutes}m` : ''})
-                        </span>
-                      )}
+                  </div>
+                  <span className={cn('inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold capitalize shrink-0', statusStyle(b.status))}>
+                    {b.status === 'confirmed' || b.status === 'completed' ? (
+                      <CheckCircle2 className="h-3 w-3" />
+                    ) : (
+                      <XCircle className="h-3 w-3" />
+                    )}
+                    {b.status}
+                  </span>
+                </div>
+
+                {/* Service & Duration */}
+                <div className="mb-2.5 rounded-xl bg-muted/40 p-2.5">
+                  <p className="text-xs font-semibold text-foreground truncate">{b.service_name}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {b.service_category ? `${b.service_category} · ` : ''}{b.total_duration || b.duration_minutes} min
+                    {(b.addons_duration > 0 || b.extra_minutes > 0) && (
+                      <span className="ml-1 text-[10px] text-primary font-medium">
+                        ({b.duration_minutes}m{b.addons_duration > 0 ? `+${b.addons_duration}m` : ''}{b.extra_minutes > 0 ? `+${b.extra_minutes}m` : ''})
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                {/* Schedule Info */}
+                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground mb-3">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Calendar className="h-3 w-3 shrink-0 text-primary/70" />
+                    <span className="truncate">{formatDate(b.appointment_start)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <Clock className="h-3 w-3 shrink-0 text-primary/70" />
+                    <span className="truncate">{formatTime(b.appointment_start)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <MapPin className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                    <span className="truncate">{b.branch_name || '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <User className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                    <span className="truncate">{b.therapist_name || '—'}</span>
+                  </div>
+                </div>
+
+                {/* Footer: Payment, Channel, Amount */}
+                <div className="flex items-center justify-between border-t border-border/40 pt-2.5">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold capitalize', paymentStyle(b.payment_status))}>
+                      {(b.payment_status || 'unpaid').replace(/_/g, ' ')}
+                    </span>
+                    {b.channel && (
+                      <span className={cn(
+                        'rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider',
+                        b.channel.toLowerCase() === 'ushdesk'
+                          ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
+                          : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
+                      )}>
+                        {b.channel}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <p className="font-extrabold text-sm text-primary">
+                      {parseFloat(b.total_amount).toFixed(3)}{' '}
+                      <span className="text-[10px] font-normal text-muted-foreground">{b.currency}</span>
                     </p>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    <div className="text-xs text-muted-foreground space-y-1">
-                      <p className="flex items-center gap-1">
-                        <MapPin className="h-3 w-3 shrink-0" />
-                        <span className="max-w-[160px] truncate">{b.branch_name || '—'}</span>
-                      </p>
-                      <p className="flex items-center gap-1">
-                        <User className="h-3 w-3 shrink-0" />
-                        <span className="max-w-[160px] truncate">{b.therapist_name || '—'}</span>
-                      </p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 hidden xl:table-cell">
-                    <div className="text-xs text-muted-foreground space-y-0.5">
-                      <p className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(b.appointment_start)}</p>
-                      <p className="flex items-center gap-1"><Clock className="h-3 w-3" /> {formatTime(b.appointment_start)}</p>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 hidden sm:table-cell text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <span className="inline-block rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] font-semibold capitalize">{b.booking_type}</span>
-                      {b.channel && (
-                        <span className={cn(
-                          'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
-                          b.channel.toLowerCase() === 'ushdesk'
-                            ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
-                            : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
-                        )}>
-                          {b.channel}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', statusStyle(b.status))}>
-                      {b.status === 'confirmed' || b.status === 'completed' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                      {b.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-center">
-                    <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', paymentStyle(b.payment_status))}>
-                      {b.payment_status ? b.payment_status.replace(/_/g, ' ') : '—'}
-                    </span>
-                  </td>
-                  <td className="pl-4 pr-6 sm:pr-8 py-3 text-right">
-                    <p className="font-bold text-sm text-primary whitespace-nowrap">{parseFloat(b.total_amount).toFixed(3)}</p>
-                    <p className="text-[11px] text-muted-foreground">{b.currency}</p>
-                  </td>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop/Tablet view: Table with clean horizontal scrolling on smaller screens */}
+          <div className="hidden sm:block overflow-x-auto rounded-2xl border border-border/60 bg-card shadow-sm scrollbar-thin">
+            <table className="w-full min-w-[780px] text-sm">
+              <thead>
+                <tr className="border-b border-border/50 bg-muted/40">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Customer</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Service</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Branch / Therapist</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Date &amp; Time</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Type</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Status</th>
+                  <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Payment</th>
+                  <th className="pl-4 pr-6 sm:pr-8 py-3 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Amount</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtered.map((b, i) => (
+                  <tr key={b.id} onClick={() => setSelectedBooking(b)}
+                    className={cn('border-b border-border/30 transition hover:bg-primary/5 cursor-pointer', i % 2 !== 0 && 'bg-muted/10')}>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <CustomerAvatar name={b.customer_name} size="sm" />
+                        <div>
+                          <p className="font-semibold text-sm leading-tight">{b.customer_name}</p>
+                          {b.booking_number && <p className="text-[11px] font-mono font-bold text-primary">{b.booking_number}</p>}
+                          {b.customer_phone && <p className="text-[11px] text-muted-foreground">{b.customer_phone}</p>}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="text-xs font-semibold text-foreground max-w-[160px] truncate">{b.service_name}</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {b.service_category ? `${b.service_category} · ` : ''}{b.total_duration || b.duration_minutes} min
+                        {(b.addons_duration > 0 || b.extra_minutes > 0) && (
+                          <span className="ml-1 text-[10px] text-primary font-medium">
+                            ({b.duration_minutes}m{b.addons_duration > 0 ? `+${b.addons_duration}m` : ''}{b.extra_minutes > 0 ? `+${b.extra_minutes}m` : ''})
+                          </span>
+                        )}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <p className="flex items-center gap-1">
+                          <MapPin className="h-3 w-3 shrink-0" />
+                          <span className="max-w-[160px] truncate">{b.branch_name || '—'}</span>
+                        </p>
+                        <p className="flex items-center gap-1">
+                          <User className="h-3 w-3 shrink-0" />
+                          <span className="max-w-[160px] truncate">{b.therapist_name || '—'}</span>
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="text-xs text-muted-foreground space-y-0.5 whitespace-nowrap">
+                        <p className="flex items-center gap-1"><Calendar className="h-3 w-3" /> {formatDate(b.appointment_start)}</p>
+                        <p className="flex items-center gap-1"><Clock className="h-3 w-3" /> {formatTime(b.appointment_start)}</p>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className="inline-block rounded-full bg-muted/60 px-2.5 py-0.5 text-[11px] font-semibold capitalize">{b.booking_type}</span>
+                        {b.channel && (
+                          <span className={cn(
+                            'rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider',
+                            b.channel.toLowerCase() === 'ushdesk'
+                              ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20'
+                              : 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20'
+                          )}>
+                            {b.channel}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                      <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', statusStyle(b.status))}>
+                        {b.status === 'confirmed' || b.status === 'completed' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                        {b.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center whitespace-nowrap">
+                      <span className={cn('inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold capitalize', paymentStyle(b.payment_status))}>
+                        {b.payment_status ? b.payment_status.replace(/_/g, ' ') : '—'}
+                      </span>
+                    </td>
+                    <td className="pl-4 pr-6 sm:pr-8 py-3 text-right">
+                      <p className="font-bold text-sm text-primary whitespace-nowrap">{parseFloat(b.total_amount).toFixed(3)}</p>
+                      <p className="text-[11px] text-muted-foreground">{b.currency}</p>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* ── Pagination ── */}

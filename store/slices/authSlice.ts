@@ -22,6 +22,8 @@ export interface AuthUser {
   avatar?: string | null;
   branch_id?: string | null;
   branch_name?: string | null;
+  role?: string | null;
+  role_name?: string | null;
 }
 
 /** Role/permission metadata returned by the API under data.permissions */
@@ -170,6 +172,36 @@ export const loginThunk = createAsyncThunk(
         is_therapist_role:(rawPermBlock?.is_therapist_role as boolean | undefined) ?? false,
       };
 
+      let branchId = (rawUser.branch_id ?? rawUser.branch ?? payload_data.branch_id ?? null) as string | null;
+      let branchName = (rawUser.branch_name ?? payload_data.branch_name ?? null) as string | null;
+
+      // Fetch employee profile to ensure assigned branch and employee details are captured
+      if (token) {
+        try {
+          const empRes = await fetch('/api/v1/employees/me', {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+          });
+          if (empRes.ok) {
+            const empJson = await empRes.json().catch(() => ({}));
+            const emp = (empJson?.data ?? empJson?.employee ?? empJson) as Record<string, unknown>;
+            if (emp) {
+              const bId = emp.branch_id ?? (emp.branch as any)?.id ?? (emp.branch as any)?.branch_id ?? (Array.isArray(emp.branches) && emp.branches[0]?.id ? emp.branches[0]?.id : null);
+              const bName = emp.branch_name ?? (emp.branch as any)?.name ?? (emp.branch as any)?.branch_name ?? (Array.isArray(emp.branches) && emp.branches[0]?.name ? emp.branches[0]?.name : null);
+              if (bId) branchId = String(bId);
+              if (bName) branchName = String(bName);
+              if (emp.role_name && !roleInfo.role_name) {
+                roleInfo.role_name = String(emp.role_name);
+              }
+            }
+          }
+        } catch {
+          // ignore error
+        }
+      }
+
       const user: AuthUser = {
         id: (rawUser.id ?? rawUser.pk ?? '') as string,
         name: fullName,
@@ -177,8 +209,10 @@ export const loginThunk = createAsyncThunk(
         email: (rawUser.email ?? null) as string | null,
         user_type: userType || 'employee',
         avatar: (rawUser.avatar ?? null) as string | null,
-        branch_id: (rawUser.branch_id ?? rawUser.branch ?? null) as string | null,
-        branch_name: (rawUser.branch_name ?? null) as string | null,
+        branch_id: branchId,
+        branch_name: branchName,
+        role: (rawUser.role ?? roleInfo.role_name ?? null) as string | null,
+        role_name: (roleInfo.role_name ?? rawUser.role_name ?? null) as string | null,
       };
 
       saveToken(token);
@@ -201,9 +235,47 @@ export const initAuthFromStorage = createAsyncThunk(
     const raw   = loadUser() as (AuthUser & { permissions?: string[]; roleInfo?: AuthRoleInfo }) | null;
     // Extract permissions and roleInfo separately from the stored user blob
     const { permissions: storedPerms, roleInfo: storedRole, ...userFields } = raw ?? {};
-    const user        = raw ? (userFields as AuthUser) : null;
+    const user        = raw ? ({ ...userFields } as AuthUser) : null;
     const permissions = Array.isArray(storedPerms) ? storedPerms : [];
-    const roleInfo    = storedRole ?? null;
+    let roleInfo      = storedRole ?? null;
+
+    if (token && user && (!user.branch_id || !roleInfo?.role_name)) {
+      try {
+        const empRes = await fetch('/api/v1/employees/me', {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (empRes.ok) {
+          const empJson = await empRes.json().catch(() => ({}));
+          const emp = (empJson?.data ?? empJson?.employee ?? empJson) as Record<string, unknown>;
+          if (emp) {
+            const bId = emp.branch_id ?? (emp.branch as any)?.id ?? (emp.branch as any)?.branch_id ?? (Array.isArray(emp.branches) && emp.branches[0]?.id ? emp.branches[0]?.id : null);
+            const bName = emp.branch_name ?? (emp.branch as any)?.name ?? (emp.branch as any)?.branch_name ?? (Array.isArray(emp.branches) && emp.branches[0]?.name ? emp.branches[0]?.name : null);
+            if (bId) user.branch_id = String(bId);
+            if (bName) user.branch_name = String(bName);
+            if (emp.role_name) {
+              if (!roleInfo) {
+                roleInfo = {
+                  is_superuser: false,
+                  is_branch_manager: false,
+                  is_therapist_role: false,
+                  role_name: String(emp.role_name),
+                };
+              } else {
+                roleInfo.role_name = String(emp.role_name);
+              }
+              user.role_name = String(emp.role_name);
+            }
+            saveUser({ ...user as unknown as Record<string, unknown>, permissions, roleInfo });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     return { token, user, permissions, roleInfo };
   },
 );
@@ -229,6 +301,19 @@ const authSlice = createSlice({
     /** Called after a silent token refresh — keeps Redux in sync with localStorage. */
     setToken(state, action: { payload: string }) {
       state.token = action.payload;
+    },
+    updateUserBranch(state, action: { payload: { branch_id: string; branch_name?: string } }) {
+      if (state.user) {
+        state.user.branch_id = action.payload.branch_id;
+        if (action.payload.branch_name) {
+          state.user.branch_name = action.payload.branch_name;
+        }
+        saveUser({
+          ...state.user as unknown as Record<string, unknown>,
+          permissions: state.permissions,
+          roleInfo: state.roleInfo,
+        });
+      }
     },
   },
   extraReducers: (builder) => {
@@ -264,5 +349,5 @@ const authSlice = createSlice({
   },
 });
 
-export const { logout, clearError, setToken } = authSlice.actions;
+export const { logout, clearError, setToken, updateUserBranch } = authSlice.actions;
 export default authSlice.reducer;

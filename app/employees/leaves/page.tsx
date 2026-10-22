@@ -1,13 +1,15 @@
 'use client';
 
-import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
-import { useMemo, useState } from 'react';
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, isLeaveInPast } from '@/lib/datetime';
+import { useMemo, useState, useEffect } from 'react';
 import {
   CalendarOff, Search, ChevronDown, RefreshCw, AlertCircle,
   CheckCircle2, Clock, XCircle, LayoutGrid, List,
   Calendar, UserCheck, Briefcase, Phone, Mail, Plus,
+  Trash2, X, Loader2,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
+import { authedFetch } from '@/lib/authedFetch';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader, PageHeaderButton } from '@/components/dashboard/page-header';
 import { AddLeaveModal } from '@/components/employees/AddLeaveModal';
@@ -140,14 +142,170 @@ function SelectFilter({ label, value, options, onChange }: {
   );
 }
 
+// ── Cancel Leave Modal ─────────────────────────────────────────────────────────
+function CancelLeaveModal({
+  leave,
+  onClose,
+  onSuccess,
+}: {
+  leave: LeaveRecord;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isPast = isLeaveInPast(leave);
+
+  const handleConfirm = async () => {
+    if (isPast) {
+      setError('Cannot cancel a leave whose date and time has already passed.');
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await authedFetch(`/uauth/api/v1/employees/leaves/${leave.id}/`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.detail || j.message || 'Failed to cancel leave request.');
+      }
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error cancelling leave request.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
+      <div className="relative w-full max-w-md rounded-3xl bg-card border border-border/60 shadow-2xl overflow-hidden p-6 space-y-5 animate-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between pb-3 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="h-10 w-10 rounded-2xl bg-rose-100 dark:bg-rose-950/50 flex items-center justify-center text-rose-600 dark:text-rose-400">
+              <CalendarOff className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Cancel Leave</h3>
+              <p className="text-xs text-muted-foreground">Confirm cancellation of leave record</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/40 hover:bg-muted text-muted-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Leave details summary */}
+        <div className="rounded-2xl bg-muted/40 p-4 space-y-2.5 text-xs">
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Employee:</span>
+            <span className="font-bold text-foreground">{leave.employee.name}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Code:</span>
+            <span className="font-mono text-muted-foreground">{leave.employee.employee_code}</span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Leave Type:</span>
+            <span className="font-semibold text-primary">
+              {LEAVE_TYPE_LABELS[leave.leave_type] || leave.leave_type}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Dates:</span>
+            <span className="font-bold text-foreground">
+              {formatDate(leave.leave_date)}
+              {leave.end_date && leave.end_date !== leave.leave_date && ` – ${formatDate(leave.end_date)}`}
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span className="text-muted-foreground">Duration:</span>
+            <span className="font-semibold text-foreground">
+              {calculateDays(leave.leave_date, leave.end_date, leave.leave_type)}
+            </span>
+          </div>
+          {leave.reason && (
+            <div className="pt-2 border-t border-border/40">
+              <span className="text-muted-foreground block mb-0.5">Reason:</span>
+              <p className="text-foreground/90 italic">{leave.reason}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-rose-500/20 bg-rose-50/50 dark:bg-rose-950/20 p-3.5 text-xs text-rose-900 dark:text-rose-200">
+          <p className="font-bold flex items-center gap-1.5">
+            <AlertCircle className="h-4 w-4 text-rose-600 dark:text-rose-400 shrink-0" />
+            Are you sure you want to cancel this leave?
+          </p>
+          <p className="mt-1 leading-relaxed text-muted-foreground">
+            This will delete the leave record and restore the employee&apos;s regular working schedule.
+          </p>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-600 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="flex items-center justify-end gap-2.5 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-xl border border-border/60 bg-muted/30 px-4 py-2 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+          >
+            Keep Leave
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={submitting || isPast}
+            className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <span>Cancelling…</span>
+              </>
+            ) : (
+              <>
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Yes, Cancel Leave</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page Component ─────────────────────────────────────────────────────────────
 export default function EmployeeLeavesPage() {
-  const [search,       setSearch]       = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [typeFilter,   setTypeFilter]   = useState('');
-  const [deptFilter,   setDeptFilter]   = useState('');
-  const [viewMode,     setViewMode]     = useState<'list' | 'grid'>('list');
-  const [showAddModal, setShowAddModal] = useState(false);
+  const [search,        setSearch]        = useState('');
+  const [statusFilter,  setStatusFilter]  = useState('');
+  const [typeFilter,    setTypeFilter]    = useState('');
+  const [deptFilter,    setDeptFilter]    = useState('');
+  const [viewMode,      setViewMode]      = useState<'list' | 'grid'>('list');
+  const [showAddModal,  setShowAddModal]  = useState(false);
+  const [leaveToCancel, setLeaveToCancel] = useState<LeaveRecord | null>(null);
 
   const { data: rawLeaves, loading, error, refetch } = useApiList<Record<string, unknown>>(
     '/api/v1/employees/leaves',
@@ -353,8 +511,8 @@ export default function EmployeeLeavesPage() {
 
       {/* ── LIST VIEW ── */}
       {!loading && filtered.length > 0 && viewMode === 'list' && (
-        <div className="rounded-2xl border border-border/80 bg-card overflow-hidden shadow-sm">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-2xl border border-border/80 bg-card shadow-sm scrollbar-thin">
+          <table className="w-full min-w-[760px] text-sm">
             <thead>
               <tr className="border-b border-border/50 bg-muted/40">
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground">Employee</th>
@@ -363,6 +521,7 @@ export default function EmployeeLeavesPage() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden md:table-cell">Reason</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-muted-foreground hidden lg:table-cell">Approved By</th>
                 <th className="px-4 py-3 text-center text-xs font-semibold text-muted-foreground">Status</th>
+                <th className="px-4 py-3 text-right text-xs font-semibold text-muted-foreground">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -451,6 +610,23 @@ export default function EmployeeLeavesPage() {
                         {statusCfg.label}
                       </span>
                     </td>
+
+                    {/* Actions */}
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      {!isLeaveInPast(leave) ? (
+                        <button
+                          type="button"
+                          onClick={() => setLeaveToCancel(leave)}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-500/20 hover:border-rose-500/30 transition cursor-pointer"
+                          title="Cancel Leave"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Cancel</span>
+                        </button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/40 italic">—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -469,76 +645,91 @@ export default function EmployeeLeavesPage() {
             return (
               <div
                 key={leave.id}
-                className="group relative rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition hover:shadow-md hover:border-primary/40 animate-fade-in-up"
+                className="group relative rounded-2xl border border-border/80 bg-card p-5 shadow-sm transition hover:shadow-md hover:border-primary/40 animate-fade-in-up flex flex-col justify-between"
               >
-                {/* Status badge */}
-                <div className="flex items-center justify-between mb-3">
-                  <span className="inline-block rounded-full bg-muted/80 px-2.5 py-0.5 text-[11px] font-semibold text-foreground">
-                    {LEAVE_TYPE_LABELS[leave.leave_type] || leave.leave_type}
-                  </span>
-                  <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold', statusCfg.badgeCls)}>
-                    <StatusIcon className="h-3 w-3" />
-                    {statusCfg.label}
-                  </span>
-                </div>
+                <div>
+                  {/* Status badge */}
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="inline-block rounded-full bg-muted/80 px-2.5 py-0.5 text-[11px] font-semibold text-foreground">
+                      {LEAVE_TYPE_LABELS[leave.leave_type] || leave.leave_type}
+                    </span>
+                    <span className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold', statusCfg.badgeCls)}>
+                      <StatusIcon className="h-3 w-3" />
+                      {statusCfg.label}
+                    </span>
+                  </div>
 
-                {/* Employee Info */}
-                <div className="flex items-center gap-3 mb-4">
-                  {leave.employee.avatar ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={leave.employee.avatar}
-                      alt={leave.employee.name}
-                      className="h-12 w-12 rounded-xl object-cover shrink-0"
-                    />
-                  ) : (
-                    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-sm font-bold text-white shadow-xs">
-                      {initials(leave.employee.name)}
+                  {/* Employee Info */}
+                  <div className="flex items-center gap-3 mb-4">
+                    {leave.employee.avatar ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={leave.employee.avatar}
+                        alt={leave.employee.name}
+                        className="h-12 w-12 rounded-xl object-cover shrink-0"
+                      />
+                    ) : (
+                      <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-sm font-bold text-white shadow-xs">
+                        {initials(leave.employee.name)}
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="font-bold text-sm leading-tight text-foreground truncate">{leave.employee.name}</p>
+                      <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{leave.employee.employee_code}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">{leave.employee.department_name} · {leave.employee.role_name}</p>
                     </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="font-bold text-sm leading-tight text-foreground truncate">{leave.employee.name}</p>
-                    <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{leave.employee.employee_code}</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{leave.employee.department_name} · {leave.employee.role_name}</p>
                   </div>
+
+                  {/* Leave Date Range */}
+                  <div className="mb-3 rounded-xl bg-muted/40 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+                        <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                        {formatDate(leave.leave_date)}
+                        {leave.end_date && leave.end_date !== leave.leave_date && (
+                          <span> – {formatDate(leave.end_date)}</span>
+                        )}
+                      </span>
+                      <span className="text-[11px] font-bold text-primary">
+                        {calculateDays(leave.leave_date, leave.end_date, leave.leave_type)}
+                      </span>
+                    </div>
+                    {leave.start_time && leave.end_time && (
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        Time: {leave.start_time} – {leave.end_time}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Reason */}
+                  <p className="text-xs text-foreground/90 font-medium mb-3 line-clamp-2">
+                    <span className="font-bold text-muted-foreground">Reason: </span>
+                    {leave.reason}
+                  </p>
                 </div>
 
-                {/* Leave Date Range */}
-                <div className="mb-3 rounded-xl bg-muted/40 p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-xs font-bold text-foreground">
-                      <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                      {formatDate(leave.leave_date)}
-                      {leave.end_date && leave.end_date !== leave.leave_date && (
-                        <span> – {formatDate(leave.end_date)}</span>
-                      )}
-                    </span>
-                    <span className="text-[11px] font-bold text-primary">
-                      {calculateDays(leave.leave_date, leave.end_date, leave.leave_type)}
-                    </span>
+                {/* Footer Info & Cancel Action */}
+                <div className="border-t border-border/40 pt-3 flex items-center justify-between gap-2">
+                  <div className="text-[11px] text-muted-foreground space-y-0.5 min-w-0">
+                    {leave.approved_by && (
+                      <p className="flex items-center gap-1 truncate text-foreground font-medium">
+                        <UserCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                        Approved by: {leave.approved_by}
+                      </p>
+                    )}
+                    <p>Requested: {formatDate(leave.created_at)}</p>
                   </div>
-                  {leave.start_time && leave.end_time && (
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      Time: {leave.start_time} – {leave.end_time}
-                    </p>
+                  {!isLeaveInPast(leave) && (
+                    <button
+                      type="button"
+                      onClick={() => setLeaveToCancel(leave)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer shrink-0"
+                      title="Cancel Leave"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Cancel</span>
+                    </button>
                   )}
-                </div>
-
-                {/* Reason */}
-                <p className="text-xs text-foreground/90 font-medium mb-3 line-clamp-2">
-                  <span className="font-bold text-muted-foreground">Reason: </span>
-                  {leave.reason}
-                </p>
-
-                {/* Footer Info */}
-                <div className="border-t border-border/40 pt-3 text-[11px] text-muted-foreground space-y-1">
-                  {leave.approved_by && (
-                    <p className="flex items-center gap-1 truncate text-foreground font-medium">
-                      <UserCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-                      Approved by: {leave.approved_by}
-                    </p>
-                  )}
-                  <p>Requested: {formatDate(leave.created_at)}</p>
                 </div>
               </div>
             );
@@ -560,6 +751,16 @@ export default function EmployeeLeavesPage() {
             department_name: l.employee.department_name,
             avatar: l.employee.avatar,
           }))}
+        />
+      )}
+
+      {leaveToCancel && (
+        <CancelLeaveModal
+          leave={leaveToCancel}
+          onClose={() => setLeaveToCancel(null)}
+          onSuccess={() => {
+            refetch();
+          }}
         />
       )}
     </DashboardShell>

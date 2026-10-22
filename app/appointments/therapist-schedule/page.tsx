@@ -12,6 +12,7 @@ import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { isBranchRestrictedScheduleRole } from '@/lib/permissions';
 import {
   TherapistScheduleBookingModal,
 } from '@/components/bookings/TherapistScheduleBookingModal';
@@ -1174,8 +1175,57 @@ function formatHeaderDate(isoDate: string): string {
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function TherapistSchedulePage() {
   // Auth token from Redux store
-  const token  = useAppSelector((s) => s.auth.token);
-  const locale = useAppSelector((s) => s.ui.locale);
+  const token    = useAppSelector((s) => s.auth.token);
+  const user     = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
+  const locale   = useAppSelector((s) => s.ui.locale);
+
+  // Track assigned branch for role-restricted employees (Branch Manager, Customer Support Manager, Customer Support Agent)
+  const [assignedBranch, setAssignedBranch] = useState<{ id: string; name: string } | null>(() => {
+    if (user?.branch_id) {
+      return { id: String(user.branch_id), name: user.branch_name || '' };
+    }
+    return null;
+  });
+
+  useEffect(() => {
+    if (user?.branch_id) {
+      setAssignedBranch({ id: String(user.branch_id), name: user.branch_name || '' });
+    }
+  }, [user?.branch_id, user?.branch_name]);
+
+  // Ensure assigned branch is fetched if not present on user object
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch('/api/v1/employees/me', {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept-Language': locale,
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+        if (!res.ok) return;
+        const json = await res.json().catch(() => ({}));
+        const emp = (json?.data ?? json?.employee ?? json) as Record<string, unknown>;
+        if (active && emp) {
+          const bId = emp.branch_id ?? (emp.branch as any)?.id ?? (emp.branch as any)?.branch_id ?? (Array.isArray(emp.branches) && emp.branches[0]?.id ? emp.branches[0]?.id : null);
+          const bName = emp.branch_name ?? (emp.branch as any)?.name ?? (emp.branch as any)?.branch_name ?? (Array.isArray(emp.branches) && emp.branches[0]?.name ? emp.branches[0]?.name : null);
+          if (bId) {
+            setAssignedBranch({ id: String(bId), name: String(bName || '') });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { active = false; };
+  }, [token, locale]);
+
+  const assignedBranchId = assignedBranch?.id || (user?.branch_id ? String(user.branch_id) : null);
+  const isBranchRestricted = isBranchRestrictedScheduleRole(roleInfo, user) && Boolean(assignedBranchId);
 
   // Today's date as YYYY-MM-DD (Kuwait wall-clock date)
   const todayStr = getCurrentKuwaitDateTime().dateStr;
@@ -1282,7 +1332,11 @@ export default function TherapistSchedulePage() {
           if (active) {
             if (list.length > 0) {
               setBranchList(list);
-              setSelectedBranchId((prev) => (prev && list.some(b => b.branch_id === prev) ? prev : list[0].branch_id));
+              if (isBranchRestricted && assignedBranchId) {
+                setSelectedBranchId(assignedBranchId);
+              } else {
+                setSelectedBranchId((prev) => (prev && list.some(b => b.branch_id === prev) ? prev : list[0].branch_id));
+              }
             } else {
               setLoading(false);
             }
@@ -1296,7 +1350,7 @@ export default function TherapistSchedulePage() {
       }
     })();
     return () => { active = false; };
-  }, [token, locale]);
+  }, [token, locale, isBranchRestricted, assignedBranchId]);
 
   // Fetch schedule when branch, date, or locale changes
   useEffect(() => {
@@ -1495,6 +1549,24 @@ export default function TherapistSchedulePage() {
 
   // Branch list combines /api/v1/branches with schedule response
   const apiBranches: ApiBranch[] = useMemo(() => {
+    // When employee has role "Branch Manager", "Customer Support Manager", or "Customer Support Agent"
+    // and is assigned to any branch, ONLY show that branch in the dropdown
+    if (isBranchRestricted && assignedBranchId) {
+      const match = branchList.find(b => b.branch_id === assignedBranchId) ||
+                    (scheduleData?.branch?.branches ?? []).find(b => b.branch_id === assignedBranchId);
+      const name = match?.branch_name ||
+                   (scheduleData?.branch?.id === assignedBranchId ? scheduleData.branch.name : null) ||
+                   assignedBranch?.name ||
+                   user?.branch_name ||
+                   'Assigned Branch';
+      return [{
+        branch_id: assignedBranchId,
+        branch_name: name,
+        opening_time: match?.opening_time,
+        closing_time: match?.closing_time,
+      }];
+    }
+
     const map = new Map<string, string>();
     branchList.forEach(b => map.set(b.branch_id, b.branch_name));
     (scheduleData?.branch?.branches ?? []).forEach(b => {
@@ -1506,13 +1578,19 @@ export default function TherapistSchedulePage() {
       map.set(scheduleData.branch.id, scheduleData.branch.name ?? scheduleData.branch.id);
     }
     return Array.from(map.entries()).map(([branch_id, branch_name]) => ({ branch_id, branch_name }));
-  }, [branchList, scheduleData]);
+  }, [branchList, scheduleData, isBranchRestricted, assignedBranchId, assignedBranch?.name, user?.branch_name]);
 
   useEffect(() => {
+    if (isBranchRestricted && assignedBranchId) {
+      if (selectedBranchId !== assignedBranchId) {
+        setSelectedBranchId(assignedBranchId);
+      }
+      return;
+    }
     if (!selectedBranchId && apiBranches.length > 0) {
       setSelectedBranchId(apiBranches[0].branch_id);
     }
-  }, [selectedBranchId, apiBranches]);
+  }, [isBranchRestricted, assignedBranchId, selectedBranchId, apiBranches]);
 
   const branchLabel = apiBranches.find(b => b.branch_id === selectedBranchId)?.branch_name ?? 'Select Branch';
 

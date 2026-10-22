@@ -163,3 +163,55 @@ export function kuwaitWallClockDate(value: DateInput, timeZone: string = DEFAULT
   if (isNaN(d.getTime())) return d;
   return new Date(d.getTime() + getTimezoneOffsetMs(timeZone, d));
 }
+
+/**
+ * Returns current business datetime breakdown in Kuwait (dateStr: YYYY-MM-DD, timeStr: HH:MM, minutes: minutes since midnight).
+ */
+export function getCurrentKuwaitDateTime(timeZone: string = DEFAULT_TIMEZONE): {
+  dateStr: string;
+  timeStr: string;
+  minutes: number;
+} {
+  const now = new Date();
+  const dateStr = kuwaitDateString(now, timeZone);
+  const timeStr = kuwaitTimeString(now, timeZone);
+  const minutes = parseClockToMinutes(timeStr);
+  return { dateStr, timeStr, minutes };
+}
+
+/**
+ * Determines whether a leave's scheduled date and time has already passed
+ * relative to the business timezone (Asia/Kuwait).
+ *
+ * Rules:
+ * - If leave_date is in the past (< today's date): true
+ * - If leave_date is in the future (> today's date): false
+ * - If leave_date is today:
+ *     - If specific start/end time is specified: true if current time > leave start_time
+ *     - If full day (no time specified): false (ongoing today, can still be managed during the day)
+ */
+export function isLeaveInPast(
+  leave: {
+    leave_date: string;
+    start_time?: string | null;
+    end_time?: string | null;
+  },
+  timeZone: string = DEFAULT_TIMEZONE,
+): boolean {
+  if (!leave?.leave_date) return false;
+  const leaveDate = leave.leave_date.split('T')[0];
+  const current = getCurrentKuwaitDateTime(timeZone);
+
+  if (leaveDate < current.dateStr) return true;
+  if (leaveDate > current.dateStr) return false;
+
+  // leaveDate === current.dateStr (leave is today)
+  const timeLabel = leave.start_time || leave.end_time;
+  if (timeLabel) {
+    const leaveMinutes = parseClockToMinutes(timeLabel);
+    return current.minutes > leaveMinutes;
+  }
+
+  return false;
+}
+

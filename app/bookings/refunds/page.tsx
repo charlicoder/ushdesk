@@ -1621,7 +1621,7 @@ export default function RefundsPage() {
       <div className="mt-5 rounded-2xl border border-border/60 bg-card p-4 shadow-sm space-y-3">
         {/* Top filter row: Status Tabs */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/40 pb-3">
-          <div className="flex flex-wrap items-center gap-1.5">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none max-w-full">
             {(
               [
                 ['all', 'All Statuses'],
@@ -1640,7 +1640,7 @@ export default function RefundsPage() {
                   setPage(1);
                 }}
                 className={cn(
-                  'rounded-xl px-3 py-1.5 text-xs font-bold transition',
+                  'shrink-0 rounded-xl px-3 py-1.5 text-xs font-bold transition whitespace-nowrap cursor-pointer',
                   statusFilter === val
                     ? 'bg-primary text-primary-foreground shadow-sm'
                     : 'bg-muted/40 text-muted-foreground hover:bg-muted hover:text-foreground'
@@ -1766,149 +1766,264 @@ export default function RefundsPage() {
             </p>
           </div>
         ) : viewMode === 'list' ? (
-          <div className="overflow-x-auto rounded-2xl border border-border/60 bg-card shadow-sm">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border/60 bg-muted/40 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                  <th className="px-4 py-3">Refund Number & Date</th>
-                  <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Booking Ref</th>
-                  <th className="px-4 py-3">Type & Method</th>
-                  <th className="px-4 py-3 text-right">Requested & Net</th>
-                  <th className="px-4 py-3 text-center">Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40">
-                {items.map((r) => {
-                  const customerName = getCustomerName(r);
-                  const customerPhone = getCustomerPhone(r);
-                  const bookingNumber = getBookingNumber(r);
+          <>
+            {/* Mobile Card View (block sm:hidden) */}
+            <div className="block sm:hidden space-y-3">
+              {items.map((r) => {
+                const customerName = getCustomerName(r);
+                const customerPhone = getCustomerPhone(r);
+                const bookingNumber = getBookingNumber(r);
 
-                  return (
-                    <tr
-                      key={r.id}
-                      onClick={() => setSelectedRefund(r)}
-                      className="cursor-pointer transition-colors hover:bg-muted/30"
-                    >
-                      {/* Refund Number & Date */}
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex flex-col gap-1 items-start">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
-                              {r.refund_number}
-                            </span>
-                            <CopyButton text={r.refund_number} />
-                          </div>
-                          <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                            <Calendar className="h-3 w-3 text-muted-foreground/70" />
-                            {formatDate(r.created_at)}
-                          </span>
+                return (
+                  <div
+                    key={r.id}
+                    onClick={() => setSelectedRefund(r)}
+                    className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm active:scale-[0.99] transition hover:border-primary/40 cursor-pointer space-y-3"
+                  >
+                    {/* Header: Customer and Amount */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10 font-bold text-xs text-primary shadow-xs">
+                          {getInitials(customerName)}
                         </div>
-                      </td>
+                        <div className="min-w-0">
+                          <p className="font-bold text-sm text-foreground truncate">{customerName}</p>
+                          <p className="text-xs text-muted-foreground truncate">{customerPhone || 'No phone'}</p>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="font-black text-base text-emerald-600 dark:text-emerald-400 block">
+                          {money(r.refunded_amount, r.currency)}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground block font-medium">
+                          Req: {money(r.requested_amount, r.currency)}
+                        </span>
+                      </div>
+                    </div>
 
-                      {/* Customer */}
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/10 font-bold text-[10px] text-primary">
-                            {getInitials(customerName)}
+                    {/* Pills Row */}
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="flex items-center gap-1 bg-primary/10 text-primary font-mono text-xs font-bold px-2 py-0.5 rounded-md" onClick={(e) => e.stopPropagation()}>
+                        <span>{r.refund_number}</span>
+                        <CopyButton text={r.refund_number} />
+                      </div>
+                      <StatusBadge status={r.status} />
+                      <MethodBadge method={r.refund_method} />
+                      <TypeBadge type={r.refund_type} />
+                    </div>
+
+                    {/* Details Box */}
+                    <div className="rounded-xl bg-muted/40 p-2.5 space-y-1.5 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground text-[11px]">Booking Ref:</span>
+                        <span className="font-mono font-semibold text-foreground truncate">
+                          {bookingNumber || (r.booking_id ? `${r.booking_id.slice(0, 8)}…` : '—')}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+                          <Calendar className="h-3 w-3" /> Date:
+                        </span>
+                        <span className="text-muted-foreground text-[11px]">
+                          {formatDate(r.created_at)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Actions Row */}
+                    <div
+                      className="border-t border-border/40 pt-2.5 flex items-center justify-between gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-[11px] text-muted-foreground">Tap to view full details</span>
+                      <div className="flex items-center gap-1.5">
+                        {r.status === 'requested' && canApproveReject ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setRejectTarget(r)}
+                              className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setApproveTarget(r)}
+                              className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-xs font-bold shadow-xs transition cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                          </>
+                        ) : r.status === 'approved' && canProcessRefund ? (
+                          <button
+                            type="button"
+                            onClick={() => setProcessTarget(r)}
+                            className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-xs font-bold shadow-xs transition cursor-pointer flex items-center gap-1"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Process
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedRefund(r)}
+                            className="rounded-lg bg-muted px-2.5 py-1 text-xs font-bold text-muted-foreground hover:bg-muted/80 hover:text-foreground transition cursor-pointer"
+                          >
+                            View
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Desktop / Tablet Table View (hidden sm:block with horizontal scrolling min-w-[880px]) */}
+            <div className="hidden sm:block overflow-x-auto rounded-2xl border border-border/60 bg-card shadow-sm scrollbar-thin">
+              <table className="w-full min-w-[880px] text-xs">
+                <thead>
+                  <tr className="border-b border-border/60 bg-muted/40 text-left text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    <th className="px-4 py-3">Refund Number & Date</th>
+                    <th className="px-4 py-3">Customer</th>
+                    <th className="px-4 py-3">Booking Ref</th>
+                    <th className="px-4 py-3">Type & Method</th>
+                    <th className="px-4 py-3 text-right">Requested & Net</th>
+                    <th className="px-4 py-3 text-center">Status</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40">
+                  {items.map((r) => {
+                    const customerName = getCustomerName(r);
+                    const customerPhone = getCustomerPhone(r);
+                    const bookingNumber = getBookingNumber(r);
+
+                    return (
+                      <tr
+                        key={r.id}
+                        onClick={() => setSelectedRefund(r)}
+                        className="cursor-pointer transition-colors hover:bg-muted/30"
+                      >
+                        {/* Refund Number & Date */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex flex-col gap-1 items-start">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-xs font-bold text-primary bg-primary/10 px-2 py-0.5 rounded-md">
+                                {r.refund_number}
+                              </span>
+                              <CopyButton text={r.refund_number} />
+                            </div>
+                            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
+                              <Calendar className="h-3 w-3 text-muted-foreground/70" />
+                              {formatDate(r.created_at)}
+                            </span>
                           </div>
-                          <div className="min-w-0">
-                            <p className="font-semibold text-foreground truncate max-w-[140px]">{customerName}</p>
-                            {customerPhone && (
-                              <p className="text-[11px] text-muted-foreground truncate">{customerPhone}</p>
+                        </td>
+
+                        {/* Customer */}
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-primary/10 font-bold text-[10px] text-primary">
+                              {getInitials(customerName)}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-foreground truncate max-w-[140px]">{customerName}</p>
+                              {customerPhone && (
+                                <p className="text-[11px] text-muted-foreground truncate">{customerPhone}</p>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Booking Ref */}
+                        <td className="px-4 py-3">
+                          {bookingNumber ? (
+                            <div className="flex items-center gap-1">
+                              <span className="font-mono text-xs font-semibold text-foreground">{bookingNumber}</span>
+                            </div>
+                          ) : (
+                            <span className="font-mono text-[11px] text-muted-foreground">
+                              {r.booking_id ? `${r.booking_id.slice(0, 8)}…` : '—'}
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Type & Method */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="flex flex-col gap-1 items-start">
+                            <MethodBadge method={r.refund_method} />
+                            <TypeBadge type={r.refund_type} />
+                          </div>
+                        </td>
+
+                        {/* Requested & Net Refund */}
+                        <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="font-black text-emerald-600 dark:text-emerald-400">
+                              {money(r.refunded_amount, r.currency)}
+                            </span>
+                            <span className="text-[11px] text-muted-foreground">
+                              Req: {money(r.requested_amount, r.currency)}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-4 py-3 text-center whitespace-nowrap">
+                          <StatusBadge status={r.status} />
+                        </td>
+
+                        {/* Actions */}
+                        <td
+                          className="px-4 py-3 text-right whitespace-nowrap"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="flex items-center justify-end gap-1.5">
+                            {r.status === 'requested' && canApproveReject ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => setRejectTarget(r)}
+                                  className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer"
+                                >
+                                  Reject
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setApproveTarget(r)}
+                                  className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-xs transition cursor-pointer"
+                                >
+                                  Approve
+                                </button>
+                              </>
+                            ) : r.status === 'approved' && canProcessRefund ? (
+                              <button
+                                type="button"
+                                onClick={() => setProcessTarget(r)}
+                                className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-xs transition cursor-pointer flex items-center gap-1"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                Process
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedRefund(r)}
+                                className="rounded-lg bg-muted px-2.5 py-1 text-[11px] font-bold text-muted-foreground hover:bg-muted/80 hover:text-foreground transition cursor-pointer"
+                              >
+                                View
+                              </button>
                             )}
                           </div>
-                        </div>
-                      </td>
-
-                      {/* Booking Ref */}
-                      <td className="px-4 py-3">
-                        {bookingNumber ? (
-                          <div className="flex items-center gap-1">
-                            <span className="font-mono text-xs font-semibold text-foreground">{bookingNumber}</span>
-                          </div>
-                        ) : (
-                          <span className="font-mono text-[11px] text-muted-foreground">
-                            {r.booking_id ? `${r.booking_id.slice(0, 8)}…` : '—'}
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Type & Method */}
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex flex-col gap-1 items-start">
-                          <MethodBadge method={r.refund_method} />
-                          <TypeBadge type={r.refund_type} />
-                        </div>
-                      </td>
-
-                      {/* Requested & Net Refund */}
-                      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap">
-                        <div className="flex flex-col items-end gap-0.5">
-                          <span className="font-black text-emerald-600 dark:text-emerald-400">
-                            {money(r.refunded_amount, r.currency)}
-                          </span>
-                          <span className="text-[11px] text-muted-foreground">
-                            Req: {money(r.requested_amount, r.currency)}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Status */}
-                      <td className="px-4 py-3 text-center whitespace-nowrap">
-                        <StatusBadge status={r.status} />
-                      </td>
-
-                      {/* Actions */}
-                      <td
-                        className="px-4 py-3 text-right whitespace-nowrap"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="flex items-center justify-end gap-1.5">
-                          {r.status === 'requested' && canApproveReject ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setRejectTarget(r)}
-                                className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-600 hover:bg-rose-500/20 transition cursor-pointer"
-                              >
-                                Reject
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setApproveTarget(r)}
-                                className="rounded-lg bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-xs transition cursor-pointer"
-                              >
-                                Approve
-                              </button>
-                            </>
-                          ) : r.status === 'approved' && canProcessRefund ? (
-                            <button
-                              type="button"
-                              onClick={() => setProcessTarget(r)}
-                              className="rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-bold shadow-xs transition cursor-pointer flex items-center gap-1"
-                            >
-                              <RotateCcw className="h-3 w-3" />
-                              Process
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedRefund(r)}
-                              className="rounded-lg bg-muted px-2.5 py-1 text-[11px] font-bold text-muted-foreground hover:bg-muted/80 hover:text-foreground transition cursor-pointer"
-                            >
-                              View
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         ) : (
           /* Grid View */
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

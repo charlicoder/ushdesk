@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { authedFetch } from '@/lib/authedFetch';
 import { cn } from '@/lib/utils';
+import { getCurrentKuwaitDateTime, parseClockToMinutes } from '@/lib/datetime';
 
 export interface EmployeeOption {
   id: string;
@@ -35,6 +36,16 @@ export function getTodayKuwait(): string {
   }
   return new Date().toISOString().slice(0, 10);
 }
+
+export function getDefaultTimesForToday(): { start: string; end: string } {
+  const { minutes } = getCurrentKuwaitDateTime();
+  const nextHour = Math.min(23, Math.floor(minutes / 60) + 1);
+  const endHour = Math.min(23, Math.max(nextHour + 1, nextHour + 2));
+  const startStr = `${String(nextHour).padStart(2, '0')}:00`;
+  const endStr = `${String(endHour).padStart(2, '0')}:00`;
+  return { start: startStr, end: endStr };
+}
+
 
 const COMMON_REASONS = [
   'Annual Leave',
@@ -63,19 +74,30 @@ export function AddLeaveModal({
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [employeeSearch, setEmployeeSearch] = useState('');
 
+  const currentKuwait = getCurrentKuwaitDateTime();
+  const initialTimes = useMemo(() => getDefaultTimesForToday(), []);
+
   // Form states
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(initialEmployeeId || '');
   const [leaveType, setLeaveType] = useState<'full_day' | 'half_day'>('full_day');
-  const [leaveDate, setLeaveDate] = useState(getTodayKuwait());
+  const [leaveDate, setLeaveDate] = useState(currentKuwait.dateStr);
   const [isMultiDay, setIsMultiDay] = useState(false);
-  const [endDate, setEndDate] = useState(getTodayKuwait());
-  const [startTime, setStartTime] = useState('09:00');
-  const [endTime, setEndTime] = useState('13:00');
+  const [endDate, setEndDate] = useState(currentKuwait.dateStr);
+  const [startTime, setStartTime] = useState(initialTimes.start);
+  const [endTime, setEndTime] = useState(initialTimes.end);
   const [reason, setReason] = useState('Personal Time Off');
   const [status, setStatus] = useState<'approved' | 'pending'>('approved');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Derived validation checks for past date/time
+  const isToday = leaveDate === currentKuwait.dateStr;
+  const isLeaveDateInPast = Boolean(leaveDate && leaveDate < currentKuwait.dateStr);
+  const isEndDateInPast = Boolean(isMultiDay && endDate && endDate < currentKuwait.dateStr);
+  const isStartTimeInPast = Boolean(leaveType === 'half_day' && isToday && startTime && parseClockToMinutes(startTime) <= currentKuwait.minutes);
+  const isTimeOrderInvalid = Boolean(leaveType === 'half_day' && startTime && endTime && startTime >= endTime);
+  const hasPastError = isLeaveDateInPast || isEndDateInPast || isStartTimeInPast;
 
   // Close on Escape key
   useEffect(() => {
@@ -154,6 +176,8 @@ export function AddLeaveModal({
     e.preventDefault();
     setError(null);
 
+    const now = getCurrentKuwaitDateTime();
+
     if (!selectedEmployeeId) {
       setError('Please select an employee or therapist.');
       return;
@@ -161,6 +185,11 @@ export function AddLeaveModal({
 
     if (!leaveDate) {
       setError('Please specify a leave date.');
+      return;
+    }
+
+    if (leaveDate < now.dateStr) {
+      setError('Cannot add leave for a past date.');
       return;
     }
 
@@ -173,6 +202,10 @@ export function AddLeaveModal({
         setError('End date cannot be earlier than start date.');
         return;
       }
+      if (endDate < now.dateStr) {
+        setError('End date cannot be in the past.');
+        return;
+      }
     }
 
     if (leaveType === 'half_day') {
@@ -183,6 +216,13 @@ export function AddLeaveModal({
       if (startTime >= endTime) {
         setError('End time must be strictly after start time.');
         return;
+      }
+      if (leaveDate === now.dateStr) {
+        const startMin = parseClockToMinutes(startTime);
+        if (startMin <= now.minutes) {
+          setError(`Cannot add leave for past date and time. Start time must be after ${now.timeStr}.`);
+          return;
+        }
       }
     }
 
@@ -352,14 +392,27 @@ export function AddLeaveModal({
                   </label>
                   <input
                     type="date"
+                    min={currentKuwait.dateStr}
                     value={leaveDate}
                     onChange={(e) => {
-                      setLeaveDate(e.target.value);
-                      if (endDate < e.target.value) setEndDate(e.target.value);
+                      const val = e.target.value;
+                      setLeaveDate(val);
+                      if (endDate < val) setEndDate(val);
                     }}
                     required
-                    className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    className={cn(
+                      "w-full h-10 rounded-xl border bg-card px-3 text-sm font-semibold outline-none focus:ring-2",
+                      isLeaveDateInPast
+                        ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20 text-rose-600"
+                        : "border-border focus:border-primary focus:ring-primary/20"
+                    )}
                   />
+                  {isLeaveDateInPast && (
+                    <p className="text-[11px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 shrink-0" />
+                      Leave date cannot be in the past.
+                    </p>
+                  )}
                 </div>
 
                 {isMultiDay && (
@@ -367,12 +420,23 @@ export function AddLeaveModal({
                     <label className="text-xs font-bold text-muted-foreground">End Date *</label>
                     <input
                       type="date"
-                      min={leaveDate}
+                      min={leaveDate && leaveDate > currentKuwait.dateStr ? leaveDate : currentKuwait.dateStr}
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                       required
-                      className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      className={cn(
+                        "w-full h-10 rounded-xl border bg-card px-3 text-sm font-semibold outline-none focus:ring-2",
+                        isEndDateInPast
+                          ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20 text-rose-600"
+                          : "border-border focus:border-primary focus:ring-primary/20"
+                      )}
                     />
+                    {isEndDateInPast && (
+                      <p className="text-[11px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3 shrink-0" />
+                        End date cannot be in the past.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -401,11 +465,23 @@ export function AddLeaveModal({
                 <label className="text-xs font-bold text-muted-foreground">Date *</label>
                 <input
                   type="date"
+                  min={currentKuwait.dateStr}
                   value={leaveDate}
                   onChange={(e) => setLeaveDate(e.target.value)}
                   required
-                  className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className={cn(
+                    "w-full h-10 rounded-xl border bg-card px-3 text-sm font-semibold outline-none focus:ring-2",
+                    isLeaveDateInPast
+                      ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20 text-rose-600"
+                      : "border-border focus:border-primary focus:ring-primary/20"
+                  )}
                 />
+                {isLeaveDateInPast && (
+                  <p className="text-[11px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    Leave date cannot be in the past.
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -413,21 +489,40 @@ export function AddLeaveModal({
                   <label className="text-xs font-bold text-muted-foreground">Start Time *</label>
                   <input
                     type="time"
+                    min={isToday ? currentKuwait.timeStr : undefined}
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
                     required
-                    className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    className={cn(
+                      "w-full h-10 rounded-xl border bg-card px-3 text-sm font-semibold outline-none focus:ring-2",
+                      isStartTimeInPast
+                        ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20 text-rose-600"
+                        : "border-border focus:border-primary focus:ring-primary/20"
+                    )}
                   />
+                  {isStartTimeInPast && (
+                    <p className="text-[11px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 shrink-0" />
+                      Cannot be in the past (after {currentKuwait.timeStr}).
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-muted-foreground">End Time *</label>
                   <input
                     type="time"
+                    min={isToday ? (startTime || currentKuwait.timeStr) : (startTime || undefined)}
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
                     required
                     className="w-full h-10 rounded-xl border border-border bg-card px-3 text-sm font-semibold outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   />
+                  {isTimeOrderInvalid && (
+                    <p className="text-[11px] font-semibold text-rose-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="h-3 w-3 shrink-0" />
+                      End time must be after start time.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -524,7 +619,7 @@ export function AddLeaveModal({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || hasPastError || isTimeOrderInvalid}
               className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white px-5 py-2.5 text-xs font-bold shadow-md shadow-orange-500/20 transition cursor-pointer active:scale-95 disabled:opacity-50"
             >
               {saving ? (

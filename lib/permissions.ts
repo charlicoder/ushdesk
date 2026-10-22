@@ -211,10 +211,11 @@ export function isRefundsAndFinancePermittedRole(
 export function isBranchManagerRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
   if (roleInfo?.is_branch_manager === true) return true;
   const candidates = extractRoleCandidates(roleInfo, user);
-  const patterns = ['branch manager', 'branchmanager'];
-  return candidates.some((c) =>
-    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
-  );
+  const patterns = ['branch manager', 'branchmanager', 'branch manger'];
+  return candidates.some((c) => {
+    const norm = c.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    return patterns.some((p) => norm === p || norm.includes(p)) || (norm.includes('branch') && norm.includes('manage'));
+  });
 }
 
 /**
@@ -222,11 +223,56 @@ export function isBranchManagerRole(roleInfo?: RoleInfoLike | null, user?: UserL
  */
 export function isCustomerSupportManagerRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
   const candidates = extractRoleCandidates(roleInfo, user);
-  const patterns = ['customer support manager', 'customersupportmanager', 'customer support', 'support manager'];
-  return candidates.some((c) =>
-    patterns.some((p) => c === p || c.includes(p) || p.includes(c))
+  const patterns = ['customer support manager', 'customersupportmanager', 'customer suport manager', 'customersuportmanager', 'support manager', 'suport manager'];
+  return candidates.some((c) => {
+    const norm = c.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    return patterns.some((p) => norm === p || norm.includes(p)) ||
+      ((norm.includes('support') || norm.includes('suport')) && norm.includes('manage'));
+  });
+}
+
+/**
+ * Checks whether the current user has the Customer Support Agent role.
+ * Handles both "Customer Support Agent" and "Customer Suport Agent".
+ */
+export function isCustomerSupportAgentRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = [
+    'customer support agent',
+    'customersupportagent',
+    'customer suport agent',
+    'customersuportagent',
+    'support agent',
+    'suport agent',
+  ];
+  return candidates.some((c) => {
+    const norm = c.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    return patterns.some((p) => norm === p || norm.includes(p)) ||
+      ((norm.includes('support') || norm.includes('suport')) && norm.includes('agent'));
+  });
+}
+
+/**
+ * Checks whether the employee has one of the roles that should only see
+ * their assigned branch in the branch dropdown on Therapist Schedule and Room Schedule:
+ * - Branch Manager
+ * - Customer Support Manager
+ * - Customer Support Agent (or Customer Suport Agent)
+ *
+ * System administrators and superusers have global access and are NOT restricted.
+ */
+export function isBranchRestrictedScheduleRole(
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdministratorRole(roleInfo, user)) return false;
+  return (
+    isBranchManagerRole(roleInfo, user) ||
+    isCustomerSupportManagerRole(roleInfo, user) ||
+    isCustomerSupportAgentRole(roleInfo, user)
   );
 }
+
 
 /**
  * Checks whether the user is in one of the roles granted access to

@@ -967,88 +967,179 @@ export default function PaymentsPage() {
 // ── List View ──────────────────────────────────────────────────────────────────
 function ListView({ payments, onSelect }: { payments: Payment[]; onSelect: (p: Payment) => void }) {
   return (
-    <div className="mt-4 overflow-hidden rounded-2xl border border-border/50 bg-card">
-      {/* Table head */}
-      <div className="grid grid-cols-[1.5fr_2fr_1.2fr_1.4fr_1fr_1fr] gap-3 border-b border-border/40 bg-muted/40 px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <span>Payment / Invoice #</span>
-        <span>Customer</span>
-        <span>Amount</span>
-        <span>Method / Provider</span>
-        <span>Status</span>
-        <span>Date</span>
-      </div>
-
-      {/* Rows */}
-      <div className="divide-y divide-border/30">
+    <>
+      {/* Mobile Card View (block sm:hidden) */}
+      <div className="block sm:hidden space-y-3 mt-4">
         {payments.map((p) => (
           <button
             key={p.id}
             onClick={() => onSelect(p)}
-            className="grid w-full grid-cols-[1.5fr_2fr_1.2fr_1.4fr_1fr_1fr] gap-3 px-5 py-3.5 text-left text-sm transition hover:bg-muted/40 items-center cursor-pointer"
+            className="w-full text-left rounded-2xl border border-border/60 bg-card p-4 shadow-sm active:scale-[0.99] transition hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/20 space-y-3 cursor-pointer"
           >
-            {/* Payment & Invoice Number */}
-            <div className="min-w-0 space-y-0.5">
-              <span className="font-mono font-bold text-xs text-primary tracking-wide block truncate">
-                {p.payment_number || '—'}
-              </span>
-              {p.invoice_number ? (
-                <span className="font-mono text-[11px] text-muted-foreground truncate flex items-center gap-1">
-                  <Receipt className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-                  <span className="truncate">{p.invoice_number}</span>
+            {/* Header: Avatar, Name, Mobile, Amount */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white text-xs font-bold shadow-xs', gatewayColor(p.payment_method))}>
+                  {initials(p.customer_name)}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-bold text-sm text-foreground truncate">{p.customer_name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{p.customer_mobile || 'No mobile'}</p>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="font-black text-base text-foreground">{formatCurrency(p.amount, p.currency)}</p>
+                <p className="text-[10px] uppercase font-bold text-muted-foreground">{p.currency}</p>
+              </div>
+            </div>
+
+            {/* Badges Row */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <StatusBadge status={p.status} />
+              <PaidBadge isPaid={p.is_paid} />
+              {p.payment_through && (
+                <span className={cn(
+                  'text-[9px] font-black px-1.5 py-0.5 rounded tracking-wider uppercase',
+                  p.payment_through.toLowerCase() === 'ushdesk'
+                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                    : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                )}>
+                  {p.payment_through}
                 </span>
-              ) : (
-                <span className="text-[11px] text-muted-foreground/40 block">Inv: —</span>
+              )}
+              {p.booking_number && (
+                <span className="inline-flex items-center gap-1 font-mono rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary">
+                  <Calendar className="h-3 w-3" />
+                  {p.booking_number}
+                </span>
               )}
             </div>
 
-            {/* Customer */}
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white text-xs font-bold', gatewayColor(p.payment_method))}>
-                {initials(p.customer_name)}
+            {/* Details Box */}
+            <div className="rounded-xl bg-muted/40 p-2.5 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-[11px]">Payment #:</span>
+                <span className="font-mono font-bold text-primary truncate">
+                  {p.payment_number || '—'}
+                </span>
               </div>
-              <div className="min-w-0">
-                <p className="truncate font-semibold text-sm">{p.customer_name}</p>
-                <p className="truncate text-[11px] text-muted-foreground">{p.customer_mobile}</p>
-              </div>
-            </div>
-
-            {/* Amount */}
-            <div>
-              <p className="font-extrabold text-foreground">{formatCurrency(p.amount, p.currency)}</p>
-              <p className="text-[11px] text-muted-foreground">{p.currency}</p>
-            </div>
-
-            {/* Method / Provider */}
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <p className="font-bold text-foreground text-sm capitalize">
-                  {p.payment_provider || p.provider || p.payment_method || '—'}
-                </p>
-                {p.payment_through && (
-                  <span className={cn(
-                    'text-[9px] font-black px-1.5 py-0.5 rounded tracking-wider uppercase',
-                    p.payment_through.toLowerCase() === 'ushdesk'
-                      ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
-                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
-                  )}>
-                    {p.payment_through}
+              {p.invoice_number && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+                    <Receipt className="h-3 w-3" /> Invoice #:
                   </span>
-                )}
+                  <span className="font-mono font-semibold text-foreground truncate">
+                    {p.invoice_number}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+                  <CreditCard className="h-3 w-3" /> Method:
+                </span>
+                <span className="font-semibold text-foreground capitalize truncate">
+                  {p.payment_provider || p.provider || p.payment_method || '—'}
+                </span>
               </div>
-              <p className="text-[11px] text-muted-foreground capitalize truncate">
-                {[p.payment_method, p.payment_gateway].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v?.toLowerCase() !== (p.payment_provider || p.provider)?.toLowerCase()).join(' · ') || p.payment_method || p.provider || '—'}
-              </p>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-muted-foreground text-[11px] flex items-center gap-1">
+                  <Clock className="h-3 w-3" /> Date:
+                </span>
+                <span className="text-muted-foreground text-[11px]">
+                  {formatDateTime(p.created_at)}
+                </span>
+              </div>
             </div>
-
-            {/* Status */}
-            <StatusBadge status={p.status} />
-
-            {/* Date */}
-            <p className="text-[11px] text-muted-foreground">{formatDate(p.created_at)}</p>
           </button>
         ))}
       </div>
-    </div>
+
+      {/* Desktop / Tablet Table View (hidden sm:block with horizontal scrolling min-w-[840px]) */}
+      <div className="mt-4 hidden sm:block overflow-x-auto rounded-2xl border border-border/50 bg-card shadow-sm scrollbar-thin">
+        <div className="min-w-[840px]">
+          {/* Table head */}
+          <div className="grid grid-cols-[1.5fr_2fr_1.2fr_1.4fr_1fr_1fr] gap-3 border-b border-border/40 bg-muted/40 px-5 py-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Payment / Invoice #</span>
+            <span>Customer</span>
+            <span>Amount</span>
+            <span>Method / Provider</span>
+            <span>Status</span>
+            <span>Date</span>
+          </div>
+
+          {/* Rows */}
+          <div className="divide-y divide-border/30">
+            {payments.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => onSelect(p)}
+                className="grid w-full grid-cols-[1.5fr_2fr_1.2fr_1.4fr_1fr_1fr] gap-3 px-5 py-3.5 text-left text-sm transition hover:bg-muted/40 items-center cursor-pointer"
+              >
+                {/* Payment & Invoice Number */}
+                <div className="min-w-0 space-y-0.5">
+                  <span className="font-mono font-bold text-xs text-primary tracking-wide block truncate">
+                    {p.payment_number || '—'}
+                  </span>
+                  {p.invoice_number ? (
+                    <span className="font-mono text-[11px] text-muted-foreground truncate flex items-center gap-1">
+                      <Receipt className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+                      <span className="truncate">{p.invoice_number}</span>
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-muted-foreground/40 block">Inv: —</span>
+                  )}
+                </div>
+
+                {/* Customer */}
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white text-xs font-bold', gatewayColor(p.payment_method))}>
+                    {initials(p.customer_name)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-sm">{p.customer_name}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">{p.customer_mobile}</p>
+                  </div>
+                </div>
+
+                {/* Amount */}
+                <div>
+                  <p className="font-extrabold text-foreground">{formatCurrency(p.amount, p.currency)}</p>
+                  <p className="text-[11px] text-muted-foreground">{p.currency}</p>
+                </div>
+
+                {/* Method / Provider */}
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <p className="font-bold text-foreground text-sm capitalize">
+                      {p.payment_provider || p.provider || p.payment_method || '—'}
+                    </p>
+                    {p.payment_through && (
+                      <span className={cn(
+                        'text-[9px] font-black px-1.5 py-0.5 rounded tracking-wider uppercase',
+                        p.payment_through.toLowerCase() === 'ushdesk'
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                      )}>
+                        {p.payment_through}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground capitalize truncate">
+                    {[p.payment_method, p.payment_gateway].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i && v?.toLowerCase() !== (p.payment_provider || p.provider)?.toLowerCase()).join(' · ') || p.payment_method || p.provider || '—'}
+                  </p>
+                </div>
+
+                {/* Status */}
+                <StatusBadge status={p.status} />
+
+                {/* Date */}
+                <p className="text-[11px] text-muted-foreground">{formatDate(p.created_at)}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
   );
 }
 
