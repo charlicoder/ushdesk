@@ -2747,12 +2747,17 @@ export default function GiftVouchersPage() {
   }, [filtered, page, pageSize]);
 
   const stats = {
-    total:    vouchers.length,
-    active:   vouchers.filter(v => v.status === 'active').length,
-    redeemed: vouchers.filter(v => v.status === 'redeemed').length,
-    expired:  vouchers.filter(v => v.status === 'expired').length,
-    revenue:  vouchers.reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
-    currency: vouchers[0]?.currency ?? 'KWD',
+    total:          vouchers.length,
+    active:         vouchers.filter(v => v.status === 'active').length,
+    redeemed:       vouchers.filter(v => v.status === 'redeemed').length,
+    expired:        vouchers.filter(v => v.status === 'expired').length,
+    revenue:        vouchers
+                      .filter(v => v.status === 'active' || v.status === 'redeemed')
+                      .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
+    pendingRevenue: vouchers
+                      .filter(v => v.status === 'pending')
+                      .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
+    currency:       vouchers[0]?.currency ?? 'KWD',
   };
 
   return (
@@ -2791,12 +2796,13 @@ export default function GiftVouchersPage() {
       )}
 
       {/* ── Stat cards ── */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Total Vouchers', value: stats.total,                          sub: 'all time',        grad: 'from-primary to-accent', bg: 'bg-primary/5 dark:bg-primary/10', border: 'border-primary/20' },
-          { label: 'Active',         value: stats.active,                         sub: 'ready to redeem', grad: 'from-emerald-500 to-teal-500',   bg: 'bg-emerald-50 dark:bg-emerald-950/30', border: 'border-emerald-200/80 dark:border-emerald-800/40' },
-          { label: 'Redeemed',       value: stats.redeemed,                       sub: 'used vouchers',   grad: 'from-blue-500 to-sky-500',       bg: 'bg-blue-50 dark:bg-blue-950/30',  border: 'border-blue-200/80 dark:border-blue-800/40' },
-          { label: 'Total Revenue',  value: `${stats.revenue.toFixed(3)} ${stats.currency}`, sub: 'voucher sales', grad: 'from-amber-500 to-orange-500', bg: 'bg-amber-50 dark:bg-amber-950/30', border: 'border-amber-200/80 dark:border-amber-800/40' },
+          { label: 'Total Vouchers',  value: stats.total,                                      sub: 'all time',              grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
+          { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
+          { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
+          { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
+          { label: 'Pending Revenue', value: `${stats.pendingRevenue.toFixed(3)} ${stats.currency}`, sub: 'awaiting confirmation', grad: 'from-violet-500 to-purple-500',   bg: 'bg-violet-50 dark:bg-violet-950/30',    border: 'border-violet-200/80 dark:border-violet-800/40' },
         ].map(k => (
           <div key={k.label} className={cn('relative overflow-hidden rounded-2xl border p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5', k.bg, k.border)}>
             <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{k.label}</p>
