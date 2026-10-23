@@ -2755,7 +2755,10 @@ export default function GiftVouchersPage() {
                       .filter(v => v.status === 'active' || v.status === 'redeemed')
                       .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
     pendingRevenue: vouchers
-                      .filter(v => v.status === 'pending')
+                      .filter(v => {
+                        const s = v.status?.toLowerCase() ?? '';
+                        return s === 'pending' || s === 'payment_pending' || s.includes('pending');
+                      })
                       .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
     currency:       vouchers[0]?.currency ?? 'KWD',
   };
@@ -3028,7 +3031,14 @@ export default function GiftVouchersPage() {
                         </p>
                         <div className="flex items-center gap-1 mt-0.5 text-[11px] font-semibold text-muted-foreground">
                           <Timer className="h-3 w-3 text-muted-foreground shrink-0" />
-                          <span>{v.total_duration} min</span>
+                          <span>{
+                            (() => {
+                              const base = v.service_data?.duration_minutes || 0;
+                              const extra = v.extra_time || 0;
+                              const addonsMins = (v.addons ?? []).reduce((s: number, a: Addon) => s + (a.duration_minutes || 0), 0);
+                              return (v.total_duration || (base + extra + addonsMins)) || 0;
+                            })()
+                          } min</span>
                         </div>
                       </td>
 
