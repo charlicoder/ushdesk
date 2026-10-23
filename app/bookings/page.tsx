@@ -21,6 +21,13 @@ import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingM
 import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
+import {
+  DateRangeFilter,
+  DateFilterActiveBadge,
+  type DateFilterType,
+  type DateRange,
+  matchesDateRange,
+} from '@/components/dashboard/date-range-filter';
 
 import {
   Booking, normalise, formatDateTime, formatDate, formatTime, initials,
@@ -40,10 +47,20 @@ export default function BookingListPage() {
   const [page,            setPage]            = useState(1);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
 
-  const proxyUrl = `/api/v1/bookings?page=${page}&page_size=20`;
+  // Date filters
+  const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
+  const [dateRange,  setDateRange]  = useState<DateRange>({});
+
+  const proxyUrl = useMemo(() => {
+    let url = `/api/v1/bookings?page=${page}&page_size=20`;
+    if (dateRange.from) url += `&date_from=${encodeURIComponent(dateRange.from)}`;
+    if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}`;
+    return url;
+  }, [page, dateRange]);
+
   const { data: rawBookings, loading, error, pagination, refetch } = useBookings<Record<string, unknown>>(proxyUrl, []);
 
-  useEffect(() => { setPage(1); }, [search, branchFilter, statusFilter, payFilter, channelFilter]);
+  useEffect(() => { setPage(1); }, [search, branchFilter, statusFilter, payFilter, channelFilter, dateFilter, dateRange]);
 
   const bookings    = useMemo(() => rawBookings.map(normalise), [rawBookings]);
   const branches    = useMemo(() => Array.from(new Set(bookings.map((b) => b.branch_name))).filter(Boolean).sort(),    [bookings]);
@@ -71,18 +88,22 @@ export default function BookingListPage() {
       const matchStatus  = !statusFilter  || b.status.toLowerCase()      === statusFilter.toLowerCase();
       const matchPay     = !payFilter     || b.payment_status.toLowerCase() === payFilter.toLowerCase();
       const matchChannel = !channelFilter || (b.channel || b.source || b.payment_through || '').trim().toLowerCase() === channelFilter.trim().toLowerCase();
-      return matchSearch && matchBranch && matchStatus && matchPay && matchChannel;
+      const matchDate    = matchesDateRange(b.appointment_start || b.created_at, dateRange);
+      return matchSearch && matchBranch && matchStatus && matchPay && matchChannel && matchDate;
     });
-  }, [bookings, search, branchFilter, statusFilter, payFilter, channelFilter]);
+  }, [bookings, search, branchFilter, statusFilter, payFilter, channelFilter, dateRange]);
 
-  const activeCount = [branchFilter, statusFilter, payFilter, channelFilter].filter(Boolean).length;
-  const hasFilter   = Boolean(search || activeCount > 0);
-  const clearAll    = () => {
+  const hasDateFilter = dateFilter !== 'all';
+  const activeCount   = [branchFilter, statusFilter, payFilter, channelFilter].filter(Boolean).length;
+  const hasFilter     = Boolean(search || activeCount > 0 || hasDateFilter);
+  const clearAll      = () => {
     setSearch('');
     setBranchFilter('');
     setStatusFilter('');
     setPayFilter('');
     setChannelFilter('');
+    setDateFilter('all');
+    setDateRange({});
   };
   const hasNextPage = pagination ? page < pagination.total_pages : false;
   const totalCount  = pagination?.count ?? rawBookings.length;
@@ -121,6 +142,18 @@ export default function BookingListPage() {
             </button>
           )}
         </div>
+
+        {/* Date Range Filter */}
+        <DateRangeFilter
+          buttonLabelPrefix="Date Filters"
+          dateFilter={dateFilter}
+          dateRange={dateRange}
+          onChange={(type, range) => {
+            setDateFilter(type);
+            setDateRange(range);
+            setPage(1);
+          }}
+        />
 
         {/* Filter toggle */}
         <button
@@ -242,6 +275,17 @@ export default function BookingListPage() {
           </div>
         </div>
       )}
+
+      {/* Active Date Filter Badge */}
+      <DateFilterActiveBadge
+        dateFilter={dateFilter}
+        dateRange={dateRange}
+        onClear={() => {
+          setDateFilter('all');
+          setDateRange({});
+          setPage(1);
+        }}
+      />
 
       {/* Skeleton */}
       {loading && (

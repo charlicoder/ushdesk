@@ -14,6 +14,14 @@ import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
+import { authedFetch } from '@/lib/authedFetch';
+import {
+  DateRangeFilter,
+  DateFilterActiveBadge,
+  type DateFilterType,
+  type DateRange,
+  matchesDateRange,
+} from '@/components/dashboard/date-range-filter';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface CustomerData {
@@ -116,6 +124,7 @@ interface Payment {
   deposit_status: string;
   customer_data: CustomerData;
   booking_data: Record<string, unknown>;
+  branch_name: string;
   paid_at: string | null;
   created_at: string;
 }
@@ -228,6 +237,21 @@ function normalise(raw: RawPayment): Payment {
     ''
   ).trim();
 
+  const rawBranchData = (typeof raw.branch_data === 'object' && raw.branch_data !== null)
+    ? (raw.branch_data as Record<string, unknown>)
+    : ((typeof rawBookingData.branch_data === 'object' && rawBookingData.branch_data !== null)
+      ? (rawBookingData.branch_data as Record<string, unknown>)
+      : {});
+  const branchName = String(
+    raw.branch_name ??
+    rawBranchData.name ??
+    rawBranchData.branch_name ??
+    rawBookingData.branch_name ??
+    rawBookingData.branch ??
+    raw.branch ??
+    ''
+  ).trim();
+
   return {
     id:                 String(raw.id                 ?? ''),
     payment_number:     paymentNumber || null,
@@ -266,6 +290,7 @@ function normalise(raw: RawPayment): Payment {
     deposit_status:     String(raw.deposit_status     ?? ''),
     customer_data:      cd,
     booking_data:       (raw.booking_data             ?? {}) as Record<string, unknown>,
+    branch_name:        branchName,
     paid_at:            paidAt,
     created_at:         createdAt,
   };
@@ -649,12 +674,11 @@ interface Filters {
   provider: string;
   method: string;
   depositStatus: string;
-  dateFrom: string;
-  dateTo: string;
+  branch: string;
 }
 
 const DEFAULT_FILTERS: Filters = {
-  search: '', status: '', isPaid: '', provider: '', method: '', depositStatus: '', dateFrom: '', dateTo: '',
+  search: '', status: '', isPaid: '', provider: '', method: '', depositStatus: '', branch: '',
 };
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
@@ -666,7 +690,17 @@ export default function PaymentsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const PAGE_SIZE = 20;
 
-  const proxyUrl = `/api/v1/payments?page=${page}&page_size=${PAGE_SIZE}`;
+  // Date filters
+  const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
+  const [dateRange,  setDateRange]  = useState<DateRange>({});
+
+  const proxyUrl = useMemo(() => {
+    let url = `/api/v1/payments?page=${page}&page_size=${PAGE_SIZE}`;
+    if (dateRange.from) url += `&date_from=${encodeURIComponent(dateRange.from)}`;
+    if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}`;
+    return url;
+  }, [page, dateRange]);
+
   const { data: raw, loading, error, refetch, pagination } = useBookings<Record<string, unknown>>(proxyUrl);
 
   const payments: Payment[] = useMemo(() =>
@@ -675,6 +709,25 @@ export default function PaymentsPage() {
   );
 
   // ── Derived filter options ─────────────────────────────────────────────────
+  const [apiBranches, setApiBranches] = useState<string[]>([]);
+  useEffect(() => {
+    authedFetch('/api/v1/branches')
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data?.data ?? data?.results ?? []);
+        if (Array.isArray(list)) {
+          const names = list.map((b: any) => b.name || b.branch_name).filter(Boolean);
+          setApiBranches(names);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const branches  = useMemo(() => {
+    const fromPayments = payments.map((p) => p.branch_name).filter(Boolean);
+    return Array.from(new Set([...apiBranches, ...fromPayments])).sort();
+  }, [apiBranches, payments]);
+
   const statuses  = useMemo(() => Array.from(new Set(payments.map((p) => p.status).filter(Boolean))), [payments]);
   const providers = useMemo(() => Array.from(new Set(payments.map((p) => p.payment_provider || p.provider).filter(Boolean))), [payments]);
   const methods   = useMemo(() => Array.from(new Set(payments.map((p) => p.payment_method).filter(Boolean))), [payments]);
@@ -689,26 +742,20 @@ export default function PaymentsPage() {
         p.payment_id, p.transaction_id, p.invoice_id,
         p.customer_reference, p.invoice_reference,
         p.payment_provider, p.provider, p.payment_method, p.payment_through,
+        p.branch_name,
       ].some((v) => v?.toLowerCase().includes(q))) return false;
 
+      if (filters.branch && p.branch_name?.toLowerCase() !== filters.branch.toLowerCase()) return false;
       if (filters.status && p.status?.toLowerCase() !== filters.status) return false;
       if (filters.isPaid === 'paid'   && !p.is_paid)  return false;
       if (filters.isPaid === 'unpaid' &&  p.is_paid)  return false;
       if (filters.provider && !(p.payment_provider?.toLowerCase() === filters.provider || p.provider?.toLowerCase() === filters.provider)) return false;
       if (filters.method   && !(p.payment_method?.toLowerCase() === filters.method || p.payment_gateway?.toLowerCase() === filters.method)) return false;
       if (filters.depositStatus && p.deposit_status?.toLowerCase() !== filters.depositStatus.toLowerCase()) return false;
-      if (filters.dateFrom) {
-        const d = new Date(p.created_at);
-        if (d < new Date(filters.dateFrom)) return false;
-      }
-      if (filters.dateTo) {
-        const d = new Date(p.created_at);
-        const end = new Date(filters.dateTo); end.setHours(23, 59, 59);
-        if (d > end) return false;
-      }
+      if (!matchesDateRange(p.created_at || p.created_date || p.transaction_date, dateRange)) return false;
       return true;
     });
-  }, [payments, filters]);
+  }, [payments, filters, dateRange]);
 
   // ── Summary stats ──────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -724,8 +771,14 @@ export default function PaymentsPage() {
     setPage(1);
   }, []);
 
-  const clearFilters = () => { setFilters(DEFAULT_FILTERS); setPage(1); };
-  const activeCount = Object.values(filters).filter(Boolean).length;
+  const clearFilters = () => {
+    setFilters(DEFAULT_FILTERS);
+    setDateFilter('all');
+    setDateRange({});
+    setPage(1);
+  };
+  const hasDateFilter = dateFilter !== 'all';
+  const activeCount = Object.values(filters).filter(Boolean).length + (hasDateFilter ? 1 : 0);
 
   // ── Currency from first record ─────────────────────────────────────────────
   const currency = payments[0]?.currency ?? 'KWD';
@@ -770,6 +823,18 @@ export default function PaymentsPage() {
             className="h-10 w-full rounded-xl border border-border/60 bg-card pl-9 pr-4 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
+
+        {/* Date Range Filter */}
+        <DateRangeFilter
+          buttonLabelPrefix="Date Filters"
+          dateFilter={dateFilter}
+          dateRange={dateRange}
+          onChange={(type, range) => {
+            setDateFilter(type);
+            setDateRange(range);
+            setPage(1);
+          }}
+        />
 
         {/* Filter toggle */}
         <button
@@ -828,7 +893,20 @@ export default function PaymentsPage() {
 
       {/* ── Filter Panel ── */}
       {showFilters && (
-        <div className="mt-3 rounded-2xl border border-border/50 bg-card/80 backdrop-blur p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="mt-3 rounded-2xl border border-border/50 bg-card/80 backdrop-blur p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* Branch */}
+          <div>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Branch</label>
+            <select
+              value={filters.branch}
+              onChange={(e) => setFilter('branch', e.target.value)}
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+            >
+              <option value="">All Branches</option>
+              {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+
           {/* Status */}
           <div>
             <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Status</label>
@@ -881,30 +959,19 @@ export default function PaymentsPage() {
               {methods.map((m) => <option key={m} value={m.toLowerCase()}>{m}</option>)}
             </select>
           </div>
-
-          {/* Date From */}
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">From</label>
-            <input
-              type="date"
-              value={filters.dateFrom}
-              onChange={(e) => setFilter('dateFrom', e.target.value)}
-              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
-
-          {/* Date To */}
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">To</label>
-            <input
-              type="date"
-              value={filters.dateTo}
-              onChange={(e) => setFilter('dateTo', e.target.value)}
-              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            />
-          </div>
         </div>
       )}
+
+      {/* ── Active Date Filter Badge ── */}
+      <DateFilterActiveBadge
+        dateFilter={dateFilter}
+        dateRange={dateRange}
+        onClear={() => {
+          setDateFilter('all');
+          setDateRange({});
+          setPage(1);
+        }}
+      />
 
       {/* ── Error Banner ── */}
       {error && (

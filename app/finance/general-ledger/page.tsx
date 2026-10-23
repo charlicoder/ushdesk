@@ -16,6 +16,13 @@ import {
   ErrorBanner,
   RefreshButton,
 } from '@/components/finance/finance-ui';
+import {
+  DateRangeFilter,
+  DateFilterActiveBadge,
+  type DateFilterType,
+  type DateRange,
+} from '@/components/dashboard/date-range-filter';
+import { cn } from '@/lib/utils';
 
 interface LedgerLine {
   date: string;
@@ -36,29 +43,25 @@ interface LedgerReport {
   page_size: number;
 }
 
-const PAGE_SIZE = 100;
-
-function isoDay(d: Date) {
-  return kuwaitDateString(d);
-}
-
 export default function GeneralLedgerPage() {
-  const today = new Date();
-  const [dateFrom, setDateFrom] = useState(isoDay(new Date(today.getFullYear(), 0, 1)));
-  const [dateTo, setDateTo] = useState(isoDay(today));
-  const [accountId, setAccountId] = useState('');
-  const [page, setPage] = useState(1);
+  const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
+  const [dateRange,  setDateRange]  = useState<DateRange>({});
+  const [accountId,  setAccountId]  = useState('');
+  const [page,       setPage]       = useState(1);
+  const [pageSize,   setPageSize]   = useState(20);
 
   const { items: accounts } = useAnrList<Account>('accounts', { pageSize: 200 });
 
-  const params: Record<string, string | number> = { date_from: dateFrom, date_to: dateTo, page, page_size: PAGE_SIZE };
-  if (accountId) params.account_id = accountId;
+  const params: Record<string, string | number> = { page, page_size: pageSize };
+  if (dateRange.from) params.date_from = dateRange.from;
+  if (dateRange.to)   params.date_to   = dateRange.to;
+  if (accountId)      params.account_id = accountId;
 
   const { data, loading, error, refetch } = useAnrReport<LedgerReport>('general-ledger', params);
 
   const lines = data?.lines ?? [];
   const total = data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(total / pageSize));
 
   const totals = useMemo(
     () =>
@@ -79,7 +82,9 @@ export default function GeneralLedgerPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `general-ledger_${dateFrom}_${dateTo}.csv`;
+    const fromLabel = dateRange.from || 'all';
+    const toLabel = dateRange.to || 'all';
+    a.download = `general-ledger_${fromLabel}_${toLabel}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -131,33 +136,9 @@ export default function GeneralLedgerPage() {
         ]}
       />
 
-      <div className="mt-5 flex flex-wrap items-end gap-3 rounded-2xl border border-border/60 bg-card p-4">
-        <div>
-          <label className={labelCls}>From</label>
-          <input
-            type="date"
-            className={inputCls}
-            value={dateFrom}
-            onChange={(e) => {
-              setDateFrom(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-        <div>
-          <label className={labelCls}>To</label>
-          <input
-            type="date"
-            className={inputCls}
-            value={dateTo}
-            onChange={(e) => {
-              setDateTo(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
-        <div className="min-w-[220px] flex-1">
-          <label className={labelCls}>Account</label>
+      <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-border/60 bg-card p-4">
+        {/* All accounts filter (reduced width, placed first) */}
+        <div className="w-56 sm:w-64">
           <select
             className={inputCls}
             value={accountId}
@@ -174,8 +155,32 @@ export default function GeneralLedgerPage() {
             ))}
           </select>
         </div>
+
+        {/* Date Filter Button & Dropdown (right to All accounts) */}
+        <DateRangeFilter
+          buttonLabelPrefix="Date Filters"
+          dateFilter={dateFilter}
+          dateRange={dateRange}
+          onChange={(type, range) => {
+            setDateFilter(type);
+            setDateRange(range);
+            setPage(1);
+          }}
+        />
+
         <RefreshButton onClick={refetch} loading={loading} />
       </div>
+
+      {/* ── Active Date Filter Badge ── */}
+      <DateFilterActiveBadge
+        dateFilter={dateFilter}
+        dateRange={dateRange}
+        onClear={() => {
+          setDateFilter('all');
+          setDateRange({});
+          setPage(1);
+        }}
+      />
 
       <div className="mt-5">
         {error && <ErrorBanner message={String(error)} className="mb-4" />}
@@ -216,27 +221,68 @@ export default function GeneralLedgerPage() {
           </div>
         )}
 
-        {pages > 1 && (
-          <div className="mt-4 flex items-center justify-end gap-2 text-xs">
-            <button
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="grid h-8 w-8 place-items-center rounded-lg border border-border/60 disabled:opacity-40"
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="text-muted-foreground">
-              Page {page} / {pages}
-            </span>
-            <button
-              disabled={page >= pages}
-              onClick={() => setPage((p) => Math.min(pages, p + 1))}
-              className="grid h-8 w-8 place-items-center rounded-lg border border-border/60 disabled:opacity-40"
-              aria-label="Next page"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
+        {/* ── Pagination ── */}
+        {total > 0 && (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground border-t border-border/60 pt-4">
+            <div className="flex items-center gap-2">
+              <span>
+                Showing <span className="font-semibold text-foreground">{lines.length > 0 ? (page - 1) * pageSize + 1 : 0}</span> to{' '}
+                <span className="font-semibold text-foreground">{Math.min(page * pageSize, total)}</span> of{' '}
+                <span className="font-semibold text-foreground">{total.toLocaleString()}</span> total lines
+              </span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="rounded-md border border-border/60 bg-card px-2 py-0.5 text-[11px] font-medium text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+              >
+                <option value={20}>20 per page</option>
+                <option value={50}>50 per page</option>
+                <option value={100}>100 per page</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" /> Previous
+              </button>
+
+              {pages > 1 &&
+                Array.from({ length: Math.min(5, pages) }, (_, i) => {
+                  let pageNum = i + 1;
+                  if (pages > 5 && page > 3) {
+                    pageNum = Math.min(pages - 4 + i, page - 2 + i);
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setPage(pageNum)}
+                      className={cn(
+                        'grid h-8 w-8 place-items-center rounded-xl text-xs font-semibold transition cursor-pointer',
+                        page === pageNum
+                          ? 'bg-primary text-primary-foreground shadow-xs'
+                          : 'border border-border/60 bg-card hover:bg-muted/60 text-muted-foreground'
+                      )}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+
+              <button
+                onClick={() => setPage((p) => Math.min(pages, page + 1))}
+                disabled={page >= pages}
+                className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              >
+                Next <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         )}
       </div>

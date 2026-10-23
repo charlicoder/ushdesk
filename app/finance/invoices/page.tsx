@@ -1,6 +1,6 @@
 'use client';
 
-import { kuwaitDateString } from '@/lib/datetime';
+import { kuwaitDateString, kuwaitDatePlusDays } from '@/lib/datetime';
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
   Receipt,
@@ -28,6 +28,7 @@ import {
   Send,
   Loader2,
   FileText,
+  Check,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -41,6 +42,8 @@ import {
 } from '@/hooks/use-accounting';
 import { authedFetch } from '@/lib/authedFetch';
 
+type DateFilterType = 'all' | 'today' | 'last_week' | 'last_month' | 'custom';
+
 export default function InvoicesPage() {
   const [typeFilter, setTypeFilter]   = useState<'all' | 'invoice' | 'bill' | 'credit_note'>('all');
   const [stateFilter, setStateFilter] = useState<string>('all');
@@ -48,6 +51,30 @@ export default function InvoicesPage() {
   const [view, setView]               = useState<'list' | 'grid'>('list');
   const [selected, setSelected]       = useState<Invoice | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
+
+  // Date filters
+  const [dateFilter, setDateFilter]   = useState<DateFilterType>('all');
+  const [dateRange, setDateRange]     = useState<{ from?: string; to?: string }>({});
+  const [customFrom, setCustomFrom]   = useState<string>('');
+  const [customTo, setCustomTo]       = useState<string>('');
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [showCustomDateModal, setShowCustomDateModal] = useState(false);
+  const [modalFrom, setModalFrom]     = useState<string>('');
+  const [modalTo, setModalTo]         = useState<string>('');
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close filter dropdown on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target as Node)) {
+        setShowFilterDropdown(false);
+      }
+    }
+    if (showFilterDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showFilterDropdown]);
 
   const {
     items: rawInvoices,
@@ -59,14 +86,73 @@ export default function InvoicesPage() {
     refetch,
     setPage,
   } = useAnrList<Invoice>('invoices', {
-    pageSize: 30,
+    pageSize: 20,
     params: {
       invoice_type: typeFilter !== 'all' ? typeFilter : undefined,
       state: stateFilter !== 'all' ? stateFilter : undefined,
+      date_from: dateRange.from || undefined,
+      date_to: dateRange.to || undefined,
     },
   });
 
-  // Client-side search & type filtering
+  const handleSelectDateFilter = (type: DateFilterType) => {
+    const today = kuwaitDateString();
+
+    if (type === 'custom') {
+      setShowFilterDropdown(false);
+      setModalFrom(dateRange.from || customFrom || today);
+      setModalTo(dateRange.to || customTo || today);
+      setShowCustomDateModal(true);
+      return;
+    }
+
+    setDateFilter(type);
+    setPage(1);
+
+    if (type === 'today') {
+      setDateRange({ from: today, to: today });
+      setShowFilterDropdown(false);
+    } else if (type === 'last_week') {
+      setDateRange({ from: kuwaitDatePlusDays(-7), to: today });
+      setShowFilterDropdown(false);
+    } else if (type === 'last_month') {
+      setDateRange({ from: kuwaitDatePlusDays(-30), to: today });
+      setShowFilterDropdown(false);
+    } else if (type === 'all') {
+      setDateRange({});
+      setCustomFrom('');
+      setCustomTo('');
+      setShowFilterDropdown(false);
+    }
+  };
+
+  const handleClearDateFilter = () => {
+    setDateFilter('all');
+    setDateRange({});
+    setCustomFrom('');
+    setCustomTo('');
+    setPage(1);
+    setShowFilterDropdown(false);
+  };
+
+  const dateFilterLabel = useMemo(() => {
+    switch (dateFilter) {
+      case 'today':
+        return 'Today';
+      case 'last_week':
+        return 'Last Week';
+      case 'last_month':
+        return 'Last Month';
+      case 'custom':
+        return dateRange.from && dateRange.to
+          ? `${dateRange.from} → ${dateRange.to}`
+          : 'Custom Range';
+      default:
+        return 'Filter';
+    }
+  }, [dateFilter, dateRange]);
+
+  // Client-side search, type & date filtering
   const filtered = useMemo(() => {
     let list = rawInvoices;
     if (typeFilter !== 'all') {
@@ -78,6 +164,15 @@ export default function InvoicesPage() {
         return t === typeFilter;
       });
     }
+    if (dateRange.from || dateRange.to) {
+      list = list.filter((inv) => {
+        const invDate = (inv.invoice_date || inv.accounting_date || inv.created_at || '').slice(0, 10);
+        if (!invDate) return true;
+        if (dateRange.from && invDate < dateRange.from) return false;
+        if (dateRange.to && invDate > dateRange.to) return false;
+        return true;
+      });
+    }
     if (!search.trim()) return list;
     const q = search.toLowerCase();
     return list.filter((inv) =>
@@ -86,7 +181,7 @@ export default function InvoicesPage() {
       inv.partner_name?.toLowerCase().includes(q) ||
       inv.notes?.toLowerCase().includes(q)
     );
-  }, [rawInvoices, search, typeFilter]);
+  }, [rawInvoices, search, typeFilter, dateRange]);
 
   // Summary stats computed from current filtered items
   const stats = useMemo(() => {
@@ -206,6 +301,73 @@ export default function InvoicesPage() {
             <option value="cancelled">Cancelled</option>
           </select>
 
+          {/* Date Filter Button & Dropdown */}
+          <div className="relative" ref={filterDropdownRef}>
+            <button
+              onClick={() => setShowFilterDropdown((prev) => !prev)}
+              className={cn(
+                'flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-semibold transition shadow-xs cursor-pointer',
+                dateFilter !== 'all'
+                  ? 'border-primary bg-primary/10 text-primary ring-2 ring-primary/20'
+                  : 'border-border/60 bg-card text-foreground hover:bg-muted/60'
+              )}
+              title="Filter by Date"
+            >
+              <Filter className={cn('h-3.5 w-3.5', dateFilter !== 'all' && 'fill-primary text-primary')} />
+              <span>{dateFilterLabel}</span>
+              {dateFilter !== 'all' && (
+                <span className="flex h-1.5 w-1.5 rounded-full bg-primary" />
+              )}
+            </button>
+
+            {/* Filter Dropdown */}
+            {showFilterDropdown && (
+              <div className="absolute right-0 mt-2 z-50 w-72 rounded-2xl border border-border/80 bg-card p-4 shadow-xl backdrop-blur-md animate-in fade-in zoom-in-95">
+                <div className="flex items-center justify-between pb-2.5 border-b border-border/60">
+                  <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <Calendar className="h-3.5 w-3.5 text-primary" />
+                    Filter by Date
+                  </span>
+                  {dateFilter !== 'all' && (
+                    <button
+                      onClick={handleClearDateFilter}
+                      className="text-[11px] font-medium text-rose-500 hover:text-rose-600 transition cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-3 space-y-1">
+                  {[
+                    { id: 'all', label: 'All Dates', sub: 'No date restriction' },
+                    { id: 'today', label: 'Current Date', sub: 'Today' },
+                    { id: 'last_week', label: 'Last Week', sub: 'Past 7 days' },
+                    { id: 'last_month', label: 'Last Month', sub: 'Past 30 days' },
+                    { id: 'custom', label: 'Custom Range…', sub: 'Select date interval via popup' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      onClick={() => handleSelectDateFilter(opt.id as DateFilterType)}
+                      className={cn(
+                        'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-xs font-medium transition cursor-pointer',
+                        dateFilter === opt.id
+                          ? 'bg-primary/10 text-primary font-semibold'
+                          : 'hover:bg-muted/60 text-foreground'
+                      )}
+                    >
+                      <div>
+                        <p>{opt.label}</p>
+                        <p className="text-[10px] text-muted-foreground">{opt.sub}</p>
+                      </div>
+                      {dateFilter === opt.id && <Check className="h-4 w-4 text-primary" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Search box */}
           <div className="relative w-56 sm:w-64">
             <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -254,6 +416,41 @@ export default function InvoicesPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Active Date Filter Badge ── */}
+      {dateFilter !== 'all' && (
+        <div className="mt-2.5 flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Active Filter:</span>
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            <Calendar className="h-3 w-3" />
+            <button
+              type="button"
+              onClick={() => {
+                if (dateFilter === 'custom') {
+                  const today = kuwaitDateString();
+                  setModalFrom(dateRange.from || customFrom || today);
+                  setModalTo(dateRange.to || customTo || today);
+                  setShowCustomDateModal(true);
+                }
+              }}
+              className={cn(dateFilter === 'custom' && 'hover:underline cursor-pointer')}
+              title={dateFilter === 'custom' ? 'Click to edit date range' : undefined}
+            >
+              {dateFilter === 'today' && `Current Date: ${dateRange.from}`}
+              {dateFilter === 'last_week' && `Last Week: ${dateRange.from} to ${dateRange.to}`}
+              {dateFilter === 'last_month' && `Last Month: ${dateRange.from} to ${dateRange.to}`}
+              {dateFilter === 'custom' && `Custom Range: ${dateRange.from || 'Start'} to ${dateRange.to || 'End'}`}
+            </button>
+            <button
+              onClick={handleClearDateFilter}
+              className="ml-1 rounded-full p-0.5 hover:bg-primary/20 text-primary transition cursor-pointer"
+              title="Clear date filter"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Error Banner ── */}
       {error && (
@@ -421,23 +618,54 @@ export default function InvoicesPage() {
       )}
 
       {/* ── Pagination ── */}
-      {pages > 1 && (
-        <div className="mt-5 flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Page {page} of {pages} · {total.toLocaleString()} total invoices
-          </span>
+      {total > 0 && (
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground border-t border-border/60 pt-4">
+          <div className="flex items-center gap-2">
+            <span>
+              Showing <span className="font-semibold text-foreground">{filtered.length > 0 ? (page - 1) * 20 + 1 : 0}</span> to{' '}
+              <span className="font-semibold text-foreground">{Math.min(page * 20, total)}</span> of{' '}
+              <span className="font-semibold text-foreground">{total.toLocaleString()}</span> total invoices
+            </span>
+            <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              20 per page
+            </span>
+          </div>
+
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page <= 1}
-              className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition"
+              className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
             >
               <ChevronLeft className="h-3.5 w-3.5" /> Previous
             </button>
+
+            {pages > 1 &&
+              Array.from({ length: Math.min(5, pages) }, (_, i) => {
+                let pageNum = i + 1;
+                if (pages > 5 && page > 3) {
+                  pageNum = Math.min(pages - 4 + i, page - 2 + i);
+                }
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setPage(pageNum)}
+                    className={cn(
+                      'grid h-8 w-8 place-items-center rounded-xl text-xs font-semibold transition cursor-pointer',
+                      page === pageNum
+                        ? 'bg-primary text-primary-foreground shadow-xs'
+                        : 'border border-border/60 bg-card hover:bg-muted/60 text-muted-foreground'
+                    )}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+
             <button
               onClick={() => setPage(Math.min(pages, page + 1))}
               disabled={page >= pages}
-              className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition"
+              className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
             >
               Next <ChevronRight className="h-3.5 w-3.5" />
             </button>
@@ -455,7 +683,178 @@ export default function InvoicesPage() {
           onCreated={() => { setShowNewForm(false); refetch(); }}
         />
       )}
+
+      {/* ── Custom Date Range Modal Popup ── */}
+      {showCustomDateModal && (
+        <CustomDateModal
+          initialFrom={modalFrom}
+          initialTo={modalTo}
+          onApply={(from, to) => {
+            setCustomFrom(from);
+            setCustomTo(to);
+            setDateRange({ from: from || undefined, to: to || undefined });
+            setDateFilter('custom');
+            setPage(1);
+            setShowCustomDateModal(false);
+          }}
+          onClose={() => setShowCustomDateModal(false)}
+        />
+      )}
     </DashboardShell>
+  );
+}
+
+// ── Custom Date Range Modal Popup ───────────────────────────────────────────────
+function CustomDateModal({
+  initialFrom,
+  initialTo,
+  onApply,
+  onClose,
+}: {
+  initialFrom?: string;
+  initialTo?: string;
+  onApply: (from: string, to: string) => void;
+  onClose: () => void;
+}) {
+  const today = kuwaitDateString();
+  const [from, setFrom]   = useState(initialFrom || today);
+  const [to, setTo]       = useState(initialTo || today);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleApply = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (from && to && from > to) {
+      setError('Start date cannot be after end date.');
+      return;
+    }
+    setError(null);
+    onApply(from, to);
+  };
+
+  const applyPreset = (days: number) => {
+    setError(null);
+    setTo(today);
+    setFrom(kuwaitDatePlusDays(-days));
+  };
+
+  const applyThisMonth = () => {
+    setError(null);
+    const [y, m] = today.split('-');
+    setFrom(`${y}-${m}-01`);
+    setTo(today);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+      <div className="relative w-full max-w-md rounded-3xl border border-border/80 bg-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className="flex items-center justify-between pb-4 border-b border-border/60">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Calendar className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-foreground">Select Date Range</h3>
+              <p className="text-xs text-muted-foreground">Filter invoices between specific dates</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-lg border border-border/60 bg-muted/30 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Quick Shortcuts */}
+        <div className="mt-4">
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+            Quick Shortcuts
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { label: 'Past 7 Days', action: () => applyPreset(7) },
+              { label: 'This Month', action: applyThisMonth },
+              { label: 'Past 30 Days', action: () => applyPreset(30) },
+              { label: 'Past 90 Days', action: () => applyPreset(90) },
+            ].map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={p.action}
+                className="rounded-lg border border-border/70 bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground hover:border-primary/50 hover:bg-primary/5 hover:text-primary transition cursor-pointer"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Date Inputs Form */}
+        <form onSubmit={handleApply} className="mt-5 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-foreground block mb-1.5">
+                From Date
+              </label>
+              <input
+                type="date"
+                required
+                value={from}
+                onChange={(e) => { setFrom(e.target.value); setError(null); }}
+                className="h-10 w-full rounded-xl border border-border/80 bg-muted/30 px-3 text-xs font-medium focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-foreground block mb-1.5">
+                To Date
+              </label>
+              <input
+                type="date"
+                required
+                value={to}
+                onChange={(e) => { setTo(e.target.value); setError(null); }}
+                className="h-10 w-full rounded-xl border border-border/80 bg-muted/30 px-3 text-xs font-medium focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition"
+              />
+            </div>
+          </div>
+
+          {error && (
+            <p className="text-xs font-medium text-rose-500 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          {/* Active Range Preview */}
+          {from && to && (
+            <div className="rounded-xl border border-border/60 bg-muted/30 p-3 text-xs">
+              <span className="text-muted-foreground block text-[11px]">Selected Interval:</span>
+              <span className="font-semibold text-foreground font-mono mt-0.5 block">
+                {from} <span className="text-primary font-sans font-bold">→</span> {to}
+              </span>
+            </div>
+          )}
+
+          {/* Footer Actions */}
+          <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/60">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-10 rounded-xl border border-border/70 px-4 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-xs font-bold text-primary-foreground shadow-sm hover:opacity-90 active:scale-95 transition cursor-pointer"
+            >
+              <Check className="h-3.5 w-3.5" />
+              Apply Range
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 

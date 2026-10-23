@@ -2,6 +2,7 @@ import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import type { Locale } from '@/lib/i18n';
 
 const LOCALE_STORAGE_KEY = 'ush_locale';
+const THEME_STORAGE_KEY = 'ush_theme';
 
 function loadLocale(): Locale {
   if (typeof window === 'undefined') return 'en';
@@ -15,6 +16,18 @@ function persistLocale(locale: Locale): void {
   }
 }
 
+function loadTheme(): 'light' | 'dark' {
+  if (typeof window === 'undefined') return 'light';
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  return stored === 'dark' ? 'dark' : 'light';
+}
+
+function persistTheme(theme: 'light' | 'dark'): void {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }
+}
+
 export interface UiState {
   locale: Locale;
   language: 'en' | 'ar';
@@ -24,12 +37,13 @@ export interface UiState {
 }
 
 const storedLocale = loadLocale();
+const storedTheme = loadTheme();
 
 const initialState: UiState = {
   locale: storedLocale,
   language: storedLocale,
   direction: storedLocale === 'ar' ? 'rtl' : 'ltr',
-  theme: 'light',
+  theme: storedTheme,
   sidebarOpen: true,
 };
 
@@ -52,9 +66,12 @@ const uiSlice = createSlice({
     },
     setTheme(state, action: PayloadAction<'light' | 'dark'>) {
       state.theme = action.payload;
+      persistTheme(action.payload);
     },
     toggleTheme(state) {
-      state.theme = state.theme === 'light' ? 'dark' : 'light';
+      const next = state.theme === 'light' ? 'dark' : 'light';
+      state.theme = next;
+      persistTheme(next);
     },
     setSidebarOpen(state, action: PayloadAction<boolean>) {
       state.sidebarOpen = action.payload;

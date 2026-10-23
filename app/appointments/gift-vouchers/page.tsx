@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
   Gift, Loader2, AlertCircle, RefreshCw, ExternalLink, Eye,
-  X, CheckCircle2, Clock, XCircle, ChevronDown,
+  X, CheckCircle2, Clock, XCircle, ChevronDown, ChevronLeft, ChevronRight,
   User, Scissors, MapPin, Timer, Package, CreditCard,
   MessageSquare, Hash, Building2, Building, Smartphone, Truck, Phone, Mail, Calendar, CalendarDays,
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
@@ -24,6 +24,13 @@ import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { paymentLinksApi, whatsappShareUrl, smsShareUrl, sendPaymentLinkSms, type PaymentLink } from '@/lib/paymentLinks';
 import { usePermissions } from '@/hooks/use-permissions';
 import { extractRoleCandidates } from '@/lib/permissions';
+import {
+  DateRangeFilter,
+  DateFilterActiveBadge,
+  type DateFilterType,
+  type DateRange,
+  matchesDateRange,
+} from '@/components/dashboard/date-range-filter';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -2524,7 +2531,17 @@ export default function GiftVouchersPage() {
   const [statusFilter,    setStatusFilter]    = useState<string>('all');
   const [showCreate,      setShowCreate]      = useState(false);
 
+  // Date filters & pagination
+  const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
+  const [dateRange,  setDateRange]  = useState<DateRange>({});
+  const [page,       setPage]       = useState(1);
+  const [pageSize,   setPageSize]   = useState(20);
+
   const [searchQuery,     setSearchQuery]     = useState<string>('');
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery, statusFilter, dateFilter, dateRange]);
   const [shareVoucher,     setShareVoucher]     = useState<Voucher | null>(null);
   const [shareChannel,     setShareChannel]     = useState<'sms' | 'whatsapp'>('whatsapp');
   const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
@@ -2714,9 +2731,20 @@ export default function GiftVouchersPage() {
         if (!match) return false;
       }
 
+      // 3. Date filter
+      if (!matchesDateRange(v.created_at || v.expire_date, dateRange)) {
+        return false;
+      }
+
       return true;
     });
-  }, [vouchers, statusFilter, searchQuery]);
+  }, [vouchers, statusFilter, searchQuery, dateRange]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const paginatedVouchers = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page, pageSize]);
 
   const stats = {
     total:    vouchers.length,
@@ -2802,7 +2830,17 @@ export default function GiftVouchersPage() {
               </button>
             )}
           </div>
-          <StatusFilter value={statusFilter} onChange={setStatusFilter} />
+          <StatusFilter value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} />
+          <DateRangeFilter
+            buttonLabelPrefix="Date Filters"
+            dateFilter={dateFilter}
+            dateRange={dateRange}
+            onChange={(type, range) => {
+              setDateFilter(type);
+              setDateRange(range);
+              setPage(1);
+            }}
+          />
           <button
             onClick={fetchVouchers}
             disabled={loading}
@@ -2820,6 +2858,17 @@ export default function GiftVouchersPage() {
           New Voucher
         </button>
       </div>
+
+      {/* ── Active Date Filter Badge ── */}
+      <DateFilterActiveBadge
+        dateFilter={dateFilter}
+        dateRange={dateRange}
+        onClear={() => {
+          setDateFilter('all');
+          setDateRange({});
+          setPage(1);
+        }}
+      />
 
       {/* ── Loading ── */}
       {loading && (
@@ -2886,7 +2935,7 @@ export default function GiftVouchersPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40">
-                {filtered.map(v => {
+                {paginatedVouchers.map(v => {
                   const cfg = statusCfg(v.status);
                   const expired = v.expire_date && new Date(v.expire_date) < new Date();
                   const senderName = v.sender_data?.name || v.sender_details?.name;
@@ -3000,20 +3049,86 @@ export default function GiftVouchersPage() {
             <div className="h-28 pointer-events-none" aria-hidden="true" />
           </div>
 
-          {/* Table footer */}
-          <div className="flex items-center justify-between border-t border-border/40 bg-muted/20 px-5 py-3">
-            <p className="text-[12px] text-muted-foreground">
-              Showing <span className="font-bold text-foreground">{filtered.length}</span> of{' '}
-              <span className="font-bold text-foreground">{vouchers.length}</span> vouchers
-            </p>
-            <div className="flex items-center gap-1.5">
-              <Hash className="h-3 w-3 text-muted-foreground" />
-              <p className="text-[11px] text-muted-foreground">
-                Total value:{' '}
-                <span className="font-bold text-primary">
-                  {filtered.reduce((s, v) => s + (parseFloat(v.total_amount) || 0), 0).toFixed(3)} {stats.currency}
-                </span>
+          {/* Table footer / Pagination */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 bg-muted/20 px-5 py-3">
+            <div className="flex items-center gap-3">
+              <p className="text-[12px] text-muted-foreground">
+                Showing{' '}
+                <span className="font-bold text-foreground">
+                  {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
+                </span>{' '}
+                to{' '}
+                <span className="font-bold text-foreground">
+                  {Math.min(page * pageSize, filtered.length)}
+                </span>{' '}
+                of <span className="font-bold text-foreground">{filtered.length}</span> vouchers
               </p>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-7 rounded-lg border border-border/60 bg-card px-2 text-xs font-medium text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+              >
+                <option value={10}>10 per page</option>
+                <option value={20}>20 per page</option>
+                <option value={50}>50 per page</option>
+                <option value={100}>100 per page</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="hidden sm:flex items-center gap-1.5">
+                <Hash className="h-3 w-3 text-muted-foreground" />
+                <p className="text-[11px] text-muted-foreground">
+                  Total value:{' '}
+                  <span className="font-bold text-primary">
+                    {filtered.reduce((s, v) => s + (parseFloat(v.total_amount) || 0), 0).toFixed(3)} {stats.currency}
+                  </span>
+                </p>
+              </div>
+
+              {totalPages > 1 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-2.5 py-1 text-xs font-semibold disabled:opacity-40 hover:bg-muted transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                  </button>
+
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum = i + 1;
+                    if (totalPages > 5 && page > 3) {
+                      pageNum = Math.min(totalPages - 4 + i, page - 2 + i);
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setPage(pageNum)}
+                        className={cn(
+                          'grid h-7 w-7 place-items-center rounded-lg text-xs font-semibold transition cursor-pointer',
+                          page === pageNum
+                            ? 'bg-primary text-primary-foreground shadow-xs'
+                            : 'border border-border/60 bg-card hover:bg-muted text-muted-foreground'
+                        )}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-2.5 py-1 text-xs font-semibold disabled:opacity-40 hover:bg-muted transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
+                  >
+                    Next <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

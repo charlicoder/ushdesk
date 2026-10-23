@@ -1284,7 +1284,7 @@ export default function OrdersPage() {
 
         {/* Page Header */}
         <PageHeader
-          title="Vendor Orders"
+          title="Product Orders"
           subtitle="Real-time delivery fulfillment milestones and order status dispatching."
         >
           <button

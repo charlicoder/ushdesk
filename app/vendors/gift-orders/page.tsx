@@ -1311,7 +1311,7 @@ export default function GiftOrdersPage() {
         )}
 
         {/* Header */}
-        <PageHeader title="Gift Vouchers" subtitle="Track and manage physical gift deliveries for all gift vouchers.">
+        <PageHeader title="Gift Voucher Orders" subtitle="Track and manage physical gift deliveries for all gift vouchers.">
           <button onClick={fetchOrders} className="inline-flex h-10 items-center gap-2 rounded-xl border border-border/80 bg-card px-4 text-xs font-semibold text-foreground shadow-sm hover:bg-muted transition">
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
             Refresh

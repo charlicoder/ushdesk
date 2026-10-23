@@ -17,7 +17,6 @@ import {
   Users,
   Store,
   Sparkles,
-  Settings,
   X,
   UserCheck,
   Package,
@@ -153,10 +152,9 @@ export function Sidebar() {
       permission: PERMISSIONS.VENDORS,
       children: [
         { href: '/vendors/orders',      label: t('navOrders'), icon: ShoppingBag, permission: PERMISSIONS.VENDORS_ORDERS },
-        { href: '/vendors/gift-orders', label: 'Gift Vouchers', icon: Gift,        permission: PERMISSIONS.VENDORS_GIFT_ORDERS },
+        { href: '/vendors/gift-orders', label: t('navGiftOrders'), icon: Gift,        permission: PERMISSIONS.VENDORS_GIFT_ORDERS },
       ],
     },
-    { href: '/settings', label: t('navSettings'), icon: Settings, permission: PERMISSIONS.SETTINGS },
   ];
 
   /**

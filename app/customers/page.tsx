@@ -16,6 +16,13 @@ import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { useI18n } from '@/hooks/use-i18n';
 import { cn } from '@/lib/utils';
+import {
+  DateRangeFilter,
+  DateFilterActiveBadge,
+  type DateFilterType,
+  type DateRange,
+  matchesDateRange,
+} from '@/components/dashboard/date-range-filter';
 
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -40,7 +47,6 @@ interface Customer {
 }
 
 type MessageChannel = 'sms' | 'whatsapp' | 'email';
-type SignupDateFilter = '' | 'today' | 'last_week' | 'last_month';
 
 // ── Normalise ──────────────────────────────────────────────────────────────────
 function normalise(raw: Record<string, unknown>): Customer {
@@ -1440,12 +1446,6 @@ function CustomerDetailsModal({
   );
 }
 
-const SIGNUP_DATE_OPTIONS: { label: string; value: SignupDateFilter }[] = [
-  { label: 'Current Date', value: 'today' },
-  { label: 'Last Week', value: 'last_week' },
-  { label: 'Last Month', value: 'last_month' },
-];
-
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function CustomersPage() {
   const { t } = useI18n();
@@ -1455,7 +1455,8 @@ export default function CustomersPage() {
   const [page,             setPage]             = useState(1);
   const [pageSize,         setPageSize]         = useState(20);
   const [genderFilter,     setGenderFilter]     = useState('');
-  const [signupDateFilter, setSignupDateFilter] = useState<SignupDateFilter>('');
+  const [dateFilter,       setDateFilter]       = useState<DateFilterType>('all');
+  const [dateRange,        setDateRange]        = useState<DateRange>({});
   const [whatsappOnly,     setWhatsappOnly]     = useState(false);
   const [emailOnly,        setEmailOnly]        = useState(false);
   const [viewMode,         setViewMode]         = useState<'grid' | 'list'>('list');
@@ -1473,7 +1474,7 @@ export default function CustomersPage() {
   // Reset page when client filters change
   useEffect(() => {
     setPage(1);
-  }, [genderFilter, whatsappOnly, emailOnly, signupDateFilter]);
+  }, [genderFilter, whatsappOnly, emailOnly, dateFilter, dateRange]);
 
   // Multi-select
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
@@ -1504,36 +1505,16 @@ export default function CustomersPage() {
   const filtered = useMemo(() => {
     const q = debouncedSearch ? '' : search.toLowerCase();
 
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-
-    const sevenDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7, 0, 0, 0, 0);
-    const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30, 0, 0, 0, 0);
-
     return customers.filter((c) => {
       const matchSearch   = !q || c.name.toLowerCase().includes(q) || c.phone?.includes(q) || c.email?.toLowerCase().includes(q);
       const matchGender   = !genderFilter || c.gender === genderFilter;
       const matchWhatsapp = !whatsappOnly || c.is_whatsapp_verified;
       const matchEmail    = !emailOnly    || c.is_email_verified;
-
-      let matchSignupDate = true;
-      if (signupDateFilter) {
-        const d = parseCustomerDate(c.created_at);
-        if (!d) {
-          matchSignupDate = false;
-        } else if (signupDateFilter === 'today') {
-          matchSignupDate = d >= todayStart && d <= todayEnd;
-        } else if (signupDateFilter === 'last_week') {
-          matchSignupDate = d >= sevenDaysAgo && d <= todayEnd;
-        } else if (signupDateFilter === 'last_month') {
-          matchSignupDate = d >= thirtyDaysAgo && d <= todayEnd;
-        }
-      }
+      const matchSignupDate = matchesDateRange(parseCustomerDate(c.created_at), dateRange);
 
       return matchSearch && matchGender && matchWhatsapp && matchEmail && matchSignupDate;
     });
-  }, [customers, search, debouncedSearch, genderFilter, whatsappOnly, emailOnly, signupDateFilter]);
+  }, [customers, search, debouncedSearch, genderFilter, whatsappOnly, emailOnly, dateRange]);
 
   const totalCount  = pagination?.count ?? customers.length;
   const totalPages  = pagination?.total_pages ?? Math.max(1, Math.ceil(totalCount / pageSize));
@@ -1541,12 +1522,13 @@ export default function CustomersPage() {
   const hasPrevPage = pagination ? Boolean(pagination.previous) : page > 1;
   const pageNumbers = useMemo(() => getPageNumbers(page, totalPages), [page, totalPages]);
 
-  const hasFilter = search || genderFilter || signupDateFilter || whatsappOnly || emailOnly;
+  const hasFilter = search || genderFilter || dateFilter !== 'all' || whatsappOnly || emailOnly;
   const clearAll  = () => {
     setSearch('');
     setDebouncedSearch('');
     setGenderFilter('');
-    setSignupDateFilter('');
+    setDateFilter('all');
+    setDateRange({});
     setWhatsappOnly(false);
     setEmailOnly(false);
     setPage(1);
@@ -1633,13 +1615,16 @@ export default function CustomersPage() {
             className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" />
         </div>
 
-        {/* Signup date filter */}
-        <SelectFilter
-          label="All Signup Dates"
-          value={signupDateFilter}
-          icon={<Calendar className="h-4 w-4" />}
-          options={SIGNUP_DATE_OPTIONS}
-          onChange={(v) => setSignupDateFilter(v as SignupDateFilter)}
+        {/* Date Range Filter */}
+        <DateRangeFilter
+          buttonLabelPrefix="Date Filters"
+          dateFilter={dateFilter}
+          dateRange={dateRange}
+          onChange={(type, range) => {
+            setDateFilter(type);
+            setDateRange(range);
+            setPage(1);
+          }}
         />
 
         {/* Gender */}
@@ -1695,6 +1680,17 @@ export default function CustomersPage() {
           ))}
         </div>
       </div>
+
+      {/* ── Active Date Filter Badge ── */}
+      <DateFilterActiveBadge
+        dateFilter={dateFilter}
+        dateRange={dateRange}
+        onClear={() => {
+          setDateFilter('all');
+          setDateRange({});
+          setPage(1);
+        }}
+      />
 
       {/* ── Selection action bar ── */}
       {someSelected && (

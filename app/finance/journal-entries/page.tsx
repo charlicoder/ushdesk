@@ -40,6 +40,13 @@ import {
   JournalItemRecord,
 } from '@/hooks/use-accounting';
 import { authedFetch } from '@/lib/authedFetch';
+import {
+  DateRangeFilter,
+  DateFilterActiveBadge,
+  type DateFilterType,
+  type DateRange,
+  matchesDateRange,
+} from '@/components/dashboard/date-range-filter';
 
 export default function JournalEntriesAndItemsPage() {
   const [viewMode, setViewMode]       = useState<'items' | 'entries'>('items');
@@ -48,6 +55,10 @@ export default function JournalEntriesAndItemsPage() {
   const [search, setSearch]           = useState<string>('');
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [showNewEntry, setShowNewEntry] = useState(false);
+
+  // Date filters
+  const [dateFilter, setDateFilter]   = useState<DateFilterType>('all');
+  const [dateRange, setDateRange]     = useState<DateRange>({});
 
   // 1. Journal Items (all 3,115 individual debit & credit lines)
   const {
@@ -65,6 +76,8 @@ export default function JournalEntriesAndItemsPage() {
     params: {
       search: search || undefined,
       reconciled: itemType === 'reconciled' ? true : undefined,
+      date_from: dateRange.from || undefined,
+      date_to: dateRange.to || undefined,
     },
   });
 
@@ -83,6 +96,8 @@ export default function JournalEntriesAndItemsPage() {
     params: {
       state: stateFilter !== 'all' ? stateFilter : undefined,
       search: search || undefined,
+      date_from: dateRange.from || undefined,
+      date_to: dateRange.to || undefined,
     },
   });
 
@@ -96,10 +111,22 @@ export default function JournalEntriesAndItemsPage() {
 
   // Filter items by debit/credit locally if needed
   const filteredItems = useMemo(() => {
-    if (itemType === 'debit') return rawItems.filter((i) => i.debit > 0);
-    if (itemType === 'credit') return rawItems.filter((i) => i.credit > 0);
-    return rawItems;
-  }, [rawItems, itemType]);
+    let list = rawItems;
+    if (dateRange.from || dateRange.to) {
+      list = list.filter((i) => matchesDateRange(i.date, dateRange));
+    }
+    if (itemType === 'debit') return list.filter((i) => i.debit > 0);
+    if (itemType === 'credit') return list.filter((i) => i.credit > 0);
+    return list;
+  }, [rawItems, itemType, dateRange]);
+
+  const filteredEntries = useMemo(() => {
+    let list = rawEntries;
+    if (dateRange.from || dateRange.to) {
+      list = list.filter((e) => matchesDateRange(e.entry_date || e.accounting_date, dateRange));
+    }
+    return list;
+  }, [rawEntries, dateRange]);
 
   return (
     <DashboardShell>
@@ -280,6 +307,18 @@ export default function JournalEntriesAndItemsPage() {
             )}
           </div>
 
+          {/* Date Filter Button & Dropdown */}
+          <DateRangeFilter
+            dateFilter={dateFilter}
+            dateRange={dateRange}
+            onChange={(type, range) => {
+              setDateFilter(type);
+              setDateRange(range);
+              setItemsPage(1);
+              setEntriesPage(1);
+            }}
+          />
+
           <button
             onClick={handleRefresh}
             className="grid h-9 w-9 place-items-center rounded-xl border border-border/60 bg-card text-muted-foreground hover:text-foreground transition"
@@ -289,6 +328,18 @@ export default function JournalEntriesAndItemsPage() {
           </button>
         </div>
       </div>
+
+      {/* ── Active Date Filter Badge ── */}
+      <DateFilterActiveBadge
+        dateFilter={dateFilter}
+        dateRange={dateRange}
+        onClear={() => {
+          setDateFilter('all');
+          setDateRange({});
+          setItemsPage(1);
+          setEntriesPage(1);
+        }}
+      />
 
       {/* ── Error Banner ── */}
       {error && (
@@ -448,7 +499,7 @@ export default function JournalEntriesAndItemsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
-                    {rawEntries.map((entry) => {
+                    {filteredEntries.map((entry) => {
                       const badge = getStateBadge(entry.state);
                       return (
                         <tr
