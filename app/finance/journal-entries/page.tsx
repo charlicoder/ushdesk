@@ -9,6 +9,8 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   X,
   CheckCircle2,
   AlertCircle,
@@ -28,6 +30,13 @@ import {
   Loader2,
   Send,
 } from 'lucide-react';
+
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 3) return [1, 2, 3, 4, 'ellipsis', total];
+  if (current >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+  return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
+}
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
@@ -59,6 +68,8 @@ export default function JournalEntriesAndItemsPage() {
   // Date filters
   const [dateFilter, setDateFilter]   = useState<DateFilterType>('all');
   const [dateRange, setDateRange]     = useState<DateRange>({});
+  const [itemsPageSize, setItemsPageSize] = useState(50);
+  const [entriesPageSize, setEntriesPageSize] = useState(30);
 
   // 1. Journal Items (all 3,115 individual debit & credit lines)
   const {
@@ -72,7 +83,7 @@ export default function JournalEntriesAndItemsPage() {
     setPage: setItemsPage,
     meta: itemsMeta,
   } = useAnrList<JournalItemRecord>('journal-entries/items', {
-    pageSize: 50,
+    pageSize: itemsPageSize,
     params: {
       search: search || undefined,
       reconciled: itemType === 'reconciled' ? true : undefined,
@@ -92,7 +103,7 @@ export default function JournalEntriesAndItemsPage() {
     refetch: refetchEntries,
     setPage: setEntriesPage,
   } = useAnrList<JournalEntry>('journal-entries', {
-    pageSize: 30,
+    pageSize: entriesPageSize,
     params: {
       state: stateFilter !== 'all' ? stateFilter : undefined,
       search: search || undefined,
@@ -442,24 +453,127 @@ export default function JournalEntriesAndItemsPage() {
 
           {/* Items Pagination */}
           {itemsPages > 1 && (
-            <div className="mt-5 flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Page {itemsPage} of {itemsPages} · {itemsTotal.toLocaleString()} total journal items
-              </span>
-              <div className="flex items-center gap-1.5">
+            <div className="mt-6 flex flex-col md:flex-row items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span>
+                  Showing{' '}
+                  <strong className="text-foreground font-semibold">
+                    {itemsTotal === 0 ? 0 : (itemsPage - 1) * itemsPageSize + 1}
+                  </strong>
+                  –
+                  <strong className="text-foreground font-semibold">
+                    {Math.min(itemsPage * itemsPageSize, itemsTotal)}
+                  </strong>{' '}
+                  of <strong className="text-foreground font-semibold">{itemsTotal.toLocaleString()}</strong> journal items
+                </span>
+
+                <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
+
+                <div className="flex items-center gap-1.5">
+                  <span>Rows per page:</span>
+                  <select
+                    value={itemsPageSize}
+                    onChange={(e) => {
+                      setItemsPageSize(Number(e.target.value));
+                      setItemsPage(1);
+                    }}
+                    className="h-8 rounded-lg border border-border bg-muted/40 px-2 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                  >
+                    {[10, 20, 50, 100].map((sz) => (
+                      <option key={sz} value={sz}>{sz}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-2">
+                  <span>Go to:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={itemsPages}
+                    defaultValue={itemsPage}
+                    key={`jump-items-${itemsPage}`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const val = Number((e.target as HTMLInputElement).value);
+                        if (val >= 1 && val <= itemsPages) setItemsPage(val);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const val = Number(e.target.value);
+                      if (val >= 1 && val <= itemsPages && val !== itemsPage) setItemsPage(val);
+                    }}
+                    className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20"
+                  />
+                </div>
+
+                <button
+                  onClick={() => setItemsPage(1)}
+                  disabled={itemsPage === 1}
+                  title="First page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    itemsPage === 1 ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </button>
+
                 <button
                   onClick={() => setItemsPage(Math.max(1, itemsPage - 1))}
                   disabled={itemsPage <= 1}
-                  className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition"
+                  title="Previous page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    itemsPage <= 1 ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
                 >
-                  <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                  <ChevronLeft className="h-4 w-4" />
                 </button>
+
+                <div className="flex items-center gap-1">
+                  {getPageNumbers(itemsPage, itemsPages).map((p, idx) => {
+                    if (p === 'ellipsis') return <span key={`ellipsis-${idx}`} className="px-1 text-xs text-muted-foreground select-none">…</span>;
+                    const isCurrent = p === itemsPage;
+                    return (
+                      <button
+                        key={`page-${p}`}
+                        onClick={() => setItemsPage(p)}
+                        className={cn(
+                          'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer',
+                          isCurrent ? 'bg-primary text-white shadow-sm' : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <button
                   onClick={() => setItemsPage(Math.min(itemsPages, itemsPage + 1))}
                   disabled={itemsPage >= itemsPages}
-                  className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition"
+                  title="Next page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    itemsPage >= itemsPages ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
                 >
-                  Next <ChevronRight className="h-3.5 w-3.5" />
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+
+                <button
+                  onClick={() => setItemsPage(itemsPages)}
+                  disabled={itemsPage === itemsPages}
+                  title="Last page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    itemsPage === itemsPages ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
+                >
+                  <ChevronsRight className="h-4 w-4" />
                 </button>
               </div>
             </div>
@@ -547,24 +661,127 @@ export default function JournalEntriesAndItemsPage() {
 
           {/* Entries Pagination */}
           {entriesPages > 1 && (
-            <div className="mt-5 flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                Page {entriesPage} of {entriesPages} · {entriesTotal.toLocaleString()} total entries
-              </span>
-              <div className="flex items-center gap-1.5">
+            <div className="mt-6 flex flex-col md:flex-row items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                <span>
+                  Showing{' '}
+                  <strong className="text-foreground font-semibold">
+                    {entriesTotal === 0 ? 0 : (entriesPage - 1) * entriesPageSize + 1}
+                  </strong>
+                  –
+                  <strong className="text-foreground font-semibold">
+                    {Math.min(entriesPage * entriesPageSize, entriesTotal)}
+                  </strong>{' '}
+                  of <strong className="text-foreground font-semibold">{entriesTotal.toLocaleString()}</strong> journal entries
+                </span>
+
+                <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
+
+                <div className="flex items-center gap-1.5">
+                  <span>Rows per page:</span>
+                  <select
+                    value={entriesPageSize}
+                    onChange={(e) => {
+                      setEntriesPageSize(Number(e.target.value));
+                      setEntriesPage(1);
+                    }}
+                    className="h-8 rounded-lg border border-border bg-muted/40 px-2 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                  >
+                    {[10, 20, 30, 50, 100].map((sz) => (
+                      <option key={sz} value={sz}>{sz}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-2">
+                  <span>Go to:</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={entriesPages}
+                    defaultValue={entriesPage}
+                    key={`jump-entries-${entriesPage}`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        const val = Number((e.target as HTMLInputElement).value);
+                        if (val >= 1 && val <= entriesPages) setEntriesPage(val);
+                      }
+                    }}
+                    onBlur={(e) => {
+                      const val = Number(e.target.value);
+                      if (val >= 1 && val <= entriesPages && val !== entriesPage) setEntriesPage(val);
+                    }}
+                    className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20"
+                  />
+                </div>
+
+                <button
+                  onClick={() => setEntriesPage(1)}
+                  disabled={entriesPage === 1}
+                  title="First page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    entriesPage === 1 ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
+                >
+                  <ChevronsLeft className="h-4 w-4" />
+                </button>
+
                 <button
                   onClick={() => setEntriesPage(Math.max(1, entriesPage - 1))}
                   disabled={entriesPage <= 1}
-                  className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition"
+                  title="Previous page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    entriesPage <= 1 ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
                 >
-                  <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                  <ChevronLeft className="h-4 w-4" />
                 </button>
+
+                <div className="flex items-center gap-1">
+                  {getPageNumbers(entriesPage, entriesPages).map((p, idx) => {
+                    if (p === 'ellipsis') return <span key={`ellipsis-${idx}`} className="px-1 text-xs text-muted-foreground select-none">…</span>;
+                    const isCurrent = p === entriesPage;
+                    return (
+                      <button
+                        key={`page-${p}`}
+                        onClick={() => setEntriesPage(p)}
+                        className={cn(
+                          'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer',
+                          isCurrent ? 'bg-primary text-white shadow-sm' : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p}
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <button
                   onClick={() => setEntriesPage(Math.min(entriesPages, entriesPage + 1))}
                   disabled={entriesPage >= entriesPages}
-                  className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition"
+                  title="Next page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    entriesPage >= entriesPages ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
                 >
-                  Next <ChevronRight className="h-3.5 w-3.5" />
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+
+                <button
+                  onClick={() => setEntriesPage(entriesPages)}
+                  disabled={entriesPage === entriesPages}
+                  title="Last page"
+                  className={cn(
+                    'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                    entriesPage === entriesPages ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                  )}
+                >
+                  <ChevronsRight className="h-4 w-4" />
                 </button>
               </div>
             </div>

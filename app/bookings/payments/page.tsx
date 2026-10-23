@@ -8,8 +8,16 @@ import {
   DollarSign, User, Phone, Mail, Calendar, Building2,
   Hash, Tag, Banknote, Shield, ArrowUpRight, Filter,
   Receipt, Wallet, TrendingUp, ChevronLeft, ChevronRight,
+  ChevronsLeft, ChevronsRight,
   Copy, ExternalLink,
 } from 'lucide-react';
+
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 3) return [1, 2, 3, 4, 'ellipsis', total];
+  if (current >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+  return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
+}
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -688,18 +696,18 @@ export default function PaymentsPage() {
   const [page,     setPage]     = useState(1);
   const [selected, setSelected] = useState<Payment | null>(null);
   const [showFilters, setShowFilters] = useState(false);
-  const PAGE_SIZE = 20;
+  const [pageSize, setPageSize] = useState(20);
 
   // Date filters
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
 
   const proxyUrl = useMemo(() => {
-    let url = `/api/v1/payments?page=${page}&page_size=${PAGE_SIZE}`;
+    let url = `/api/v1/payments?page=${page}&page_size=${pageSize}`;
     if (dateRange.from) url += `&date_from=${encodeURIComponent(dateRange.from)}`;
     if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}`;
     return url;
-  }, [page, dateRange]);
+  }, [page, pageSize, dateRange]);
 
   const { data: raw, loading, error, refetch, pagination } = useBookings<Record<string, unknown>>(proxyUrl);
 
@@ -1001,29 +1009,145 @@ export default function PaymentsPage() {
       )}
 
       {/* ── Pagination ── */}
-      {pagination && pagination.total_pages > 1 && (
-        <div className="mt-6 flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Page {pagination.current_page} of {pagination.total_pages} · {pagination.count.toLocaleString()} records
-          </p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={!pagination.previous}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-card disabled:opacity-40 hover:bg-muted/60 transition"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setPage((p) => p + 1)}
-              disabled={!pagination.next}
-              className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 bg-card disabled:opacity-40 hover:bg-muted/60 transition"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
+      {pagination && pagination.total_pages > 1 && (() => {
+        const totalPages = pagination.total_pages;
+        const totalCount = pagination.count;
+        const hasPrevPage = Boolean(pagination.previous);
+        const hasNextPage = Boolean(pagination.next);
+        const pageNumbers = getPageNumbers(page, totalPages);
+        return (
+          <div className="mt-6 flex flex-col md:flex-row items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+            {/* Left: Summary & page size selector */}
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <span>
+                Showing{' '}
+                <strong className="text-foreground font-semibold">
+                  {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}
+                </strong>
+                –
+                <strong className="text-foreground font-semibold">
+                  {Math.min(page * pageSize, totalCount)}
+                </strong>{' '}
+                of <strong className="text-foreground font-semibold">{totalCount.toLocaleString()}</strong> payments
+              </span>
+
+              <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
+
+              <div className="flex items-center gap-1.5">
+                <span>Rows per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-border bg-muted/40 px-2 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                >
+                  {[10, 20, 50, 100].map((sz) => (
+                    <option key={sz} value={sz}>{sz}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Right: Page navigation buttons and jump */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-2">
+                <span>Go to:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  defaultValue={page}
+                  key={`jump-${page}`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const val = Number((e.target as HTMLInputElement).value);
+                      if (val >= 1 && val <= totalPages) setPage(val);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const val = Number(e.target.value);
+                    if (val >= 1 && val <= totalPages && val !== page) setPage(val);
+                  }}
+                  className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20"
+                />
+              </div>
+
+              <button
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                title="First page"
+                aria-label="First page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  page === 1 ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
+
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={!hasPrevPage}
+                title="Previous page"
+                aria-label="Previous page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  !hasPrevPage ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center gap-1">
+                {pageNumbers.map((p, idx) => {
+                  if (p === 'ellipsis') return <span key={`ellipsis-${idx}`} className="px-1 text-xs text-muted-foreground select-none">…</span>;
+                  const isCurrent = p === page;
+                  return (
+                    <button
+                      key={`page-${p}`}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer',
+                        isCurrent ? 'bg-primary text-white shadow-sm' : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                onClick={() => setPage((p) => p + 1)}
+                disabled={!hasNextPage}
+                title="Next page"
+                aria-label="Next page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  !hasNextPage ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={page === totalPages}
+                title="Last page"
+                aria-label="Last page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  page === totalPages ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed' : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Modal ── */}
       {selected && <PaymentModal payment={selected} onClose={() => setSelected(null)} />}

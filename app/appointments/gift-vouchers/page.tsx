@@ -6,6 +6,7 @@ import Link from 'next/link';
 import {
   Gift, Loader2, AlertCircle, RefreshCw, ExternalLink, Eye,
   X, CheckCircle2, Clock, XCircle, ChevronDown, ChevronLeft, ChevronRight,
+  ChevronsLeft, ChevronsRight,
   User, Scissors, MapPin, Timer, Package, CreditCard,
   MessageSquare, Hash, Building2, Building, Smartphone, Truck, Phone, Mail, Calendar, CalendarDays,
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
@@ -31,6 +32,13 @@ import {
   type DateRange,
   matchesDateRange,
 } from '@/components/dashboard/date-range-filter';
+
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 3) return [1, 2, 3, 4, 'ellipsis', total];
+  if (current >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+  return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -3066,85 +3074,160 @@ export default function GiftVouchersPage() {
           </div>
 
           {/* Table footer / Pagination */}
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/40 bg-muted/20 px-5 py-3">
-            <div className="flex items-center gap-3">
-              <p className="text-[12px] text-muted-foreground">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 border-t border-border/40 bg-muted/20 px-5 py-3">
+            {/* Left: Summary & page size selector */}
+            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+              <span>
                 Showing{' '}
-                <span className="font-bold text-foreground">
+                <strong className="text-foreground font-semibold">
                   {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
-                </span>{' '}
-                to{' '}
-                <span className="font-bold text-foreground">
+                </strong>
+                –
+                <strong className="text-foreground font-semibold">
                   {Math.min(page * pageSize, filtered.length)}
-                </span>{' '}
-                of <span className="font-bold text-foreground">{filtered.length}</span> vouchers
-              </p>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value));
-                  setPage(1);
-                }}
-                className="h-7 rounded-lg border border-border/60 bg-card px-2 text-xs font-medium text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-              >
-                <option value={10}>10 per page</option>
-                <option value={20}>20 per page</option>
-                <option value={50}>50 per page</option>
-                <option value={100}>100 per page</option>
-              </select>
-            </div>
+                </strong>{' '}
+                of <strong className="text-foreground font-semibold">{filtered.length.toLocaleString()}</strong> vouchers
+              </span>
 
-            <div className="flex items-center gap-4">
-              <div className="hidden sm:flex items-center gap-1.5">
+              <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
+
+              <div className="flex items-center gap-1.5">
+                <span>Rows per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  className="h-8 rounded-lg border border-border bg-muted/40 px-2 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+                >
+                  {[10, 20, 50, 100].map((sz) => (
+                    <option key={sz} value={sz}>{sz}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="h-4 w-[1px] bg-border/80 hidden lg:block" />
+
+              <div className="hidden lg:flex items-center gap-1.5">
                 <Hash className="h-3 w-3 text-muted-foreground" />
-                <p className="text-[11px] text-muted-foreground">
+                <span>
                   Total value:{' '}
                   <span className="font-bold text-primary">
                     {filtered.reduce((s, v) => s + (parseFloat(v.total_amount) || 0), 0).toFixed(3)} {stats.currency}
                   </span>
-                </p>
+                </span>
+              </div>
+            </div>
+
+            {/* Right: Page navigation buttons and jump */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-2">
+                <span>Go to:</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  defaultValue={page}
+                  key={`jump-${page}`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const val = Number((e.target as HTMLInputElement).value);
+                      if (val >= 1 && val <= totalPages) setPage(val);
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const val = Number(e.target.value);
+                    if (val >= 1 && val <= totalPages && val !== page) setPage(val);
+                  }}
+                  className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20"
+                />
               </div>
 
-              {totalPages > 1 && (
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page <= 1}
-                    className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-2.5 py-1 text-xs font-semibold disabled:opacity-40 hover:bg-muted transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    <ChevronLeft className="h-3.5 w-3.5" /> Previous
-                  </button>
+              <button
+                onClick={() => setPage(1)}
+                disabled={page === 1}
+                title="First page"
+                aria-label="First page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  page === 1
+                    ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                    : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronsLeft className="h-4 w-4" />
+              </button>
 
-                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                    let pageNum = i + 1;
-                    if (totalPages > 5 && page > 3) {
-                      pageNum = Math.min(totalPages - 4 + i, page - 2 + i);
-                    }
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page <= 1}
+                title="Previous page"
+                aria-label="Previous page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  page <= 1
+                    ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                    : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+
+              <div className="flex items-center gap-1">
+                {getPageNumbers(page, totalPages).map((p, idx) => {
+                  if (p === 'ellipsis') {
                     return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setPage(pageNum)}
-                        className={cn(
-                          'grid h-7 w-7 place-items-center rounded-lg text-xs font-semibold transition cursor-pointer',
-                          page === pageNum
-                            ? 'bg-primary text-primary-foreground shadow-xs'
-                            : 'border border-border/60 bg-card hover:bg-muted text-muted-foreground'
-                        )}
-                      >
-                        {pageNum}
-                      </button>
+                      <span key={`ellipsis-${idx}`} className="px-1 text-xs text-muted-foreground select-none">…</span>
                     );
-                  })}
+                  }
+                  const isCurrent = p === page;
+                  return (
+                    <button
+                      key={`page-${p}`}
+                      onClick={() => setPage(p)}
+                      className={cn(
+                        'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer',
+                        isCurrent
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {p}
+                    </button>
+                  );
+                })}
+              </div>
 
-                  <button
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page >= totalPages}
-                    className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-2.5 py-1 text-xs font-semibold disabled:opacity-40 hover:bg-muted transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
-                  >
-                    Next <ChevronRight className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )}
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page >= totalPages}
+                title="Next page"
+                aria-label="Next page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  page >= totalPages
+                    ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                    : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+
+              <button
+                onClick={() => setPage(totalPages)}
+                disabled={page === totalPages}
+                title="Last page"
+                aria-label="Last page"
+                className={cn(
+                  'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                  page === totalPages
+                    ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                    : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+                )}
+              >
+                <ChevronsRight className="h-4 w-4" />
+              </button>
             </div>
           </div>
         </div>

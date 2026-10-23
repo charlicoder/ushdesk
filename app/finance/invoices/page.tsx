@@ -11,6 +11,8 @@ import {
   List,
   ChevronLeft,
   ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   X,
   CreditCard,
   Building2,
@@ -30,6 +32,13 @@ import {
   FileText,
   Check,
 } from 'lucide-react';
+
+function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  if (current <= 3) return [1, 2, 3, 4, 'ellipsis', total];
+  if (current >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+  return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
+}
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
@@ -51,6 +60,7 @@ export default function InvoicesPage() {
   const [view, setView]               = useState<'list' | 'grid'>('list');
   const [selected, setSelected]       = useState<Invoice | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
+  const [pageSize, setPageSize]       = useState(20);
 
   // Date filters
   const [dateFilter, setDateFilter]   = useState<DateFilterType>('all');
@@ -86,7 +96,7 @@ export default function InvoicesPage() {
     refetch,
     setPage,
   } = useAnrList<Invoice>('invoices', {
-    pageSize: 20,
+    pageSize,
     params: {
       invoice_type: typeFilter !== 'all' ? typeFilter : undefined,
       state: stateFilter !== 'all' ? stateFilter : undefined,
@@ -618,56 +628,148 @@ export default function InvoicesPage() {
       )}
 
       {/* ── Pagination ── */}
-      {total > 0 && (
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground border-t border-border/60 pt-4">
-          <div className="flex items-center gap-2">
+      {total > 0 && pages > 1 && (
+        <div className="mt-6 flex flex-col md:flex-row items-center justify-between gap-4 rounded-2xl border border-border/60 bg-card p-4 shadow-sm">
+          {/* Left: Summary & page size selector */}
+          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             <span>
-              Showing <span className="font-semibold text-foreground">{filtered.length > 0 ? (page - 1) * 20 + 1 : 0}</span> to{' '}
-              <span className="font-semibold text-foreground">{Math.min(page * 20, total)}</span> of{' '}
-              <span className="font-semibold text-foreground">{total.toLocaleString()}</span> total invoices
+              Showing{' '}
+              <strong className="text-foreground font-semibold">
+                {total === 0 ? 0 : (page - 1) * pageSize + 1}
+              </strong>
+              –
+              <strong className="text-foreground font-semibold">
+                {Math.min(page * pageSize, total)}
+              </strong>{' '}
+              of <strong className="text-foreground font-semibold">{total.toLocaleString()}</strong> invoices
             </span>
-            <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
-              20 per page
-            </span>
+
+            <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
+
+            <div className="flex items-center gap-1.5">
+              <span>Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+                className="h-8 rounded-lg border border-border bg-muted/40 px-2 text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20 cursor-pointer"
+              >
+                {[10, 20, 50, 100].map((sz) => (
+                  <option key={sz} value={sz}>{sz}</option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          {/* Right: Page navigation buttons and jump */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground mr-2">
+              <span>Go to:</span>
+              <input
+                type="number"
+                min={1}
+                max={pages}
+                defaultValue={page}
+                key={`jump-${page}`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const val = Number((e.target as HTMLInputElement).value);
+                    if (val >= 1 && val <= pages) setPage(val);
+                  }
+                }}
+                onBlur={(e) => {
+                  const val = Number(e.target.value);
+                  if (val >= 1 && val <= pages && val !== page) setPage(val);
+                }}
+                className="h-8 w-14 rounded-lg border border-border bg-card px-2 text-center text-xs font-semibold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary/20"
+              />
+            </div>
+
             <button
-              onClick={() => setPage(Math.max(1, page - 1))}
-              disabled={page <= 1}
-              className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              onClick={() => setPage(1)}
+              disabled={page === 1}
+              title="First page"
+              aria-label="First page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                page === 1
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
             >
-              <ChevronLeft className="h-3.5 w-3.5" /> Previous
+              <ChevronsLeft className="h-4 w-4" />
             </button>
 
-            {pages > 1 &&
-              Array.from({ length: Math.min(5, pages) }, (_, i) => {
-                let pageNum = i + 1;
-                if (pages > 5 && page > 3) {
-                  pageNum = Math.min(pages - 4 + i, page - 2 + i);
+            <button
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={page <= 1}
+              title="Previous page"
+              aria-label="Previous page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                page <= 1
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
+            <div className="flex items-center gap-1">
+              {getPageNumbers(page, pages).map((p, idx) => {
+                if (p === 'ellipsis') {
+                  return (
+                    <span key={`ellipsis-${idx}`} className="px-1 text-xs text-muted-foreground select-none">…</span>
+                  );
                 }
+                const isCurrent = p === page;
                 return (
                   <button
-                    key={pageNum}
-                    onClick={() => setPage(pageNum)}
+                    key={`page-${p}`}
+                    onClick={() => setPage(p)}
                     className={cn(
-                      'grid h-8 w-8 place-items-center rounded-xl text-xs font-semibold transition cursor-pointer',
-                      page === pageNum
-                        ? 'bg-primary text-primary-foreground shadow-xs'
-                        : 'border border-border/60 bg-card hover:bg-muted/60 text-muted-foreground'
+                      'flex h-8 min-w-8 px-2 items-center justify-center rounded-xl text-xs font-semibold transition active:scale-95 cursor-pointer',
+                      isCurrent
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground'
                     )}
                   >
-                    {pageNum}
+                    {p}
                   </button>
                 );
               })}
+            </div>
 
             <button
-              onClick={() => setPage(Math.min(pages, page + 1))}
+              onClick={() => setPage((p) => Math.min(pages, p + 1))}
               disabled={page >= pages}
-              className="flex items-center gap-1 rounded-xl border border-border/60 bg-card px-3 py-1.5 font-medium disabled:opacity-40 hover:bg-muted/60 transition shadow-xs cursor-pointer disabled:cursor-not-allowed"
+              title="Next page"
+              aria-label="Next page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                page >= pages
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
             >
-              Next <ChevronRight className="h-3.5 w-3.5" />
+              <ChevronRight className="h-4 w-4" />
+            </button>
+
+            <button
+              onClick={() => setPage(pages)}
+              disabled={page === pages}
+              title="Last page"
+              aria-label="Last page"
+              className={cn(
+                'flex h-8 w-8 items-center justify-center rounded-xl border transition cursor-pointer',
+                page === pages
+                  ? 'border-border/40 text-muted-foreground/30 cursor-not-allowed'
+                  : 'border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground active:scale-95'
+              )}
+            >
+              <ChevronsRight className="h-4 w-4" />
             </button>
           </div>
         </div>
