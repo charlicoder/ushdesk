@@ -64,6 +64,35 @@ export function getUanrPath(): string {
   ).replace(/\/+$/, '');
 }
 
+/**
+ * Returns the direct URL for ushauth service (bypasses Kong gateway).
+ * Set DIRECT_UAUTH_URL in .env to override.
+ * Automatically falls back to 127.0.0.1:8002 when API_BASE_URL is local.
+ */
+export function getDirectUauthUrl(): string | null {
+  const direct = (process.env['DIRECT_UAUTH_URL'] || process.env.DIRECT_UAUTH_URL || '').trim();
+  if (direct) return direct.replace(/\/+$/, '');
+
+  const baseUrl = getApiBaseUrl();
+  const isLocal = baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost');
+  return isLocal ? 'http://127.0.0.1:8002' : null;
+}
+
+/**
+ * Returns the direct URL for ushbooknpay service (bypasses Kong gateway).
+ * Set DIRECT_BOOKNPAY_URL in .env to override.
+ * Automatically falls back to 127.0.0.1:8003 when API_BASE_URL is local.
+ */
+export function getDirectBooknpayUrl(): string | null {
+  const direct = (process.env['DIRECT_BOOKNPAY_URL'] || process.env.DIRECT_BOOKNPAY_URL || '').trim();
+  if (direct) return direct.replace(/\/+$/, '');
+
+  const baseUrl = getApiBaseUrl();
+  const isLocal = baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost');
+  return isLocal ? 'http://127.0.0.1:8003' : null;
+}
+
+
 export function getDefaultCompanyId(): string {
   return (
     process.env.DEFAULT_COMPANY_ID ||

@@ -328,6 +328,20 @@ const GIFT_CATEGORY_CONFIG: Record<string, { label: string; color: string; icon:
   service:  { label: 'Service Gift',  color: 'text-violet-600 bg-violet-50 dark:bg-violet-950/40 dark:text-violet-300 border-violet-200 dark:border-violet-800', icon: Sparkles },
 };
 
+/**
+ * Total voucher duration in minutes = service + add-ons + extra time.
+ * Some sources (ushweb) send `duration` instead of `duration_minutes`, and the stored
+ * `total_duration` may only contain the extra minutes, so take the larger value.
+ */
+function getVoucherTotalDuration(v: Voucher): number {
+  const num = (x: unknown) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+  const sd = (v.service_data ?? {}) as any;
+  const base = num(sd.duration_minutes) || num(sd.duration);
+  const addons = (v.addons ?? []).reduce((s: number, a: any) => s + (num(a.duration_minutes) || num(a.duration)), 0);
+  const computed = base + addons + num(v.extra_time);
+  return Math.max(computed, num(v.total_duration));
+}
+
 function getCategoryConfig(category?: string | null, voucher?: Voucher) {
   const cat = (category || '').toLowerCase();
   if (cat === 'digital' || (voucher as any)?.digital_product_data || (voucher as any)?.gift_type === 'digital' || (voucher as any)?.gift_type === 'digital_service') {
@@ -1234,7 +1248,7 @@ function VoucherDetailModal({
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
                     <Package className="h-3.5 w-3.5 text-primary" />
-                    Ordered Items
+                    Gift Items
                     {voucher.ordered_items && voucher.ordered_items.length > 0 ? ` (${voucher.ordered_items.length})` : ''}
                   </p>
                   <div className="space-y-3">
@@ -1280,9 +1294,9 @@ function VoucherDetailModal({
                           </div>
 
                           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            {(voucher.service_data?.duration_minutes || voucher.total_duration) && (
+                            {getVoucherTotalDuration(voucher) > 0 && (
                               <span className="flex items-center gap-1">
-                                <Clock className="h-3 w-3 text-primary" />{voucher.service_data?.duration_minutes || voucher.total_duration} min
+                                <Clock className="h-3 w-3 text-primary" />{getVoucherTotalDuration(voucher)} min
                               </span>
                             )}
                             {voucher.branch_data?.name && (
@@ -1383,8 +1397,8 @@ function VoucherDetailModal({
                 </div>
               )}
 
-              {/* Delivery Status */}
-              {(isPhysical || voucher.delivery_status) && (
+              {/* Delivery Status — only when the voucher actually contains products */}
+              {Boolean(voucher.ordered_items?.length) && (
                 <div className="rounded-xl border border-border/60 bg-muted/20 p-3.5 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
@@ -3063,14 +3077,7 @@ export default function GiftVouchersPage() {
                         </p>
                         <div className="flex items-center gap-1 mt-0.5 text-[11px] font-semibold text-muted-foreground">
                           <Timer className="h-3 w-3 text-muted-foreground shrink-0" />
-                          <span>{
-                            (() => {
-                              const base = v.service_data?.duration_minutes || 0;
-                              const extra = v.extra_time || 0;
-                              const addonsMins = (v.addons ?? []).reduce((s: number, a: Addon) => s + (a.duration_minutes || 0), 0);
-                              return (v.total_duration || (base + extra + addonsMins)) || 0;
-                            })()
-                          } min</span>
+                          <span>{getVoucherTotalDuration(v)} min</span>
                         </div>
                       </td>
 

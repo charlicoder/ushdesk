@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { CreateCustomerModal, COUNTRY_CODES, type CreatedCustomer } from './CreateCustomerModal';
 import { MakePaymentModal } from './MakePaymentModal';
+import { sanitizeLocalPhone, isValidLocalPhone, phoneErrorMessage, toKuwaitLocal, KUWAIT_CODE } from '@/lib/phone';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
 const B = {
@@ -993,6 +994,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [recipientCountryCode, setRecipientCountryCode] = useState('+965');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [senderName, setSenderName] = useState('');
+  const [senderPhone, setSenderPhone] = useState(''); // local Kuwait digits (without +965)
   const [recipientEmail, setRecipientEmail] = useState('');
   const [giftMessage, setGiftMessage] = useState('');
   const [giftTemplate, setGiftTemplate] = useState(GIFT_TEMPLATES[0]);
@@ -1274,7 +1276,15 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const stepProductValid = !isPhysical || !!selectedProduct;
   const stepServiceValid = !!selectedService && !!selectedBranch && !!selectedArrangt && !detailLoading;
   const effectiveRecipientPhone = recipientPhone.trim() || (recipient ? (customerPhone(recipient) || '').trim() : '');
-  const stepRecipientValid = recipientName.trim().length > 0 && (effectiveRecipientPhone.length > 0 || !!recipient);
+  const recipientLocalPhone = sanitizeLocalPhone(effectiveRecipientPhone, recipientCountryCode);
+  const recipientPhoneValid = isValidLocalPhone(recipientLocalPhone, recipientCountryCode);
+  const senderPhoneValid = isValidLocalPhone(senderPhone, KUWAIT_CODE);
+  const senderNameValid = (senderName.trim() || (sender ? customerLabel(sender) : '')).trim().length > 0;
+  const stepRecipientValid =
+    recipientName.trim().length > 0 &&
+    recipientPhoneValid &&
+    senderNameValid &&
+    senderPhoneValid;
 
   // ── Navigation Logic ──
   const serviceStepNumber = isPhysical ? 3 : 2;
@@ -1426,7 +1436,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       sender_data: {
         id: sender?.id ?? '',
         name: resolvedSenderName,
-        phone_number: sender ? customerPhone(sender) : '',
+        phone_number: senderPhone ? `${KUWAIT_CODE}${senderPhone}` : '',
         email: sender?.email ?? '',
       },
       gift_message: giftMessage,
@@ -1980,6 +1990,40 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     </div>
                   </div>
 
+                  {/* Recipient phone */}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
+                      Recipient Phone <span className="text-red-500">*</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={recipientCountryCode}
+                        onChange={(e) => { setRecipientCountryCode(e.target.value); setRecipientPhone(''); }}
+                        className="rounded-xl border px-2 py-2.5 text-xs font-semibold bg-transparent outline-none"
+                        style={{ borderColor: B.linen }}
+                        aria-label="Recipient country code"
+                      >
+                        {COUNTRY_CODES.map((c) => (
+                          <option key={c.code + c.country} value={c.code}>{c.flag} {c.code}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        maxLength={recipientCountryCode === KUWAIT_CODE ? 8 : 14}
+                        value={recipientLocalPhone}
+                        onChange={(e) => setRecipientPhone(sanitizeLocalPhone(e.target.value, recipientCountryCode))}
+                        placeholder="41028983"
+                        className="flex-1 rounded-xl border px-3.5 py-2.5 bg-transparent text-sm outline-none font-medium"
+                        style={{ borderColor: B.linen }}
+                      />
+                    </div>
+                    {recipientLocalPhone.length > 0 && !recipientPhoneValid && (
+                      <p className="mt-1 text-[11px] text-red-500">{phoneErrorMessage(recipientCountryCode)}</p>
+                    )}
+                  </div>
+
                   {/* Or pick from customer DB for recipient */}
                   <div className="pt-2 border-t" style={{ borderColor: B.lineMuted }}>
                     <CustomerPicker
@@ -2017,6 +2061,35 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     </div>
                   </div>
 
+                  {/* Sender phone (required) */}
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
+                      Sender Phone <span className="text-red-500">*</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-xl border px-2.5 py-2.5 text-xs font-semibold whitespace-nowrap" style={{ borderColor: B.linen }}>
+                        🇰🇼 {KUWAIT_CODE}
+                      </span>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        maxLength={8}
+                        value={senderPhone}
+                        onChange={(e) => setSenderPhone(sanitizeLocalPhone(e.target.value, KUWAIT_CODE))}
+                        placeholder="41028983"
+                        className="flex-1 rounded-xl border px-3.5 py-2.5 bg-transparent text-sm outline-none font-medium"
+                        style={{ borderColor: B.linen }}
+                      />
+                    </div>
+                    {senderPhone.length > 0 && !senderPhoneValid && (
+                      <p className="mt-1 text-[11px] text-red-500">{phoneErrorMessage(KUWAIT_CODE)}</p>
+                    )}
+                    {senderPhone.length === 0 && (
+                      <p className="mt-1 text-[11px]" style={{ color: B.textMuted }}>Required — a voucher cannot be created without the sender phone number.</p>
+                    )}
+                  </div>
+
                   {/* Or pick from customer DB */}
                   <div className="pt-2 border-t" style={{ borderColor: B.lineMuted }}>
                     <CustomerPicker
@@ -2026,11 +2099,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                         setSender(c);
                         if (c) {
                           setSenderName(customerLabel(c));
+                          setSenderPhone(toKuwaitLocal(customerPhone(c)));
                         }
                       }}
                       onClear={() => {
                         setSender(null);
                         setSenderName('');
+                        setSenderPhone('');
                       }}
                       onCreateNew={() => {
                         setCreateForRole('sender');
@@ -2229,7 +2304,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
           amount={totalPrice.toFixed(3)}
           currency={currency}
           customerName={resolvedSenderName || recipientName.trim()}
-          customerPhone={sender ? customerPhone(sender) : computedRecipientPhone}
+          customerPhone={senderPhone ? `${KUWAIT_CODE}${senderPhone}` : computedRecipientPhone}
           onBeforeNext={handleCreateVoucherForPaymentLink}
           onPaymentSuccess={() => {
             onSuccess?.();
@@ -2263,6 +2338,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
             if (createForRole === 'sender') {
               setSender(asCustomer);
               setSenderName(customerLabel(asCustomer));
+              setSenderPhone(toKuwaitLocal(asCustomer.phone_number));
             }
             if (createForRole === 'recipient') handleSelectRecipient(asCustomer);
           }}

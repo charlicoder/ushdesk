@@ -15,6 +15,7 @@ import {
   X, User, Phone, Mail, Loader2, UserPlus, AlertCircle, CheckCircle2, ChevronDown,
 } from 'lucide-react';
 import { authedFetch } from '@/lib/authedFetch';
+import { sanitizeLocalPhone, isValidLocalPhone, phoneErrorMessage } from '@/lib/phone';
 
 // ── Country Codes ─────────────────────────────────────────────────────────────
 
@@ -192,19 +193,12 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
     if (!firstName.trim()) { setError('First name is required.'); return; }
     if (!phone.trim())     { setError('Phone number is required.'); return; }
 
-    const rawPhone = phone.trim();
-    let fullPhoneNumber = rawPhone;
-    if (rawPhone.startsWith('+')) {
-      fullPhoneNumber = rawPhone;
-    } else {
-      const codeDigits = countryCode.replace('+', '');
-      let stripped = rawPhone.replace(/[\s\-()]/g, '');
-      if (stripped.startsWith(codeDigits)) {
-        stripped = stripped.slice(codeDigits.length);
-      }
-      stripped = stripped.replace(/^0+/, '');
-      fullPhoneNumber = `${countryCode}${stripped}`;
+    const localPhone = sanitizeLocalPhone(phone, countryCode);
+    if (!isValidLocalPhone(localPhone, countryCode)) {
+      setError(phoneErrorMessage(countryCode));
+      return;
     }
+    const fullPhoneNumber = `${countryCode}${localPhone.replace(/^0+/, '')}`;
 
     const payload: CreateCustomerPayload = {
       phone_number:     fullPhoneNumber,
@@ -301,8 +295,11 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
                   <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 pointer-events-none" />
                   <input
                     type="tel"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={countryCode === '+965' ? 8 : 14}
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) => setPhone(sanitizeLocalPhone(e.target.value, countryCode))}
                     placeholder="41028983"
                     required
                     className="w-full h-10 rounded-xl border border-border bg-muted/30 pl-9 pr-3.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"

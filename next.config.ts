@@ -14,9 +14,9 @@ const nextConfig: NextConfig = {
   },
 
   async rewrites() {
-    // Reads from Amplify environment variables.
+    // Reads from environment variables injected at runtime (Amplify, Docker, local .env).
     // Fallback to localhost only for local development.
-    const baseUrl = (
+    const rawBaseUrl = (
       process.env.API_BASE_URL ||
       process.env.NEXT_PUBLIC_API_BASE_URL ||
       'https://apidev.ushspa.co'
@@ -24,19 +24,31 @@ const nextConfig: NextConfig = {
 
     const uauth    = (process.env.API_UAUTH    || '/uauth').replace(/\/+$/, '');
     const booknpay = (process.env.API_BOOKNPAY || '/booknpay').replace(/\/+$/, '');
-    const uanr     = (process.env.API_UANR     || '/uanr').replace(/\/+$/, '');
+
+    // Allow explicit direct-service URL overrides (bypasses Kong/gateway).
+    // Set these when running ushdesk in Docker alongside the microservices:
+    //   DIRECT_UAUTH_URL=http://ushauth:8002
+    //   DIRECT_BOOKNPAY_URL=http://ushbooknpay:8003
+    // Or locally without Kong:
+    //   DIRECT_UAUTH_URL=http://127.0.0.1:8002
+    //   DIRECT_BOOKNPAY_URL=http://127.0.0.1:8003
+    const directUauthBase    = (process.env['DIRECT_UAUTH_URL']    || '').replace(/\/+$/, '');
+    const directBooknpayBase = (process.env['DIRECT_BOOKNPAY_URL'] || '').replace(/\/+$/, '');
+
+    const uauthDest    = directUauthBase    ? `${directUauthBase}/api/:path*`    : `${rawBaseUrl}${uauth}/api/:path*`;
+    const booknpayDest = directBooknpayBase ? `${directBooknpayBase}/api/:path*` : `${rawBaseUrl}${booknpay}/api/:path*`;
 
     return {
       fallback: [
-        // Booking & payment proxy  →  https://apidev.ushspa.co/booknpay/api/:path*
+        // Booking & payment proxy  →  gateway or direct booknpay service
         {
           source: '/booknpay/api/:path*',
-          destination: `${baseUrl}${booknpay}/api/:path*`,
+          destination: booknpayDest,
         },
-        // Auth & user management proxy  →  https://apidev.ushspa.co/uauth/api/:path*
+        // Auth & user management proxy  →  gateway or direct ushauth service
         {
           source: '/uauth/api/:path*',
-          destination: `${baseUrl}${uauth}/api/:path*`,
+          destination: uauthDest,
         },
       ],
     };
