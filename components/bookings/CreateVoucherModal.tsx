@@ -1254,29 +1254,14 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const arrangPriceRaw = selectedArrangt?.arrangement_price ?? selectedArrangt?.price;
   const arrangPrice = parseFloat(String(arrangPriceRaw ?? '')) || 0;
 
-  // Extra time calculation
-  const extraTimePricePerMin = useMemo(() => {
-    const arr = selectedArrangt;
-    if (arr) {
-      const raw = arr.extra_time_price_per_minute ?? arr.price_per_extra_minute ?? arr.extra_time_price;
-      if (raw != null) {
-        const parsed = parseFloat(String(raw));
-        if (!isNaN(parsed) && parsed > 0) return parsed;
-      }
-    }
-    const effectivePrice = arrangPrice || basePrice;
-    const effectiveDuration = baseDuration || 60;
-    return effectivePrice > 0 && effectiveDuration > 0 ? effectivePrice / effectiveDuration : 0;
-  }, [selectedArrangt, arrangPrice, basePrice, baseDuration]);
-
-  const calcExtraPrice = (mins: number) => {
-    return mins > 0 ? parseFloat((extraTimePricePerMin * mins).toFixed(3)) : 0;
-  };
-
   // Only offer extra time when the service defines both extra_minutes and price_for_extra_minutes (> 0)
   const svcExtraMinutes = Number(fullDetail?.extra_minutes ?? selectedService?.extra_minutes ?? 0) || 0;
   const svcExtraPrice = Number(fullDetail?.price_for_extra_minutes ?? selectedService?.price_for_extra_minutes ?? 0) || 0;
   const hasExtraTime = svcExtraMinutes > 0 && svcExtraPrice > 0;
+
+  // Extra time price = (requested minutes / service extra_minutes) * service price_for_extra_minutes
+  const calcExtraPrice = (mins: number) =>
+    hasExtraTime && mins > 0 ? parseFloat(((mins / svcExtraMinutes) * svcExtraPrice).toFixed(3)) : 0;
 
   useEffect(() => {
     if (!hasExtraTime && extraTime !== 0) setExtraTime(0);
@@ -1944,14 +1929,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       <span className="text-[11px] sm:text-xs font-bold uppercase tracking-wider text-muted-foreground">
                         EXTRA TIME
                       </span>
-                      {(() => {
-                        const ratePrice = calcExtraPrice(15) || (extraTimePricePerMin > 0 ? parseFloat((extraTimePricePerMin * 15).toFixed(3)) : 5.0);
-                        return (
-                          <span className="text-[11px] sm:text-xs font-normal normal-case text-muted-foreground/75">
-                            ({ratePrice.toFixed(3)} {currency} / 15 min)
-                          </span>
-                        );
-                      })()}
+                      <span className="text-[11px] sm:text-xs font-normal normal-case text-muted-foreground/75">
+                        ({svcExtraPrice.toFixed(3)} {currency} / {svcExtraMinutes} min)
+                      </span>
                     </div>
 
                     <div className="grid grid-cols-3 gap-3">
