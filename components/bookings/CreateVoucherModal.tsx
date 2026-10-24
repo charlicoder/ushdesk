@@ -83,6 +83,8 @@ interface SlimService {
   image1?: string | null;
   is_packaged_services?: boolean | string | number;
   is_packaged?: boolean | string | number;
+  extra_minutes?: number | string | null;
+  price_for_extra_minutes?: number | string | null;
 }
 
 interface AddonItem {
@@ -132,6 +134,8 @@ interface ServiceFullDetail {
   service_arrangements?: Arrangement[];
   is_packaged_services?: boolean | string | number;
   is_packaged?: boolean | string | number;
+  extra_minutes?: number | string | null;
+  price_for_extra_minutes?: number | string | null;
 }
 
 interface Customer {
@@ -1133,6 +1137,33 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         if (!res.ok) throw new Error(`Error ${res.status}`);
         const data = await res.json().catch(() => ({}));
         const detail = (data.data ?? data) as ServiceFullDetail;
+
+        // Only list active branches (GET /api/v1/branches returns active branches only).
+        // If the active list can't be loaded, leave the branches unfiltered.
+        try {
+          const bRes = await authedFetch('/api/v1/branches?page_size=200', {
+            headers: { Authorization: authHeader, Accept: 'application/json' },
+          });
+          if (bRes.ok) {
+            const bJson = await bRes.json().catch(() => ({}));
+            const rawList: any[] = Array.isArray(bJson)
+              ? bJson
+              : (bJson?.results ?? bJson?.data?.results ?? bJson?.data ?? bJson?.branches ?? []);
+            const activeIds = new Set(
+              (Array.isArray(rawList) ? rawList : [])
+                .map((b) => String(b?.id ?? b?.branch_id ?? ''))
+                .filter(Boolean),
+            );
+            if (activeIds.size > 0 && Array.isArray(detail.branches)) {
+              detail.branches = detail.branches.filter((b) =>
+                activeIds.has(String(b.id ?? b.branch_id ?? '')),
+              );
+            }
+          }
+        } catch {
+          /* keep unfiltered branches */
+        }
+
         setFullDetail(detail);
 
         // Pre-select first branch & arrangement if available
@@ -1241,6 +1272,15 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const calcExtraPrice = (mins: number) => {
     return mins > 0 ? parseFloat((extraTimePricePerMin * mins).toFixed(3)) : 0;
   };
+
+  // Only offer extra time when the service defines both extra_minutes and price_for_extra_minutes (> 0)
+  const svcExtraMinutes = Number(fullDetail?.extra_minutes ?? selectedService?.extra_minutes ?? 0) || 0;
+  const svcExtraPrice = Number(fullDetail?.price_for_extra_minutes ?? selectedService?.price_for_extra_minutes ?? 0) || 0;
+  const hasExtraTime = svcExtraMinutes > 0 && svcExtraPrice > 0;
+
+  useEffect(() => {
+    if (!hasExtraTime && extraTime !== 0) setExtraTime(0);
+  }, [hasExtraTime, extraTime]);
 
   const extraTimePrice = calcExtraPrice(extraTime);
   const totalPrice = productPrice + (arrangPrice || basePrice) + addonPrice + extraTimePrice;
@@ -1897,7 +1937,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                 )}
 
                 {/* Extra time */}
-                {selectedArrangt && (
+                {selectedArrangt && hasExtraTime && (
                   <div>
                     <div className="flex items-center gap-2 mb-2.5">
                       <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
@@ -1990,40 +2030,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     </div>
                   </div>
 
-                  {/* Recipient phone */}
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
-                      Recipient Phone <span className="text-red-500">*</span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <select
-                        value={recipientCountryCode}
-                        onChange={(e) => { setRecipientCountryCode(e.target.value); setRecipientPhone(''); }}
-                        className="rounded-xl border px-2 py-2.5 text-xs font-semibold bg-transparent outline-none"
-                        style={{ borderColor: B.linen }}
-                        aria-label="Recipient country code"
-                      >
-                        {COUNTRY_CODES.map((c) => (
-                          <option key={c.code + c.country} value={c.code}>{c.flag} {c.code}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        autoComplete="off"
-                        maxLength={recipientCountryCode === KUWAIT_CODE ? 8 : 14}
-                        value={recipientLocalPhone}
-                        onChange={(e) => setRecipientPhone(sanitizeLocalPhone(e.target.value, recipientCountryCode))}
-                        placeholder="41028983"
-                        className="flex-1 rounded-xl border px-3.5 py-2.5 bg-transparent text-sm outline-none font-medium"
-                        style={{ borderColor: B.linen }}
-                      />
-                    </div>
-                    {recipientLocalPhone.length > 0 && !recipientPhoneValid && (
-                      <p className="mt-1 text-[11px] text-red-500">{phoneErrorMessage(recipientCountryCode)}</p>
-                    )}
-                  </div>
-
                   {/* Or pick from customer DB for recipient */}
                   <div className="pt-2 border-t" style={{ borderColor: B.lineMuted }}>
                     <CustomerPicker
@@ -2059,35 +2065,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                         className="flex-1 bg-transparent text-sm outline-none font-medium"
                       />
                     </div>
-                  </div>
-
-                  {/* Sender phone (required) */}
-                  <div>
-                    <label className="block text-[11px] font-bold uppercase tracking-wider mb-1" style={{ color: B.textMuted }}>
-                      Sender Phone <span className="text-red-500">*</span>
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-xl border px-2.5 py-2.5 text-xs font-semibold whitespace-nowrap" style={{ borderColor: B.linen }}>
-                        🇰🇼 {KUWAIT_CODE}
-                      </span>
-                      <input
-                        type="tel"
-                        inputMode="numeric"
-                        autoComplete="off"
-                        maxLength={8}
-                        value={senderPhone}
-                        onChange={(e) => setSenderPhone(sanitizeLocalPhone(e.target.value, KUWAIT_CODE))}
-                        placeholder="41028983"
-                        className="flex-1 rounded-xl border px-3.5 py-2.5 bg-transparent text-sm outline-none font-medium"
-                        style={{ borderColor: B.linen }}
-                      />
-                    </div>
-                    {senderPhone.length > 0 && !senderPhoneValid && (
-                      <p className="mt-1 text-[11px] text-red-500">{phoneErrorMessage(KUWAIT_CODE)}</p>
-                    )}
-                    {senderPhone.length === 0 && (
-                      <p className="mt-1 text-[11px]" style={{ color: B.textMuted }}>Required — a voucher cannot be created without the sender phone number.</p>
-                    )}
                   </div>
 
                   {/* Or pick from customer DB */}

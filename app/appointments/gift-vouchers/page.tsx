@@ -2310,6 +2310,81 @@ function StatusFilter({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
+// ── Payment Through Config & Filter Dropdown ───────────────────────────────────
+
+function getPaymentThroughConfig(ptRaw?: string | null) {
+  if (!ptRaw) return null;
+  const pt = ptRaw.trim().toLowerCase();
+  if (pt === 'ushweb' || pt === 'web') {
+    return {
+      label: 'USHWeb',
+      badgeClass: 'bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200 dark:border-purple-800',
+      dotClass: 'bg-purple-500',
+    };
+  }
+  if (pt === 'desk' || pt === 'ushdesk') {
+    return {
+      label: 'Desk',
+      badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800',
+      dotClass: 'bg-blue-500',
+    };
+  }
+  if (pt === 'ushspa' || pt === 'spa' || pt === 'app') {
+    return {
+      label: 'USHSpa',
+      badgeClass: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800',
+      dotClass: 'bg-emerald-500',
+    };
+  }
+  return {
+    label: ptRaw,
+    badgeClass: 'bg-muted text-muted-foreground border-border',
+    dotClass: 'bg-muted-foreground',
+  };
+}
+
+function PaymentThroughFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const options = [
+    { val: 'all',    label: 'All Channels' },
+    { val: 'ushweb', label: 'USHWeb' },
+    { val: 'desk',   label: 'Desk' },
+    { val: 'ushspa', label: 'USHSpa' },
+  ];
+  const current = options.find(o => o.val === value) ?? options[0];
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
+      >
+        <span>{current.label}</span>
+        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-2 z-50 w-44 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
+            {options.map(o => (
+              <button
+                key={o.val}
+                onClick={() => { onChange(o.val); setOpen(false); }}
+                className={cn(
+                  'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
+                  o.val === value ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Share Voucher Modal ────────────────────────────────────────────────────────
 
 interface ShareVoucherModalProps {
@@ -2554,8 +2629,9 @@ export default function GiftVouchersPage() {
   const [loading,         setLoading]         = useState(false);
   const [error,           setError]           = useState<string | null>(null);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
-  const [statusFilter,    setStatusFilter]    = useState<string>('all');
-  const [showCreate,      setShowCreate]      = useState(false);
+  const [statusFilter,          setStatusFilter]          = useState<string>('all');
+  const [paymentThroughFilter,  setPaymentThroughFilter]  = useState<string>('all');
+  const [showCreate,            setShowCreate]            = useState(false);
 
   // Date filters & pagination
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
@@ -2567,7 +2643,7 @@ export default function GiftVouchersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, statusFilter, dateFilter, dateRange]);
+  }, [searchQuery, statusFilter, paymentThroughFilter, dateFilter, dateRange]);
   const [shareVoucher,     setShareVoucher]     = useState<Voucher | null>(null);
   const [shareChannel,     setShareChannel]     = useState<'sms' | 'whatsapp'>('whatsapp');
   const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
@@ -2701,6 +2777,20 @@ export default function GiftVouchersPage() {
         }
       }
 
+      // 1b. Payment through filter (ushweb, desk, ushspa)
+      if (paymentThroughFilter !== 'all') {
+        const pt = (v.payment_through || (v as any).payment_data?.payment_through || (v as any).channel || '').trim().toLowerCase();
+        if (paymentThroughFilter === 'ushweb') {
+          if (pt !== 'ushweb' && pt !== 'web') return false;
+        } else if (paymentThroughFilter === 'desk') {
+          if (pt !== 'desk' && pt !== 'ushdesk') return false;
+        } else if (paymentThroughFilter === 'ushspa') {
+          if (pt !== 'ushspa' && pt !== 'spa' && pt !== 'app') return false;
+        } else if (pt !== paymentThroughFilter.toLowerCase()) {
+          return false;
+        }
+      }
+
       // 2. Search box filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
@@ -2755,6 +2845,7 @@ export default function GiftVouchersPage() {
         const recName = (v.recipient_data?.name ?? v.recipient_details?.name ?? '').toLowerCase();
         const recEmail = (v.recipient_data?.email ?? v.recipient_details?.email ?? '').toLowerCase();
         const sndName = (v.sender_data?.name ?? v.sender_details?.name ?? '').toLowerCase();
+        const ptName = (v.payment_through ?? '').toLowerCase();
         const srvName = (v.service_data?.name ?? '').toLowerCase();
         const brName = (v.branch_data?.name ?? '').toLowerCase();
 
@@ -2763,6 +2854,7 @@ export default function GiftVouchersPage() {
           matchesRecipientPhone ||
           matchesVNum ||
           matchesSenderPhone ||
+          ptName.includes(q) ||
           vId.includes(q) ||
           recName.includes(q) ||
           recEmail.includes(q) ||
@@ -2780,7 +2872,7 @@ export default function GiftVouchersPage() {
 
       return true;
     });
-  }, [vouchers, statusFilter, searchQuery, dateRange]);
+  }, [vouchers, statusFilter, paymentThroughFilter, searchQuery, dateRange]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginatedVouchers = useMemo(() => {
@@ -2847,7 +2939,7 @@ export default function GiftVouchersPage() {
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || statusFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
+          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || statusFilter !== 'all' || paymentThroughFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
           { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
           { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
@@ -2886,6 +2978,7 @@ export default function GiftVouchersPage() {
             )}
           </div>
           <StatusFilter value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} />
+          <PaymentThroughFilter value={paymentThroughFilter} onChange={(v) => { setPaymentThroughFilter(v); setPage(1); }} />
           <DateRangeFilter
             buttonLabelPrefix="Date Filters"
             dateFilter={dateFilter}
@@ -2914,16 +3007,40 @@ export default function GiftVouchersPage() {
         </button>
       </div>
 
-      {/* ── Active Date Filter Badge ── */}
-      <DateFilterActiveBadge
-        dateFilter={dateFilter}
-        dateRange={dateRange}
-        onClear={() => {
-          setDateFilter('all');
-          setDateRange({});
-          setPage(1);
-        }}
-      />
+      {/* ── Active Date / Channel Filter Badge ── */}
+      <div className="flex flex-wrap items-center gap-2">
+        <DateFilterActiveBadge
+          dateFilter={dateFilter}
+          dateRange={dateRange}
+          onClear={() => {
+            setDateFilter('all');
+            setDateRange({});
+            setPage(1);
+          }}
+        />
+        {paymentThroughFilter !== 'all' && (
+          <div className="mt-2.5 flex items-center gap-2 animate-in fade-in">
+            <span className="text-xs text-muted-foreground">Channel:</span>
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+              <CreditCard className="h-3 w-3" />
+              <span>
+                {paymentThroughFilter === 'ushweb' ? 'USHWeb' : paymentThroughFilter === 'desk' ? 'Desk' : paymentThroughFilter === 'ushspa' ? 'USHSpa' : paymentThroughFilter}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentThroughFilter('all');
+                  setPage(1);
+                }}
+                className="hover:text-primary/70 transition-colors"
+                title="Clear channel filter"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* ── Loading ── */}
       {loading && (
@@ -2958,12 +3075,18 @@ export default function GiftVouchersPage() {
               ? `No vouchers match "${searchQuery}"`
               : 'No vouchers match the selected filter'}
           </p>
-          {searchQuery.trim() && (
+          {(searchQuery.trim() || statusFilter !== 'all' || paymentThroughFilter !== 'all' || dateFilter !== 'all') && (
             <button
-              onClick={() => setSearchQuery('')}
+              onClick={() => {
+                setSearchQuery('');
+                setStatusFilter('all');
+                setPaymentThroughFilter('all');
+                setDateFilter('all');
+                setDateRange({});
+              }}
               className="mt-3 text-xs font-bold text-primary hover:underline"
             >
-              Clear search
+              Clear filters
             </button>
           )}
         </div>
@@ -2978,7 +3101,7 @@ export default function GiftVouchersPage() {
                 <tr className="border-b border-border/60 bg-muted/30">
                   {[
                     'Voucher Code', 'Sender → Recipient', 'Service',
-                    'Price & Duration', 'Expires', 'Status',
+                    'Price & Duration', 'Payment Through', 'Expires', 'Status',
                   ].map(col => (
                     <th
                       key={col}
@@ -3079,6 +3202,22 @@ export default function GiftVouchersPage() {
                           <Timer className="h-3 w-3 text-muted-foreground shrink-0" />
                           <span>{getVoucherTotalDuration(v)} min</span>
                         </div>
+                      </td>
+
+                      {/* Payment Through */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        {(() => {
+                          const ptCfg = getPaymentThroughConfig(v.payment_through);
+                          if (!ptCfg) {
+                            return <span className="text-muted-foreground text-xs font-medium">—</span>;
+                          }
+                          return (
+                            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap border', ptCfg.badgeClass)}>
+                              <span className={cn('h-1.5 w-1.5 rounded-full', ptCfg.dotClass)} />
+                              {ptCfg.label}
+                            </span>
+                          );
+                        })()}
                       </td>
 
                       {/* Expires */}
