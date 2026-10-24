@@ -704,12 +704,15 @@ export default function PaymentsPage() {
 
   const proxyUrl = useMemo(() => {
     let url = `/api/v1/payments?page=${page}&page_size=${pageSize}`;
-    if (dateRange.from) url += `&date_from=${encodeURIComponent(dateRange.from)}`;
-    if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}`;
+    if (dateRange.from) url += `&date_from=${encodeURIComponent(dateRange.from)}&from_date=${encodeURIComponent(dateRange.from)}`;
+    if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}&to_date=${encodeURIComponent(dateRange.to)}`;
+    if (filters.search) url += `&search=${encodeURIComponent(filters.search.trim())}`;
+    if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
+    if (filters.provider) url += `&payment_provider=${encodeURIComponent(filters.provider)}`;
     return url;
-  }, [page, pageSize, dateRange]);
+  }, [page, pageSize, dateRange, filters.search, filters.status, filters.provider]);
 
-  const { data: raw, loading, error, refetch, pagination } = useBookings<Record<string, unknown>>(proxyUrl);
+  const { data: raw, loading, error, refetch, pagination, analytics } = useBookings<Record<string, unknown>>(proxyUrl);
 
   const payments: Payment[] = useMemo(() =>
     raw.map((r) => normalise(r as RawPayment)),
@@ -736,7 +739,12 @@ export default function PaymentsPage() {
     return Array.from(new Set([...apiBranches, ...fromPayments])).sort();
   }, [apiBranches, payments]);
 
-  const statuses  = useMemo(() => Array.from(new Set(payments.map((p) => p.status).filter(Boolean))), [payments]);
+  const statuses  = useMemo(() => {
+    const defaultList = ['Success', 'Pending', 'Failed'];
+    const fromPayments = payments.map((p) => p.status).filter(Boolean);
+    const combined = [...defaultList, ...fromPayments];
+    return Array.from(new Set(combined.map((s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()))).sort();
+  }, [payments]);
   const providers = useMemo(() => Array.from(new Set(payments.map((p) => p.payment_provider || p.provider).filter(Boolean))), [payments]);
   const methods   = useMemo(() => Array.from(new Set(payments.map((p) => p.payment_method).filter(Boolean))), [payments]);
 
@@ -754,7 +762,16 @@ export default function PaymentsPage() {
       ].some((v) => v?.toLowerCase().includes(q))) return false;
 
       if (filters.branch && p.branch_name?.toLowerCase() !== filters.branch.toLowerCase()) return false;
-      if (filters.status && p.status?.toLowerCase() !== filters.status) return false;
+      if (filters.status) {
+        const s = p.status?.toLowerCase() ?? '';
+        if (filters.status === 'pending') {
+          if (s !== 'pending' && s !== 'payment_pending' && !s.includes('pending')) return false;
+        } else if (filters.status === 'success') {
+          if (s !== 'success' && s !== 'paid' && !p.is_paid) return false;
+        } else if (s !== filters.status) {
+          return false;
+        }
+      }
       if (filters.isPaid === 'paid'   && !p.is_paid)  return false;
       if (filters.isPaid === 'unpaid' &&  p.is_paid)  return false;
       if (filters.provider && !(p.payment_provider?.toLowerCase() === filters.provider || p.provider?.toLowerCase() === filters.provider)) return false;
@@ -765,14 +782,30 @@ export default function PaymentsPage() {
     });
   }, [payments, filters, dateRange]);
 
-  // ── Summary stats ──────────────────────────────────────────────────────────
+  // ── Summary stats computed across full filtered dataset ─────────────────────
   const stats = useMemo(() => {
+    if (analytics) {
+      const vol = parseFloat(String(analytics.successful_volume ?? analytics.total_volume ?? '0'));
+      const successCount = Number(analytics.success_count ?? analytics.successful_count ?? 0);
+      const paidCount = Number(analytics.paid_count ?? 0);
+      const pendingCount = Number(analytics.pending_count ?? 0);
+      return {
+        total: vol,
+        success: successCount,
+        paid: paidCount,
+        pending: pendingCount,
+        count: pagination?.count ?? filtered.length,
+      };
+    }
     const total   = filtered.reduce((s, p) => s + parseFloat(p.amount ?? '0'), 0);
-    const success = filtered.filter((p) => p.status?.toLowerCase() === 'success').length;
+    const success = filtered.filter((p) => p.status?.toLowerCase() === 'success' || p.status?.toLowerCase() === 'paid' || p.is_paid).length;
     const paid    = filtered.filter((p) => p.is_paid).length;
-    const pending = filtered.filter((p) => p.status?.toLowerCase() === 'pending').length;
-    return { total, success, paid, pending, count: filtered.length };
-  }, [filtered]);
+    const pending = filtered.filter((p) => {
+      const s = p.status?.toLowerCase() ?? '';
+      return s === 'pending' || s === 'payment_pending' || s.includes('pending');
+    }).length;
+    return { total, success, paid, pending, count: pagination?.count ?? filtered.length };
+  }, [analytics, pagination, filtered]);
 
   const setFilter = useCallback((key: keyof Filters, val: string) => {
     setFilters((prev) => ({ ...prev, [key]: val }));

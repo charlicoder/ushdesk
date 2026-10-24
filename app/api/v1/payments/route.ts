@@ -66,6 +66,12 @@ export async function GET(req: NextRequest) {
   const params = new URLSearchParams(req.nextUrl.searchParams.toString());
   const rawSize = parseInt(params.get('page_size') ?? '20', 10);
   params.set('page_size', String(Math.min(rawSize, MAX_PAGE_SIZE)));
+  if (params.has('date_from') && !params.has('from_date')) {
+    params.set('from_date', params.get('date_from')!);
+  }
+  if (params.has('date_to') && !params.has('to_date')) {
+    params.set('to_date', params.get('date_to')!);
+  }
 
   const urls = getUpstreamUrls('/api/v1/payments/', params.toString());
 

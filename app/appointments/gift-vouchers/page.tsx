@@ -427,7 +427,11 @@ const STATUS_CFG: Record<string, { label: string; pill: string; dot: string; ico
 };
 
 function statusCfg(s: string) {
-  return STATUS_CFG[s?.toLowerCase()] ?? STATUS_CFG['pending'];
+  const norm = s?.toLowerCase() ?? '';
+  if (norm === 'payment_pending' || norm === 'created' || norm.includes('pending')) {
+    return STATUS_CFG['pending'];
+  }
+  return STATUS_CFG[norm] ?? STATUS_CFG['pending'];
 }
 
 function getVoucherPublicUrl(voucher: Voucher): string {
@@ -2663,8 +2667,24 @@ export default function GiftVouchersPage() {
   const filtered = useMemo(() => {
     return vouchers.filter((v) => {
       // 1. Status filter
-      if (statusFilter !== 'all' && v.status?.toLowerCase() !== statusFilter) {
-        return false;
+      if (statusFilter !== 'all') {
+        const s = v.status?.toLowerCase() ?? '';
+        if (statusFilter === 'pending') {
+          const isPending =
+            s === 'pending' ||
+            s === 'payment_pending' ||
+            s === 'created' ||
+            s.includes('pending');
+          if (!isPending) return false;
+        } else if (statusFilter === 'active') {
+          if (s !== 'active') return false;
+        } else if (statusFilter === 'redeemed') {
+          if (s !== 'redeemed' && !v.redeemed_at) return false;
+        } else if (statusFilter === 'expired') {
+          if (s !== 'expired') return false;
+        } else if (s !== statusFilter) {
+          return false;
+        }
       }
 
       // 2. Search box filter
@@ -2754,22 +2774,26 @@ export default function GiftVouchersPage() {
     return filtered.slice(start, start + pageSize);
   }, [filtered, page, pageSize]);
 
-  const stats = {
-    total:          vouchers.length,
-    active:         vouchers.filter(v => v.status === 'active').length,
-    redeemed:       vouchers.filter(v => v.status === 'redeemed').length,
-    expired:        vouchers.filter(v => v.status === 'expired').length,
-    revenue:        vouchers
-                      .filter(v => v.status === 'active' || v.status === 'redeemed')
-                      .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
-    pendingRevenue: vouchers
-                      .filter(v => {
-                        const s = v.status?.toLowerCase() ?? '';
-                        return s === 'pending' || s === 'payment_pending' || s.includes('pending');
-                      })
-                      .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
-    currency:       vouchers[0]?.currency ?? 'KWD',
-  };
+  // Aggregate stats across all matching filtered records (not just current page)
+  const stats = useMemo(() => {
+    const target = filtered;
+    return {
+      total:          target.length,
+      active:         target.filter(v => v.status?.toLowerCase() === 'active').length,
+      redeemed:       target.filter(v => v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at)).length,
+      expired:        target.filter(v => v.status?.toLowerCase() === 'expired').length,
+      revenue:        target
+                        .filter(v => v.status?.toLowerCase() === 'active' || v.status?.toLowerCase() === 'redeemed')
+                        .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
+      pendingRevenue: target
+                        .filter(v => {
+                          const s = v.status?.toLowerCase() ?? '';
+                          return s === 'pending' || s === 'payment_pending' || s === 'created' || s.includes('pending');
+                        })
+                        .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
+      currency:       target[0]?.currency ?? vouchers[0]?.currency ?? 'KWD',
+    };
+  }, [filtered, vouchers]);
 
   return (
     <DashboardShell>
@@ -2809,7 +2833,7 @@ export default function GiftVouchersPage() {
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Total Vouchers',  value: stats.total,                                      sub: 'all time',              grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
+          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || statusFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
           { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
           { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },

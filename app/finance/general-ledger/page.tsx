@@ -39,6 +39,8 @@ interface LedgerLine {
 interface LedgerReport {
   lines: LedgerLine[];
   total: number;
+  total_debit?: number;
+  total_credit?: number;
   page: number;
   page_size: number;
 }
@@ -63,7 +65,7 @@ export default function GeneralLedgerPage() {
   const total = data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
-  const totals = useMemo(
+  const pageTotals = useMemo(
     () =>
       lines.reduce(
         (acc, l) => ({ debit: acc.debit + Number(l.debit || 0), credit: acc.credit + Number(l.credit || 0) }),
@@ -71,6 +73,10 @@ export default function GeneralLedgerPage() {
       ),
     [lines],
   );
+
+  const effectiveDebit = data?.total_debit !== undefined ? data.total_debit : pageTotals.debit;
+  const effectiveCredit = data?.total_credit !== undefined ? data.total_credit : pageTotals.credit;
+  const effectiveNet = effectiveDebit - effectiveCredit;
 
   const exportCsv = () => {
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -108,28 +114,28 @@ export default function GeneralLedgerPage() {
           {
             label: 'Lines',
             value: total.toString(),
-            sub: `Page ${page} of ${pages}`,
+            sub: total > pageSize ? `Showing ${lines.length} of ${total} lines (Page ${page}/${pages})` : `Page ${page} of ${pages}`,
             icon: Rows3,
             color: 'from-blue-500/20 to-blue-500/5 text-blue-600 dark:text-blue-400',
           },
           {
-            label: 'Debit (page)',
-            value: money(totals.debit),
-            sub: 'Sum of shown lines',
+            label: 'Total Debit',
+            value: money(effectiveDebit),
+            sub: total > pageSize ? `Full filtered sum (${total} lines)` : 'Sum of shown lines',
             icon: ArrowDownCircle,
             color: 'from-emerald-500/20 to-emerald-500/5 text-emerald-600 dark:text-emerald-400',
           },
           {
-            label: 'Credit (page)',
-            value: money(totals.credit),
-            sub: 'Sum of shown lines',
+            label: 'Total Credit',
+            value: money(effectiveCredit),
+            sub: total > pageSize ? `Full filtered sum (${total} lines)` : 'Sum of shown lines',
             icon: ArrowUpCircle,
             color: 'from-rose-500/20 to-rose-500/5 text-rose-600 dark:text-rose-400',
           },
           {
-            label: 'Net (page)',
-            value: money(totals.debit - totals.credit),
-            sub: 'Debit − Credit',
+            label: 'Net Balance',
+            value: money(effectiveNet),
+            sub: 'Total Debit − Total Credit',
             icon: ScrollText,
             color: 'from-purple-500/20 to-purple-500/5 text-purple-600 dark:text-purple-400',
           },

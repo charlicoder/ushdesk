@@ -173,22 +173,22 @@ export default function JournalEntriesAndItemsPage() {
         {[
           {
             label: 'Total Journal Items',
-            val: itemsTotal > 0 ? itemsTotal.toLocaleString() : '3,115',
-            sub: 'Individual debit/credit lines',
+            val: itemsLoading ? 'Loading…' : itemsTotal.toLocaleString(),
+            sub: (dateRange.from || dateRange.to || search) ? 'Filtered line items' : 'Individual debit/credit lines',
             color: 'from-blue-500/20 to-blue-500/5 text-blue-600 dark:text-blue-400',
             icon: ListFilter,
           },
           {
             label: 'Total Journal Entries',
-            val: entriesTotal > 0 ? entriesTotal.toLocaleString() : '1,029',
-            sub: 'Voucher transaction headers',
+            val: entriesLoading ? 'Loading…' : entriesTotal.toLocaleString(),
+            sub: (dateRange.from || dateRange.to || search || stateFilter !== 'all') ? 'Filtered vouchers' : 'Voucher transaction headers',
             color: 'from-purple-500/20 to-purple-500/5 text-purple-600 dark:text-purple-400',
             icon: BookOpen,
           },
           {
             label: 'Total Ledger Volume',
-            val: itemsMeta?.total_debit ? formatKwd(itemsMeta.total_debit) : '2,863,318.892 KWD',
-            sub: 'Cumulative transactions',
+            val: itemsLoading ? 'Loading…' : (itemsMeta?.total_debit != null ? formatKwd(itemsMeta.total_debit) : formatKwd(0)),
+            sub: (dateRange.from || dateRange.to || search) ? 'Filtered transactions volume' : 'Cumulative transactions',
             color: 'from-emerald-500/20 to-emerald-500/5 text-emerald-600 dark:text-emerald-400',
             icon: Scale,
           },
@@ -289,6 +289,7 @@ export default function JournalEntriesAndItemsPage() {
               <option value="all">All States</option>
               <option value="posted">Posted</option>
               <option value="paid">Paid</option>
+              <option value="pending">Pending (Draft)</option>
               <option value="draft">Draft</option>
               <option value="reversed">Reversed</option>
             </select>

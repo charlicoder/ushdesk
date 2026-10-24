@@ -1462,12 +1462,12 @@ export default function RefundsPage() {
 
   // Derived metrics (using server analytics if present, or client aggregation fallback)
   const stats = useMemo(() => {
-    if (analytics && dateFilter === 'all') {
+    if (analytics) {
       return {
         totalRefunded: parseFloat(String(analytics.total_refunded_amount ?? 0)),
         totalFee: parseFloat(String(analytics.total_cancellation_fee ?? 0)),
         totalRequested: parseFloat(String(analytics.total_requested_amount ?? 0)),
-        count: analytics.total_count ?? items.length,
+        count: Number(analytics.total_count ?? pagination?.count ?? items.length),
       };
     }
     const refunded = displayItems.reduce((acc, i) => acc + (parseFloat(String(i.refunded_amount)) || 0), 0);
@@ -1479,7 +1479,7 @@ export default function RefundsPage() {
       totalRequested: req,
       count: pagination?.count ?? displayItems.length,
     };
-  }, [analytics, dateFilter, items, displayItems, pagination]);
+  }, [analytics, items, displayItems, pagination]);
 
   // Export to CSV
   const handleExportCsv = () => {

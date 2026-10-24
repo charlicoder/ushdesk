@@ -18,6 +18,7 @@ interface UseBookingsResult<T> {
   loading: boolean;
   error: string | null;
   pagination: PaginationMeta | null;
+  analytics?: Record<string, any> | null;
   refetch: () => void;
 }
 
@@ -40,6 +41,7 @@ export function useBookings<T>(
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
+  const [analytics,  setAnalytics]  = useState<Record<string, any> | null>(null);
   const [tick,       setTick]       = useState(0);
 
   const refetch = useCallback(() => setTick((t) => t + 1), []);
@@ -110,6 +112,9 @@ export function useBookings<T>(
           list = json.data as T[];
         }
 
+        const rawAnalytics = json?.analytics ?? (json?.meta as Record<string, unknown>)?.analytics ?? null;
+        setAnalytics(rawAnalytics && typeof rawAnalytics === 'object' ? (rawAnalytics as Record<string, any>) : null);
+
         setData(list.length > 0 ? list : fallback);
         setPagination(meta);
       })
@@ -127,5 +132,5 @@ export function useBookings<T>(
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [proxyPath, token, initialized, locale, tick]);
 
-  return { data, loading, error, pagination, refetch };
+  return { data, loading, error, pagination, analytics, refetch };
 }

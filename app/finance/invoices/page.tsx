@@ -95,6 +95,7 @@ export default function InvoicesPage() {
     error,
     refetch,
     setPage,
+    meta,
   } = useAnrList<Invoice>('invoices', {
     pageSize,
     params: {
@@ -102,6 +103,7 @@ export default function InvoicesPage() {
       state: stateFilter !== 'all' ? stateFilter : undefined,
       date_from: dateRange.from || undefined,
       date_to: dateRange.to || undefined,
+      search: search.trim() || undefined,
     },
   });
 
@@ -193,13 +195,22 @@ export default function InvoicesPage() {
     );
   }, [rawInvoices, search, typeFilter, dateRange]);
 
-  // Summary stats computed from current filtered items
+  // Summary stats computed from full filtered set (using server analytics when available)
+  const analytics = (meta as any)?.analytics;
   const stats = useMemo(() => {
+    if (analytics) {
+      return {
+        totalAmount: Number(analytics.total_amount ?? 0),
+        paidAmount:  Number(analytics.paid_amount ?? 0),
+        residual:    Number(analytics.residual_amount ?? 0),
+        count: total,
+      };
+    }
     const totalAmount = filtered.reduce((acc, curr) => acc + (curr.amount_total || 0), 0);
     const paidAmount  = filtered.reduce((acc, curr) => acc + (curr.amount_paid || 0), 0);
     const residual    = filtered.reduce((acc, curr) => acc + (curr.amount_residual || 0), 0);
-    return { totalAmount, paidAmount, residual, count: filtered.length };
-  }, [filtered]);
+    return { totalAmount, paidAmount, residual, count: total || filtered.length };
+  }, [filtered, analytics, total]);
 
   return (
     <DashboardShell>
@@ -223,7 +234,7 @@ export default function InvoicesPage() {
           {
             label: 'Total Value',
             val: formatKwd(stats.totalAmount),
-            sub: `${stats.count} items loaded`,
+            sub: `${stats.count} items filtered`,
             color: 'from-blue-500/20 to-blue-500/5 text-blue-600 dark:text-blue-400',
             icon: Receipt,
           },
@@ -307,6 +318,7 @@ export default function InvoicesPage() {
             <option value="all">All States</option>
             <option value="posted">Posted</option>
             <option value="paid">Paid</option>
+            <option value="pending">Pending Payment</option>
             <option value="draft">Draft</option>
             <option value="cancelled">Cancelled</option>
           </select>
