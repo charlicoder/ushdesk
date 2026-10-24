@@ -503,25 +503,22 @@ export function TherapistScheduleBookingModal({
   const extraPricePerUnit = parseFloat(String(selectedService?.price_for_extra_minutes ?? '0')) || 0;
   const baseDuration      = selectedService?.duration_minutes ?? 60;
 
-  // 3 options for Extra Time: None (0 min), 30 min, 60 min. Price based on service.
+  // Extra time is offered only when the service defines both extra_minutes and
+  // price_for_extra_minutes (> 0). Price = (mins / extra_minutes) * price_for_extra_minutes.
+  const hasExtraTime = (Number(extraMinutesUnit) || 0) > 0 && extraPricePerUnit > 0;
   const calcExtraPrice = (mins: number) => {
-    if (mins <= 0) return 0;
-    if (extraPricePerUnit > 0 && extraMinutesUnit > 0) {
-      return (mins / extraMinutesUnit) * extraPricePerUnit;
-    }
-    if (extraPricePerUnit > 0) {
-      return (mins / 30) * extraPricePerUnit;
-    }
-    const effPrice = servicePrice > 0 ? servicePrice : (parseFloat(String(selectedService?.base_price ?? '0')) || 0);
-    const effDur   = baseDuration > 0 ? baseDuration : 60;
-    return (effPrice / effDur) * mins;
+    if (mins <= 0 || !hasExtraTime) return 0;
+    return (mins / Number(extraMinutesUnit)) * extraPricePerUnit;
   };
 
   const extraMinutesPrice = calcExtraPrice(form.extraMinutes);
   const totalPrice        = servicePrice + addonTotal + extraMinutesPrice;
   const totalDuration     = (selectedService ? baseDuration : 0) + addonDuration + form.extraMinutes;
-  const hasExtraTime      = !!selectedService;
   const extraOptions      = [0, 30, 60] as const;
+
+  useEffect(() => {
+    if (!hasExtraTime && form.extraMinutes !== 0) setForm(p => ({ ...p, extraMinutes: 0 }));
+  }, [hasExtraTime, form.extraMinutes]);
 
   // Load therapists on step 2
   useEffect(() => {
