@@ -19,6 +19,8 @@ import { PaymentReferenceModal } from './PaymentReferenceModal';
 import { BookingReceiptModal } from './BookingReceiptModal';
 import { MakePaymentModal } from './MakePaymentModal';
 import { authedFetch } from '@/lib/authedFetch';
+import { MultiSelectDrop } from './MultiSelectDrop';
+import { exceedsMaxDuration, maxDurationMessage } from '@/lib/booking-duration';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 import { buildAppointmentWindow, nowWithTimezone, toZonedIsoFromLocal } from '@/lib/datetime';
@@ -141,6 +143,8 @@ export interface TherapistScheduleBookingProps {
   therapistId: string;
   therapistName: string;
   therapistPhoto?: string | null;
+  /** Max contiguous free minutes from `timeSlot` (frontend validation of total duration). */
+  maxDurationMinutes?: number;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -296,7 +300,8 @@ interface PaymentForm {
 }
 
 interface Form {
-  serviceId: string;
+  serviceId: string;          // primary (first selected) service
+  serviceIds: string[];       // all selected services (ordered)
   serviceSearch: string;
   therapistId: string;
   therapistSearch: string;
@@ -316,6 +321,7 @@ interface Form {
 export function TherapistScheduleBookingModal({
   token, timeSlot, date, branchId, branchName,
   therapistId, therapistName, therapistPhoto,
+  maxDurationMinutes: maxDuration,
   onClose, onSuccess,
 }: TherapistScheduleBookingProps) {
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
@@ -324,7 +330,7 @@ export function TherapistScheduleBookingModal({
 
   const [step, setStep] = useState<Step>(1);
   const [form, setForm] = useState<Form>({
-    serviceId: '', serviceSearch: '',
+    serviceId: '', serviceIds: [], serviceSearch: '',
     therapistId, therapistSearch: therapistName,
     customerId: '', customerSearch: '',
     addonIds: [], arrangementAddonIds: [], extraMinutes: 0, notes: '',
@@ -402,6 +408,9 @@ export function TherapistScheduleBookingModal({
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
+  // Services bookable together in the chosen room (null = unknown / loading)
+  const [arrangementServices, setArrangementServices] = useState<ApiService[] | null>(null);
+
   // Load therapist-specific services
   useEffect(() => {
     setServicesLoading(true);
@@ -441,6 +450,18 @@ export function TherapistScheduleBookingModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.serviceId, branchId, authHeader]);
 
+  // Load the services offered in the chosen arrangement (additional services must all fit the same room)
+  useEffect(() => {
+    if (!form.arrangementId) { setArrangementServices(null); return; }
+    let cancelled = false;
+    setArrangementServices(null);
+    authedFetch(`/api/v1/service-arrangements/${form.arrangementId}/services`, { headers: authHeader ? { Authorization: authHeader } : undefined })
+      .then(r => r.json())
+      .then(d => { if (!cancelled) setArrangementServices(Array.isArray(d) ? d : (d.data ?? d.results ?? [])); })
+      .catch(() => { if (!cancelled) setArrangementServices([]); });
+    return () => { cancelled = true; };
+  }, [form.arrangementId, authHeader]);
+
   // Load arrangement add-ons when an arrangement is selected
   useEffect(() => {
     if (!form.arrangementId) { setArrangementAddons([]); return; }
@@ -456,7 +477,15 @@ export function TherapistScheduleBookingModal({
   }, [form.arrangementId, authHeader]);
 
   // Derived pricing (need before therapist effect for duration)
-  const selectedService   = useMemo(() => services.find(s => s.id === form.serviceId) ?? null, [services, form.serviceId]);
+  const selectedServices  = useMemo(
+    () => form.serviceIds.map(id => services.find(s => s.id === id)).filter((s): s is ApiService => Boolean(s)),
+    [services, form.serviceIds],
+  );
+  const selectedService   = selectedServices[0] ?? null;
+  const arrangementServiceIdSet = useMemo(
+    () => new Set((arrangementServices ?? []).map(s => String(s.id))),
+    [arrangementServices],
+  );
   const selectedTherapist = useMemo(() => therapists.find(t => t.id === form.therapistId) ?? null, [therapists, form.therapistId]);
   const selectedCustomer  = useMemo(() => {
     if (!form.customerId) return null;
@@ -481,7 +510,20 @@ export function TherapistScheduleBookingModal({
     String((selectedService as any)?.is_packaged).toLowerCase() === 'true'
   );
 
-  const serviceAddons     = isPackagedService ? [] : (selectedService?.add_ons ?? []);
+  // Union (de-duplicated) of the add-ons of every selected, non-packaged service
+  const serviceAddons     = useMemo(() => {
+    const seen = new Set<string>();
+    const out: NonNullable<ApiService['add_ons']> = [];
+    selectedServices.forEach((sv, i) => {
+      const pkg = i === 0 ? isPackagedService : Boolean(
+        sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true' ||
+        (sv as any).is_packaged === true || String((sv as any).is_packaged).toLowerCase() === 'true');
+      if (pkg) return;
+      (sv.add_ons ?? []).forEach(a => { if (!seen.has(a.id)) { seen.add(a.id); out.push(a); } });
+    });
+    return out;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedServices, isPackagedService]);
   // Pricing: if an arrangement is selected and has arrangement_price, use it; otherwise fall back to service price
   const selectedArrangement = useMemo(
     () => arrangements.find(a => a.id === form.arrangementId) ?? null,
@@ -490,9 +532,16 @@ export function TherapistScheduleBookingModal({
   const arrPrice = selectedArrangement?.arrangement_price != null
     ? parseFloat(String(selectedArrangement.arrangement_price)) || 0
     : null;
-  const servicePrice = arrPrice !== null
+  const primaryPrice = arrPrice !== null
     ? arrPrice
     : (parseFloat(String(selectedService?.arrangement_price ?? selectedService?.base_price ?? '0')) || 0);
+  /** Effective price of one selected service (primary uses the chosen arrangement's price). */
+  const priceOfService = (sv: ApiService, idx: number): number => {
+    if (idx === 0) return primaryPrice;
+    const fromRoom = arrangementServices?.find(x => String(x.id) === String(sv.id));
+    return parseFloat(String(fromRoom?.arrangement_price ?? sv.arrangement_price ?? sv.base_price ?? '0')) || 0;
+  };
+  const servicePrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
   // Merge service add-ons + arrangement add-ons into one total
   const selectedAddons         = isPackagedService ? [] : serviceAddons.filter(a => form.addonIds.includes(a.id));
   const selectedArrAddons      = isPackagedService ? [] : arrangementAddons.filter(a => form.arrangementAddonIds.includes(a.id));
@@ -501,7 +550,7 @@ export function TherapistScheduleBookingModal({
   const addonDuration          = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
   const extraMinutesUnit  = selectedService?.extra_minutes ?? 0;
   const extraPricePerUnit = parseFloat(String(selectedService?.price_for_extra_minutes ?? '0')) || 0;
-  const baseDuration      = selectedService?.duration_minutes ?? 60;
+  const baseDuration      = selectedServices.reduce((sum, sv) => sum + (sv.duration_minutes ?? 60), 0) || 60;
 
   // Extra time is offered only when the service defines both extra_minutes and
   // price_for_extra_minutes (> 0). Price = (mins / extra_minutes) * price_for_extra_minutes.
@@ -516,9 +565,47 @@ export function TherapistScheduleBookingModal({
   const totalDuration     = (selectedService ? baseDuration : 0) + addonDuration + form.extraMinutes;
   const extraOptions      = [0, 30, 60] as const;
 
+  // ── Duration validation against the therapist's free time ───────────────────
+  const durationExceeded = exceedsMaxDuration(totalDuration, maxDuration);
+  const durationMsg      = typeof maxDuration === 'number' ? maxDurationMessage(maxDuration) : '';
+  /** Reason an unselected service can't be added (different room, or would overflow the free time) */
+  const serviceDisabledReason = (svc: ApiService): string | null => {
+    if (selectedServices.length > 0) {
+      if (!form.arrangementId || arrangementServices === null) return 'Loading room services\u2026';
+      if (!arrangementServiceIdSet.has(String(svc.id))) return 'Not available in the selected room';
+    }
+    if (typeof maxDuration !== 'number') return null;
+    const added = svc.duration_minutes ?? 60;
+    const base  = selectedServices.length === 0 ? 0 : totalDuration;
+    return base + added > maxDuration ? durationMsg : null;
+  };
+  const addonDisabledReason = (a: { duration_minutes?: number }): string | null => {
+    if (typeof maxDuration !== 'number') return null;
+    return totalDuration + (a.duration_minutes ?? 0) > maxDuration ? durationMsg : null;
+  };
+  const extraDisabledReason = (mins: number): string | null => {
+    if (typeof maxDuration !== 'number') return null;
+    return totalDuration - form.extraMinutes + mins > maxDuration ? durationMsg : null;
+  };
+
   useEffect(() => {
     if (!hasExtraTime && form.extraMinutes !== 0) setForm(p => ({ ...p, extraMinutes: 0 }));
   }, [hasExtraTime, form.extraMinutes]);
+
+  // Drop additional services that are not offered in the chosen room
+  useEffect(() => {
+    if (arrangementServices === null || form.serviceIds.length < 2) return;
+    const keep = form.serviceIds.filter((id, i) => i === 0 || arrangementServiceIdSet.has(String(id)));
+    if (keep.length !== form.serviceIds.length) setForm(p => ({ ...p, serviceIds: keep }));
+  }, [arrangementServices, arrangementServiceIdSet, form.serviceIds]);
+
+  // Drop add-ons that no longer belong to any selected service
+  useEffect(() => {
+    if (form.addonIds.length === 0) return;
+    const valid = new Set(serviceAddons.map(a => a.id));
+    const keep = form.addonIds.filter(id => valid.has(id));
+    if (keep.length !== form.addonIds.length) setForm(p => ({ ...p, addonIds: keep }));
+  }, [serviceAddons, form.addonIds]);
 
   // Load therapists on step 2
   useEffect(() => {
@@ -532,10 +619,19 @@ export function TherapistScheduleBookingModal({
       appointment_start:      toHHMM(timeSlot),
       duration:               String(totalDuration > 0 ? totalDuration : (selectedService?.duration_minutes ?? 60)),
     });
-    authedFetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
-      .then(r => r.json())
-      .then(d => {
-        const list: ApiTherapist[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+    // Every selected service must be performed by the same therapist → intersect the lists.
+    const ids = form.serviceIds.length > 0 ? form.serviceIds : [form.serviceId];
+    Promise.all(ids.map(id =>
+      authedFetch(`/api/v1/services/${id}/therapists?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
+        .then(r => r.json())
+        .then(d => (Array.isArray(d) ? d : (d.data ?? d.results ?? [])) as ApiTherapist[]),
+    ))
+      .then(lists => {
+        let list: ApiTherapist[] = lists[0] ?? [];
+        for (let i = 1; i < lists.length; i++) {
+          const idsI = new Set(lists[i].map(t => t.id));
+          list = list.filter(t => idsI.has(t.id));
+        }
         // Always ensure the pre-selected therapist appears in the list
         const exists = list.some(t => t.id === therapistId);
         if (!exists) {
@@ -548,7 +644,7 @@ export function TherapistScheduleBookingModal({
       .catch(() => setTherapists([]))
       .finally(() => setTherapistsLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, form.serviceId, authHeader]);
+  }, [step, form.serviceIds, authHeader]);
 
   // Customer search
   useEffect(() => {
@@ -579,10 +675,16 @@ export function TherapistScheduleBookingModal({
     return () => clearTimeout(t);
   }, [customerQuery, authHeader, form.customerId]);
 
-  const selectService   = (s: ApiService) =>
-    setForm(p => ({ ...p, serviceId: s.id, serviceSearch: s.name, addonIds: [], arrangementAddonIds: [], extraMinutes: 0, arrangementId: '', arrangementName: '', arrangementType: '' }));
-  const clearService    = () =>
-    setForm(p => ({ ...p, serviceId: '', serviceSearch: '', addonIds: [], arrangementAddonIds: [], extraMinutes: 0, arrangementId: '', arrangementName: '', arrangementType: '' }));
+  const toggleService = (s: ApiService) =>
+    setForm(p => {
+      const ids = p.serviceIds.includes(s.id) ? p.serviceIds.filter(x => x !== s.id) : [...p.serviceIds, s.id];
+      const primary = ids[0] ?? '';
+      const next = { ...p, serviceIds: ids, serviceId: primary };
+      // The primary service drives the room (arrangement) and extra time → reset them when it changes.
+      return primary !== p.serviceId
+        ? { ...next, addonIds: [], arrangementAddonIds: [], extraMinutes: 0, arrangementId: '', arrangementName: '', arrangementType: '' }
+        : next;
+    });
   const selectTherapist = (t: ApiTherapist) => {
     const name = t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ');
     setForm(p => ({ ...p, therapistId: t.id, therapistSearch: name }));
@@ -622,6 +724,7 @@ export function TherapistScheduleBookingModal({
   const goNext = () => {
     if (!form.serviceId) { setSubmitError('Please select a service.'); return; }
     if (!form.arrangementId) { setSubmitError('Please select an arrangement (room).'); return; }
+    if (durationExceeded) { setSubmitError(durationMsg); return; }
     setSubmitError(null); setStep(2);
   };
   const goNextToStep3 = () => {
@@ -638,9 +741,12 @@ export function TherapistScheduleBookingModal({
       return;
     }
     if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
+    if (durationExceeded) { setSubmitError(durationMsg); return; }
     setSubmitting(true); setSubmitError(null);
 
     const svc             = selectedService!;
+    const primaryDuration = svc.duration_minutes ?? 60;
+    const multiService    = selectedServices.length > 1;
     const baseP           = parseFloat(String(svc.arrangement_price ?? svc.base_price ?? '0')) || 0;
     const timeHHMM        = toHHMM(timeSlot);
     const dateObj         = new Date(date + 'T00:00:00');
@@ -680,15 +786,40 @@ export function TherapistScheduleBookingModal({
       service_name:     svc.name,
       service_category: svc.category ?? '',
       base_price:       fmt(svc.base_price),
-      baseDuration,
+      baseDuration: primaryDuration,
       service_data: {
         service_id:       svc.id,
         service_name:     svc.name,
         service_category: svc.category ?? '',
         base_price:       fmt(svc.base_price),
         arrangement_price: fmt(svc.arrangement_price ?? svc.base_price),
-        duration_minutes: svc.duration_minutes ?? baseDuration,
+        duration_minutes: svc.duration_minutes ?? primaryDuration,
       },
+      // Multi-service booking: all services share the same room and therapist.
+      ...(multiService ? {
+        services: selectedServices.map((sv, i) => ({
+          service_id:       sv.id,
+          service_name:     sv.name,
+          service_category: sv.category ?? '',
+          base_price:       fmt(priceOfService(sv, i)),
+          base_duration:    sv.duration_minutes ?? 60,
+          service_data: {
+            service_id:        sv.id,
+            service_name:      sv.name,
+            service_category:  sv.category ?? '',
+            base_price:        fmt(sv.base_price),
+            arrangement_price: fmt(priceOfService(sv, i)),
+            duration_minutes:  sv.duration_minutes ?? 60,
+          },
+          service_arrangement_id: form.arrangementId,
+          service_arrangement_data: {
+            arrangement_id:   form.arrangementId,
+            arrangement_name: form.arrangementName,
+            arrangement_type: form.arrangementType,
+            ...(selectedArrangement?.capacity ? { capacity: selectedArrangement.capacity } : {}),
+          },
+        })),
+      } : {}),
       // ── Branch ──────────────────────────────────────────────────────────────
       branch_id: branchId,
       branch_data: {
@@ -747,10 +878,10 @@ export function TherapistScheduleBookingModal({
       // ── Booking meta ────────────────────────────────────────────────────────
       booking_type: 'branch_service',
       pricing_details: {
-        base:              fmt(baseP),
-        base_price:        fmt(baseP),
-        arrangement:       fmt(effectiveBaseP),
-        arrangement_price: fmt(effectiveBaseP),
+        base:              fmt(multiService ? servicePrice : baseP),
+        base_price:        fmt(multiService ? servicePrice : baseP),
+        arrangement:       fmt(multiService ? servicePrice : effectiveBaseP),
+        arrangement_price: fmt(multiService ? servicePrice : effectiveBaseP),
         addons:            fmt(addonTotal),
         addons_price:      fmt(addonTotal),
         extratime:         fmt(extraMinutesPrice),
@@ -1059,14 +1190,14 @@ export function TherapistScheduleBookingModal({
 
         // ── Service ────────────────────────────────────────────────────────────
         service_id:   selectedService?.id ?? (raw?.service_id as string) ?? '',
-        service_name: selectedService?.name ?? (raw?.service_name as string) ?? '',
+        service_name: selectedServices.length > 0 ? selectedServices.map(x => x.name).join(', ') : ((raw?.service_name as string) ?? ''),
         service_data: {
           service_id:        selectedService?.id ?? '',
           service_name:      selectedService?.name ?? '',
           service_category:  selectedService?.category ?? '',
           base_price:        fmt(selectedService?.base_price),
           arrangement_price: fmt(selectedService?.arrangement_price ?? selectedService?.base_price),
-          duration_minutes:  selectedService?.duration_minutes ?? baseDuration,
+          duration_minutes:  selectedService?.duration_minutes ?? 60,
         },
 
         // ── Branch ─────────────────────────────────────────────────────────────
@@ -1367,115 +1498,84 @@ export function TherapistScheduleBookingModal({
                     {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                   </div>
                   <FLabel>Search & Select *</FLabel>
-                  <SearchDrop<ApiService>
-                    value={form.serviceSearch}
-                    placeholder={servicesLoading ? 'Loading services…' : 'Search services…'}
-                    loading={servicesLoading}
+                  <MultiSelectDrop<ApiService>
                     items={filteredServices}
-                    getKey={(s, idx) => String(s.id ?? (s as any).service_id ?? (s as any).pk ?? idx)}
-                    isSelected={(s) => String(s.id ?? '') === form.serviceId}
-                    selectedItem={selectedService}
+                    selectedIds={form.serviceIds}
+                    getId={(sv) => String(sv.id ?? '')}
+                    search={form.serviceSearch}
+                    placeholder={servicesLoading ? 'Loading services\u2026' : 'Search & tick one or more services\u2026'}
+                    loading={servicesLoading}
                     icon={Scissors}
-                    getImageUrl={getServiceImageUrl}
-                    onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q, serviceId: '' }))}
-                    onSelect={selectService}
-                    onClear={clearService}
-                    renderItem={(s) => {
-                      const img = getServiceImageUrl(s);
-                      return (
-                        <div className="flex items-center gap-3 px-4 py-3">
-                          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-muted/20">
-                            {img ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={img}
-                                alt={s.name}
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = 'none';
-                                  const fallback = (e.target as HTMLElement).parentElement?.querySelector('.svc-img-fallback');
-                                  if (fallback) fallback.classList.remove('hidden');
-                                }}
-                              />
-                            ) : null}
-                            <div className={cn(
-                              "svc-img-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
-                              img ? "hidden" : ""
-                            )}>
-                              <Scissors className="h-4 w-4" />
-                            </div>
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <p className="text-sm font-semibold truncate">{s.name}</p>
-                              {(s.is_packaged_services === true || String(s.is_packaged_services).toLowerCase() === 'true') && (
-                                <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
-                                  Package
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-muted-foreground">
-                              {s.category && <span className="mr-2">{s.category}</span>}
-                              {s.duration_minutes && <span>{s.duration_minutes} min</span>}
-                            </p>
-                          </div>
-                          {(s.arrangement_price ?? s.base_price) && (
-                            <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
-                              {fmt(s.arrangement_price ?? s.base_price)} KWD
-                            </p>
-                          )}
-                          {s.id === form.serviceId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
+                    onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q }))}
+                    onToggle={toggleService}
+                    getDisabledReason={serviceDisabledReason}
+                    renderItem={(sv, checked) => (
+                      <div className="flex items-start gap-3 py-3 pr-4">
+                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                          <Scissors className="h-3.5 w-3.5" />
                         </div>
-                      );
-                    }}
-                  />
-                  {selectedService && (
-                    <div className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
-                      {(() => {
-                        const selImg = getServiceImageUrl(selectedService);
-                        return (
-                          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-lg border border-primary/20 bg-muted/20">
-                            {selImg ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={selImg}
-                                alt={selectedService.name}
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = 'none';
-                                  const fallback = (e.target as HTMLElement).parentElement?.querySelector('.svc-sel-fallback');
-                                  if (fallback) fallback.classList.remove('hidden');
-                                }}
-                              />
-                            ) : null}
-                            <div className={cn(
-                              "svc-sel-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
-                              selImg ? "hidden" : ""
-                            )}>
-                              <Scissors className="h-4 w-4" />
-                            </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-semibold truncate">{sv.name}</p>
+                            {(sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true') && (
+                              <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
+                                Package
+                              </span>
+                            )}
                           </div>
-                        );
-                      })()}
+                          <p className="text-[11px] text-muted-foreground">
+                            {sv.category && <span className="mr-2">{sv.category}</span>}
+                            {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
+                          </p>
+                        </div>
+                        {(sv.arrangement_price ?? sv.base_price) && (
+                          <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
+                            {fmt(sv.arrangement_price ?? sv.base_price)} KWD
+                          </p>
+                        )}
+                        {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
+                      </div>
+                    )}
+                  />
+                  {typeof maxDuration === 'number' && (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      Available time from {timeSlot}: <span className="font-bold text-foreground">{maxDuration} min</span>
+                      {' · '}Selected: <span className={cn('font-bold', durationExceeded ? 'text-destructive' : 'text-foreground')}>{totalDuration} min</span>
+                    </p>
+                  )}
+                  {selectedServices.map((sv, idx) => (
+                    <div key={sv.id} className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
-                          {isPackagedService && (
+                          <p className="text-xs font-bold text-primary truncate">
+                            {sv.name}
+                            {selectedServices.length > 1 && <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground">#{idx + 1}</span>}
+                          </p>
+                          {idx === 0 && isPackagedService && (
                             <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
                               Packaged Service
                             </span>
                           )}
                         </div>
                         <p className="text-[10px] text-muted-foreground">
-                          {selectedService.duration_minutes && <span>{selectedService.duration_minutes} min</span>}
-                          {selectedService.category && <span> · {selectedService.category}</span>}
+                          {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
+                          {sv.category && <span> · {sv.category}</span>}
                         </p>
                       </div>
                       <p className="shrink-0 text-sm font-extrabold text-primary">
-                        {fmt(selectedService.arrangement_price ?? selectedService.base_price)} KWD
+                        {fmt(idx === 0 ? primaryPrice : priceOfService(sv, idx))} KWD
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => toggleService(sv)}
+                        className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition"
+                        aria-label={`Remove ${sv.name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </div>
-                  )}
+                  ))}
                 </div>
 
                 {hasExtraTime && (
@@ -1490,13 +1590,17 @@ export function TherapistScheduleBookingModal({
                       {extraOptions.map((mins) => {
                         const active = form.extraMinutes === mins;
                         const price = calcExtraPrice(mins);
+                        const blocked = !active && Boolean(extraDisabledReason(mins));
                         return (
                           <button
                             key={mins}
                             type="button"
+                            disabled={blocked}
+                            title={blocked ? durationMsg : undefined}
                             onClick={() => setForm(p => ({ ...p, extraMinutes: mins }))}
                             className={cn(
                               'flex flex-col items-center justify-center rounded-xl border py-2.5 px-2 text-center transition cursor-pointer',
+                              blocked && 'opacity-45 cursor-not-allowed',
                               active
                                 ? 'border-primary/50 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/30'
                                 : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
@@ -1646,14 +1750,16 @@ export function TherapistScheduleBookingModal({
                           <div className="grid grid-cols-2 gap-2">
                             {arrangementAddons.map((addon) => {
                               const checked = form.arrangementAddonIds.includes(addon.id);
+                              const arrBlocked = !checked && Boolean(addonDisabledReason(addon));
                               return (
-                                <label key={addon.id} className={cn(
+                                <label key={addon.id} title={arrBlocked ? durationMsg : undefined} className={cn(
                                   'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
+                                  arrBlocked && 'opacity-45 cursor-not-allowed',
                                   checked
                                     ? 'border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300'
                                     : 'border-border bg-muted/20 hover:bg-muted/40',
                                 )}>
-                                  <input type="checkbox" checked={checked} onChange={() => toggleArrAddon(addon.id)}
+                                  <input type="checkbox" checked={checked} disabled={arrBlocked} onChange={() => toggleArrAddon(addon.id)}
                                     className="mt-0.5 h-3.5 w-3.5 accent-amber-500 shrink-0" />
                                   <div className="min-w-0 flex-1">
                                     <p className="text-xs font-semibold leading-tight">{addon.name}</p>
@@ -1703,13 +1809,15 @@ export function TherapistScheduleBookingModal({
                     <div className="grid grid-cols-2 gap-2">
                       {serviceAddons.map((addon) => {
                         const checked = form.addonIds.includes(addon.id);
+                        const addonBlocked = !checked && Boolean(addonDisabledReason(addon));
                         return (
-                          <label key={addon.id} className={cn(
+                          <label key={addon.id} title={addonBlocked ? durationMsg : undefined} className={cn(
                             'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
+                            addonBlocked && 'opacity-45 cursor-not-allowed',
                             checked ? 'border-primary/40 bg-primary/5 text-primary'
                               : 'border-border bg-muted/20 hover:bg-muted/40',
                           )}>
-                            <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
+                            <input type="checkbox" checked={checked} disabled={addonBlocked} onChange={() => toggleAddon(addon.id)}
                               className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0" />
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-semibold leading-tight">{addon.name}</p>
@@ -1947,8 +2055,8 @@ export function TherapistScheduleBookingModal({
                         );
                       })()}
                       <div>
-                        <p className="text-xs font-bold text-foreground">{selectedService?.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{selectedService?.category || 'Service'}</p>
+                        <p className="text-xs font-bold text-foreground">{selectedServices.map(x => x.name).join(' + ')}</p>
+                        <p className="text-[11px] text-muted-foreground">{selectedServices.length > 1 ? `${selectedServices.length} services · ${baseDuration} min` : (selectedService?.category || 'Service')}</p>
                       </div>
                     </div>
                     <p className="text-xs font-bold text-foreground">{fmt(servicePrice)} KWD</p>
@@ -2349,7 +2457,7 @@ export function TherapistScheduleBookingModal({
                 <div className="flex flex-col min-w-0 flex-1">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Scissors className="h-2.5 w-2.5" />Service</p>
                   <p className="text-xs font-semibold">{fmt(servicePrice)} KWD</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{selectedService.name}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">{selectedServices.length > 1 ? `${selectedServices.length} services` : selectedService.name}</p>
                 </div>
                 {addonTotal > 0 && (<>
                   <div className="w-px self-stretch bg-border/60 mx-3" />
@@ -2535,6 +2643,7 @@ export function TherapistScheduleBookingModal({
             serviceName: selectedService?.name || null,
             serviceCategory: selectedService?.category || null,
             servicePrice: servicePrice,
+            services: selectedServices.map((sv, i) => ({ name: sv.name, category: sv.category ?? null, price: priceOfService(sv, i), duration: sv.duration_minutes ?? 60 })),
             appointmentDate: date,
             timeSlot: timeSlot,
             totalDuration: totalDuration,

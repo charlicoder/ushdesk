@@ -16,6 +16,7 @@ import { isBranchRestrictedScheduleRole } from '@/lib/permissions';
 import {
   TherapistScheduleBookingModal,
 } from '@/components/bookings/TherapistScheduleBookingModal';
+import { computeMaxContiguousMinutes } from '@/lib/booking-duration';
 import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
 import { TherapistDayWorkingHoursModal } from '@/components/employees/DaySlotDetailModal';
 
@@ -1237,7 +1238,7 @@ export default function TherapistSchedulePage() {
   const [search,           setSearch]            = useState('');
   const [modal,            setModal]             = useState<ModalPayload | null>(null);
   const [detailBookingId,  setDetailBookingId]   = useState<string | null>(null);
-  const [bookingModal,     setBookingModal]      = useState<{ therapist: Therapist; timeSlot: string } | null>(null);
+  const [bookingModal,     setBookingModal]      = useState<{ therapist: Therapist; timeSlot: string; maxDurationMinutes?: number } | null>(null);
   const [selectedBreakTherapist, setSelectedBreakTherapist] = useState<{ therapist: Therapist; slot: Slot; date: string } | null>(null);
 
   // Drag-and-drop state for break times
@@ -1607,8 +1608,9 @@ export default function TherapistSchedulePage() {
 
   const openBookingModal = useCallback((therapist: Therapist, timeSlot: string) => {
     if (isSlotInPast(selectedDate, timeSlot)) return;
-    setBookingModal({ therapist, timeSlot });
-  }, [selectedDate]);
+    const maxDurationMinutes = computeMaxContiguousMinutes(timeSlots, timeSlot, l => schedule[therapist.id]?.[l], grid.slot_duration_minutes);
+    setBookingModal({ therapist, timeSlot, maxDurationMinutes });
+  }, [selectedDate, timeSlots, schedule, grid.slot_duration_minutes]);
 
   const handleDropBreak = useCallback(async (
     therapist: Therapist,
@@ -2412,6 +2414,7 @@ export default function TherapistSchedulePage() {
           therapistId={bookingModal.therapist.id}
           therapistName={bookingModal.therapist.name}
           therapistPhoto={bookingModal.therapist.photoUrl ?? null}
+          maxDurationMinutes={bookingModal.maxDurationMinutes}
           onClose={() => {
             setBookingModal(null);
             setScheduleRefreshKey(k => k + 1);

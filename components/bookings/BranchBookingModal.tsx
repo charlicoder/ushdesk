@@ -16,6 +16,8 @@ import { authedFetch } from '@/lib/authedFetch';
 import { buildAppointmentWindow } from '@/lib/datetime';
 import { MakePaymentModal } from './MakePaymentModal';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
+import { MultiSelectDrop } from './MultiSelectDrop';
+import { exceedsMaxDuration, maxDurationMessage } from '@/lib/booking-duration';
 
 // ── Exported types ─────────────────────────────────────────────────────────────
 
@@ -81,12 +83,20 @@ export interface NewBookingPayload {
   arrangement: Arrangement;
   timeSlot: string;
   date: string;
+  /**
+   * Maximum total duration (minutes) that fits in the free room time starting at
+   * `timeSlot` (no overlap with other bookings / unavailable time). Undefined = no limit.
+   */
+  maxDurationMinutes?: number;
 }
 
 export type BookingStep = 1 | 2 | 3;
 
 export interface BranchBookingForm {
+  /** Primary (first selected) service — kept in sync with serviceIds[0] */
   serviceId: string;
+  /** All selected services, in selection order */
+  serviceIds: string[];
   serviceSearch: string;
   therapistId: string;
   therapistSearch: string;
@@ -98,7 +108,7 @@ export interface BranchBookingForm {
 }
 
 const INITIAL_FORM: BranchBookingForm = {
-  serviceId: '', serviceSearch: '', therapistId: '', therapistSearch: '',
+  serviceId: '', serviceIds: [], serviceSearch: '', therapistId: '', therapistSearch: '',
   customerId: '', customerSearch: '', addonIds: [], extraMinutes: 0, notes: '',
 };
 
@@ -251,6 +261,7 @@ export function NewBranchBookingModal({
   preselectedTherapistName?: string;
 }) {
   const { arrangement, timeSlot, date } = payload;
+  const maxDuration = payload.maxDurationMinutes;
 
   const [step, setStep]           = useState<BookingStep>(1);
   const [form, setForm]           = useState<BranchBookingForm>(() => ({
@@ -333,7 +344,12 @@ export function NewBranchBookingModal({
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
   };
 
-  const selectedService   = useMemo(() => services.find(s => s.id === form.serviceId) ?? null, [services, form.serviceId]);
+  // All selected services in selection order; the first one is the primary service.
+  const selectedServices  = useMemo(() => {
+    const byId = new Map(services.map(s => [s.id, s] as const));
+    return form.serviceIds.map(id => byId.get(id)).filter((s): s is ApiService => Boolean(s));
+  }, [services, form.serviceIds]);
+  const selectedService   = selectedServices[0] ?? null;
   const selectedTherapist = useMemo(() => therapists.find(t => t.id === form.therapistId) ?? null, [therapists, form.therapistId]);
   const selectedCustomer  = useMemo(() => {
     if (!form.customerId) return null;
@@ -351,19 +367,31 @@ export function NewBranchBookingModal({
     }) : therapists,
     [therapists, form.therapistSearch]);
 
-  const serviceAddons: ApiAddOn[] = selectedService?.add_ons ?? [];
+  const serviceAddons: ApiAddOn[] = useMemo(() => {
+    const seen = new Set<string>();
+    const out: ApiAddOn[] = [];
+    for (const svc of selectedServices) {
+      for (const a of svc.add_ons ?? []) {
+        if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
+      }
+    }
+    return out;
+  }, [selectedServices]);
   const allAddons = useMemo(() => {
     const ids = new Set(serviceAddons.map(a => a.id));
     return [...serviceAddons, ...globalAddons.filter(a => !ids.has(a.id))];
   }, [serviceAddons, globalAddons]);
 
-  const servicePrice      = parseFloat(String(selectedService?.arrangement_price ?? selectedService?.base_price ?? '0')) || 0;
+  const servicePrice      = selectedServices.reduce(
+    (sum, svc) => sum + (parseFloat(String(svc.arrangement_price ?? svc.base_price ?? '0')) || 0), 0);
   const selectedAddons    = allAddons.filter(a => form.addonIds.includes(a.id));
   const addonTotal        = selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonDuration     = selectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
   const extraMinutesUnit  = selectedService?.extra_minutes ?? 0;
   const extraPricePerUnit = parseFloat(String(selectedService?.price_for_extra_minutes ?? '0')) || 0;
-  const baseDuration      = selectedService?.duration_minutes ?? 60;
+  const baseDuration      = selectedServices.length > 0
+    ? selectedServices.reduce((sum, svc) => sum + (svc.duration_minutes ?? 60), 0)
+    : 60;
 
   // Extra time is offered only when the service defines both extra_minutes and
   // price_for_extra_minutes (> 0). Price = (mins / extra_minutes) * price_for_extra_minutes.
@@ -377,6 +405,25 @@ export function NewBranchBookingModal({
   const totalPrice        = servicePrice + addonTotal + extraMinutesPrice;
   const totalDuration     = (selectedService ? baseDuration : 0) + addonDuration + form.extraMinutes;
   const extraOptions      = [0, 30, 60] as const;
+
+  // ── Duration validation against the free room time ──────────────────────────
+  const durationExceeded = exceedsMaxDuration(totalDuration, maxDuration);
+  const durationMsg      = typeof maxDuration === 'number' ? maxDurationMessage(maxDuration) : '';
+  /** Reason an unselected service can't be added (would overflow the free time) */
+  const serviceDisabledReason = (svc: ApiService): string | null => {
+    if (typeof maxDuration !== 'number') return null;
+    const added = svc.duration_minutes ?? 60;
+    const base  = selectedServices.length === 0 ? 0 : totalDuration;
+    return base + added > maxDuration ? durationMsg : null;
+  };
+  const addonDisabledReason = (a: ApiAddOn): string | null => {
+    if (typeof maxDuration !== 'number') return null;
+    return totalDuration + (a.duration_minutes ?? 0) > maxDuration ? durationMsg : null;
+  };
+  const extraDisabledReason = (mins: number): string | null => {
+    if (typeof maxDuration !== 'number') return null;
+    return totalDuration - form.extraMinutes + mins > maxDuration ? durationMsg : null;
+  };
 
   useEffect(() => {
     if (!hasExtraTime && form.extraMinutes !== 0) setForm(p => ({ ...p, extraMinutes: 0 }));
@@ -394,13 +441,28 @@ export function NewBranchBookingModal({
       appointment_start:      toHHMM(timeSlot),
       duration:               String(totalDuration > 0 ? totalDuration : (selectedService?.duration_minutes ?? 60)),
     });
-    authedFetch(`/api/v1/services/${form.serviceId}/therapists?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
-      .then(r => r.json())
-      .then(d => { const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []); setTherapists(list); })
+    // Every selected service must be performed by the same therapist → intersect the lists.
+    const ids = form.serviceIds.length > 0 ? form.serviceIds : [form.serviceId];
+    Promise.all(ids.map(id =>
+      authedFetch(`/api/v1/services/${id}/therapists?${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
+        .then(r => r.json())
+        .then(d => (Array.isArray(d) ? d : (d.data ?? d.results ?? [])) as ApiTherapist[]),
+    ))
+      .then(lists => {
+        let common = lists[0] ?? [];
+        for (let i = 1; i < lists.length; i++) {
+          const ids_i = new Set(lists[i].map(t => t.id));
+          common = common.filter(t => ids_i.has(t.id));
+        }
+        setTherapists(common);
+        // Drop a previously chosen therapist that can't do every selected service
+        setForm(p => (p.therapistId && !common.some(t => t.id === p.therapistId))
+          ? { ...p, therapistId: '', therapistSearch: '' } : p);
+      })
       .catch(() => setTherapists([]))
       .finally(() => setTherapistsLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, form.serviceId, authHeader]);
+  }, [step, form.serviceIds, authHeader]);
 
   // Customer search (debounced)
   useEffect(() => {
@@ -433,10 +495,15 @@ export function NewBranchBookingModal({
 
   const toggleAddon     = (id: string) =>
     setForm(p => ({ ...p, addonIds: p.addonIds.includes(id) ? p.addonIds.filter(x => x !== id) : [...p.addonIds, id] }));
-  const selectService   = (s: ApiService) =>
-    setForm(p => ({ ...p, serviceId: s.id, serviceSearch: s.name, therapistId: '', therapistSearch: '', addonIds: [], extraMinutes: 0 }));
+  /** Tick / un-tick a service (multi-select). The first ticked service is the primary one. */
+  const toggleService   = (s: ApiService) =>
+    setForm(p => {
+      const has = p.serviceIds.includes(s.id);
+      const serviceIds = has ? p.serviceIds.filter(x => x !== s.id) : [...p.serviceIds, s.id];
+      return { ...p, serviceIds, serviceId: serviceIds[0] ?? '', therapistId: '', therapistSearch: '' };
+    });
   const clearService    = () =>
-    setForm(p => ({ ...p, serviceId: '', serviceSearch: '', therapistId: '', therapistSearch: '', addonIds: [], extraMinutes: 0 }));
+    setForm(p => ({ ...p, serviceId: '', serviceIds: [], serviceSearch: '', therapistId: '', therapistSearch: '', addonIds: [], extraMinutes: 0 }));
   const selectTherapist = (t: ApiTherapist) => {
     const name = t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ');
     setForm(p => ({ ...p, therapistId: t.id, therapistSearch: name }));
@@ -471,6 +538,7 @@ export function NewBranchBookingModal({
 
   const goNext = () => {
     if (!form.serviceId) { setSubmitError('Please select a service.'); return; }
+    if (durationExceeded) { setSubmitError(durationMsg); return; }
     setSubmitError(null); setStep(2);
   };
   const goNextToStep3 = () => {
@@ -490,11 +558,13 @@ export function NewBranchBookingModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.customerId) { setSubmitError('Please select a customer.'); return; }
+    if (durationExceeded) { setSubmitError(durationMsg); return; }
     setSubmitting(true); setSubmitError(null);
 
     const svc           = selectedService!;
     const svcCategory   = svc.category ?? '';
-    const baseP         = parseFloat(String(svc.arrangement_price ?? svc.base_price ?? '0')) || 0;
+    const baseP         = servicePrice; // sum of all selected services
+    const primaryDuration = svc.duration_minutes ?? 60;
     const timeHHMM      = toHHMM(timeSlot);
     const dateObj       = new Date(date + 'T00:00:00');
     const formattedDate = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -512,15 +582,42 @@ export function NewBranchBookingModal({
       service_name:     svc.name,
       service_category: svcCategory,
       base_price:       fmtPriceB(svc.base_price),
-      baseDuration,
+      baseDuration: primaryDuration,
       service_data: {
         service_id:       svc.id,
         service_name:     svc.name,
         service_category: svcCategory,
         base_price:       fmtPriceB(svc.base_price),
         arrangement_price: fmtPriceB(svc.arrangement_price ?? svc.base_price),
-        duration_minutes: svc.duration_minutes ?? baseDuration,
+        duration_minutes: primaryDuration,
       },
+      // Multi-service booking: all services share the same room and therapist.
+      ...(selectedServices.length > 1 ? {
+        services: selectedServices.map((sv) => ({
+          service_id:       sv.id,
+          service_name:     sv.name,
+          service_category: sv.category ?? '',
+          base_price:       fmtPriceB(sv.arrangement_price ?? sv.base_price),
+          base_duration:    sv.duration_minutes ?? 60,
+          service_data: {
+            service_id:        sv.id,
+            service_name:      sv.name,
+            service_category:  sv.category ?? '',
+            base_price:        fmtPriceB(sv.base_price),
+            arrangement_price: fmtPriceB(sv.arrangement_price ?? sv.base_price),
+            duration_minutes:  sv.duration_minutes ?? 60,
+          },
+          ...(arrangement.id ? {
+            service_arrangement_id: arrangement.id,
+            service_arrangement_data: {
+              arrangement_id:   arrangement.id,
+              arrangement_name: arrangement.name,
+              arrangement_type: arrangement.arrangementType,
+              ...(arrangement.capacity ? { capacity: arrangement.capacity } : {}),
+            },
+          } : {}),
+        })),
+      } : {}),
       branch_id:        arrangement.branchId,
       branch_data: {
         branch_id:      arrangement.branchId,
@@ -869,20 +966,19 @@ export function NewBranchBookingModal({
                     {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                   </div>
                   <BFormLabel>Search &amp; Select *</BFormLabel>
-                  <BSearchDropdown<ApiService>
-                    value={form.serviceSearch}
-                    placeholder={servicesLoading ? 'Loading services\u2026' : 'Search services\u2026'}
-                    loading={servicesLoading}
+                  <MultiSelectDrop<ApiService>
                     items={filteredServices}
-                    getKey={(s, idx) => String(s.id ?? (s as any).service_id ?? (s as any).pk ?? idx)}
-                    isSelected={(s) => String(s.id ?? '') === form.serviceId}
-                    selectedItem={selectedService}
+                    selectedIds={form.serviceIds}
+                    getId={(s) => String(s.id ?? '')}
+                    search={form.serviceSearch}
+                    placeholder={servicesLoading ? 'Loading services\u2026' : 'Search & tick one or more services\u2026'}
+                    loading={servicesLoading}
                     icon={Scissors}
-                    onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q, serviceId: '' }))}
-                    onSelect={selectService}
-                    onClear={clearService}
-                    renderItem={(s) => (
-                      <div className="flex items-start gap-3 px-4 py-3">
+                    onSearch={(q) => setForm(p => ({ ...p, serviceSearch: q }))}
+                    onToggle={toggleService}
+                    getDisabledReason={serviceDisabledReason}
+                    renderItem={(s, checked) => (
+                      <div className="flex items-start gap-3 py-3 pr-4">
                         <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
                           <Scissors className="h-3.5 w-3.5" />
                         </div>
@@ -898,25 +994,42 @@ export function NewBranchBookingModal({
                             {fmtPriceB(s.arrangement_price ?? s.base_price)} KWD
                           </p>
                         )}
-                        {s.id === form.serviceId && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
+                        {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
                       </div>
                     )}
                   />
-                  {selectedService && (
-                    <div className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
+                  {typeof maxDuration === 'number' && (
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      Available time from {timeSlot}: <span className="font-bold text-foreground">{maxDuration} min</span>
+                      {' · '}Selected: <span className={cn('font-bold', durationExceeded ? 'text-destructive' : 'text-foreground')}>{totalDuration} min</span>
+                    </p>
+                  )}
+                  {selectedServices.map((svc, idx) => (
+                    <div key={svc.id} className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-primary truncate">{selectedService.name}</p>
+                        <p className="text-xs font-bold text-primary truncate">
+                          {svc.name}
+                          {selectedServices.length > 1 && <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground">#{idx + 1}</span>}
+                        </p>
                         <p className="text-[10px] text-muted-foreground">
-                          {selectedService.duration_minutes && <span>{selectedService.duration_minutes} min</span>}
-                          {selectedService.category && <span> · {selectedService.category}</span>}
+                          {svc.duration_minutes && <span>{svc.duration_minutes} min</span>}
+                          {svc.category && <span> · {svc.category}</span>}
                         </p>
                       </div>
                       <p className="shrink-0 text-sm font-extrabold text-primary">
-                        {fmtPriceB(selectedService.arrangement_price ?? selectedService.base_price)} KWD
+                        {fmtPriceB(svc.arrangement_price ?? svc.base_price)} KWD
                       </p>
+                      <button
+                        type="button"
+                        onClick={() => toggleService(svc)}
+                        className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition"
+                        aria-label={`Remove ${svc.name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
                     </div>
-                  )}
+                  ))}
                 </div>
 
                 {hasExtraTime && (
@@ -931,13 +1044,17 @@ export function NewBranchBookingModal({
                       {extraOptions.map((mins) => {
                         const active = form.extraMinutes === mins;
                         const price = calcExtraPrice(mins);
+                        const blocked = !active && Boolean(extraDisabledReason(mins));
                         return (
                           <button
                             key={mins}
                             type="button"
+                            disabled={blocked}
+                            title={blocked ? durationMsg : undefined}
                             onClick={() => setForm(p => ({ ...p, extraMinutes: mins }))}
                             className={cn(
                               'flex flex-col items-center justify-center rounded-xl border py-2.5 px-2 text-center transition cursor-pointer',
+                              blocked && 'opacity-45 cursor-not-allowed',
                               active
                                 ? 'border-primary/50 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/30'
                                 : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
@@ -966,12 +1083,14 @@ export function NewBranchBookingModal({
                   <div className="grid grid-cols-2 gap-2">
                     {allAddons.map((addon) => {
                       const checked = form.addonIds.includes(addon.id);
+                      const addonBlocked = !checked && Boolean(addonDisabledReason(addon));
                       return (
-                        <label key={addon.id} className={cn(
+                        <label key={addon.id} title={addonBlocked ? durationMsg : undefined} className={cn(
                           'flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 transition',
+                          addonBlocked && 'opacity-45 cursor-not-allowed',
                           checked ? 'border-primary/40 bg-primary/5 text-primary' : 'border-border bg-muted/20 hover:border-border/80 hover:bg-muted/40',
                         )}>
-                          <input type="checkbox" checked={checked} onChange={() => toggleAddon(addon.id)}
+                          <input type="checkbox" checked={checked} disabled={addonBlocked} onChange={() => toggleAddon(addon.id)}
                             className="mt-0.5 h-3.5 w-3.5 accent-primary shrink-0" />
                           <div className="min-w-0 flex-1">
                             <p className="text-xs font-semibold leading-tight">{addon.name}</p>
@@ -1228,16 +1347,20 @@ export function NewBranchBookingModal({
 
                 {/* Summary card before submitting */}
                 <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <Scissors className="h-3.5 w-3.5 text-primary" />
-                      <div>
-                        <p className="text-xs font-bold text-foreground">{selectedService?.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{selectedService?.category || 'Service'}</p>
+                  {selectedServices.map((svc) => (
+                    <div key={svc.id} className="flex items-center justify-between px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <Scissors className="h-3.5 w-3.5 text-primary" />
+                        <div>
+                          <p className="text-xs font-bold text-foreground">{svc.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {svc.category || 'Service'}{svc.duration_minutes ? ` · ${svc.duration_minutes} min` : ''}
+                          </p>
+                        </div>
                       </div>
+                      <p className="text-xs font-bold text-foreground">{fmtPriceB(svc.arrangement_price ?? svc.base_price)} KWD</p>
                     </div>
-                    <p className="text-xs font-bold text-foreground">{fmtPriceB(servicePrice)} KWD</p>
-                  </div>
+                  ))}
 
                   <div className="flex items-center justify-between px-4 py-3">
                     <div className="flex items-center gap-2.5">
@@ -1277,7 +1400,9 @@ export function NewBranchBookingModal({
                 <div className="flex flex-col min-w-0 flex-1">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Scissors className="h-2.5 w-2.5" />Service</p>
                   <p className="text-xs font-semibold">{fmtPriceB(servicePrice)} KWD</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{selectedService.name}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {selectedServices.length > 1 ? `${selectedServices.length} services` : selectedService.name}
+                  </p>
                 </div>
                 {addonTotal > 0 && (<>
                   <div className="w-px self-stretch bg-border/60 mx-3" />

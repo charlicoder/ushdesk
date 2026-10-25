@@ -291,7 +291,10 @@ export function RescheduleBookingModal({
   const bookingNum = firstTruthy(bk?.booking_number, bk?.number);
 
   const svcObj = (bk?.service_data || bk?.service || bk?.raw?.service_data || bk?.raw?.service) as AnyRecord | undefined;
-  const svcName = firstTruthy(svcObj?.service_name, svcObj?.name, bk?.service_name, 'Spa Service');
+  const multiSvcNames = (Array.isArray(bk?.services) ? (bk?.services as AnyRecord[]) : [])
+    .map((e: AnyRecord) => firstTruthy(e?.service_data?.service_name, e?.service_data?.name, e?.service_name))
+    .filter(Boolean);
+  const svcName = multiSvcNames.length > 1 ? multiSvcNames.join(' + ') : firstTruthy(svcObj?.service_name, svcObj?.name, bk?.service_name, 'Spa Service');
   const svcCategory = firstTruthy(svcObj?.service_category, svcObj?.category, bk?.service_category);
   const durationVal = parseInt(String(bk?.total_duration ?? bk?.duration_minutes ?? bk?.duration ?? 60), 10) || 60;
   const pricing = (bk?.pricing_details || bk?.raw?.pricing_details) as AnyRecord | undefined;

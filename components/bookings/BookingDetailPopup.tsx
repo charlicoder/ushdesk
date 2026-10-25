@@ -81,7 +81,22 @@ export function normalise(raw: Record<string, unknown>): Booking {
   const firstName = String(cd.first_name ?? '');
   const lastName  = String(cd.last_name  ?? '');
 
-  const durSvc    = Number(raw.duration_minutes ?? sd.duration_minutes ?? sd.base_duration ?? 0);
+  // Multi-service bookings carry a `services` array (legacy single-service bookings don't).
+  const svcList = (Array.isArray(raw.services) ? raw.services : []) as Array<Record<string, unknown>>;
+  const isMultiSvc = svcList.length > 1;
+  const svcEntryName = (e: Record<string, unknown>) => {
+    const d = (e.service_data ?? {}) as Record<string, unknown>;
+    return String(d.name ?? d.service_name ?? e.service_name ?? '').trim();
+  };
+  const multiNames = isMultiSvc ? svcList.map(svcEntryName).filter(Boolean).join(' + ') : '';
+  const multiDur   = isMultiSvc
+    ? svcList.reduce((sum, e) => sum + (Number(e.duration_minutes ?? e.base_duration ?? (e.service_data as Record<string, unknown> | undefined)?.duration_minutes ?? 0) || 0), 0)
+    : 0;
+  const multiPrice = isMultiSvc ? svcList.reduce((sum, e) => sum + (Number(e.base_price ?? 0) || 0), 0) : 0;
+
+  const durSvc    = isMultiSvc && multiDur > 0
+    ? multiDur
+    : Number(raw.duration_minutes ?? sd.duration_minutes ?? sd.base_duration ?? 0);
   const durAddons = Number(raw.addons_duration ?? 0);
   const durExtra  = Number(raw.extra_minutes ?? 0);
   const totalDur  = Number(raw.total_duration ?? (durSvc + durAddons + durExtra)) || (durSvc + durAddons + durExtra);
@@ -102,9 +117,9 @@ export function normalise(raw: Record<string, unknown>): Booking {
       customer_phone:    (cd.phone_number ?? null) as string | null,
       customer_email:    (cd.email        ?? null) as string | null,
       branch_name:       String(bd.branch_name ?? bd.name ?? raw.branch_id ?? ''),
-      service_name:      String(sd.name ?? sd.service_name ?? ''),
+      service_name:      multiNames || String(sd.name ?? sd.service_name ?? ''),
       service_category:  String(sd.category ?? sd.service_category ?? ''),
-      service_price:     String(sd.base_price ?? sd.arrangement_price ?? raw.base_price ?? '0'),
+      service_price:     isMultiSvc && multiPrice > 0 ? String(multiPrice) : String(sd.base_price ?? sd.arrangement_price ?? raw.base_price ?? '0'),
       arrangement_name:  (sad.arrangement_name ?? sad.room_name ?? null) as string | null,
       therapist_name:    String(td.therapist_name ?? td.name ?? '—'),
       appointment_start: String(raw.appointment_start ?? ''),
@@ -1201,14 +1216,38 @@ export function BookingDetailPopup({
     ? booking.addons
     : ((booking.raw?.selected_addons as Array<Record<string, unknown>>) ?? []);
 
-  const serviceDuration = Number(detail?.duration_minutes ?? booking.duration_minutes ?? 0);
+  // Multi-service bookings: one entry per service (legacy bookings have no `services` array)
+  const svcEntries = (Array.isArray(detail?.services) && (detail?.services as unknown[]).length > 0
+    ? detail?.services
+    : Array.isArray(booking.raw?.services) ? booking.raw.services : []) as Array<Record<string, unknown>>;
+  const isMultiService = svcEntries.length > 1;
+  const multiItems = isMultiService ? svcEntries.map(e => {
+    const d = (e.service_data ?? {}) as Record<string, unknown>;
+    return {
+      name:     String(d.name ?? d.service_name ?? e.service_name ?? 'Service'),
+      category: String(d.category ?? d.service_category ?? e.service_category ?? ''),
+      price:    parseFloat(String(e.base_price ?? d.arrangement_price ?? d.base_price ?? '0')) || 0,
+      duration: Number(e.duration_minutes ?? e.base_duration ?? d.duration_minutes ?? 0) || 0,
+    };
+  }) : [];
+  const multiDurationSum = multiItems.reduce((sum, it) => sum + it.duration, 0);
+  const multiPriceSum    = multiItems.reduce((sum, it) => sum + it.price, 0);
+
+  const serviceDuration = isMultiService && multiDurationSum > 0
+    ? multiDurationSum
+    : Number(detail?.duration_minutes ?? booking.duration_minutes ?? 0);
   const addonsDuration  = Number(detail?.addons_duration  ?? booking.addons_duration  ?? 0);
   const extraMinutes    = Number(detail?.extra_minutes    ?? booking.extra_minutes    ?? 0);
   const totalDuration   = (serviceDuration + addonsDuration + extraMinutes) || Number(detail?.total_duration ?? booking.total_duration ?? serviceDuration);
 
   const pricingObj = (detail?.pricing ?? booking.pricing ?? booking.raw?.pricing_details) as Record<string, unknown> | undefined;
 
-  const servicePrice = parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0;
+  const servicePrice = isMultiService && multiPriceSum > 0
+    ? multiPriceSum
+    : parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0;
+  const serviceItems = isMultiService
+    ? multiItems
+    : [{ name: booking.service_name, category: booking.service_category, price: servicePrice, duration: serviceDuration }];
 
   const addonsPriceFromList = addons.reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? '0')) || 0), 0);
   const addonsPrice = parseFloat(String(pricingObj?.addon_price ?? pricingObj?.addons_price ?? detail?.addons_price ?? (addonsPriceFromList > 0 ? addonsPriceFromList : '0'))) || 0;
@@ -1949,70 +1988,73 @@ export function BookingDetailPopup({
                   </DRow>
                 </div>
 
-                {/* Row 2: Service */}
-                <DRow icon={Scissors} label="Service">
-                  <div className="flex items-center justify-between gap-2">
-                    <div>
-                      <span className="font-bold">{booking.service_name}</span>
-                      {booking.service_category && (
-                        <span className="ml-2 text-[11px] font-normal text-muted-foreground">({booking.service_category})</span>
-                      )}
+                {/* Row 2: Services, Add-ons & Extra time — itemised with price and duration */}
+                <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs">
+                  <div className="flex items-center justify-between gap-2 border-b border-border/50 bg-gradient-to-r from-primary/10 to-transparent px-4 py-2.5">
+                    <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      <Scissors className="h-3.5 w-3.5 text-primary" />
+                      {serviceItems.length > 1 ? `Services (${serviceItems.length})` : 'Service'}
+                    </p>
+                    <div className="grid grid-cols-[64px_96px] gap-2 text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                      <span>Duration</span><span>Price</span>
                     </div>
-                    <span className="text-xs font-mono font-bold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
                   </div>
-                </DRow>
-
-                {/* Row 3 & 4: Addons and Extra Minutes just after the service section */}
-                {addons.length > 0 ? (
-                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                        <Plus className="h-3.5 w-3.5 text-primary" /> Addons ({addons.length})
-                      </p>
-                      {addonsDuration > 0 && (
-                        <span className="text-[11px] font-semibold text-muted-foreground">+{addonsDuration} min duration</span>
-                      )}
-                    </div>
-                    <div className="space-y-1.5">
-                      {addons.map((addon, idx) => {
-                        const aName = String(addon.name ?? addon.addon_name ?? `Addon #${idx + 1}`);
-                        const aPrice = parseFloat(String(addon.price ?? addon.base_price ?? '0')) || 0;
-                        return (
-                          <div key={idx} className="flex items-center justify-between text-xs rounded-xl bg-card border border-border/40 px-3 py-2">
-                            <span className="font-medium text-foreground">{aName}</span>
-                            <span className="font-mono font-bold text-primary">+{aPrice.toFixed(3)} {currency}</span>
+                  <div className="divide-y divide-border/40">
+                    {serviceItems.map((it, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 px-4 py-2.5">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-primary/10 text-[11px] font-extrabold text-primary">{i + 1}</span>
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-bold text-foreground">{it.name}</p>
+                            {it.category && <p className="text-[10px] text-muted-foreground">{it.category}</p>}
                           </div>
-                        );
-                      })}
-                    </div>
-                    <div className="flex justify-between pt-1 text-xs border-t border-border/40 font-semibold text-muted-foreground">
-                      <span>Addons Subtotal:</span>
-                      <span className="font-mono text-foreground font-bold">{addonsPrice.toFixed(3)} {currency}</span>
-                    </div>
-                  </div>
-                ) : addonsDuration > 0 ? (
-                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-3 flex items-center justify-between text-xs">
-                    <span className="font-medium text-muted-foreground">Addons Duration</span>
-                    <span className="font-bold text-primary">+{addonsDuration} min</span>
-                  </div>
-                ) : null}
-
-                {extraMinutes > 0 && (
-                  <div className="rounded-2xl border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-950/20 p-3.5 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2">
-                      <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                      <div>
-                        <p className="font-bold text-foreground">Extra Minutes Included</p>
-                        <p className="text-[11px] text-muted-foreground">+{extraMinutes} minutes added to appointment</p>
+                        </div>
+                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
+                          <span className="text-muted-foreground">{it.duration > 0 ? `${it.duration} min` : '—'}</span>
+                          <span className="font-mono font-bold text-foreground">{it.price.toFixed(3)} {currency}</span>
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <span className="font-mono font-bold text-amber-700 dark:text-amber-300">
-                        +{extraPrice.toFixed(3)} {currency}
-                      </span>
+                    ))}
+                    {addons.length > 0 && (
+                      <div className="bg-muted/20 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Plus className="h-3 w-3 text-primary" /> Add-ons ({addons.length})
+                      </div>
+                    )}
+                    {addons.map((addon, idx) => {
+                      const aName = String(addon.name ?? addon.addon_name ?? `Addon #${idx + 1}`);
+                      const aPrice = parseFloat(String(addon.price ?? addon.base_price ?? '0')) || 0;
+                      const aDur = Number(addon.duration_minutes ?? addon.duration ?? 0) || 0;
+                      return (
+                        <div key={`a${idx}`} className="flex items-center justify-between gap-2 px-4 py-2">
+                          <p className="min-w-0 truncate pl-8 text-xs font-medium text-foreground">{aName}</p>
+                          <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
+                            <span className="text-muted-foreground">{aDur > 0 ? `+${aDur} min` : '—'}</span>
+                            <span className="font-mono font-semibold text-primary">+{aPrice.toFixed(3)} {currency}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {extraMinutes > 0 && (
+                      <div className="flex items-center justify-between gap-2 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-2.5">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400"><Clock className="h-3.5 w-3.5" /></span>
+                          <p className="text-xs font-bold text-foreground">Extra Time ({extraMinutes} min)</p>
+                        </div>
+                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
+                          <span className="text-muted-foreground">+{extraMinutes} min</span>
+                          <span className="font-mono font-bold text-amber-700 dark:text-amber-300">+{extraPrice.toFixed(3)} {currency}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-primary/5 px-4 py-3">
+                    <p className="text-xs font-extrabold uppercase tracking-wider text-foreground">Total</p>
+                    <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right">
+                      <span className="text-xs font-bold text-primary">{totalDuration} min</span>
+                      <span className="font-mono text-sm font-extrabold text-primary">{computedTotal.toFixed(3)} {currency}</span>
                     </div>
                   </div>
-                )}
+                </div>
 
                 {/* Date & Time + Duration Breakdown (Service + Addons + Extra) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2074,10 +2116,17 @@ export function BookingDetailPopup({
                     <CreditCard className="h-3.5 w-3.5 text-primary" /> Pricing &amp; Total Amount
                   </p>
                   <div className="space-y-1.5 text-xs">
-                    <div className="flex justify-between text-muted-foreground">
-                      <span>Base Service:</span>
-                      <span className="font-mono font-semibold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
-                    </div>
+                    {serviceItems.length > 1 ? serviceItems.map((it, i) => (
+                      <div key={i} className="flex justify-between text-muted-foreground">
+                        <span className="truncate pr-2">{it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}:</span>
+                        <span className="font-mono font-semibold text-foreground">{it.price.toFixed(3)} {currency}</span>
+                      </div>
+                    )) : (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Base Service:</span>
+                        <span className="font-mono font-semibold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
+                      </div>
+                    )}
                     {addonsPrice > 0 && (
                       <div className="flex justify-between text-muted-foreground">
                         <span>Addons ({addons.length}):</span>
@@ -2252,10 +2301,12 @@ export function BookingDetailPopup({
                       <span>Description</span>
                       <span>Amount</span>
                     </div>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-medium text-foreground">{booking.service_name}</span>
-                      <span className="font-semibold">{servicePrice.toFixed(3)} {currency}</span>
-                    </div>
+                    {serviceItems.map((it, i) => (
+                      <div key={i} className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-foreground">{it.name}{serviceItems.length > 1 && it.duration > 0 ? ` (${it.duration}m)` : ''}</span>
+                        <span className="font-semibold">{it.price.toFixed(3)} {currency}</span>
+                      </div>
+                    ))}
                     {addons.map((a, i) => (
                       <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>+ Add-on: {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}</span>
@@ -2912,6 +2963,7 @@ export function BookingDetailPopup({
             serviceName: booking.service_name,
             serviceCategory: booking.service_category,
             servicePrice: servicePrice,
+            services: serviceItems.map(it => ({ name: it.name, category: it.category, price: it.price, duration: it.duration })),
             appointmentStart: booking.appointment_start,
             appointmentEnd: booking.appointment_end,
             appointmentDate: formatDate(booking.appointment_start),

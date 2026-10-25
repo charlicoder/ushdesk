@@ -15,6 +15,7 @@ import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
 import { isBranchRestrictedScheduleRole } from '@/lib/permissions';
 import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
+import { computeMaxContiguousMinutes } from '@/lib/booking-duration';
 import {
   NewBranchBookingModal,
   getArrangementType,
@@ -1391,8 +1392,9 @@ export default function BranchAppointmentsPage() {
 
   const openNewBooking = useCallback((arrangement: Arrangement, timeSlot: string) => {
     if (isSlotInPast(selectedDate, timeSlot)) return;
-    setNewBookingModal({ arrangement, timeSlot, date: selectedDate });
-  }, [selectedDate]);
+    const maxDurationMinutes = computeMaxContiguousMinutes(timeSlots, timeSlot, l => schedule[arrangement.id]?.[l], grid.slot_duration_minutes, arrangement.capacity ?? 1);
+    setNewBookingModal({ arrangement, timeSlot, date: selectedDate, maxDurationMinutes });
+  }, [selectedDate, timeSlots, schedule, grid.slot_duration_minutes]);
 
   const handleBookingSuccess = useCallback((showSpinner = false) => {
     // Reload schedule

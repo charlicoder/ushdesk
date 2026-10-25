@@ -30,6 +30,8 @@ export interface BookingReceiptData {
   serviceName?: string | null;
   serviceCategory?: string | null;
   servicePrice?: number | string | null;
+  /** All booked services (one line each). When omitted the single `serviceName` is shown. */
+  services?: Array<{ name?: string; category?: string | null; price?: number | string; duration?: number | string }>;
   appointmentStart?: string | null;
   appointmentEnd?: string | null;
   timeSlot?: string | null;
@@ -376,7 +378,25 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 <span>Amount</span>
               </div>
 
-              {/* Main Service */}
+              {/* Services (one line per service) */}
+              {data.services && data.services.length > 0 ? (
+                <div className="space-y-1.5">
+                  {data.services.map((sv, idx) => {
+                    const p = parseFloat(String(sv.price ?? '0')) || 0;
+                    return (
+                      <div key={idx} className="space-y-0.5">
+                        <div className="flex justify-between font-bold text-slate-900 text-xs">
+                          <span>{sv.name || 'Spa Service'}</span>
+                          <span className="font-mono">{p.toFixed(3)} {currency}</span>
+                        </div>
+                        {Number(sv.duration ?? 0) > 0 && (
+                          <p className="text-[10px] text-slate-500">{sv.duration} mins</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
               <div className="space-y-0.5">
                 <div className="flex justify-between font-bold text-slate-900 text-xs">
                   <span>{data.serviceName || 'Spa Service'}</span>
@@ -392,6 +412,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   <p className="text-[10px] text-slate-500">{data.serviceDuration} mins base service</p>
                 )}
               </div>
+              )}
 
               {/* Addons */}
               {data.addons && data.addons.length > 0 && (
