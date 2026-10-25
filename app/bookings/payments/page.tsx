@@ -9,6 +9,7 @@ import {
   Hash, Tag, Banknote, Shield, ArrowUpRight, Filter,
   Receipt, Wallet, TrendingUp, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight,
+  FileText,
   Copy, ExternalLink,
 } from 'lucide-react';
 
@@ -18,6 +19,7 @@ function getPageNumbers(current: number, total: number): (number | 'ellipsis')[]
   if (current >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
   return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
 }
+import { PaymentReportModal } from '@/components/payments/PaymentReportModal';
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -87,6 +89,10 @@ interface RawPayment {
   vat_amount?: unknown;
   due_deposit?: unknown;
   deposit_status?: unknown;
+  branch_id?: unknown;
+  branch_data?: unknown;
+  branch_name?: unknown;
+  branch?: unknown;
   customer_data?: CustomerData | Record<string, unknown>;
   booking_data?: Record<string, unknown>;
   paid_at?: unknown;
@@ -94,7 +100,7 @@ interface RawPayment {
   [key: string]: unknown;
 }
 
-interface Payment {
+export interface Payment {
   id: string;
   payment_number: string | null;
   payment_url: string | null;
@@ -132,13 +138,15 @@ interface Payment {
   deposit_status: string;
   customer_data: CustomerData;
   booking_data: Record<string, unknown>;
+  branch_id: string | null;
+  branch_data: Record<string, unknown> | null;
   branch_name: string;
   paid_at: string | null;
   created_at: string;
 }
 
 // ── Normalise raw API response → Payment ──────────────────────────────────────
-function normalise(raw: RawPayment): Payment {
+function normalise(raw: RawPayment, branchMap?: Map<string, string>): Payment {
   const cd = (raw.customer_data ?? {}) as CustomerData;
 
   // Resolve customer name: prefer customer_data fields, fall back to flat fields
@@ -250,7 +258,16 @@ function normalise(raw: RawPayment): Payment {
     : ((typeof rawBookingData.branch_data === 'object' && rawBookingData.branch_data !== null)
       ? (rawBookingData.branch_data as Record<string, unknown>)
       : {});
-  const branchName = String(
+
+  const branchId = String(
+    raw.branch_id ??
+    rawBranchData.id ??
+    rawBranchData.branch_id ??
+    rawBookingData.branch_id ??
+    ''
+  ).trim();
+
+  let branchName = String(
     raw.branch_name ??
     rawBranchData.name ??
     rawBranchData.branch_name ??
@@ -259,6 +276,11 @@ function normalise(raw: RawPayment): Payment {
     raw.branch ??
     ''
   ).trim();
+
+  if ((!branchName || branchName.toLowerCase() === branchId.toLowerCase()) && branchId && branchMap) {
+    const resolved = branchMap.get(branchId.toLowerCase());
+    if (resolved) branchName = resolved;
+  }
 
   return {
     id:                 String(raw.id                 ?? ''),
@@ -298,6 +320,8 @@ function normalise(raw: RawPayment): Payment {
     deposit_status:     String(raw.deposit_status     ?? ''),
     customer_data:      cd,
     booking_data:       (raw.booking_data             ?? {}) as Record<string, unknown>,
+    branch_id:          branchId || null,
+    branch_data:        Object.keys(rawBranchData).length > 0 ? rawBranchData : null,
     branch_name:        branchName,
     paid_at:            paidAt,
     created_at:         createdAt,
@@ -545,13 +569,14 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
             ))}
           </div>
 
-          {/* Customer Info */}
+          {/* Customer & Location Info */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Customer</p>
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Customer &amp; Location</p>
             <div className="rounded-2xl border border-border/40 bg-muted/20 px-4 py-1">
               <DetailRow label="Name"       value={payment.customer_name} />
               <DetailRow label="Mobile"     value={payment.customer_mobile} copyable />
               <DetailRow label="Email"      value={payment.customer_email} copyable />
+              <DetailRow label="Branch"     value={payment.branch_name || '—'} />
               <DetailRow label="Customer ID" value={shortId(payment.customer_id)} mono copyable={false} />
             </div>
           </div>
@@ -701,6 +726,49 @@ export default function PaymentsPage() {
   // Date filters
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
+  const [showReportModal, setShowReportModal] = useState(false);
+
+  // ── Derived filter options ─────────────────────────────────────────────────
+  const [apiBranches, setApiBranches] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    authedFetch('/api/v1/branches?page_size=200')
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data?.data ?? data?.results ?? []);
+        if (Array.isArray(list)) {
+          const items = list
+            .map((b: any) => ({
+              id: String(b.id || b.branch_id || '').trim(),
+              name: String(b.name || b.branch_name || '').trim(),
+            }))
+            .filter((b) => b.name);
+          setApiBranches(items);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const branchMap = useMemo(() => {
+    const map = new Map<string, string>();
+    apiBranches.forEach((b) => {
+      if (b.id) map.set(b.id.toLowerCase(), b.name);
+    });
+    return map;
+  }, [apiBranches]);
+
+  const branchNameToIdMap = useMemo(() => {
+    const map = new Map<string, string>();
+    apiBranches.forEach((b) => {
+      if (b.id && b.name) map.set(b.name.toLowerCase(), b.id);
+    });
+    return map;
+  }, [apiBranches]);
+
+  const resolvedFilterBranchId = useMemo(() => {
+    if (!filters.branch) return '';
+    if (/^[0-9a-f-]{36}$/i.test(filters.branch)) return filters.branch;
+    return branchNameToIdMap.get(filters.branch.toLowerCase()) || '';
+  }, [filters.branch, branchNameToIdMap]);
 
   const proxyUrl = useMemo(() => {
     let url = `/api/v1/payments?page=${page}&page_size=${pageSize}`;
@@ -709,34 +777,24 @@ export default function PaymentsPage() {
     if (filters.search) url += `&search=${encodeURIComponent(filters.search.trim())}`;
     if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
     if (filters.provider) url += `&payment_provider=${encodeURIComponent(filters.provider)}`;
+    if (resolvedFilterBranchId) url += `&branch_id=${encodeURIComponent(resolvedFilterBranchId)}`;
     return url;
-  }, [page, pageSize, dateRange, filters.search, filters.status, filters.provider]);
+  }, [page, pageSize, dateRange, filters.search, filters.status, filters.provider, resolvedFilterBranchId]);
 
   const { data: raw, loading, error, refetch, pagination, analytics } = useBookings<Record<string, unknown>>(proxyUrl);
 
   const payments: Payment[] = useMemo(() =>
-    raw.map((r) => normalise(r as RawPayment)),
-    [raw],
+    raw.map((r) => normalise(r as RawPayment, branchMap)),
+    [raw, branchMap],
   );
 
-  // ── Derived filter options ─────────────────────────────────────────────────
-  const [apiBranches, setApiBranches] = useState<string[]>([]);
-  useEffect(() => {
-    authedFetch('/api/v1/branches')
-      .then((r) => r.json())
-      .then((data) => {
-        const list = Array.isArray(data) ? data : (data?.data ?? data?.results ?? []);
-        if (Array.isArray(list)) {
-          const names = list.map((b: any) => b.name || b.branch_name).filter(Boolean);
-          setApiBranches(names);
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const branches  = useMemo(() => {
-    const fromPayments = payments.map((p) => p.branch_name).filter(Boolean);
-    return Array.from(new Set([...apiBranches, ...fromPayments])).sort();
+  const branches = useMemo(() => {
+    const names = new Set<string>();
+    apiBranches.forEach((b) => names.add(b.name));
+    payments.forEach((p) => {
+      if (p.branch_name) names.add(p.branch_name);
+    });
+    return Array.from(names).filter(Boolean).sort();
   }, [apiBranches, payments]);
 
   const statuses  = useMemo(() => {
@@ -761,7 +819,20 @@ export default function PaymentsPage() {
         p.branch_name,
       ].some((v) => v?.toLowerCase().includes(q))) return false;
 
-      if (filters.branch && p.branch_name?.toLowerCase() !== filters.branch.toLowerCase()) return false;
+      if (filters.branch) {
+        const filterLower = filters.branch.toLowerCase();
+        const pBranchNameLower = (p.branch_name || '').toLowerCase();
+        const pBranchIdLower = (p.branch_id || '').toLowerCase();
+        const mappedBranchName = p.branch_id ? (branchMap.get(pBranchIdLower) || '').toLowerCase() : '';
+
+        const matches =
+          pBranchNameLower === filterLower ||
+          pBranchIdLower === filterLower ||
+          (resolvedFilterBranchId && pBranchIdLower === resolvedFilterBranchId.toLowerCase()) ||
+          mappedBranchName === filterLower;
+
+        if (!matches) return false;
+      }
       if (filters.status) {
         const s = p.status?.toLowerCase() ?? '';
         if (filters.status === 'pending') {
@@ -919,6 +990,16 @@ export default function PaymentsPage() {
           title="Refresh"
         >
           <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+        </button>
+
+        {/* Generate Report */}
+        <button
+          onClick={() => setShowReportModal(true)}
+          className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white shadow-xs hover:bg-primary/90 transition active:scale-95 cursor-pointer ml-auto sm:ml-0"
+          title="Generate Financial Report"
+        >
+          <FileText className="h-4 w-4" />
+          <span>Generate Report</span>
         </button>
 
         {/* Clear */}
@@ -1184,6 +1265,25 @@ export default function PaymentsPage() {
 
       {/* ── Modal ── */}
       {selected && <PaymentModal payment={selected} onClose={() => setSelected(null)} />}
+      {showReportModal && (
+        <PaymentReportModal
+          payments={filtered}
+          activeFilters={{
+            branch: filters.branch,
+            status: filters.status,
+            provider: filters.provider,
+            search: filters.search,
+            dateLabel:
+              dateFilter !== 'all'
+                ? dateRange.from && dateRange.to
+                  ? `${dateRange.from} to ${dateRange.to}`
+                  : dateFilter
+                : 'All Time',
+            dateRange,
+          }}
+          onClose={() => setShowReportModal(false)}
+        />
+      )}
     </DashboardShell>
   );
 }
@@ -1314,14 +1414,22 @@ function ListView({ payments, onSelect }: { payments: Payment[]; onSelect: (p: P
                   )}
                 </div>
 
-                {/* Customer */}
+                {/* Customer & Branch */}
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br text-white text-xs font-bold', gatewayColor(p.payment_method))}>
                     {initials(p.customer_name)}
                   </div>
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-sm">{p.customer_name}</p>
-                    <p className="truncate text-[11px] text-muted-foreground">{p.customer_mobile}</p>
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground truncate">
+                      {p.customer_mobile && <span>{p.customer_mobile}</span>}
+                      {p.branch_name && (
+                        <span className="flex items-center gap-0.5 text-foreground/80 font-medium">
+                          <Building2 className="h-3 w-3 text-primary/70 shrink-0" />
+                          <span className="truncate">{p.branch_name}</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
