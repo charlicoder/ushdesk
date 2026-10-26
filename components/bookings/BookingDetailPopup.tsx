@@ -253,12 +253,14 @@ export function initials(name: string) {
 
 // ── Style maps ─────────────────────────────────────────────────────────────────
 export const STATUS_STYLES: Record<string, string> = {
-  confirmed: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  completed: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
-  cancelled: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  refunded:  'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
-  pending:   'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  no_show:   'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  confirmed:   'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
+  checked_in:  'bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300',
+  in_progress: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  completed:   'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+  cancelled:   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
+  refunded:    'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
+  pending:     'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+  no_show:     'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
 };
 export const PAYMENT_STYLES: Record<string, string> = {
   success:  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
@@ -269,12 +271,33 @@ export const PAYMENT_STYLES: Record<string, string> = {
   failed:   'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
 };
 export const STATUS_BAR: Record<string, string> = {
-  confirmed: 'bg-blue-400', completed: 'bg-emerald-400',
-  cancelled: 'bg-red-400',  refunded:  'bg-purple-400',
-  pending:   'bg-amber-400', no_show: 'bg-slate-400',
+  confirmed:   'bg-blue-400',
+  checked_in:  'bg-cyan-400',
+  in_progress: 'bg-amber-400',
+  completed:   'bg-emerald-400',
+  cancelled:   'bg-red-400',
+  refunded:    'bg-purple-400',
+  pending:     'bg-amber-400',
+  no_show:     'bg-slate-400',
 };
 export const statusStyle  = (s: string) => STATUS_STYLES[s]  ?? 'bg-muted text-muted-foreground';
 export const paymentStyle = (s: string) => PAYMENT_STYLES[s] ?? 'bg-muted text-muted-foreground';
+
+export const PROGRESS_STAGES = [
+  { key: 'confirmed', label: 'Confirmed', nextKey: 'checked_in', nextLabel: 'CheckedIn', nextReason: 'Customer Checked In' },
+  { key: 'checked_in', label: 'CheckedIn', nextKey: 'in_progress', nextLabel: 'InProgress', nextReason: 'Service In Progress' },
+  { key: 'in_progress', label: 'InProgress', nextKey: 'completed', nextLabel: 'Completed', nextReason: 'Service Completed' },
+  { key: 'completed', label: 'Completed', nextKey: null, nextLabel: null, nextReason: null },
+] as const;
+
+export const STAGE_INDEX_MAP: Record<string, number> = {
+  confirmed: 0,
+  checked_in: 1,
+  checkedin: 1,
+  in_progress: 2,
+  inprogress: 2,
+  completed: 3,
+};
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 export function CustomerAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg' }) {
@@ -510,6 +533,8 @@ export function BookingDetailPopup({
   const [fetchedPaymentNumber, setFetchedPaymentNumber] = useState<string>('');
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
+  const [advancingStep, setAdvancingStep] = useState(false);
+  const [advanceError, setAdvanceError] = useState<string | null>(null);
   const [markingNoShow, setMarkingNoShow] = useState(false);
   const [noShowError, setNoShowError] = useState<string | null>(null);
 
@@ -1129,6 +1154,10 @@ export function BookingDetailPopup({
     )
   );
 
+  const currentStageIndex = STAGE_INDEX_MAP[normStatus] ?? STAGE_INDEX_MAP[curStatus] ?? -1;
+  const showStatusProgressBar = isPaymentSuccess && currentStageIndex >= 0;
+  const currentStage = currentStageIndex >= 0 ? PROGRESS_STAGES[currentStageIndex] : null;
+
   // 1. If bookings status=payment_pending and appointment_end > current datetime add "Update" button in Booking Details popup window
   const isPaymentPendingStatus = curStatus === 'payment_pending' || booking.status === 'payment_pending';
   const isBeforeApptEnd = Boolean(apptEndDateTime && apptEndDateTime.getTime() > Date.now());
@@ -1376,6 +1405,56 @@ export function BookingDetailPopup({
 
   const handlePrintReceipt = () => {
     setShowReceiptModal(true);
+  };
+
+  const handleAdvanceNextStep = async (targetStatus: string, reason: string | null) => {
+    if (!booking || advancingStep) return;
+    setAdvancingStep(true);
+    setAdvanceError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          status: targetStatus,
+          reason: reason || `Status updated to ${targetStatus}`,
+          source: 'ushdesk',
+          changed_by: user?.name || user?.id || 'Staff',
+          change_by_user: user?.name || user?.id || 'Staff',
+          change_by_user_data: user
+            ? {
+                id: user.id,
+                name: user.name,
+                full_name: user.name,
+                first_name: user.name.split(' ')[0] || user.name,
+                last_name: user.name.split(' ').slice(1).join(' ') || '',
+                email: user.email,
+                phone_number: user.phone_number,
+                role: user.user_type,
+              }
+            : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || err.detail || `Failed to update status (${res.status})`);
+      }
+      const json = await res.json().catch(() => ({}));
+      if (json?.data) {
+        setDetail(json.data);
+      } else {
+        setDetail((prev) => (prev ? { ...prev, status: targetStatus } : { ...booking, status: targetStatus }));
+      }
+      onSuccess?.();
+    } catch (err: unknown) {
+      console.error('[BookingDetailModal] Error advancing booking status:', err);
+      setAdvanceError(err instanceof Error ? err.message : `Failed to update status to ${targetStatus}`);
+    } finally {
+      setAdvancingStep(false);
+    }
   };
 
   const handleCompleteBooking = async () => {
@@ -1875,7 +1954,7 @@ export function BookingDetailPopup({
                   ? 'bg-[#5C7359]/20 text-[#244221] border border-[#5C7359]/40'
                   : statusStyle(curStatus || booking.status)
               )}>
-                {curStatus === 'confirmed' || curStatus === 'completed' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                {curStatus === 'confirmed' || curStatus === 'completed' || curStatus === 'checked_in' || curStatus === 'in_progress' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
                 {curStatus || booking.status}
               </span>
               {/* Payment status badge */}
@@ -1917,6 +1996,113 @@ export function BookingDetailPopup({
               </button>
             </div>
           </div>
+
+          {/* Progress Bar (Confirmed -> CheckedIn -> InProgress -> Completed) */}
+          {showStatusProgressBar && (
+            <div className={cn(
+              'shrink-0 border-b px-6 py-3 transition-colors',
+              isCompleted ? 'border-[#C0ABA0]/60 bg-[#C8B5A7]/20' : 'border-border/40 bg-muted/30'
+            )}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                {/* Stepper */}
+                <div className="flex items-center flex-1 max-w-xl">
+                  {PROGRESS_STAGES.map((stage, idx) => {
+                    const isDone = currentStageIndex > idx;
+                    const isCurrent = currentStageIndex === idx;
+                    const isUpcoming = currentStageIndex < idx;
+                    const isLast = idx === PROGRESS_STAGES.length - 1;
+
+                    return (
+                      <div key={stage.key} className={cn('flex items-center', !isLast && 'flex-1')}>
+                        {/* Step indicator */}
+                        <div className="flex items-center gap-1.5 sm:gap-2">
+                          <div
+                            className={cn(
+                              'relative flex h-6 w-6 sm:h-7 sm:w-7 shrink-0 items-center justify-center rounded-full text-[11px] sm:text-xs font-bold transition-all shadow-xs',
+                              isDone && 'bg-emerald-600 text-white',
+                              isCurrent && (isCompleted ? 'bg-[#3D2F27] text-white ring-4 ring-[#C8B5A7]/50' : 'bg-primary text-primary-foreground ring-4 ring-primary/20'),
+                              isUpcoming && 'border border-border/70 bg-card text-muted-foreground'
+                            )}
+                          >
+                            {isDone ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                            ) : (
+                              <span>{idx + 1}</span>
+                            )}
+                          </div>
+                          <span
+                            className={cn(
+                              'text-xs whitespace-nowrap transition-colors',
+                              isDone && 'font-semibold text-emerald-600 dark:text-emerald-400',
+                              isCurrent && (isCompleted ? 'font-bold text-[#2D241E]' : 'font-bold text-foreground'),
+                              isUpcoming && 'font-medium text-muted-foreground'
+                            )}
+                          >
+                            {stage.label}
+                          </span>
+                        </div>
+
+                        {/* Connector line */}
+                        {!isLast && (
+                          <div className="mx-1.5 sm:mx-3 flex-1 h-0.5 bg-border/60 overflow-hidden rounded-full min-w-[12px]">
+                            <div
+                              className={cn(
+                                'h-full transition-all duration-300',
+                                currentStageIndex > idx
+                                  ? 'bg-emerald-600 w-full'
+                                  : currentStageIndex === idx
+                                  ? 'bg-primary/50 w-1/2'
+                                  : 'w-0'
+                              )}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Next Step Action Button */}
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  {currentStage?.nextKey ? (
+                    <button
+                      type="button"
+                      onClick={() => handleAdvanceNextStep(currentStage.nextKey, currentStage.nextReason)}
+                      disabled={advancingStep}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed',
+                        currentStage.nextKey === 'completed'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
+                          : 'bg-primary hover:bg-primary/90 text-primary-foreground shadow-primary/20'
+                      )}
+                    >
+                      {advancingStep ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <span>Updating…</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>Next Step ({currentStage.nextLabel})</span>
+                          <ChevronRight className="h-4 w-4" />
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-3 py-1.5 text-xs font-bold text-emerald-700 dark:text-emerald-300">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                      Completed
+                    </span>
+                  )}
+                </div>
+              </div>
+              {advanceError && (
+                <p className="mt-2 text-xs text-red-600 dark:text-red-400 font-medium">
+                  {advanceError}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Tabs */}
           <div className={cn(
@@ -2774,7 +2960,7 @@ export function BookingDetailPopup({
                             >
                               Reschedule
                             </button>
-                            {!isCompleteRestrictedForRole && (
+                            {!isCompleteRestrictedForRole && !showStatusProgressBar && (
                               <button
                                 type="button"
                                 onClick={handleCompleteBooking}
@@ -2826,9 +3012,10 @@ export function BookingDetailPopup({
                     )}
                     {!isNoShow && (() => {
                       const rawPaymentStatus = String(detail?.payment_status ?? (detail as any)?.paymentStatus ?? booking.payment_status ?? '').toLowerCase().trim();
+                      const isStepAndPaid = ['confirmed', 'checked_in', 'in_progress', 'completed'].includes(normStatus) && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
                       const isConfirmedAndPaid = curStatus === 'confirmed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
                       const isCompletedAndPaid = curStatus === 'completed' && (rawPaymentStatus === 'success' || rawPaymentStatus === 'paid');
-                      const showPrintReceiptBtn = isConfirmedAndPaid || isCompletedAndPaid;
+                      const showPrintReceiptBtn = isStepAndPaid || isConfirmedAndPaid || isCompletedAndPaid;
                       if (!showPrintReceiptBtn) return null;
                       if (isPastApptEnd && !isCompletedAndPaid) return null;
                       return (
