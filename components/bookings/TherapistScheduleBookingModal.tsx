@@ -1516,6 +1516,11 @@ export function TherapistScheduleBookingModal({
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
+                            {checked && selectedServices.length > 1 && (
+                              <span className="rounded bg-primary/15 text-primary px-1.5 py-0.5 text-[10px] font-black shrink-0">
+                                #{form.serviceIds.indexOf(sv.id) + 1}
+                              </span>
+                            )}
                             <p className="text-sm font-semibold truncate">{sv.name}</p>
                             {(sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true') && (
                               <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
@@ -1548,9 +1553,13 @@ export function TherapistScheduleBookingModal({
                       <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
+                          {selectedServices.length > 1 && (
+                            <span className="rounded-md bg-primary/15 text-primary px-1.5 py-0.5 text-[10px] font-black shrink-0">
+                              #{idx + 1}
+                            </span>
+                          )}
                           <p className="text-xs font-bold text-primary truncate">
                             {sv.name}
-                            {selectedServices.length > 1 && <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground">#{idx + 1}</span>}
                           </p>
                           {idx === 0 && isPackagedService && (
                             <span className="rounded-md bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-purple-600 dark:text-purple-400">
@@ -1646,6 +1655,7 @@ export function TherapistScheduleBookingModal({
                           const isSelected = form.arrangementId === arr.id;
                           const price    = arr.arrangement_price ?? arr.base_price;
                           const imgSrc   = arr.image ?? arr.photo_url ?? arr.thumbnail ?? null;
+                          const isMulti  = selectedServices.length > 1;
                           return (
                             <button
                               key={arr.id}
@@ -1655,7 +1665,8 @@ export function TherapistScheduleBookingModal({
                                 : { ...p, arrangementId: arr.id, arrangementName: arr.name, arrangementType: arr.arrangement_type ?? '' }
                               )}
                               className={cn(
-                                'relative flex-shrink-0 w-[140px] h-[175px] rounded-2xl overflow-hidden transition-all duration-200 group',
+                                'relative flex-shrink-0 w-[140px] rounded-2xl overflow-hidden transition-all duration-200 group',
+                                isMulti ? 'min-h-[190px] h-auto' : 'h-[175px]',
                                 isSelected
                                   ? 'ring-[3px] ring-offset-2 ring-offset-card'
                                   : 'ring-1 ring-border hover:ring-2 hover:ring-border/80',
@@ -1681,39 +1692,67 @@ export function TherapistScheduleBookingModal({
                                 </div>
                               )}
 
-                              {/* Always-on dark bottom gradient overlay */}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                              {/* Always-on dark gradient overlay for text contrast */}
+                              <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/45 to-black/25" />
 
                               {/* Selected checkmark badge (top-right) */}
                               {isSelected && (
-                                <div className="absolute top-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-full shadow-lg"
+                                <div className="absolute top-2.5 right-2.5 z-20 flex h-7 w-7 items-center justify-center rounded-full shadow-lg"
                                   style={{ background: '#c9a96e' }}>
                                   <CheckCircle2 className="h-4 w-4 text-white" />
                                 </div>
                               )}
 
-                              {/* Bottom text: name + type badge + price */}
-                              <div className="absolute bottom-0 left-0 right-0 px-3 pb-3 pt-6">
-                                <p className="text-[13px] font-extrabold text-white leading-tight truncate">
-                                  {arr.name}
-                                </p>
-                                <div className="flex items-center gap-1.5 mt-1">
-                                  <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold"
-                                    style={{ background: 'rgba(255,255,255,0.18)', color: '#fff', backdropFilter: 'blur(4px)' }}>
-                                    {cfg.label}
-                                  </span>
-                                </div>
-                                {price && (
-                                  <p className="mt-1 text-[12px] font-bold leading-none"
-                                    style={{ color: isSelected ? '#f0d49a' : '#d4b483' }}>
-                                    KWD {fmt(price)}
+                              {/* Card content: Title in the middle (wrapped), price at the bottom */}
+                              <div className="relative z-10 h-full w-full flex flex-col justify-between p-3 pointer-events-none">
+                                {/* Top spacer for badge balance */}
+                                <div className="h-6 shrink-0" />
+
+                                {/* Title in the middle, wrapped to next line */}
+                                <div className="flex-1 flex items-center justify-center px-1 py-1">
+                                  <p className="text-[13px] font-extrabold text-white leading-snug text-center break-words whitespace-normal line-clamp-3">
+                                    {arr.name}
                                   </p>
-                                )}
+                                </div>
+
+                                {/* Price at the bottom */}
+                                <div className="shrink-0 pt-1 pb-0.5">
+                                  {isMulti ? (
+                                    <div className="space-y-0.5">
+                                      {selectedServices.map((sv, idx) => {
+                                        const p = idx === 0
+                                          ? (arr.arrangement_price != null
+                                              ? (parseFloat(String(arr.arrangement_price)) || 0)
+                                              : (parseFloat(String(arr.base_price ?? sv.arrangement_price ?? sv.base_price ?? '0')) || 0))
+                                          : (form.arrangementId === arr.id
+                                              ? priceOfService(sv, idx)
+                                              : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0));
+                                        return (
+                                          <p
+                                            key={sv.id || idx}
+                                            className="text-[11px] font-bold leading-tight text-center"
+                                            style={{ color: isSelected ? '#f0d49a' : '#d4b483' }}
+                                          >
+                                            <span className="font-extrabold mr-1 opacity-90">#{idx + 1}</span>
+                                            {fmt(p)} KWD
+                                          </p>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : price ? (
+                                    <p className="text-[12px] font-bold leading-none text-center"
+                                      style={{ color: isSelected ? '#f0d49a' : '#d4b483' }}>
+                                      KWD {fmt(price)}
+                                    </p>
+                                  ) : (
+                                    <div className="h-[12px]" />
+                                  )}
+                                </div>
                               </div>
 
                               {/* Selected golden border overlay */}
                               {isSelected && (
-                                <div className="absolute inset-0 rounded-2xl pointer-events-none"
+                                <div className="absolute inset-0 rounded-2xl pointer-events-none z-20"
                                   style={{ boxShadow: 'inset 0 0 0 2px #c9a96e' }} />
                               )}
                             </button>
@@ -2025,62 +2064,171 @@ export function TherapistScheduleBookingModal({
                 </div>
 
                 {/* Summary card before submitting */}
-                <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      {(() => {
-                        const sImg = getServiceImageUrl(selectedService);
-                        return (
-                          <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted/20">
-                            {sImg ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={sImg}
-                                alt=""
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = 'none';
-                                  const fallback = (e.target as HTMLElement).parentElement?.querySelector('.summary-svc-fallback');
-                                  if (fallback) fallback.classList.remove('hidden');
-                                }}
-                              />
-                            ) : null}
-                            <div className={cn(
-                              "summary-svc-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
-                              sImg ? "hidden" : ""
-                            )}>
-                              <Scissors className="h-3.5 w-3.5" />
+                <div className="rounded-2xl border border-border/70 bg-card shadow-xs overflow-hidden divide-y divide-border/40">
+                  {/* Card Header */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40">
+                    <div className="flex items-center gap-2">
+                      <Receipt className="h-4 w-4 text-primary" />
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-foreground">Booking Summary</span>
+                    </div>
+                    <span className="text-[11px] font-bold text-muted-foreground">
+                      {selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'} · {totalDuration} min
+                    </span>
+                  </div>
+
+                  {/* Services List */}
+                  <div className="divide-y divide-border/30">
+                    {selectedServices.map((svc, idx) => {
+                      const price = priceOfService(svc, idx);
+                      const sImg = getServiceImageUrl(svc);
+                      return (
+                        <div key={svc.id || idx} className="flex items-center justify-between px-4 py-2.5 hover:bg-muted/10 transition">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-lg border border-border/60 bg-muted/20">
+                              {sImg ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={sImg}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                    const fallback = (e.target as HTMLElement).parentElement?.querySelector('.summary-svc-fallback');
+                                    if (fallback) fallback.classList.remove('hidden');
+                                  }}
+                                />
+                              ) : null}
+                              <div className={cn(
+                                "summary-svc-fallback grid h-full w-full place-items-center bg-primary/10 text-primary",
+                                sImg ? "hidden" : ""
+                              )}>
+                                <Scissors className="h-3.5 w-3.5" />
+                              </div>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                {selectedServices.length > 1 && (
+                                  <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 text-[9px] font-black shrink-0">
+                                    #{idx + 1}
+                                  </span>
+                                )}
+                                <p className="text-xs font-bold text-foreground truncate">{svc.name}</p>
+                              </div>
+                              <p className="text-[11px] text-muted-foreground">
+                                {svc.duration_minutes ?? 60} min{svc.category ? ` · ${svc.category}` : ''}
+                              </p>
                             </div>
                           </div>
-                        );
-                      })()}
-                      <div>
-                        <p className="text-xs font-bold text-foreground">{selectedServices.map(x => x.name).join(' + ')}</p>
-                        <p className="text-[11px] text-muted-foreground">{selectedServices.length > 1 ? `${selectedServices.length} services · ${baseDuration} min` : (selectedService?.category || 'Service')}</p>
-                      </div>
-                    </div>
-                    <p className="text-xs font-bold text-foreground">{fmt(servicePrice)} KWD</p>
+                          <p className="text-xs font-extrabold text-foreground shrink-0 ml-3">
+                            {fmt(price)} <span className="text-[10px] font-semibold text-muted-foreground">KWD</span>
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <User className="h-3.5 w-3.5 text-violet-500" />
-                      <div>
-                        <p className="text-xs font-bold text-foreground">
+                  {/* Add-ons List (if any selected) */}
+                  {allSelectedAddons.length > 0 && (
+                    <div className="bg-primary/[0.02] px-4 py-2.5 border-t border-border/40">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                          <Package className="h-3 w-3" />
+                          <span>Add-ons ({allSelectedAddons.length})</span>
+                        </p>
+                        <span className="text-[11px] font-extrabold text-primary">+{fmt(addonTotal)} KWD</span>
+                      </div>
+                      <div className="space-y-1">
+                        {allSelectedAddons.map((addon) => (
+                          <div key={addon.id} className="flex items-center justify-between text-xs py-1 px-2.5 rounded-lg bg-muted/30 border border-border/30">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Sparkles className="h-3 w-3 text-primary shrink-0" />
+                              <span className="text-xs font-medium text-foreground truncate">{addon.name}</span>
+                              {addon.duration_minutes ? (
+                                <span className="text-[10px] text-muted-foreground font-semibold shrink-0">
+                                  (+{addon.duration_minutes} min)
+                                </span>
+                              ) : null}
+                            </div>
+                            <span className="text-xs font-bold text-foreground shrink-0 ml-2">
+                              +{fmt(addon.price ?? 0)} KWD
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Extra Time (if selected) */}
+                  {form.extraMinutes > 0 && (
+                    <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/[0.04] border-t border-border/40">
+                      <div className="flex items-center gap-2.5">
+                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          <Timer className="h-3.5 w-3.5" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-foreground">Extra Time</p>
+                          <p className="text-[10px] text-muted-foreground">+{form.extraMinutes} minutes duration</p>
+                        </div>
+                      </div>
+                      <p className="text-xs font-extrabold text-foreground shrink-0">
+                        +{fmt(extraMinutesPrice)} <span className="text-[10px] font-semibold text-muted-foreground">KWD</span>
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Customer & Appointment Schedule */}
+                  <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40 bg-muted/20">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="grid h-6 w-6 place-items-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0">
+                        <User className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-foreground truncate">
                           {selectedCustomer ? (([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || selectedCustomer.full_name) : 'Customer'}
                         </p>
-                        <p className="text-[11px] text-muted-foreground">{selectedCustomer?.phone_number || 'No phone'}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">{selectedCustomer?.phone_number || 'No phone'}</p>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right shrink-0 pl-3">
                       <p className="text-xs font-bold text-foreground">{date}</p>
-                      <p className="text-[11px] text-muted-foreground">{timeSlot}</p>
+                      <p className="text-[11px] text-muted-foreground font-semibold">{timeSlot}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between px-4 py-3 bg-muted/30">
-                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Payable</span>
-                    <span className="text-sm font-black text-primary">{fmt(totalPrice)} KWD</span>
+                  {/* Price Breakdown & Total Payable */}
+                  <div className="px-4 py-3 bg-muted/40 border-t border-border/40 space-y-2">
+                    {(allSelectedAddons.length > 0 || form.extraMinutes > 0) && (
+                      <div className="space-y-1 pb-2 border-b border-border/40 text-xs">
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Services Subtotal ({selectedServices.length}):</span>
+                          <span className="font-semibold text-foreground">{fmt(servicePrice)} KWD</span>
+                        </div>
+                        {allSelectedAddons.length > 0 && (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Add-ons ({allSelectedAddons.length}):</span>
+                            <span className="font-semibold text-primary">+{fmt(addonTotal)} KWD</span>
+                          </div>
+                        )}
+                        {form.extraMinutes > 0 && (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Extra Time (+{form.extraMinutes} min):</span>
+                            <span className="font-semibold text-amber-600 dark:text-amber-400">+{fmt(extraMinutesPrice)} KWD</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground block">Total Payable</span>
+                        {(allSelectedAddons.length > 0 || form.extraMinutes > 0) && (
+                          <span className="text-[10px] text-muted-foreground">Includes all services, add-ons and extra time</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-base font-black text-primary">{fmt(totalPrice)}</span>
+                        <span className="text-xs font-bold text-primary ml-1">KWD</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2130,15 +2278,59 @@ export function TherapistScheduleBookingModal({
 
                   {/* ── Service & Arrangement ── */}
                   <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-                    <div className="flex items-start gap-3 px-4 py-3">
-                      <Scissors className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
-                        <p className="text-sm font-semibold truncate">{sName}</p>
-                        {selectedService?.category && <p className="text-[11px] text-muted-foreground">{selectedService.category}</p>}
+                    {selectedServices.length > 1 ? (
+                      <div className="px-4 py-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Services ({selectedServices.length})
+                          </p>
+                          <span className="text-xs font-bold text-primary">{fmt(servicePrice)} KWD</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {selectedServices.map((svc, idx) => {
+                            const p = priceOfService(svc, idx);
+                            return (
+                              <div key={svc.id || idx} className="flex items-center justify-between text-xs py-0.5">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Scissors className="h-3 w-3 text-primary shrink-0" />
+                                  <span className="font-semibold text-foreground truncate flex items-center gap-1.5">
+                                    {selectedServices.length > 1 && (
+                                      <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 text-[9px] font-black shrink-0">
+                                        #{idx + 1}
+                                      </span>
+                                    )}
+                                    {svc.name}
+                                  </span>
+                                  <span className="text-[10px] text-muted-foreground shrink-0">({svc.duration_minutes ?? 60}m)</span>
+                                </div>
+                                <span className="font-semibold text-foreground shrink-0 ml-2">{fmt(p)} KWD</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                      <p className="shrink-0 text-sm font-extrabold text-primary">{fmt(servicePrice)} KWD</p>
-                    </div>
+                    ) : (
+                      <div className="flex items-start gap-3 px-4 py-3">
+                        <Scissors className="h-3.5 w-3.5 mt-0.5 shrink-0 text-primary" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Service</p>
+                          <p className="text-sm font-semibold truncate">{sName}</p>
+                          {selectedService?.category && <p className="text-[11px] text-muted-foreground">{selectedService.category} · {selectedService.duration_minutes ?? 60} min</p>}
+                        </div>
+                        <p className="shrink-0 text-sm font-extrabold text-primary">{fmt(servicePrice)} KWD</p>
+                      </div>
+                    )}
+
+                    {form.extraMinutes > 0 && (
+                      <div className="flex items-start gap-3 px-4 py-3">
+                        <Timer className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Extra Time</p>
+                          <p className="text-xs font-semibold">+{form.extraMinutes} minutes</p>
+                        </div>
+                        <p className="shrink-0 text-xs font-bold text-amber-600 dark:text-amber-400">+{fmt(extraMinutesPrice)} KWD</p>
+                      </div>
+                    )}
 
                     {form.arrangementId && (
                       <div className="flex items-start gap-3 px-4 py-3">
@@ -2147,12 +2339,7 @@ export function TherapistScheduleBookingModal({
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Room / Arrangement</p>
-                          <p className="text-xs font-semibold truncate">{form.arrangementName}</p>
-                          {form.arrangementType && (
-                            <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-bold bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400">
-                              {form.arrangementType.replace(/_/g, ' ')}
-                            </span>
-                          )}
+                          <p className="text-xs font-semibold break-words whitespace-normal">{form.arrangementName}</p>
                         </div>
                       </div>
                     )}
@@ -2211,8 +2398,12 @@ export function TherapistScheduleBookingModal({
                       <p className="text-[11px] text-muted-foreground">{timeSlot} · {totalDuration} min total</p>
                     </div>
                     <div className="text-right shrink-0 border-l border-border/40 pl-3">
-                      {addonTotal > 0 && (
-                        <p className="text-[10px] text-muted-foreground">Service: {fmt(servicePrice)} + Add-ons: {fmt(addonTotal)}</p>
+                      {(addonTotal > 0 || extraMinutesPrice > 0) && (
+                        <p className="text-[10px] text-muted-foreground">
+                          Service: {fmt(servicePrice)}
+                          {addonTotal > 0 ? ` + Add-ons: ${fmt(addonTotal)}` : ''}
+                          {extraMinutesPrice > 0 ? ` + Extra: ${fmt(extraMinutesPrice)}` : ''}
+                        </p>
                       )}
                       <p className="text-[10px] font-bold uppercase tracking-wider text-primary">Total</p>
                       <p className="text-base font-black text-primary leading-none">

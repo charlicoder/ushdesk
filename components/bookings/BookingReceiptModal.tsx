@@ -386,7 +386,10 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                     return (
                       <div key={idx} className="space-y-0.5">
                         <div className="flex justify-between font-bold text-slate-900 text-xs">
-                          <span>{sv.name || 'Spa Service'}</span>
+                          <span>
+                            {data.services && data.services.length > 1 ? `#${idx + 1} ` : ''}
+                            {sv.name || 'Spa Service'}
+                          </span>
                           <span className="font-mono">{p.toFixed(3)} {currency}</span>
                         </div>
                         {Number(sv.duration ?? 0) > 0 && (

@@ -17,6 +17,7 @@ export interface PaymentReportModalProps {
     branch?: string;
     status?: string;
     provider?: string;
+    payment_through?: string;
     search?: string;
     dateLabel?: string;
     dateRange?: { from?: string; to?: string };
@@ -156,7 +157,11 @@ export function PaymentReportModal({
     let msg = `*📊 USH SPA - Payments & Financial Report*\n`;
     msg += `📅 *Date Range:* ${dateLabel}\n`;
     msg += `🏢 *Branch:* ${branchLabel}\n`;
-    msg += `🏷️ *Status Filter:* ${statusLabel}\n\n`;
+    msg += `🏷️ *Status Filter:* ${statusLabel}\n`;
+    if (activeFilters.payment_through) {
+      msg += `💳 *Channel:* ${activeFilters.payment_through.toUpperCase()}\n`;
+    }
+    msg += `\n`;
 
     msg += `*📈 Financial Summary:*\n`;
     msg += `• *Total Transactions:* ${metrics.totalCount}\n`;
@@ -403,6 +408,7 @@ export function PaymentReportModal({
             <span class="badge">Branch: <strong>${activeFilters.branch || 'All Branches'}</strong></span>
             <span class="badge">Date Range: <strong>${activeFilters.dateLabel || 'All Time'}</strong></span>
             <span class="badge">Status: <strong>${activeFilters.status || 'All Statuses'}</strong></span>
+            ${activeFilters.payment_through ? `<span class="badge">Channel: <strong>${activeFilters.payment_through.toUpperCase()}</strong></span>` : ''}
             ${activeFilters.provider ? `<span class="badge">Provider: <strong>${activeFilters.provider}</strong></span>` : ''}
             <span class="badge">Total Records: <strong>${metrics.totalCount}</strong></span>
           </div>
@@ -637,6 +643,12 @@ export function PaymentReportModal({
                 <ShieldCheck className="h-3 w-3 text-primary" />
                 Status: {activeFilters.status || 'All Statuses'}
               </span>
+              {activeFilters.payment_through && (
+                <span className="inline-flex items-center gap-1 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1 text-xs font-bold text-foreground uppercase">
+                  <CreditCard className="h-3 w-3 text-primary" />
+                  Channel: {activeFilters.payment_through}
+                </span>
+              )}
               {activeFilters.provider && (
                 <span className="inline-flex items-center gap-1 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1 text-xs font-bold text-foreground">
                   <CreditCard className="h-3 w-3 text-primary" />

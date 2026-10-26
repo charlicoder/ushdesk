@@ -703,15 +703,13 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
 interface Filters {
   search: string;
   status: string;
-  isPaid: string;
-  provider: string;
-  method: string;
+  payment_through: string;
   depositStatus: string;
   branch: string;
 }
 
 const DEFAULT_FILTERS: Filters = {
-  search: '', status: '', isPaid: '', provider: '', method: '', depositStatus: '', branch: '',
+  search: '', status: '', payment_through: '', depositStatus: '', branch: '',
 };
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
@@ -776,10 +774,10 @@ export default function PaymentsPage() {
     if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}&to_date=${encodeURIComponent(dateRange.to)}`;
     if (filters.search) url += `&search=${encodeURIComponent(filters.search.trim())}`;
     if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
-    if (filters.provider) url += `&payment_provider=${encodeURIComponent(filters.provider)}`;
+    if (filters.payment_through) url += `&payment_through=${encodeURIComponent(filters.payment_through)}`;
     if (resolvedFilterBranchId) url += `&branch_id=${encodeURIComponent(resolvedFilterBranchId)}`;
     return url;
-  }, [page, pageSize, dateRange, filters.search, filters.status, filters.provider, resolvedFilterBranchId]);
+  }, [page, pageSize, dateRange, filters.search, filters.status, filters.payment_through, resolvedFilterBranchId]);
 
   const { data: raw, loading, error, refetch, pagination, analytics } = useBookings<Record<string, unknown>>(proxyUrl);
 
@@ -803,8 +801,7 @@ export default function PaymentsPage() {
     const combined = [...defaultList, ...fromPayments];
     return Array.from(new Set(combined.map((s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()))).sort();
   }, [payments]);
-  const providers = useMemo(() => Array.from(new Set(payments.map((p) => p.payment_provider || p.provider).filter(Boolean))), [payments]);
-  const methods   = useMemo(() => Array.from(new Set(payments.map((p) => p.payment_method).filter(Boolean))), [payments]);
+
 
   // ── Client-side filtering ──────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -843,10 +840,15 @@ export default function PaymentsPage() {
           return false;
         }
       }
-      if (filters.isPaid === 'paid'   && !p.is_paid)  return false;
-      if (filters.isPaid === 'unpaid' &&  p.is_paid)  return false;
-      if (filters.provider && !(p.payment_provider?.toLowerCase() === filters.provider || p.provider?.toLowerCase() === filters.provider)) return false;
-      if (filters.method   && !(p.payment_method?.toLowerCase() === filters.method || p.payment_gateway?.toLowerCase() === filters.method)) return false;
+      if (filters.payment_through) {
+        const pt = (p.payment_through || '').toLowerCase();
+        const target = filters.payment_through.toLowerCase();
+        if (target === 'desk' || target === 'ushdesk') {
+          if (pt !== 'desk' && pt !== 'ushdesk') return false;
+        } else if (pt !== target) {
+          return false;
+        }
+      }
       if (filters.depositStatus && p.deposit_status?.toLowerCase() !== filters.depositStatus.toLowerCase()) return false;
       if (!matchesDateRange(p.created_at || p.created_date || p.transaction_date, dateRange)) return false;
       return true;
@@ -1015,7 +1017,7 @@ export default function PaymentsPage() {
 
       {/* ── Filter Panel ── */}
       {showFilters && (
-        <div className="mt-3 rounded-2xl border border-border/50 bg-card/80 backdrop-blur p-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="mt-3 rounded-2xl border border-border/50 bg-card/80 backdrop-blur p-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
           {/* Branch */}
           <div>
             <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Branch</label>
@@ -1035,50 +1037,25 @@ export default function PaymentsPage() {
             <select
               value={filters.status}
               onChange={(e) => setFilter('status', e.target.value)}
-              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
             >
-              <option value="">All</option>
+              <option value="">All Statuses</option>
               {statuses.map((s) => <option key={s} value={s.toLowerCase()}>{s}</option>)}
             </select>
           </div>
 
-          {/* Paid */}
+          {/* Payment Through */}
           <div>
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Paid</label>
+            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Payment Through</label>
             <select
-              value={filters.isPaid}
-              onChange={(e) => setFilter('isPaid', e.target.value)}
-              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              value={filters.payment_through}
+              onChange={(e) => setFilter('payment_through', e.target.value)}
+              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 cursor-pointer font-medium"
             >
-              <option value="">All</option>
-              <option value="paid">Paid</option>
-              <option value="unpaid">Unpaid</option>
-            </select>
-          </div>
-
-          {/* Provider */}
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Provider</label>
-            <select
-              value={filters.provider}
-              onChange={(e) => setFilter('provider', e.target.value)}
-              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              <option value="">All</option>
-              {providers.map((p) => <option key={p} value={p.toLowerCase()}>{p}</option>)}
-            </select>
-          </div>
-
-          {/* Method */}
-          <div>
-            <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Method</label>
-            <select
-              value={filters.method}
-              onChange={(e) => setFilter('method', e.target.value)}
-              className="h-9 w-full rounded-xl border border-border/60 bg-card px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            >
-              <option value="">All</option>
-              {methods.map((m) => <option key={m} value={m.toLowerCase()}>{m}</option>)}
+              <option value="">All Channels</option>
+              <option value="desk">Desk (USHDesk)</option>
+              <option value="ushweb">USHWeb</option>
+              <option value="ushspa">USHSpa</option>
             </select>
           </div>
         </div>
@@ -1271,7 +1248,7 @@ export default function PaymentsPage() {
           activeFilters={{
             branch: filters.branch,
             status: filters.status,
-            provider: filters.provider,
+            payment_through: filters.payment_through,
             search: filters.search,
             dateLabel:
               dateFilter !== 'all'

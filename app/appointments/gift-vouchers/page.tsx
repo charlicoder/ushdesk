@@ -698,6 +698,8 @@ function VoucherDetailModal({
   const [loadingLinks, setLoadingLinks] = useState(false);
   const [loadingPayments, setLoadingPayments] = useState(false);
   const [syncingLink, setSyncingLink] = useState(false);
+  const [renewingLink, setRenewingLink] = useState(false);
+  const [renewError, setRenewError] = useState<string | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showMakePaymentModal, setShowMakePaymentModal] = useState(false);
   const [invoiceRecord, setInvoiceRecord] = useState<Record<string, any> | null>(null);
@@ -932,6 +934,14 @@ function VoucherDetailModal({
       (voucher.payment_data?.data?.InvoiceStatus?.toLowerCase() === 'pending'))
   );
 
+  const isPaymentLinkExpired = Boolean(
+    !isPaid &&
+    activePaymentLink &&
+    (activePaymentLink.is_expired ||
+      activePaymentLink.status === 'expired' ||
+      (activePaymentLink.expires_at && new Date(activePaymentLink.expires_at).getTime() <= Date.now()))
+  );
+
   const isPending = Boolean(
     voucher.status?.toLowerCase() === 'pending' ||
     voucher.status?.toLowerCase() === 'payment_pending' ||
@@ -948,6 +958,20 @@ function VoucherDetailModal({
       setTimeout(() => setCopiedPaymentUrl(false), 2000);
     } catch {
       // ignore
+    }
+  };
+
+  const handleRenewPaymentLink = async (linkId: string) => {
+    try {
+      setRenewingLink(true);
+      setRenewError(null);
+      const renewed = await paymentLinksApi.renew(linkId);
+      setPaymentLinks((prev) => [renewed, ...prev.filter((l) => l.id !== linkId)]);
+      onRefresh?.();
+    } catch (err) {
+      setRenewError(err instanceof Error ? err.message : 'Failed to create a new payment link.');
+    } finally {
+      setRenewingLink(false);
     }
   };
 
@@ -2085,6 +2109,17 @@ function VoucherDetailModal({
                           </button>
                         </>
                       )}
+                      {isPaymentLinkExpired && activePaymentLink && (
+                        <button
+                          type="button"
+                          onClick={() => handleRenewPaymentLink(activePaymentLink.id)}
+                          disabled={renewingLink}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/40 bg-amber-50 dark:bg-amber-950/30 px-3 py-1.5 text-xs font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-100 transition disabled:opacity-60 cursor-pointer"
+                        >
+                          {renewingLink ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                          <span>{renewingLink ? 'Creating…' : 'Create New Payment Link'}</span>
+                        </button>
+                      )}
                       {activePaymentLink && (
                         <button
                           type="button"
@@ -2097,6 +2132,21 @@ function VoucherDetailModal({
                         </button>
                       )}
                     </div>
+
+                    {isPaymentLinkExpired && (
+                      <div className="flex items-center gap-2 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        <span className="flex-1">
+                          This payment link expired{activePaymentLink?.expires_at ? ` on ${new Date(activePaymentLink.expires_at).toLocaleString()}` : ''}. Create a new one to collect payment.
+                        </span>
+                      </div>
+                    )}
+                    {renewError && (
+                      <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
+                        <span className="flex-1">{renewError}</span>
+                      </div>
+                    )}
 
                     {smsFeedback && (
                       <div

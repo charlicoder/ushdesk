@@ -2118,7 +2118,7 @@ export function BookingDetailPopup({
                   <div className="space-y-1.5 text-xs">
                     {serviceItems.length > 1 ? serviceItems.map((it, i) => (
                       <div key={i} className="flex justify-between text-muted-foreground">
-                        <span className="truncate pr-2">{it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}:</span>
+                        <span className="truncate pr-2">#{i + 1} {it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}:</span>
                         <span className="font-mono font-semibold text-foreground">{it.price.toFixed(3)} {currency}</span>
                       </div>
                     )) : (
@@ -2303,7 +2303,7 @@ export function BookingDetailPopup({
                     </div>
                     {serviceItems.map((it, i) => (
                       <div key={i} className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-foreground">{it.name}{serviceItems.length > 1 && it.duration > 0 ? ` (${it.duration}m)` : ''}</span>
+                        <span className="font-medium text-foreground">{serviceItems.length > 1 ? `#${i + 1} ` : ''}{it.name}{serviceItems.length > 1 && it.duration > 0 ? ` (${it.duration}m)` : ''}</span>
                         <span className="font-semibold">{it.price.toFixed(3)} {currency}</span>
                       </div>
                     ))}

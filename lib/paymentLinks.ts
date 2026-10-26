@@ -107,6 +107,9 @@ export const paymentLinksApi = {
 
   sync: (linkId: string) => request<PaymentLink>(`/${linkId}/sync/`, { method: 'POST' }),
 
+  /** Creates a fresh link to replace an expired, unpaid one. */
+  renew: (linkId: string) => request<PaymentLink>(`/${linkId}/renew/`, { method: 'POST' }),
+
   cancel: (linkId: string) => request<PaymentLink>(`/${linkId}/cancel/`, { method: 'POST' }),
 
   refund: (linkId: string, body: { amount?: number; reason?: string } = {}) =>

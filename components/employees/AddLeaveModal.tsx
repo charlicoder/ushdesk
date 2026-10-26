@@ -47,6 +47,19 @@ export function getDefaultTimesForToday(): { start: string; end: string } {
 }
 
 
+function dedupeEmployees(list: EmployeeOption[]): EmployeeOption[] {
+  const seen = new Set<string>();
+  const res: EmployeeOption[] = [];
+  for (const emp of list) {
+    const id = String(emp?.id ?? '').trim();
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      res.push({ ...emp, id });
+    }
+  }
+  return res;
+}
+
 const COMMON_REASONS = [
   'Annual Leave',
   'Sick Leave',
@@ -70,7 +83,7 @@ export function AddLeaveModal({
   initialEmployeeId,
   fallbackEmployees = [],
 }: AddLeaveModalProps) {
-  const [employees, setEmployees] = useState<EmployeeOption[]>(fallbackEmployees);
+  const [employees, setEmployees] = useState<EmployeeOption[]>(() => dedupeEmployees(fallbackEmployees));
   const [loadingEmployees, setLoadingEmployees] = useState(true);
   const [employeeSearch, setEmployeeSearch] = useState('');
 
@@ -144,9 +157,10 @@ export function AddLeaveModal({
               avatar: (emp.avatar ?? null) as string | null,
             };
           });
-          setEmployees(mapped);
-          if (!selectedEmployeeId && mapped.length > 0) {
-            setSelectedEmployeeId(mapped[0].id);
+          const uniqueMapped = dedupeEmployees(mapped);
+          setEmployees(uniqueMapped);
+          if (!selectedEmployeeId && uniqueMapped.length > 0) {
+            setSelectedEmployeeId(uniqueMapped[0].id);
           }
         }
       } catch (err) {
@@ -161,9 +175,10 @@ export function AddLeaveModal({
   }, []);
 
   const filteredEmployees = useMemo(() => {
+    const unique = dedupeEmployees(employees);
     const q = employeeSearch.toLowerCase().trim();
-    if (!q) return employees;
-    return employees.filter(
+    if (!q) return unique;
+    return unique.filter(
       (e) =>
         e.name.toLowerCase().includes(q) ||
         e.employee_code?.toLowerCase().includes(q) ||
@@ -340,8 +355,8 @@ export function AddLeaveModal({
                 <option value="" disabled>
                   {loadingEmployees ? 'Loading staff list…' : '— Select Employee or Therapist —'}
                 </option>
-                {filteredEmployees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
+                {filteredEmployees.map((emp, idx) => (
+                  <option key={`${emp.id}-${idx}`} value={emp.id}>
                     {emp.name} {emp.employee_code ? `(${emp.employee_code})` : ''} — {emp.role_name || emp.department_name}
                   </option>
                 ))}

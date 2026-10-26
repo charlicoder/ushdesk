@@ -9,7 +9,7 @@ import {
   Store, CalendarDays, CheckCircle2, Clock, AlertCircle, X, Layers,
   Timer, Loader2, Crown, Heart, Sparkles, LayoutGrid,
   Scissors, Package, User, Phone, Mail, DollarSign, FileText,
-  ChevronLeft, ChevronRight, UserPlus, CreditCard,
+  ChevronLeft, ChevronRight, UserPlus, CreditCard, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -874,10 +874,12 @@ export function NewBranchBookingModal({
                   <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[100px]">{arrangement.name}</p>
                 )}
                 <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{arrangement.branchName}</p>
-                <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
-                  <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block" />
-                  {isDirect ? 'Direct Booking' : getArrangementType(arrangement.arrangementType).label}
-                </span>
+                {isDirect && (
+                  <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
+                    <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block" />
+                    Direct Booking
+                  </span>
+                )}
               </div>
             </div>
 
@@ -983,7 +985,14 @@ export function NewBranchBookingModal({
                           <Scissors className="h-3.5 w-3.5" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold truncate">{s.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            {checked && selectedServices.length > 1 && (
+                              <span className="rounded bg-primary/15 text-primary px-1.5 py-0.5 text-[10px] font-black shrink-0">
+                                #{form.serviceIds.indexOf(s.id) + 1}
+                              </span>
+                            )}
+                            <p className="text-sm font-semibold truncate">{s.name}</p>
+                          </div>
                           <p className="text-[11px] text-muted-foreground">
                             {s.category && <span className="mr-2">{s.category}</span>}
                             {s.duration_minutes && <span>{s.duration_minutes} min</span>}
@@ -1008,10 +1017,14 @@ export function NewBranchBookingModal({
                     <div key={svc.id} className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
                       <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-primary truncate">
-                          {svc.name}
-                          {selectedServices.length > 1 && <span className="ml-1.5 text-[10px] font-semibold text-muted-foreground">#{idx + 1}</span>}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          {selectedServices.length > 1 && (
+                            <span className="rounded-md bg-primary/15 text-primary px-1.5 py-0.5 text-[10px] font-black shrink-0">
+                              #{idx + 1}
+                            </span>
+                          )}
+                          <p className="text-xs font-bold text-primary truncate">{svc.name}</p>
+                        </div>
                         <p className="text-[10px] text-muted-foreground">
                           {svc.duration_minutes && <span>{svc.duration_minutes} min</span>}
                           {svc.category && <span> · {svc.category}</span>}
@@ -1346,41 +1359,149 @@ export function NewBranchBookingModal({
                 </div>
 
                 {/* Summary card before submitting */}
-                <div className="rounded-2xl border border-border/60 bg-muted/20 divide-y divide-border/40">
-                  {selectedServices.map((svc) => (
-                    <div key={svc.id} className="flex items-center justify-between px-4 py-3">
+                <div className="rounded-2xl border border-border/70 bg-card shadow-xs overflow-hidden divide-y divide-border/40">
+                  {/* Card Header */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40">
+                    <div className="flex items-center gap-2">
+                      <Receipt className="h-4 w-4 text-primary" />
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-foreground">Booking Summary</span>
+                    </div>
+                    <span className="text-[11px] font-bold text-muted-foreground">
+                      {selectedServices.length} {selectedServices.length === 1 ? 'Service' : 'Services'} · {totalDuration} min
+                    </span>
+                  </div>
+
+                  {/* Services List */}
+                  <div className="divide-y divide-border/30">
+                    {selectedServices.map((svc, idx) => (
+                      <div key={svc.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-muted/10 transition">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                            <Scissors className="h-3.5 w-3.5" />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              {selectedServices.length > 1 && (
+                                <span className="rounded bg-primary/10 text-primary px-1.5 py-0.5 text-[9px] font-black shrink-0">
+                                  #{idx + 1}
+                                </span>
+                              )}
+                              <p className="text-xs font-bold text-foreground truncate">{svc.name}</p>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground">
+                              {svc.duration_minutes ?? 60} min{svc.category ? ` · ${svc.category}` : ''}
+                            </p>
+                          </div>
+                        </div>
+                        <p className="text-xs font-extrabold text-foreground shrink-0 ml-3">
+                          {fmtPriceB(svc.arrangement_price ?? svc.base_price)} <span className="text-[10px] font-semibold text-muted-foreground">KWD</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Add-ons List (if any selected) */}
+                  {selectedAddons.length > 0 && (
+                    <div className="bg-primary/[0.02] px-4 py-2.5 border-t border-border/40">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[10px] font-extrabold uppercase tracking-wider text-primary flex items-center gap-1.5">
+                          <Package className="h-3 w-3" />
+                          <span>Add-ons ({selectedAddons.length})</span>
+                        </p>
+                        <span className="text-[11px] font-extrabold text-primary">+{fmtPriceB(addonTotal)} KWD</span>
+                      </div>
+                      <div className="space-y-1">
+                        {selectedAddons.map((addon) => (
+                          <div key={addon.id} className="flex items-center justify-between text-xs py-1 px-2.5 rounded-lg bg-muted/30 border border-border/30">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Sparkles className="h-3 w-3 text-primary shrink-0" />
+                              <span className="text-xs font-medium text-foreground truncate">{addon.name}</span>
+                              {addon.duration_minutes ? (
+                                <span className="text-[10px] text-muted-foreground font-semibold shrink-0">
+                                  (+{addon.duration_minutes} min)
+                                </span>
+                              ) : null}
+                            </div>
+                            <span className="text-xs font-bold text-foreground shrink-0 ml-2">
+                              +{fmtPriceB(addon.price ?? 0)} KWD
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Extra Time (if selected) */}
+                  {form.extraMinutes > 0 && (
+                    <div className="flex items-center justify-between px-4 py-2.5 bg-amber-500/[0.04] border-t border-border/40">
                       <div className="flex items-center gap-2.5">
-                        <Scissors className="h-3.5 w-3.5 text-primary" />
+                        <div className="grid h-6 w-6 place-items-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          <Timer className="h-3.5 w-3.5" />
+                        </div>
                         <div>
-                          <p className="text-xs font-bold text-foreground">{svc.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {svc.category || 'Service'}{svc.duration_minutes ? ` · ${svc.duration_minutes} min` : ''}
-                          </p>
+                          <p className="text-xs font-bold text-foreground">Extra Time</p>
+                          <p className="text-[10px] text-muted-foreground">+{form.extraMinutes} minutes duration</p>
                         </div>
                       </div>
-                      <p className="text-xs font-bold text-foreground">{fmtPriceB(svc.arrangement_price ?? svc.base_price)} KWD</p>
+                      <p className="text-xs font-extrabold text-foreground shrink-0">
+                        +{fmtPriceB(extraMinutesPrice)} <span className="text-[10px] font-semibold text-muted-foreground">KWD</span>
+                      </p>
                     </div>
-                  ))}
+                  )}
 
-                  <div className="flex items-center justify-between px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <User className="h-3.5 w-3.5 text-violet-500" />
-                      <div>
-                        <p className="text-xs font-bold text-foreground">
+                  {/* Customer & Appointment Schedule */}
+                  <div className="flex items-center justify-between px-4 py-2.5 border-t border-border/40 bg-muted/20">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="grid h-6 w-6 place-items-center rounded-lg bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0">
+                        <User className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-foreground truncate">
                           {selectedCustomer ? (([selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) || selectedCustomer.full_name) : 'Customer'}
                         </p>
-                        <p className="text-[11px] text-muted-foreground">{selectedCustomer?.phone_number || 'No phone'}</p>
+                        <p className="text-[11px] text-muted-foreground truncate">{selectedCustomer?.phone_number || 'No phone'}</p>
                       </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right shrink-0 pl-3">
                       <p className="text-xs font-bold text-foreground">{date}</p>
-                      <p className="text-[11px] text-muted-foreground">{timeSlot}</p>
+                      <p className="text-[11px] text-muted-foreground font-semibold">{timeSlot}</p>
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between px-4 py-3 bg-muted/30">
-                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Total Payable</span>
-                    <span className="text-sm font-black text-primary">{fmtPriceB(totalPrice)} KWD</span>
+                  {/* Price Breakdown & Total Payable */}
+                  <div className="px-4 py-3 bg-muted/40 border-t border-border/40 space-y-2">
+                    {(selectedAddons.length > 0 || form.extraMinutes > 0) && (
+                      <div className="space-y-1 pb-2 border-b border-border/40 text-xs">
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>Services Subtotal ({selectedServices.length}):</span>
+                          <span className="font-semibold text-foreground">{fmtPriceB(servicePrice)} KWD</span>
+                        </div>
+                        {selectedAddons.length > 0 && (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Add-ons ({selectedAddons.length}):</span>
+                            <span className="font-semibold text-primary">+{fmtPriceB(addonTotal)} KWD</span>
+                          </div>
+                        )}
+                        {form.extraMinutes > 0 && (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Extra Time (+{form.extraMinutes} min):</span>
+                            <span className="font-semibold text-amber-600 dark:text-amber-400">+{fmtPriceB(extraMinutesPrice)} KWD</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground block">Total Payable</span>
+                        {(selectedAddons.length > 0 || form.extraMinutes > 0) && (
+                          <span className="text-[10px] text-muted-foreground">Includes all services, add-ons and extra time</span>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <span className="text-base font-black text-primary">{fmtPriceB(totalPrice)}</span>
+                        <span className="text-xs font-bold text-primary ml-1">KWD</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

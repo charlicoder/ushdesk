@@ -743,14 +743,23 @@ export default function EmployeeLeavesPage() {
           onSuccess={() => {
             refetch();
           }}
-          fallbackEmployees={leaves.map((l) => ({
-            id: l.employee.id,
-            name: l.employee.name,
-            employee_code: l.employee.employee_code,
-            role_name: l.employee.role_name,
-            department_name: l.employee.department_name,
-            avatar: l.employee.avatar,
-          }))}
+          fallbackEmployees={Array.from(
+            new Map(
+              leaves
+                .filter((l) => l.employee?.id)
+                .map((l) => [
+                  l.employee.id,
+                  {
+                    id: l.employee.id,
+                    name: l.employee.name,
+                    employee_code: l.employee.employee_code,
+                    role_name: l.employee.role_name,
+                    department_name: l.employee.department_name,
+                    avatar: l.employee.avatar,
+                  },
+                ])
+            ).values()
+          )}
         />
       )}
 
