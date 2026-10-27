@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  CreditCard, X, ChevronRight, ChevronLeft, Link2,
+  CreditCard, Banknote, X, ChevronRight, ChevronLeft, Link2,
   CheckCircle2, AlertCircle, Copy, ExternalLink,
   MessageCircle, MessageSquare, RefreshCw, Loader2,
   Sparkles, ShieldCheck, QrCode
@@ -78,7 +78,15 @@ const PROVIDERS: PaymentProvider[] = [
     name: 'Tap Providers',
     gatewayKey: 'tap',
     badge: 'Active',
-    description: 'Deema, KNET Card, VISA / Master Card, Apple Pay',
+    description: 'Deema, KNET Card, Apple Pay',
+    inactive: false,
+  },
+  {
+    id: 'cash',
+    name: 'Cash Payment',
+    gatewayKey: 'cash',
+    badge: 'Active · Cash',
+    description: 'Cash payment received at branch reception',
     inactive: false,
   },
 ];
@@ -98,13 +106,6 @@ const TAP_PROVIDERS: PaymentProvider[] = [
     gatewayKey: 'tap_knet',
     badge: 'KNET',
     description: 'Pay online with a KNET card via payment link',
-  },
-  {
-    id: 'tap_card',
-    name: 'VISA / Master Card',
-    gatewayKey: 'tap_card',
-    badge: 'Card',
-    description: 'Pay with a VISA or Master credit/debit card',
   },
   {
     id: 'tap_applepay',
@@ -132,6 +133,14 @@ export function generateKnetAuthCode(): string {
     ? Math.floor(100000 + Math.random() * 900000)
     : Math.floor(10000 + Math.random() * 90000);
   return `KENT-${num}`;
+}
+
+export function generateCashReceiptCode(): string {
+  const isSixDigit = Math.random() > 0.5;
+  const num = isSixDigit
+    ? Math.floor(100000 + Math.random() * 900000)
+    : Math.floor(10000 + Math.random() * 90000);
+  return `CASH-${num}`;
 }
 
 export function MakePaymentModal({
@@ -197,6 +206,14 @@ export function MakePaymentModal({
   const [knetNotes, setKnetNotes] = useState('');
   const [confirmingKnet, setConfirmingKnet] = useState(false);
   const [knetConfirmed, setKnetConfirmed] = useState(false);
+
+  // Cash states
+  const [cashRefCode, setCashRefCode] = useState(() =>
+    selectedProvider.id === 'cash' ? generateCashReceiptCode() : ''
+  );
+  const [cashNotes, setCashNotes] = useState('');
+  const [confirmingCash, setConfirmingCash] = useState(false);
+  const [cashConfirmed, setCashConfirmed] = useState(false);
 
   // Tap sub-step (choose Deema / KNET / Card / Apple Pay) inside step 1
   const [tapPicking, setTapPicking] = useState<boolean>(
@@ -452,6 +469,138 @@ export function MakePaymentModal({
     }
   };
 
+  const handleConfirmCashPayment = async () => {
+    const id = effectiveTargetId || targetId || (isVoucher ? voucherId : bookingId);
+    if (!id) {
+      setError(`${isVoucher ? 'Voucher' : 'Booking'} ID is missing.`);
+      return;
+    }
+    setConfirmingCash(true);
+    setError(null);
+    try {
+      const paidAtNow = nowWithTimezone();
+      const ref = cashRefCode.trim() || `CASH-${Date.now().toString().slice(-6)}`;
+
+      if (!isVoucher) {
+        // 1. Update booking status
+        const patchPayload = {
+          status: 'confirmed',
+          payment_status: 'success',
+          payment_provider: 'Cash',
+          payment_method: 'cash',
+          payment_gateway: 'Other',
+          transaction_id: ref,
+          reference_id: ref,
+          notes: cashNotes.trim() || 'Paid via Cash at branch',
+          reason: 'Paid via Cash at branch',
+          source: 'ushdesk',
+          payment_data: {
+            transaction_id: ref,
+            reference_id: ref,
+            payment_provider: 'Cash',
+            payment_method: 'cash',
+            payment_gateway: 'Other',
+            total_amount: amount,
+            currency: currency,
+            paid_at: paidAtNow,
+          },
+          payments_data: {
+            is_paid: true,
+            status: 'Paid',
+            transaction_id: ref,
+            reference_id: ref,
+            payment_provider: 'Cash',
+            payment_method: 'cash',
+            payment_gateway: 'Other',
+            paid_at: paidAtNow,
+          },
+        };
+
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${id}/status/`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(patchPayload),
+        });
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.detail || errJson.message || `Failed to update booking status (${res.status})`);
+        }
+
+        // 2. Record in payments service
+        try {
+          await authedFetch('/booknpay/api/v1/payments/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+              booking_id: id,
+              amount: parseFloat(String(amount)) || 0,
+              currency: currency || 'KWD',
+              status: 'success',
+              payment_method: 'cash',
+              payment_provider: 'Cash',
+              payment_gateway: 'Other',
+              payment_through: 'ushdesk',
+              payment_for: 'branch_service',
+              reference_id: ref,
+              transaction_id: ref,
+              invoice_number: invoiceNumber || null,
+              invoice_id: invoiceId || null,
+              notes: cashNotes.trim() || null,
+              paid_at: paidAtNow,
+            }),
+          });
+        } catch (payErr) {
+          console.warn('Payment record warning:', payErr);
+        }
+      } else {
+        // Voucher status update
+        try {
+          await authedFetch(`/booknpay/api/v1/vouchers/${id}/status/`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({
+              status: 'active',
+              payment_status: 'paid',
+              payment_method: 'Cash',
+              payment_gateway: 'Other',
+              reference_id: ref,
+            }),
+          });
+        } catch (vErr) {
+          console.warn('Voucher status warning:', vErr);
+        }
+      }
+
+      setCashConfirmed(true);
+      onPaymentSuccess?.({
+        id: ref,
+        status: 'paid',
+        amount: String(amount),
+        currency: currency || 'KWD',
+        provider: 'Cash',
+        payment_url: null,
+        invoice_id: invoiceId || null,
+        invoice_number: invoiceNumber || null,
+        amount_refunded: '0',
+        target_type: resolvedTargetType,
+        target_id: id,
+        is_expired: false,
+        paid_at: paidAtNow,
+        expires_at: null,
+      });
+
+      setTimeout(() => {
+        onSuccess?.();
+        onClose();
+      }, 1500);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to confirm Cash payment');
+    } finally {
+      setConfirmingCash(false);
+    }
+  };
+
   const handleSyncStatus = async () => {
     const linkId = paymentLink ? (paymentLink.id || paymentLink.payment_id) : null;
     if (!linkId) return;
@@ -644,6 +793,9 @@ export function MakePaymentModal({
                           if (provider.id === 'knet_card' && !knetRefCode) {
                             setKnetRefCode(generateKnetAuthCode());
                           }
+                          if (provider.id === 'cash' && !cashRefCode) {
+                            setCashRefCode(generateCashReceiptCode());
+                          }
                         }}
                         className={cn(
                           'relative flex items-center justify-between gap-3 rounded-2xl border-2 p-3.5 transition select-none',
@@ -758,6 +910,32 @@ export function MakePaymentModal({
                     </h3>
                     <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-1">
                       KNET payment of {amount} {currency} has been recorded and booking is confirmed.
+                    </p>
+                  </div>
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleDone}
+                      className="rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* If cashConfirmed, show success banner directly */}
+              {cashConfirmed && (
+                <div className="rounded-2xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/30 p-6 text-center space-y-3">
+                  <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
+                    <CheckCircle2 className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-emerald-800 dark:text-emerald-200">
+                      Payment Confirmed via Cash!
+                    </h3>
+                    <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-1">
+                      Cash payment of {amount} {currency} has been recorded and {targetType === 'voucher' ? 'voucher' : 'booking'} is confirmed.
                     </p>
                   </div>
                   <div className="pt-2">
@@ -904,8 +1082,88 @@ export function MakePaymentModal({
                 </div>
               )}
 
+              {/* If Cash Payment selected and not yet paid */}
+              {!cashConfirmed && !paymentLink && selectedProvider.id === 'cash' && (
+                <div className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div className="grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
+                      <Banknote className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-extrabold text-foreground">Cash Payment at Reception</h3>
+                      <p className="text-xs text-muted-foreground">Receive physical cash from customer and record payment.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-foreground">
+                        Receipt / Reference Code <span className="text-muted-foreground font-normal">(Auto-generated)</span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setCashRefCode(generateCashReceiptCode())}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                      >
+                        <RefreshCw className="h-3 w-3" />
+                        Regenerate
+                      </button>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={cashRefCode}
+                        onChange={(e) => setCashRefCode(e.target.value)}
+                        placeholder="e.g. CASH-84920"
+                        className="w-full h-10 rounded-xl border border-border bg-muted/20 pl-3 pr-10 text-xs font-mono font-bold outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setCashRefCode(generateCashReceiptCode())}
+                        title="Generate new code"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-primary transition rounded-lg cursor-pointer"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-foreground">
+                      Notes <span className="text-muted-foreground font-normal">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cashNotes}
+                      onChange={(e) => setCashNotes(e.target.value)}
+                      placeholder="e.g. Paid in cash at reception counter"
+                      className="w-full h-10 rounded-xl border border-border bg-muted/20 px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleConfirmCashPayment}
+                    disabled={confirmingCash}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 py-3 text-xs font-extrabold text-white shadow-md transition disabled:opacity-60 cursor-pointer"
+                  >
+                    {confirmingCash ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Confirming Cash Payment…</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Confirm Cash Payment ({amount} {currency})</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
               {/* Standard Payment Link generation for other providers */}
-              {!knetConfirmed && !paymentLink && selectedProvider.id !== 'knet_card' && (
+              {!knetConfirmed && !cashConfirmed && !paymentLink && selectedProvider.id !== 'knet_card' && selectedProvider.id !== 'cash' && (
                 <div className="rounded-2xl border-2 border-dashed border-border/80 p-6 text-center space-y-4 bg-muted/10">
                   <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-primary/10 text-primary">
                     <Link2 className="h-6 w-6" />

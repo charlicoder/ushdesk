@@ -2,6 +2,7 @@ import './globals.css';
 import type { Metadata } from 'next';
 import { Plus_Jakarta_Sans } from 'next/font/google';
 import { Providers } from './providers';
+import { ScrollLock } from '@/components/ui/ScrollLock';
 
 const jakarta = Plus_Jakarta_Sans({
   subsets: ['latin'],
@@ -54,6 +55,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${jakarta.variable} font-sans antialiased`} suppressHydrationWarning>
         <Providers>{children}</Providers>
+        <ScrollLock />
       </body>
     </html>
   );

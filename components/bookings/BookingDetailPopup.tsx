@@ -352,7 +352,7 @@ export const PAYMENT_PROVIDERS = [
     id: 'tap',
     providerOption: 'Deema' as PaymentProviderOption,
     name: 'Tap Providers',
-    description: 'Deema, KNET Card, VISA / Master Card, Apple Pay',
+    description: 'Deema, KNET Card, Apple Pay',
     tag: 'Online Payment',
     tagColor: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
     borderColor: 'border-border',
@@ -361,12 +361,12 @@ export const PAYMENT_PROVIDERS = [
   {
     id: 'other',
     providerOption: 'Other' as PaymentProviderOption,
-    name: 'Other',
-    description: 'Cash or other method',
-    tag: 'Alternative',
-    tagColor: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-    borderColor: 'border-border',
-    checkColor: 'text-primary',
+    name: 'Cash Payment',
+    description: 'Cash payment at reception',
+    tag: 'Cash',
+    tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    borderColor: 'border-emerald-400',
+    checkColor: 'text-emerald-500',
   },
 ] as const;
 
