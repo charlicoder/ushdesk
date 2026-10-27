@@ -349,11 +349,11 @@ export const PAYMENT_PROVIDERS = [
     checkColor: 'text-primary',
   },
   {
-    id: 'deema',
+    id: 'tap',
     providerOption: 'Deema' as PaymentProviderOption,
-    name: 'Deema',
-    description: 'BNPL payment split',
-    tag: 'Installments',
+    name: 'Tap Providers',
+    description: 'Deema, KNET Card, VISA / Master Card, Apple Pay',
+    tag: 'Online Payment',
     tagColor: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
     borderColor: 'border-border',
     checkColor: 'text-primary',
@@ -474,7 +474,7 @@ function PaymentProviderModal({
             onClick={onContinue}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 px-5 py-2.5 text-xs font-bold text-white shadow-md transition cursor-pointer active:scale-95"
           >
-            <span>{selected === 'paymentlink' ? 'Continue to Create Payment Link' : 'Continue to Reference & Receipt'}</span>
+            <span>{selected === 'paymentlink' || selected === 'tap' ? 'Continue to Create Payment Link' : 'Continue to Reference & Receipt'}</span>
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -1795,7 +1795,7 @@ export function BookingDetailPopup({
           onContinue={() => {
             setPaymentError(null);
             setShowPaymentModal(false);
-            if (selectedProviderId === 'paymentlink') {
+            if (selectedProviderId === 'paymentlink' || selectedProviderId === 'tap') {
               setShowMakePaymentModal(true);
             } else {
               setShowPaymentRefModal(true);
@@ -1808,8 +1808,8 @@ export function BookingDetailPopup({
       {showMakePaymentModal && (
         <MakePaymentModal
           isOpen={showMakePaymentModal}
-          initialStep={2}
-          initialProviderId="myfatoorah"
+          initialStep={selectedProviderId === 'tap' ? 1 : 2}
+          initialProviderId={selectedProviderId === 'tap' ? 'tap' : 'myfatoorah'}
           onClose={() => setShowMakePaymentModal(false)}
           bookingId={booking.id}
           bookingNumber={booking.booking_number}

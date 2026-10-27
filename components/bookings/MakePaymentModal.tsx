@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CreditCard, X, ChevronRight, ChevronLeft, Link2,
   CheckCircle2, AlertCircle, Copy, ExternalLink,
@@ -74,22 +74,56 @@ const PROVIDERS: PaymentProvider[] = [
     inactive: false,
   },
   {
-    id: 'deema',
-    name: 'Deema',
-    gatewayKey: 'deema',
-    badge: 'Inactive',
-    description: 'BNPL payment split',
-    inactive: true,
-  },
-  {
-    id: 'other',
-    name: 'Other',
-    gatewayKey: 'other',
-    badge: 'Inactive',
-    description: 'Cash or alternative method',
-    inactive: true,
+    id: 'tap',
+    name: 'Tap Providers',
+    gatewayKey: 'tap',
+    badge: 'Active',
+    description: 'Deema, KNET Card, VISA / Master Card, Apple Pay',
+    inactive: false,
   },
 ];
+
+// Second step of the "Tap Providers" group. Each entry maps to a backend gateway.
+const TAP_PROVIDERS: PaymentProvider[] = [
+  {
+    id: 'tap_deema',
+    name: 'Deema',
+    gatewayKey: 'deema',
+    badge: 'BNPL',
+    description: 'Buy now, pay later - Deema installment payment link',
+  },
+  {
+    id: 'tap_knet',
+    name: 'KNET Card',
+    gatewayKey: 'tap_knet',
+    badge: 'KNET',
+    description: 'Pay online with a KNET card via payment link',
+  },
+  {
+    id: 'tap_card',
+    name: 'VISA / Master Card',
+    gatewayKey: 'tap_card',
+    badge: 'Card',
+    description: 'Pay with a VISA or Master credit/debit card',
+  },
+  {
+    id: 'tap_applepay',
+    name: 'Apple Pay',
+    gatewayKey: 'tap_applepay',
+    badge: 'Wallet',
+    description: 'Pay with Apple Pay (supported devices)',
+  },
+];
+
+const OPEN_LINK_STATUSES = ['created', 'pending', 'active'];
+
+function providerForGateway(gateway?: string | null): PaymentProvider | null {
+  const g = (gateway || '').toLowerCase();
+  if (!g) return null;
+  const tap = TAP_PROVIDERS.find((p) => p.gatewayKey === g);
+  if (tap) return tap;
+  return PROVIDERS.find((p) => p.gatewayKey === g && p.id !== 'tap') || null;
+}
 
 export function generateKnetAuthCode(): string {
   // Generate random 5 to 6 digits (e.g. KENT-84920 or KENT-984210)
@@ -129,14 +163,14 @@ export function MakePaymentModal({
   const [step, setStep] = useState<1 | 2>(initialStep);
   const [selectedProvider, setSelectedProvider] = useState<PaymentProvider>(() => {
     if (initialProviderId) {
-      const match = PROVIDERS.find(
+      const match = [...PROVIDERS, ...TAP_PROVIDERS].find(
         (p) =>
           !p.inactive &&
           (p.id.toLowerCase() === initialProviderId.toLowerCase() ||
             p.gatewayKey.toLowerCase() === initialProviderId.toLowerCase() ||
             p.name.toLowerCase() === initialProviderId.toLowerCase())
       );
-      if (match) return match;
+      if (match) return match.id === 'tap' ? TAP_PROVIDERS[0] : match;
     }
     return PROVIDERS.find((p) => p.id === 'knet_card' && !p.inactive) || PROVIDERS[0];
   });
@@ -164,10 +198,70 @@ export function MakePaymentModal({
   const [confirmingKnet, setConfirmingKnet] = useState(false);
   const [knetConfirmed, setKnetConfirmed] = useState(false);
 
+  // Tap sub-step (choose Deema / KNET / Card / Apple Pay) inside step 1
+  const [tapPicking, setTapPicking] = useState<boolean>(
+    () => initialStep !== 2 && initialProviderId?.toLowerCase() === 'tap'
+  );
+  // Currently open (unexpired) payment link for this booking/voucher, if any.
+  const [activeLink, setActiveLink] = useState<PaymentLink | null>(null);
+  const [cancellingLink, setCancellingLink] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !effectiveTargetId) return;
+    let cancelled = false;
+    paymentLinksApi
+      .list(resolvedTargetType, effectiveTargetId)
+      .then((links) => {
+        if (cancelled) return;
+        const open = (links || []).find(
+          (l) =>
+            OPEN_LINK_STATUSES.includes(String(l.status).toLowerCase()) &&
+            !l.is_expired &&
+            Boolean(l.payment_url)
+        );
+        setActiveLink(open || null);
+      })
+      .catch(() => {
+        /* non-blocking: backend still enforces the single active link rule */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, effectiveTargetId, resolvedTargetType]);
+
   if (!isOpen) return null;
+
+  const handleContinueExistingLink = () => {
+    if (!activeLink) return;
+    const prov = providerForGateway(activeLink.gateway);
+    if (prov) setSelectedProvider(prov);
+    setPaymentLink(activeLink);
+    setTapPicking(false);
+    setStep(2);
+  };
+
+  const handleCancelActiveLink = async () => {
+    if (!activeLink) return;
+    setCancellingLink(true);
+    setError(null);
+    try {
+      await paymentLinksApi.cancel(activeLink.id);
+      setActiveLink(null);
+      setPaymentLink(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to cancel payment link');
+    } finally {
+      setCancellingLink(false);
+    }
+  };
 
   const handleNext = async () => {
     setError(null);
+    if (selectedProvider.id === 'tap' && !tapPicking) {
+      setSelectedProvider(TAP_PROVIDERS[0]);
+      setTapPicking(true);
+      return;
+    }
     if (onBeforeNext) {
       setLoading(true);
       try {
@@ -192,6 +286,7 @@ export function MakePaymentModal({
   };
 
   const handleBack = () => {
+    if (selectedProvider.id.startsWith('tap_')) setTapPicking(true);
     setStep(1);
     setError(null);
   };
@@ -505,12 +600,41 @@ export function MakePaymentModal({
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-foreground block mb-2">
-                  Select Payment Provider <span className="text-destructive">*</span>
+                  {tapPicking ? 'Select Tap Provider' : 'Select Payment Provider'} <span className="text-destructive">*</span>
                 </label>
+                {activeLink && (
+                  <div className="mb-3 rounded-2xl border border-amber-300/50 bg-amber-50/70 dark:bg-amber-950/30 p-3 text-xs space-y-2">
+                    <p className="font-bold text-amber-800 dark:text-amber-200">
+                      An active {activeLink.provider || activeLink.gateway} payment link already exists.
+                    </p>
+                    <p className="text-amber-700/90 dark:text-amber-300/80">
+                      Other payment options are blocked until this link expires or is cancelled.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleContinueExistingLink}
+                        className="rounded-lg bg-primary px-3 py-1.5 font-bold text-white cursor-pointer"
+                      >
+                        View Active Link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCancelActiveLink}
+                        disabled={cancellingLink}
+                        className="rounded-lg border border-destructive/40 px-3 py-1.5 font-bold text-destructive cursor-pointer disabled:opacity-60"
+                      >
+                        {cancellingLink ? 'Cancelling...' : 'Cancel Link'}
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="space-y-2.5">
-                  {PROVIDERS.map((provider) => {
-                    const isSelected = selectedProvider.id === provider.id;
-                    const isInactive = Boolean(provider.inactive);
+                  {(tapPicking ? TAP_PROVIDERS : PROVIDERS).map((provider) => {
+                    const isSelected =
+                      selectedProvider.id === provider.id ||
+                      (provider.id === 'tap' && selectedProvider.id.startsWith('tap_'));
+                    const isInactive = Boolean(provider.inactive) || Boolean(activeLink);
                     return (
                       <div
                         key={provider.id}
@@ -563,7 +687,7 @@ export function MakePaymentModal({
                         {isSelected && !isInactive && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
                         {isInactive && (
                           <span className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-wider shrink-0">
-                            Inactive
+                            {activeLink ? 'Blocked' : 'Inactive'}
                           </span>
                         )}
                       </div>
@@ -575,15 +699,15 @@ export function MakePaymentModal({
               <div className="pt-2 flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={() => (tapPicking ? setTapPicking(false) : onClose())}
                   className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition cursor-pointer"
                 >
-                  Cancel
+                  {tapPicking ? 'Back' : 'Cancel'}
                 </button>
                 <button
                   type="button"
                   onClick={handleNext}
-                  disabled={loading}
+                  disabled={loading || Boolean(activeLink)}
                   className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow hover:bg-primary/90 transition cursor-pointer disabled:opacity-60"
                 >
                   {loading ? (
@@ -611,7 +735,7 @@ export function MakePaymentModal({
                   <span className="text-muted-foreground">Provider:</span>
                   <span className="font-bold text-foreground">{selectedProvider.name}</span>
                 </div>
-                {initialStep !== 2 && (
+                {initialStep !== 2 && !paymentLink && (
                   <button
                     type="button"
                     onClick={handleBack}
