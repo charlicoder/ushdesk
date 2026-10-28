@@ -4,7 +4,7 @@ import { kuwaitDateString } from '@/lib/datetime';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   User, CheckCircle2, AlertCircle, Loader2, X, Search,
-  Sparkles, Calendar, Clock, MapPin, Home, RefreshCw, UserCheck
+  Sparkles, Calendar, Clock, MapPin, Home, RefreshCw, UserCheck, Heart
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -16,8 +16,10 @@ export interface ChangeTherapistModalProps {
   bookingId: string;
   initialBooking?: AnyRecord | null;
   currentTherapistName?: string;
+  secondaryTherapistName?: string;
+  targetSlot?: 'primary' | 'secondary';
   onClose: () => void;
-  onSuccess: (updatedTherapist: AnyRecord) => void;
+  onSuccess: (updatedTherapist: AnyRecord, targetSlot?: 'primary' | 'secondary', freshBooking?: AnyRecord) => void;
 }
 
 export interface TherapistSpecialty {
@@ -124,9 +126,12 @@ export function ChangeTherapistModal({
   bookingId,
   initialBooking,
   currentTherapistName,
+  secondaryTherapistName,
+  targetSlot = 'primary',
   onClose,
   onSuccess,
 }: ChangeTherapistModalProps) {
+  const [activeSlot, setActiveSlot] = useState<'primary' | 'secondary'>(targetSlot);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [therapists, setTherapists] = useState<ApiTherapist[]>([]);
@@ -135,14 +140,43 @@ export function ChangeTherapistModal({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (targetSlot) setActiveSlot(targetSlot);
+  }, [targetSlot]);
+
   // Extract raw booking and related fields
   const raw = useMemo(() => {
     return (initialBooking?.raw ?? initialBooking ?? {}) as AnyRecord;
   }, [initialBooking]);
 
   const sd = (raw.service_data ?? {}) as AnyRecord;
-  const sad = (raw.service_arrangement_data ?? {}) as AnyRecord;
+  const sad = (raw.service_arrangement_data ?? raw.arrangement ?? raw.service_arrangement ?? {}) as AnyRecord;
   const td = (raw.therapist_data ?? {}) as AnyRecord;
+  const std = (raw.secondary_therapist_data ?? {}) as AnyRecord;
+
+  // Detect whether this booking is for a couple/double room arrangement
+  const isDualTherapistBooking = useMemo(() => {
+    const arrType = String(
+      sad.arrangement_type ||
+      raw.arrangement_type ||
+      (raw.service_arrangement as AnyRecord)?.arrangement_type ||
+      ''
+    ).toLowerCase().trim().replace(/[\s-]+/g, '_');
+    const arrName = String(
+      sad.arrangement_name ||
+      raw.arrangement_name ||
+      initialBooking?.arrangement_name ||
+      ''
+    ).toLowerCase();
+    return (
+      arrType === 'couple_room' ||
+      arrType === 'double_room' ||
+      arrName.includes('couple') ||
+      arrName.includes('double') ||
+      Boolean(raw.secondary_therapist_id) ||
+      Boolean(raw.secondary_therapist_data)
+    );
+  }, [sad, raw, initialBooking]);
 
   const serviceId = useMemo(() => {
     return (
@@ -190,8 +224,8 @@ export function ChangeTherapistModal({
     return `[${timeslots.join(', ')}]`;
   }, [timeslots]);
 
-  // Current therapist ID for comparison
-  const currentTherapistId = useMemo(() => {
+  // Primary and secondary therapist IDs
+  const primaryTherapistId = useMemo(() => {
     return String(
       raw.therapist_id ||
       td.id ||
@@ -202,7 +236,18 @@ export function ChangeTherapistModal({
     );
   }, [raw, td]);
 
-  const resolvedCurrentName = useMemo(() => {
+  const secondaryTherapistId = useMemo(() => {
+    return String(
+      raw.secondary_therapist_id ||
+      std.id ||
+      std.therapist_id ||
+      std.employee_id ||
+      (raw.secondary_therapist as AnyRecord)?.id ||
+      ''
+    );
+  }, [raw, std]);
+
+  const resolvedPrimaryName = useMemo(() => {
     return (
       currentTherapistName ||
       td.therapist_name ||
@@ -212,6 +257,23 @@ export function ChangeTherapistModal({
       '—'
     );
   }, [currentTherapistName, td, raw]);
+
+  const resolvedSecondaryName = useMemo(() => {
+    return (
+      secondaryTherapistName ||
+      std.therapist_name ||
+      std.name ||
+      std.full_name ||
+      (raw.secondary_therapist as AnyRecord)?.name ||
+      ''
+    );
+  }, [secondaryTherapistName, std, raw]);
+
+  const currentTherapistId = activeSlot === 'secondary' ? secondaryTherapistId : primaryTherapistId;
+  const otherTherapistId = activeSlot === 'secondary' ? primaryTherapistId : secondaryTherapistId;
+  const resolvedCurrentName = activeSlot === 'secondary'
+    ? (resolvedSecondaryName || 'Not assigned')
+    : resolvedPrimaryName;
 
   // Fetch available therapists from availability-for-arragement endpoint
   const fetchTherapists = useCallback(async () => {
@@ -249,9 +311,10 @@ export function ChangeTherapistModal({
 
       setTherapists(list);
 
-      // Pre-select current therapist if present in the available list
-      if (currentTherapistId) {
-        const match = list.find((t) => t.id === currentTherapistId || t.employee_id === currentTherapistId);
+      // Pre-select current therapist for active slot if present
+      const curId = activeSlot === 'secondary' ? secondaryTherapistId : primaryTherapistId;
+      if (curId) {
+        const match = list.find((t) => t.id === curId || t.employee_id === curId);
         if (match) setSelectedTherapistId(match.id);
       }
     } catch (err: unknown) {
@@ -260,11 +323,24 @@ export function ChangeTherapistModal({
     } finally {
       setLoading(false);
     }
-  }, [serviceId, serviceArrangementId, appointmentDate, timeslotsQueryParam, currentTherapistId]);
+  }, [serviceId, serviceArrangementId, appointmentDate, timeslotsQueryParam, activeSlot, secondaryTherapistId, primaryTherapistId]);
 
   useEffect(() => {
     fetchTherapists();
   }, [fetchTherapists]);
+
+  // Synchronize selected therapist when switching between primary and secondary slot
+  useEffect(() => {
+    const curId = activeSlot === 'secondary' ? secondaryTherapistId : primaryTherapistId;
+    if (curId && therapists.length > 0) {
+      const match = therapists.find((t) => t.id === curId || t.employee_id === curId);
+      if (match) {
+        setSelectedTherapistId(match.id);
+        return;
+      }
+    }
+    setSelectedTherapistId('');
+  }, [activeSlot, secondaryTherapistId, primaryTherapistId, therapists]);
 
   // Filter therapists by search query
   const filteredTherapists = useMemo(() => {
@@ -302,7 +378,7 @@ export function ChangeTherapistModal({
         'Therapist'
       );
 
-      // Pass all available therapist data inside therapist_data
+      // Pass all available therapist data inside therapist_data / secondary_therapist_data
       const therapistData: AnyRecord = {
         ...selectedTherapist,
         id: therapistId,
@@ -311,7 +387,10 @@ export function ChangeTherapistModal({
         name: therapistName,
       };
 
-      const payload = {
+      const payload = activeSlot === 'secondary' ? {
+        secondary_therapist_id: therapistId,
+        secondary_therapist_data: therapistData,
+      } : {
         therapist_id: therapistId,
         therapist_data: therapistData,
       };
@@ -331,7 +410,7 @@ export function ChangeTherapistModal({
       }
 
       const resData = await res.json().catch(() => ({}));
-      onSuccess(resData?.data || therapistData);
+      onSuccess(therapistData, activeSlot, resData?.data);
       onClose();
     } catch (err: unknown) {
       console.error('[ChangeTherapistModal] Error updating therapist:', err);
@@ -348,12 +427,23 @@ export function ChangeTherapistModal({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border/50 px-6 py-4 bg-muted/20">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary">
-              <UserCheck className="h-5 w-5" />
+            <div className={cn(
+              "grid h-10 w-10 place-items-center rounded-2xl",
+              activeSlot === 'secondary' ? "bg-rose-500/10 text-rose-600 dark:text-rose-400" : "bg-primary/10 text-primary"
+            )}>
+              {activeSlot === 'secondary' ? <Heart className="h-5 w-5 fill-rose-500/20" /> : <UserCheck className="h-5 w-5" />}
             </div>
             <div>
-              <h2 className="text-base font-bold text-foreground">Change Therapist</h2>
-              <p className="text-xs text-muted-foreground">Select an available therapist for this booking</p>
+              <h2 className="text-base font-bold text-foreground">
+                {isDualTherapistBooking
+                  ? (activeSlot === 'secondary' ? 'Change Therapist 2 (Secondary)' : 'Change Therapist 1 (Primary)')
+                  : 'Change Therapist'}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                {isDualTherapistBooking
+                  ? (activeSlot === 'secondary' ? 'Select an available 2nd therapist for this couple room' : 'Select an available primary therapist for this booking')
+                  : 'Select an available therapist for this booking'}
+              </p>
             </div>
           </div>
           <button
@@ -364,6 +454,56 @@ export function ChangeTherapistModal({
             <X className="h-4 w-4" />
           </button>
         </div>
+
+        {/* Slot Switcher Tab for Couple Room bookings */}
+        {isDualTherapistBooking && (
+          <div className="px-6 py-2.5 bg-muted/15 border-b border-border/40">
+            <div className="flex items-center gap-2 p-1 bg-muted/50 rounded-2xl border border-border/50">
+              <button
+                type="button"
+                onClick={() => setActiveSlot('primary')}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer",
+                  activeSlot === 'primary'
+                    ? "bg-primary text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                )}
+              >
+                <User className="h-3.5 w-3.5" />
+                <span>Therapist 1</span>
+                {resolvedPrimaryName && resolvedPrimaryName !== '—' && (
+                  <span className={cn(
+                    "text-[10px] px-1.5 py-0.5 rounded-full font-medium truncate max-w-[100px]",
+                    activeSlot === 'primary' ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                  )}>
+                    {resolvedPrimaryName}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSlot('secondary')}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition cursor-pointer",
+                  activeSlot === 'secondary'
+                    ? "bg-rose-500 text-white shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+                )}
+              >
+                <Heart className="h-3.5 w-3.5" />
+                <span>Therapist 2</span>
+                {resolvedSecondaryName && (
+                  <span className={cn(
+                    "text-[10px] px-1.5 py-0.5 rounded-full font-medium truncate max-w-[100px]",
+                    activeSlot === 'secondary' ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
+                  )}>
+                    {resolvedSecondaryName}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Info Banner */}
         <div className="bg-muted/30 border-b border-border/40 px-6 py-3 text-xs space-y-1">
@@ -390,7 +530,7 @@ export function ChangeTherapistModal({
             )}
           </div>
           <div className="pt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span>Currently Assigned:</span>
+            <span>Currently Assigned {isDualTherapistBooking ? `(Therapist ${activeSlot === 'secondary' ? '2' : '1'}):` : ':'}</span>
             <span className="font-semibold text-foreground">{resolvedCurrentName}</span>
           </div>
         </div>
@@ -448,17 +588,28 @@ export function ChangeTherapistModal({
                   const tId = t.id;
                   const isSelected = selectedTherapistId === tId;
                   const isCurrent = tId === currentTherapistId || (t.employee_id && t.employee_id === currentTherapistId);
+                  const isOtherAssigned = Boolean(
+                    isDualTherapistBooking &&
+                    otherTherapistId &&
+                    (tId === otherTherapistId || (t.employee_id && t.employee_id === otherTherapistId))
+                  );
                   const fullName = t.full_name || `${t.first_name || ''} ${t.last_name || ''}`.trim() || t.name || 'Therapist';
 
                   return (
                     <div
                       key={tId}
-                      onClick={() => setSelectedTherapistId(tId)}
+                      onClick={() => {
+                        if (!isOtherAssigned) setSelectedTherapistId(tId);
+                      }}
                       className={cn(
-                        'group relative flex items-start gap-3.5 rounded-2xl border p-3.5 transition-all cursor-pointer select-none',
-                        isSelected
-                          ? 'border-primary bg-primary/5 shadow-sm ring-1 ring-primary'
-                          : 'border-border/60 bg-card hover:bg-muted/30 hover:border-border'
+                        'group relative flex items-start gap-3.5 rounded-2xl border p-3.5 transition-all select-none',
+                        isOtherAssigned
+                          ? 'opacity-60 bg-muted/20 border-border/40 cursor-not-allowed'
+                          : isSelected
+                          ? (activeSlot === 'secondary'
+                              ? 'border-rose-500 bg-rose-500/5 shadow-sm ring-1 ring-rose-500 cursor-pointer'
+                              : 'border-primary bg-primary/5 shadow-sm ring-1 ring-primary cursor-pointer')
+                          : 'border-border/60 bg-card hover:bg-muted/30 hover:border-border cursor-pointer'
                       )}
                     >
                       {/* Avatar */}
@@ -475,7 +626,10 @@ export function ChangeTherapistModal({
                             }}
                           />
                         ) : (
-                          <div className="grid h-full w-full place-items-center bg-primary/10 text-primary font-bold text-xs">
+                          <div className={cn(
+                            "grid h-full w-full place-items-center font-bold text-xs",
+                            activeSlot === 'secondary' ? "bg-rose-500/10 text-rose-600 dark:text-rose-400" : "bg-primary/10 text-primary"
+                          )}>
                             {fullName.slice(0, 2).toUpperCase()}
                           </div>
                         )}
@@ -487,7 +641,12 @@ export function ChangeTherapistModal({
                           <h4 className="text-xs font-bold text-foreground leading-tight">{fullName}</h4>
                           {isCurrent && (
                             <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                              Current
+                              Current {isDualTherapistBooking ? `(Therapist ${activeSlot === 'secondary' ? '2' : '1'})` : ''}
+                            </span>
+                          )}
+                          {isOtherAssigned && (
+                            <span className="rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 text-[10px] font-bold">
+                              Assigned as Therapist {activeSlot === 'secondary' ? '1' : '2'}
                             </span>
                           )}
                           {t.employee_code && (
@@ -523,8 +682,10 @@ export function ChangeTherapistModal({
                         <div
                           className={cn(
                             'h-5 w-5 rounded-full border flex items-center justify-center transition-colors',
-                            isSelected
-                              ? 'border-primary bg-primary text-white shadow-sm'
+                            isOtherAssigned
+                              ? 'border-muted bg-muted/40 text-muted-foreground'
+                              : isSelected
+                              ? (activeSlot === 'secondary' ? 'border-rose-500 bg-rose-500 text-white shadow-sm' : 'border-primary bg-primary text-white shadow-sm')
                               : 'border-muted-foreground/30 group-hover:border-muted-foreground/60'
                           )}
                         >
@@ -567,6 +728,8 @@ export function ChangeTherapistModal({
                 'inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer',
                 submitting
                   ? 'bg-muted/70 text-muted-foreground/50 border border-border/60 cursor-not-allowed'
+                  : activeSlot === 'secondary'
+                  ? 'bg-rose-500 hover:bg-rose-600 active:scale-[0.98]'
                   : 'bg-primary hover:bg-primary/90 active:scale-[0.98]'
               )}
             >
@@ -578,7 +741,9 @@ export function ChangeTherapistModal({
               ) : (
                 <>
                   <CheckCircle2 className="h-4 w-4" />
-                  Update Therapist
+                  {isDualTherapistBooking
+                    ? (activeSlot === 'secondary' ? 'Update Therapist 2' : 'Update Therapist 1')
+                    : 'Update Therapist'}
                 </>
               )}
             </button>

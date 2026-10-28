@@ -74,45 +74,20 @@ const PROVIDERS: PaymentProvider[] = [
     inactive: false,
   },
   {
-    id: 'tap',
-    name: 'Tap Providers',
-    gatewayKey: 'tap',
-    badge: 'Active',
-    description: 'Deema, KNET Card, Apple Pay',
-    inactive: false,
-  },
-  {
-    id: 'cash',
-    name: 'Cash Payment',
-    gatewayKey: 'cash',
-    badge: 'Active · Cash',
-    description: 'Cash payment received at branch reception',
-    inactive: false,
-  },
-];
-
-// Second step of the "Tap Providers" group. Each entry maps to a backend gateway.
-const TAP_PROVIDERS: PaymentProvider[] = [
-  {
-    id: 'tap_deema',
+    id: 'deema',
     name: 'Deema',
     gatewayKey: 'deema',
-    badge: 'BNPL',
+    badge: 'Active · BNPL',
     description: 'Buy now, pay later - Deema installment payment link',
+    inactive: false,
   },
   {
-    id: 'tap_knet',
-    name: 'KNET Card',
-    gatewayKey: 'tap_knet',
-    badge: 'KNET',
-    description: 'Pay online with a KNET card via payment link',
-  },
-  {
-    id: 'tap_applepay',
-    name: 'Apple Pay',
-    gatewayKey: 'tap_applepay',
-    badge: 'Wallet',
-    description: 'Pay with Apple Pay (supported devices)',
+    id: 'boubyan_link',
+    name: 'Boubyan Link',
+    gatewayKey: 'boubyan_link',
+    badge: 'Active · Link',
+    description: 'Pay via Boubyan Link and enter reference number',
+    inactive: false,
   },
 ];
 
@@ -121,9 +96,13 @@ const OPEN_LINK_STATUSES = ['created', 'pending', 'active'];
 function providerForGateway(gateway?: string | null): PaymentProvider | null {
   const g = (gateway || '').toLowerCase();
   if (!g) return null;
-  const tap = TAP_PROVIDERS.find((p) => p.gatewayKey === g);
-  if (tap) return tap;
-  return PROVIDERS.find((p) => p.gatewayKey === g && p.id !== 'tap') || null;
+  if (g === 'tap' || g === 'tap_deema' || g === 'deema') {
+    return PROVIDERS.find((p) => p.id === 'deema') || null;
+  }
+  if (g === 'cash' || g === 'boubyan' || g === 'boubyan_link') {
+    return PROVIDERS.find((p) => p.id === 'boubyan_link') || null;
+  }
+  return PROVIDERS.find((p) => p.gatewayKey === g) || null;
 }
 
 export function generateKnetAuthCode(): string {
@@ -172,14 +151,23 @@ export function MakePaymentModal({
   const [step, setStep] = useState<1 | 2>(initialStep);
   const [selectedProvider, setSelectedProvider] = useState<PaymentProvider>(() => {
     if (initialProviderId) {
-      const match = [...PROVIDERS, ...TAP_PROVIDERS].find(
+      const normalizedInit = initialProviderId.toLowerCase();
+      if (normalizedInit === 'tap' || normalizedInit === 'tap_deema' || normalizedInit === 'deema') {
+        const deemaProv = PROVIDERS.find((p) => p.id === 'deema' && !p.inactive);
+        if (deemaProv) return deemaProv;
+      }
+      if (normalizedInit === 'cash' || normalizedInit === 'boubyan' || normalizedInit === 'boubyan_link' || normalizedInit === 'boubyan link') {
+        const boubyanProv = PROVIDERS.find((p) => p.id === 'boubyan_link' && !p.inactive);
+        if (boubyanProv) return boubyanProv;
+      }
+      const match = PROVIDERS.find(
         (p) =>
           !p.inactive &&
-          (p.id.toLowerCase() === initialProviderId.toLowerCase() ||
-            p.gatewayKey.toLowerCase() === initialProviderId.toLowerCase() ||
-            p.name.toLowerCase() === initialProviderId.toLowerCase())
+          (p.id.toLowerCase() === normalizedInit ||
+            p.gatewayKey.toLowerCase() === normalizedInit ||
+            p.name.toLowerCase() === normalizedInit)
       );
-      if (match) return match.id === 'tap' ? TAP_PROVIDERS[0] : match;
+      if (match) return match;
     }
     return PROVIDERS.find((p) => p.id === 'knet_card' && !p.inactive) || PROVIDERS[0];
   });
@@ -207,18 +195,12 @@ export function MakePaymentModal({
   const [confirmingKnet, setConfirmingKnet] = useState(false);
   const [knetConfirmed, setKnetConfirmed] = useState(false);
 
-  // Cash states
-  const [cashRefCode, setCashRefCode] = useState(() =>
-    selectedProvider.id === 'cash' ? generateCashReceiptCode() : ''
-  );
+  // Boubyan Link reference states
+  const [cashRefCode, setCashRefCode] = useState('');
   const [cashNotes, setCashNotes] = useState('');
   const [confirmingCash, setConfirmingCash] = useState(false);
   const [cashConfirmed, setCashConfirmed] = useState(false);
 
-  // Tap sub-step (choose Deema / KNET / Card / Apple Pay) inside step 1
-  const [tapPicking, setTapPicking] = useState<boolean>(
-    () => initialStep !== 2 && initialProviderId?.toLowerCase() === 'tap'
-  );
   // Currently open (unexpired) payment link for this booking/voucher, if any.
   const [activeLink, setActiveLink] = useState<PaymentLink | null>(null);
   const [cancellingLink, setCancellingLink] = useState(false);
@@ -253,7 +235,6 @@ export function MakePaymentModal({
     const prov = providerForGateway(activeLink.gateway);
     if (prov) setSelectedProvider(prov);
     setPaymentLink(activeLink);
-    setTapPicking(false);
     setStep(2);
   };
 
@@ -274,11 +255,6 @@ export function MakePaymentModal({
 
   const handleNext = async () => {
     setError(null);
-    if (selectedProvider.id === 'tap' && !tapPicking) {
-      setSelectedProvider(TAP_PROVIDERS[0]);
-      setTapPicking(true);
-      return;
-    }
     if (onBeforeNext) {
       setLoading(true);
       try {
@@ -303,7 +279,6 @@ export function MakePaymentModal({
   };
 
   const handleBack = () => {
-    if (selectedProvider.id.startsWith('tap_')) setTapPicking(true);
     setStep(1);
     setError(null);
   };
@@ -475,30 +450,34 @@ export function MakePaymentModal({
       setError(`${isVoucher ? 'Voucher' : 'Booking'} ID is missing.`);
       return;
     }
+    const ref = cashRefCode.trim();
+    if (!ref) {
+      setError('Please enter a reference number.');
+      return;
+    }
     setConfirmingCash(true);
     setError(null);
     try {
       const paidAtNow = nowWithTimezone();
-      const ref = cashRefCode.trim() || `CASH-${Date.now().toString().slice(-6)}`;
 
       if (!isVoucher) {
         // 1. Update booking status
         const patchPayload = {
           status: 'confirmed',
           payment_status: 'success',
-          payment_provider: 'Cash',
-          payment_method: 'cash',
+          payment_provider: 'Boubyan Link',
+          payment_method: 'Boubyan Link',
           payment_gateway: 'Other',
           transaction_id: ref,
           reference_id: ref,
-          notes: cashNotes.trim() || 'Paid via Cash at branch',
-          reason: 'Paid via Cash at branch',
+          notes: cashNotes.trim() || 'Paid via Boubyan Link',
+          reason: 'Paid via Boubyan Link',
           source: 'ushdesk',
           payment_data: {
             transaction_id: ref,
             reference_id: ref,
-            payment_provider: 'Cash',
-            payment_method: 'cash',
+            payment_provider: 'Boubyan Link',
+            payment_method: 'Boubyan Link',
             payment_gateway: 'Other',
             total_amount: amount,
             currency: currency,
@@ -509,8 +488,8 @@ export function MakePaymentModal({
             status: 'Paid',
             transaction_id: ref,
             reference_id: ref,
-            payment_provider: 'Cash',
-            payment_method: 'cash',
+            payment_provider: 'Boubyan Link',
+            payment_method: 'Boubyan Link',
             payment_gateway: 'Other',
             paid_at: paidAtNow,
           },
@@ -537,8 +516,8 @@ export function MakePaymentModal({
               amount: parseFloat(String(amount)) || 0,
               currency: currency || 'KWD',
               status: 'success',
-              payment_method: 'cash',
-              payment_provider: 'Cash',
+              payment_method: 'payment_link',
+              payment_provider: 'Boubyan Link',
               payment_gateway: 'Other',
               payment_through: 'ushdesk',
               payment_for: 'branch_service',
@@ -562,7 +541,7 @@ export function MakePaymentModal({
             body: JSON.stringify({
               status: 'active',
               payment_status: 'paid',
-              payment_method: 'Cash',
+              payment_method: 'Boubyan Link',
               payment_gateway: 'Other',
               reference_id: ref,
             }),
@@ -578,7 +557,7 @@ export function MakePaymentModal({
         status: 'paid',
         amount: String(amount),
         currency: currency || 'KWD',
-        provider: 'Cash',
+        provider: 'Boubyan Link',
         payment_url: null,
         invoice_id: invoiceId || null,
         invoice_number: invoiceNumber || null,
@@ -595,7 +574,7 @@ export function MakePaymentModal({
         onClose();
       }, 1500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to confirm Cash payment');
+      setError(err instanceof Error ? err.message : 'Failed to confirm Boubyan Link payment');
     } finally {
       setConfirmingCash(false);
     }
@@ -677,7 +656,7 @@ export function MakePaymentModal({
     }
   };
 
-  const isPaid = knetConfirmed || paymentLink?.status === 'paid' || paymentLink?.status === 'success';
+  const isPaid = knetConfirmed || cashConfirmed || paymentLink?.status === 'paid' || paymentLink?.status === 'success';
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -700,6 +679,10 @@ export function MakePaymentModal({
               <p className="text-[11px] text-muted-foreground font-medium">
                 {step === 1
                   ? 'Step 1: Select Payment Provider'
+                  : selectedProvider.id === 'boubyan_link'
+                  ? initialStep === 2
+                    ? 'Enter Reference Number'
+                    : 'Step 2: Enter Reference Number'
                   : initialStep === 2
                   ? 'Create & Share Payment Link'
                   : 'Step 2: Create & Share Payment Link'}
@@ -749,7 +732,7 @@ export function MakePaymentModal({
             <div className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-foreground block mb-2">
-                  {tapPicking ? 'Select Tap Provider' : 'Select Payment Provider'} <span className="text-destructive">*</span>
+                  Select Payment Provider <span className="text-destructive">*</span>
                 </label>
                 {activeLink && (
                   <div className="mb-3 rounded-2xl border border-amber-300/50 bg-amber-50/70 dark:bg-amber-950/30 p-3 text-xs space-y-2">
@@ -779,10 +762,8 @@ export function MakePaymentModal({
                   </div>
                 )}
                 <div className="space-y-2.5">
-                  {(tapPicking ? TAP_PROVIDERS : PROVIDERS).map((provider) => {
-                    const isSelected =
-                      selectedProvider.id === provider.id ||
-                      (provider.id === 'tap' && selectedProvider.id.startsWith('tap_'));
+                  {PROVIDERS.map((provider) => {
+                    const isSelected = selectedProvider.id === provider.id;
                     const isInactive = Boolean(provider.inactive) || Boolean(activeLink);
                     return (
                       <div
@@ -792,9 +773,6 @@ export function MakePaymentModal({
                           setSelectedProvider(provider);
                           if (provider.id === 'knet_card' && !knetRefCode) {
                             setKnetRefCode(generateKnetAuthCode());
-                          }
-                          if (provider.id === 'cash' && !cashRefCode) {
-                            setCashRefCode(generateCashReceiptCode());
                           }
                         }}
                         className={cn(
@@ -851,10 +829,10 @@ export function MakePaymentModal({
               <div className="pt-2 flex items-center justify-between">
                 <button
                   type="button"
-                  onClick={() => (tapPicking ? setTapPicking(false) : onClose())}
+                  onClick={onClose}
                   className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2 text-xs font-semibold hover:bg-muted transition cursor-pointer"
                 >
-                  {tapPicking ? 'Back' : 'Cancel'}
+                  Cancel
                 </button>
                 <button
                   type="button"
@@ -924,7 +902,7 @@ export function MakePaymentModal({
                 </div>
               )}
 
-              {/* If cashConfirmed, show success banner directly */}
+              {/* If cashConfirmed (Boubyan Link), show success banner directly */}
               {cashConfirmed && (
                 <div className="rounded-2xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/30 p-6 text-center space-y-3">
                   <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
@@ -932,10 +910,10 @@ export function MakePaymentModal({
                   </div>
                   <div>
                     <h3 className="text-base font-extrabold text-emerald-800 dark:text-emerald-200">
-                      Payment Confirmed via Cash!
+                      Payment Confirmed via Boubyan Link!
                     </h3>
                     <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-1">
-                      Cash payment of {amount} {currency} has been recorded and {targetType === 'voucher' ? 'voucher' : 'booking'} is confirmed.
+                      Boubyan Link payment of {amount} {currency} has been recorded and {targetType === 'voucher' ? 'voucher' : 'booking'} is confirmed.
                     </p>
                   </div>
                   <div className="pt-2">
@@ -1082,50 +1060,30 @@ export function MakePaymentModal({
                 </div>
               )}
 
-              {/* If Cash Payment selected and not yet paid */}
-              {!cashConfirmed && !paymentLink && selectedProvider.id === 'cash' && (
+              {/* If Boubyan Link selected and not yet paid */}
+              {!cashConfirmed && !paymentLink && selectedProvider.id === 'boubyan_link' && (
                 <div className="rounded-2xl border border-border/80 bg-card p-5 space-y-4 shadow-sm">
                   <div className="flex items-center gap-3">
                     <div className="grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-600">
-                      <Banknote className="h-5 w-5" />
+                      <Link2 className="h-5 w-5" />
                     </div>
                     <div>
-                      <h3 className="text-sm font-extrabold text-foreground">Cash Payment at Reception</h3>
-                      <p className="text-xs text-muted-foreground">Receive physical cash from customer and record payment.</p>
+                      <h3 className="text-sm font-extrabold text-foreground">Boubyan Link Payment</h3>
+                      <p className="text-xs text-muted-foreground">Enter the Boubyan Link payment reference number to record payment.</p>
                     </div>
                   </div>
 
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-bold text-foreground">
-                        Receipt / Reference Code <span className="text-muted-foreground font-normal">(Auto-generated)</span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setCashRefCode(generateCashReceiptCode())}
-                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline cursor-pointer"
-                      >
-                        <RefreshCw className="h-3 w-3" />
-                        Regenerate
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={cashRefCode}
-                        onChange={(e) => setCashRefCode(e.target.value)}
-                        placeholder="e.g. CASH-84920"
-                        className="w-full h-10 rounded-xl border border-border bg-muted/20 pl-3 pr-10 text-xs font-mono font-bold outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setCashRefCode(generateCashReceiptCode())}
-                        title="Generate new code"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-primary transition rounded-lg cursor-pointer"
-                      >
-                        <RefreshCw className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
+                    <label className="text-xs font-bold text-foreground block">
+                      Reference Number <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={cashRefCode}
+                      onChange={(e) => setCashRefCode(e.target.value)}
+                      placeholder="Enter Boubyan Link reference number"
+                      className="w-full h-10 rounded-xl border border-border bg-muted/20 px-3 text-xs font-mono font-bold outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
+                    />
                   </div>
 
                   <div className="space-y-1.5">
@@ -1136,7 +1094,7 @@ export function MakePaymentModal({
                       type="text"
                       value={cashNotes}
                       onChange={(e) => setCashNotes(e.target.value)}
-                      placeholder="e.g. Paid in cash at reception counter"
+                      placeholder="e.g. Paid via Boubyan Link"
                       className="w-full h-10 rounded-xl border border-border bg-muted/20 px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary/20"
                     />
                   </div>
@@ -1144,18 +1102,18 @@ export function MakePaymentModal({
                   <button
                     type="button"
                     onClick={handleConfirmCashPayment}
-                    disabled={confirmingCash}
-                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 py-3 text-xs font-extrabold text-white shadow-md transition disabled:opacity-60 cursor-pointer"
+                    disabled={confirmingCash || !cashRefCode.trim()}
+                    className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 py-3 text-xs font-extrabold text-white shadow-md transition disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer"
                   >
                     {confirmingCash ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />
-                        <span>Confirming Cash Payment…</span>
+                        <span>Confirming Boubyan Link Payment…</span>
                       </>
                     ) : (
                       <>
                         <CheckCircle2 className="h-4 w-4" />
-                        <span>Confirm Cash Payment ({amount} {currency})</span>
+                        <span>Confirm Boubyan Link Payment ({amount} {currency})</span>
                       </>
                     )}
                   </button>
@@ -1163,7 +1121,7 @@ export function MakePaymentModal({
               )}
 
               {/* Standard Payment Link generation for other providers */}
-              {!knetConfirmed && !cashConfirmed && !paymentLink && selectedProvider.id !== 'knet_card' && selectedProvider.id !== 'cash' && (
+              {!knetConfirmed && !cashConfirmed && !paymentLink && selectedProvider.id !== 'knet_card' && selectedProvider.id !== 'boubyan_link' && (
                 <div className="rounded-2xl border-2 border-dashed border-border/80 p-6 text-center space-y-4 bg-muted/10">
                   <div className="grid h-12 w-12 mx-auto place-items-center rounded-2xl bg-primary/10 text-primary">
                     <Link2 className="h-6 w-6" />

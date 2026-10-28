@@ -373,7 +373,7 @@ export function PaymentReferenceModal({
                     type="text"
                     value={transactionId}
                     onChange={(e) => setTransactionId(e.target.value)}
-                    placeholder={`e.g. ${paymentProvider === 'KNET Card' ? 'KENT-984210' : 'TXN-849204'}`}
+                    placeholder={`e.g. ${paymentProvider === 'KNET Card' ? 'KENT-984210' : paymentProvider === 'Boubyan Link' ? 'Enter Boubyan Link reference number' : 'TXN-849204'}`}
                     className="h-11 w-full rounded-2xl border border-border bg-muted/20 pl-10 pr-4 text-sm font-mono outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 placeholder:text-muted-foreground/40 font-semibold"
                   />
                   {transactionId && (

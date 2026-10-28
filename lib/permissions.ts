@@ -24,21 +24,30 @@ export const PERMISSIONS = {
   APPOINTMENTS_BRANCH_APPOINTMENTS: 'deskmenu.appointments.branch_appointments',
   APPOINTMENTS_HOME_SERVICE:        'deskmenu.appointments.home_service',
   APPOINTMENTS_GIFT_VOUCHER:        'deskmenu.appointments.gift_voucher',
+  APPOINTMENTS_GIFT_VOUCHER_EDIT:          'deskmenu.appointments.gift_voucher.edit',
+  APPOINTMENTS_GIFT_VOUCHER_DELETE:        'deskmenu.appointments.gift_voucher.delete',
+  APPOINTMENTS_GIFT_VOUCHER_UPDATE_STATUS: 'deskmenu.appointments.gift_voucher.update_status',
+  APPOINTMENTS_GIFT_VOUCHER_REPORT:        'deskmenu.appointments.gift_voucher.report',
 
   // ── Bookings submenus ────────────────────────────────────────────────────────
   BOOKINGS_BOOKING_LIST:   'deskmenu.bookings.booking_list',
   BOOKINGS_PAYMENTS:       'deskmenu.bookings.payments',
   BOOKINGS_REFUNDS:        'deskmenu.bookings.refunds',
   BOOKINGS_BOOKING_REPORT: 'deskmenu.bookings.booking_report',
+  BOOKINGS_DISCOUNT:       'deskmenu.bookings.discount',
 
   // ── UshSpa submenus ──────────────────────────────────────────────────────────
   USHSPA_BRANCHES:          'deskmenu.ushspa.branches',
   USHSPA_CUSTOMERS:         'deskmenu.ushspa.customers',
+  USHSPA_CUSTOMERS_EDIT:    'deskmenu.ushspa.customers.edit',
+  USHSPA_CUSTOMERS_DELETE:  'deskmenu.ushspa.customers.delete',
+  USHSPA_CUSTOMERS_UPDATE_STATUS: 'deskmenu.ushspa.customers.update_status',
   USHSPA_EMPLOYEES:         'deskmenu.ushspa.employees',
   USHSPA_LEAVE_MANAGEMENT:  'deskmenu.ushspa.leave_management',
   USHSPA_WORKING_HOURS:     'deskmenu.ushspa.working_hours',
   USHSPA_PRODUCTS:          'deskmenu.ushspa.products',
   USHSPA_SERVICES:          'deskmenu.ushspa.services',
+  USHSPA_FEEDBACK:          'deskmenu.ushspa.feedback',
 
   // ── Finance submenus ─────────────────────────────────────────────────────────
   FINANCE_OVERVIEW:           'deskmenu.finance.overview',
@@ -294,6 +303,166 @@ export function isProcessRefundPermittedRole(
   );
 }
 
+
+export const DISCOUNT_PERMISSIONS = [
+  PERMISSIONS.BOOKINGS_DISCOUNT,
+  'bookings.discount',
+  'bookings.apply_discount',
+  'can_apply_discount',
+  'discount',
+] as const;
+
+/**
+ * Returns true if the user has permission to apply discounts to bookings.
+ * - Admins, superusers, and Administrator roles always have permission.
+ * - Otherwise checks if the user's permissions array contains any recognized discount permission.
+ */
+export function canApplyDiscount(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return DISCOUNT_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export const VOUCHER_EDIT_PERMISSIONS = [
+  'deskmenu.appointments.gift_voucher.edit',
+  'appointments.gift_voucher.edit',
+  'gift_voucher.edit',
+  'vouchers.edit',
+  'vouchers.update',
+] as const;
+
+export const VOUCHER_DELETE_PERMISSIONS = [
+  'deskmenu.appointments.gift_voucher.delete',
+  'appointments.gift_voucher.delete',
+  'gift_voucher.delete',
+  'vouchers.delete',
+] as const;
+
+export const VOUCHER_STATUS_PERMISSIONS = [
+  'deskmenu.appointments.gift_voucher.update_status',
+  'appointments.gift_voucher.update_status',
+  'gift_voucher.update_status',
+  'vouchers.update_status',
+  'vouchers.status',
+] as const;
+
+export const VOUCHER_REPORT_PERMISSIONS = [
+  'deskmenu.appointments.gift_voucher.report',
+  'appointments.gift_voucher.report',
+  'gift_voucher.report',
+  'vouchers.report',
+  'vouchers.export',
+] as const;
+
+export function canEditGiftVoucher(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return VOUCHER_EDIT_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canDeleteGiftVoucher(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return VOUCHER_DELETE_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canUpdateVoucherStatus(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return VOUCHER_STATUS_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canGenerateVoucherReport(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return VOUCHER_REPORT_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export const CUSTOMER_EDIT_PERMISSIONS = [
+  'deskmenu.ushspa.customers.edit',
+  'ushspa.customers.edit',
+  'customers.edit',
+  'customers.update',
+] as const;
+
+export const CUSTOMER_DELETE_PERMISSIONS = [
+  'deskmenu.ushspa.customers.delete',
+  'ushspa.customers.delete',
+  'customers.delete',
+] as const;
+
+export const CUSTOMER_STATUS_PERMISSIONS = [
+  'deskmenu.ushspa.customers.update_status',
+  'ushspa.customers.update_status',
+  'customers.update_status',
+  'customers.status',
+] as const;
+
+export function canEditCustomer(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return CUSTOMER_EDIT_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canDeleteCustomer(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return CUSTOMER_DELETE_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canUpdateCustomerStatus(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return CUSTOMER_STATUS_PERMISSIONS.some((p) => permissions.includes(p));
+}
 
 /**
  * Checks whether a given permission corresponds to the Refunds submenu

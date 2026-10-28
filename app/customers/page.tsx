@@ -9,12 +9,14 @@ import {
   MessageSquare, Loader2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   Check, Eye, Copy, Award, Gift, DollarSign, TrendingUp, Clock,
   Sparkles, ShoppingBag, Receipt, Star, Tag, Activity, BarChart3,
-  MapPin, UserCheck, Heart,
+  MapPin, UserCheck, Heart, SlidersHorizontal, Pencil, Trash2,
+  UserCog, AlertTriangle, Layers,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { useI18n } from '@/hooks/use-i18n';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import {
   DateRangeFilter,
@@ -172,63 +174,882 @@ function Avatar({ customer, size = 'md' }: { customer: Customer; size?: 'sm' | '
   );
 }
 
-function SelectFilter({
-  label,
-  value,
-  options,
-  icon,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  options: (string | { label: string; value: string })[];
-  icon?: React.ReactNode;
-  onChange: (v: string) => void;
-}) {
+export interface CustomerFilterCriteria {
+  accountStatus: string;
+  gender: string;
+  whatsapp: string;
+  email: string;
+  mobile: string;
+}
+
+interface CustomerFilterModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  criteria: CustomerFilterCriteria;
+  onApply: (next: CustomerFilterCriteria) => void;
+  onReset: () => void;
+}
+
+function CustomerFilterModal({
+  isOpen,
+  onClose,
+  criteria,
+  onApply,
+  onReset,
+}: CustomerFilterModalProps) {
+  const [draftStatus, setDraftStatus] = useState(criteria.accountStatus);
+  const [draftGender, setDraftGender] = useState(criteria.gender);
+  const [draftWhatsapp, setDraftWhatsapp] = useState(criteria.whatsapp);
+  const [draftEmail, setDraftEmail] = useState(criteria.email);
+  const [draftMobile, setDraftMobile] = useState(criteria.mobile);
+
+  useEffect(() => {
+    if (isOpen) {
+      setDraftStatus(criteria.accountStatus);
+      setDraftGender(criteria.gender);
+      setDraftWhatsapp(criteria.whatsapp);
+      setDraftEmail(criteria.email);
+      setDraftMobile(criteria.mobile);
+    }
+  }, [isOpen, criteria]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
+  const draftActiveCount = useMemo(() => {
+    let count = 0;
+    if (draftStatus) count++;
+    if (draftGender) count++;
+    if (draftWhatsapp) count++;
+    if (draftEmail) count++;
+    if (draftMobile) count++;
+    return count;
+  }, [draftStatus, draftGender, draftWhatsapp, draftEmail, draftMobile]);
+
+  if (!isOpen) return null;
+
+  const handleReset = () => {
+    setDraftStatus('');
+    setDraftGender('');
+    setDraftWhatsapp('');
+    setDraftEmail('');
+    setDraftMobile('');
+    onReset();
+    onClose();
+  };
+
+  const handleApply = () => {
+    onApply({
+      accountStatus: draftStatus,
+      gender: draftGender,
+      whatsapp: draftWhatsapp,
+      email: draftEmail,
+      mobile: draftMobile,
+    });
+    onClose();
+  };
+
   return (
-    <div className="relative">
-      {icon && (
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-          {icon}
-        </span>
-      )}
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={cn(
-          'h-10 appearance-none rounded-xl border border-border bg-card pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer',
-          icon ? 'pl-9' : 'pl-3',
-          value ? 'border-primary/50 text-foreground font-semibold' : 'text-muted-foreground',
-        )}
-      >
-        <option value="">{label}</option>
-        {options.map((o) => {
-          const optVal = typeof o === 'string' ? o : o.value;
-          const optLabel = typeof o === 'string' ? (o.charAt(0).toUpperCase() + o.slice(1)) : o.label;
-          return (
-            <option key={optVal} value={optVal} className="text-foreground capitalize">
-              {optLabel}
-            </option>
-          );
-        })}
-      </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Modal Dialog */}
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-primary to-amber-400" />
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-6 py-4 bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <SlidersHorizontal className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-extrabold text-foreground leading-tight">
+                  Filter Customers
+                </h3>
+                {draftActiveCount > 0 && (
+                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary font-mono">
+                    {draftActiveCount} active
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Select criteria to narrow down customers by status, gender, and verification
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body Content */}
+        <div className="overflow-y-auto p-6 space-y-5 text-xs">
+          {/* 1. Account Status */}
+          <div className="space-y-2">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+              <span>Account Status</span>
+              {draftStatus && (
+                <button
+                  type="button"
+                  onClick={() => setDraftStatus('')}
+                  className="text-[10px] font-semibold text-primary hover:underline"
+                >
+                  Clear
+                </button>
+              )}
+            </label>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {[
+                { id: '', label: 'All Statuses', desc: 'Any account status' },
+                { id: 'active', label: 'Active', desc: 'Active customer accounts' },
+                { id: 'pending', label: 'Pending', desc: 'Pending verification' },
+                { id: 'suspended', label: 'Suspended', desc: 'Suspended accounts' },
+                { id: 'deleted', label: 'Deleted', desc: 'Marked as deleted' },
+              ].map((opt) => {
+                const active = draftStatus === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setDraftStatus(opt.id)}
+                    className={cn(
+                      'flex flex-col items-start rounded-2xl border p-3 text-left transition cursor-pointer',
+                      active
+                        ? 'border-primary bg-primary/10 text-foreground ring-2 ring-primary/20 shadow-xs'
+                        : 'border-border/70 bg-card hover:border-primary/40 text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <span className="font-bold text-xs">{opt.label}</span>
+                    <span className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{opt.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 2. Gender */}
+          <div className="space-y-2">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
+              <span>Gender</span>
+              {draftGender && (
+                <button
+                  type="button"
+                  onClick={() => setDraftGender('')}
+                  className="text-[10px] font-semibold text-primary hover:underline"
+                >
+                  Clear
+                </button>
+              )}
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { id: '', label: 'All Genders' },
+                { id: 'female', label: 'Female' },
+                { id: 'male', label: 'Male' },
+              ].map((opt) => {
+                const active = draftGender === opt.id;
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setDraftGender(opt.id)}
+                    className={cn(
+                      'h-10 rounded-xl border font-semibold text-xs transition cursor-pointer flex items-center justify-center',
+                      active
+                        ? 'border-primary bg-primary text-white shadow-xs'
+                        : 'border-border/70 bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 3. Verification Channels */}
+          <div className="space-y-3 pt-1">
+            <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+              Verification Channels
+            </label>
+
+            {/* WhatsApp */}
+            <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/10 p-3">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-500/10 text-emerald-600">
+                  <MessageCircle className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-xs text-foreground">WhatsApp</p>
+                  <p className="text-[10px] text-muted-foreground">Phone number verified on WhatsApp</p>
+                </div>
+              </div>
+              <div className="flex rounded-xl border border-border overflow-hidden bg-card text-[11px] font-semibold">
+                {[
+                  { id: '', label: 'All' },
+                  { id: 'verified', label: 'Verified' },
+                  { id: 'unverified', label: 'Unverified' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setDraftWhatsapp(opt.id)}
+                    className={cn(
+                      'px-2.5 py-1.5 transition cursor-pointer',
+                      draftWhatsapp === opt.id
+                        ? 'bg-primary text-white'
+                        : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Email */}
+            <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/10 p-3">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-8 w-8 place-items-center rounded-xl bg-sky-500/10 text-sky-600">
+                  <Mail className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-xs text-foreground">Email</p>
+                  <p className="text-[10px] text-muted-foreground">Customer email address verified</p>
+                </div>
+              </div>
+              <div className="flex rounded-xl border border-border overflow-hidden bg-card text-[11px] font-semibold">
+                {[
+                  { id: '', label: 'All' },
+                  { id: 'verified', label: 'Verified' },
+                  { id: 'unverified', label: 'Unverified' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setDraftEmail(opt.id)}
+                    className={cn(
+                      'px-2.5 py-1.5 transition cursor-pointer',
+                      draftEmail === opt.id
+                        ? 'bg-primary text-white'
+                        : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Mobile */}
+            <div className="flex items-center justify-between rounded-2xl border border-border/70 bg-muted/10 p-3">
+              <div className="flex items-center gap-2.5">
+                <div className="grid h-8 w-8 place-items-center rounded-xl bg-purple-500/10 text-purple-600">
+                  <Phone className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="font-bold text-xs text-foreground">Mobile SMS</p>
+                  <p className="text-[10px] text-muted-foreground">Mobile number verified via SMS</p>
+                </div>
+              </div>
+              <div className="flex rounded-xl border border-border overflow-hidden bg-card text-[11px] font-semibold">
+                {[
+                  { id: '', label: 'All' },
+                  { id: 'verified', label: 'Verified' },
+                  { id: 'unverified', label: 'Unverified' },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setDraftMobile(opt.id)}
+                    className={cn(
+                      'px-2.5 py-1.5 transition cursor-pointer',
+                      draftMobile === opt.id
+                        ? 'bg-primary text-white'
+                        : 'text-muted-foreground hover:bg-muted',
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-border/40 px-6 py-4 bg-muted/20">
+          <button
+            type="button"
+            onClick={handleReset}
+            className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+          >
+            Reset All
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleApply}
+              className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+            >
+              Apply Filters
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-function ToggleFilter({ label, icon, active, onClick }: {
-  label: string; icon: React.ReactNode; active: boolean; onClick: () => void;
+// ── Edit Customer Modal ───────────────────────────────────────────────────────
+function EditCustomerModal({
+  customer,
+  isOpen,
+  onClose,
+  onSaved,
+}: {
+  customer: Customer | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onSaved: (updated: Customer) => void;
 }) {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [gender, setGender] = useState('');
+  const [dob, setDob] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (customer && isOpen) {
+      setFirstName(customer.first_name || customer.name.split(' ')[0] || '');
+      setLastName(customer.last_name || customer.name.split(' ').slice(1).join(' ') || '');
+      setPhone(customer.phone || '');
+      setEmail(customer.email || '');
+      setGender(customer.gender || '');
+      setDob(customer.dob ? customer.dob.split('T')[0] : '');
+      setErrorMsg(null);
+    }
+  }, [customer, isOpen]);
+
+  if (!isOpen || !customer) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setErrorMsg(null);
+
+    try {
+      const payload: Record<string, unknown> = {
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        phone_number: phone.trim() || null,
+        email: email.trim() || null,
+        gender: gender || null,
+        dob: dob || null,
+      };
+
+      const res = await fetch(`/api/v1/customers/${customer.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        const msg = data.detail || data.message || Object.values(data)[0] || 'Failed to update customer';
+        setErrorMsg(typeof msg === 'string' ? msg : JSON.stringify(msg));
+        setSaving(false);
+        return;
+      }
+
+      const updatedCustomer = normalise(data.data || data);
+      onSaved(updatedCustomer);
+      onClose();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Error updating customer');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <button onClick={onClick} className={cn(
-      'flex h-10 items-center gap-2 rounded-xl border px-4 text-sm font-semibold transition',
-      active
-        ? 'border-primary bg-primary text-white shadow-sm'
-        : 'border-border bg-card text-muted-foreground hover:border-primary/50 hover:text-primary',
-    )}>
-      {icon}{label}
-    </button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="h-1.5 w-full bg-gradient-to-r from-blue-500 via-primary to-blue-500" />
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-6 py-4 bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-primary/10 text-primary">
+              <Pencil className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-foreground leading-tight">
+                Edit Customer Details
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Update customer name, contact information, and preferences
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Form Body */}
+        <form onSubmit={handleSubmit} className="flex flex-col overflow-y-auto">
+          <div className="p-6 space-y-4 text-xs">
+            {errorMsg && (
+              <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{errorMsg}</span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                  First Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                  Last Name
+                </label>
+                <input
+                  type="text"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                Phone Number
+              </label>
+              <div className="relative">
+                <Phone className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+965XXXXXXXX"
+                  className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                Email Address
+              </label>
+              <div className="relative">
+                <Mail className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                  Gender
+                </label>
+                <select
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                >
+                  <option value="">Not Specified</option>
+                  <option value="female">Female</option>
+                  <option value="male">Male</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                  Date of Birth
+                </label>
+                <input
+                  type="date"
+                  value={dob}
+                  onChange={(e) => setDob(e.target.value)}
+                  className="h-10 w-full rounded-xl border border-border bg-card px-3 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 border-t border-border/40 px-6 py-4 bg-muted/20">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              <span>{saving ? 'Saving…' : 'Save Changes'}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Change Customer Status Modal ──────────────────────────────────────────────
+function ChangeCustomerStatusModal({
+  customers,
+  isOpen,
+  onClose,
+  onUpdated,
+}: {
+  customers: Customer[];
+  isOpen: boolean;
+  onClose: () => void;
+  onUpdated: () => void;
+}) {
+  const [status, setStatus] = useState<string>('active');
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (customers.length === 1 && isOpen) {
+      setStatus(customers[0].account_status || 'active');
+      setErrorMsg(null);
+    } else if (isOpen) {
+      setStatus('active');
+      setErrorMsg(null);
+    }
+  }, [customers, isOpen]);
+
+  if (!isOpen || customers.length === 0) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErrorMsg(null);
+
+    try {
+      for (const c of customers) {
+        const res = await fetch(`/api/v1/customers/${c.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ account_status: status }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || data.message || `Failed to update status for ${c.name}`);
+        }
+      }
+      onUpdated();
+      onClose();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Error updating status');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const statusOptions = [
+    {
+      id: 'active',
+      title: 'Active',
+      desc: 'Customer can sign in, receive communications, and book appointments.',
+      badgeColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
+    },
+    {
+      id: 'pending',
+      title: 'Pending',
+      desc: 'Customer account is pending identity or mobile phone verification.',
+      badgeColor: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
+    },
+    {
+      id: 'suspended',
+      title: 'Suspended',
+      desc: 'Account is temporarily suspended. Sign in and new bookings are blocked.',
+      badgeColor: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300',
+    },
+    {
+      id: 'deleted',
+      title: 'Deleted',
+      desc: 'Account is deactivated and marked as deleted from active lists.',
+      badgeColor: 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300',
+    },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="h-1.5 w-full bg-gradient-to-r from-amber-400 via-primary to-amber-400" />
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-6 py-4 bg-muted/20">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-amber-500/10 text-amber-600">
+              <UserCog className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-foreground leading-tight">
+                Update Account Status
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {customers.length === 1
+                  ? `For ${customers[0].name}`
+                  : `For ${customers.length} selected customers`}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body Form */}
+        <form onSubmit={handleSubmit} className="p-6 space-y-3 text-xs overflow-y-auto">
+          {errorMsg && (
+            <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            {statusOptions.map((opt) => {
+              const selected = status === opt.id;
+              return (
+                <label
+                  key={opt.id}
+                  onClick={() => setStatus(opt.id)}
+                  className={cn(
+                    'flex items-start gap-3 rounded-2xl border p-3.5 transition cursor-pointer',
+                    selected
+                      ? 'border-primary bg-primary/5 ring-2 ring-primary/20 shadow-xs'
+                      : 'border-border/70 bg-card hover:border-primary/40',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="status"
+                    checked={selected}
+                    onChange={() => setStatus(opt.id)}
+                    className="mt-0.5 text-primary focus:ring-primary"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-sm text-foreground">{opt.title}</span>
+                      <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold capitalize', opt.badgeColor)}>
+                        {opt.id}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{opt.desc}</p>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 pt-4 border-t border-border/40">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+            >
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+              <span>{submitting ? 'Updating…' : 'Update Status'}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Delete Customer Modal ─────────────────────────────────────────────────────
+function DeleteCustomerModal({
+  customers,
+  isOpen,
+  onClose,
+  onDeleted,
+}: {
+  customers: Customer[];
+  isOpen: boolean;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  if (!isOpen || customers.length === 0) return null;
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    setErrorMsg(null);
+
+    try {
+      for (const c of customers) {
+        const res = await fetch(`/api/v1/customers/${c.id}`, {
+          method: 'DELETE',
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || data.message || `Failed to delete ${c.name}`);
+        }
+      }
+      onDeleted();
+      onClose();
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Error deleting customer');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 flex max-h-[92vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-destructive/40 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+        <div className="h-1.5 w-full bg-gradient-to-r from-red-500 via-rose-500 to-red-500" />
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-6 py-4 bg-destructive/5">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-destructive/10 text-destructive">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-foreground leading-tight">
+                Delete Customer{customers.length > 1 ? 's' : ''}
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Permanent deletion confirmation
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-6 space-y-4 text-xs">
+          {errorMsg && (
+            <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+          )}
+
+          <p className="text-sm text-foreground leading-relaxed">
+            {customers.length === 1 ? (
+              <>
+                Are you sure you want to permanently delete customer{' '}
+                <strong className="text-foreground font-extrabold">{customers[0].name}</strong>{' '}
+                {customers[0].phone ? `(${customers[0].phone})` : ''}?
+              </>
+            ) : (
+              <>
+                Are you sure you want to permanently delete{' '}
+                <strong className="text-foreground font-extrabold">{customers.length} selected customers</strong>?
+              </>
+            )}
+          </p>
+
+          <div className="rounded-2xl border border-destructive/20 bg-destructive/5 p-3.5 text-xs text-destructive/90 leading-relaxed">
+            <span className="font-bold uppercase tracking-wider block mb-1">Warning:</span>
+            This action cannot be undone. The customer profile, account login, and related records will be permanently removed.
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-border/40 px-6 py-4 bg-muted/20">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={deleting}
+            className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleting}
+            className="flex items-center gap-1.5 rounded-xl bg-destructive px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-destructive/90 transition cursor-pointer disabled:opacity-50"
+          >
+            {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            <span>{deleting ? 'Deleting…' : 'Delete Permanently'}</span>
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -502,10 +1323,22 @@ function CustomerDetailsModal({
   customer,
   onClose,
   onSendMessage,
+  onEdit,
+  onChangeStatus,
+  onDelete,
+  canEdit = false,
+  canUpdateStatus = false,
+  canDelete = false,
 }: {
   customer: Customer;
   onClose: () => void;
   onSendMessage: (customer: Customer) => void;
+  onEdit?: (customer: Customer) => void;
+  onChangeStatus?: (customer: Customer) => void;
+  onDelete?: (customer: Customer) => void;
+  canEdit?: boolean;
+  canUpdateStatus?: boolean;
+  canDelete?: boolean;
 }) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'finance' | 'vouchers' | 'loyalty' | 'marketing'>('overview');
@@ -1421,25 +2254,59 @@ function CustomerDetailsModal({
         </div>
 
         {/* Footer actions */}
-        <div className="shrink-0 flex items-center justify-between border-t border-border/60 bg-muted/20 px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="h-10 rounded-xl border border-border bg-card px-5 text-sm font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              onClose();
-              onSendMessage(customer);
-            }}
-            className="flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
-          >
-            <Send className="h-4 w-4" />
-            <span>Send Message</span>
-          </button>
+        <div className="shrink-0 flex flex-wrap items-center justify-between border-t border-border/60 bg-muted/20 px-6 py-4 gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-10 rounded-xl border border-border bg-card px-5 text-sm font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
+            >
+              Close
+            </button>
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => onDelete?.(customer)}
+                className="flex h-10 items-center gap-1.5 rounded-xl border border-destructive/40 bg-card px-4 text-sm font-semibold text-destructive hover:bg-destructive/10 transition cursor-pointer"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span>Delete</span>
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {canUpdateStatus && (
+              <button
+                type="button"
+                onClick={() => onChangeStatus?.(customer)}
+                className="flex h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+              >
+                <UserCog className="h-4 w-4 text-amber-600" />
+                <span>Change Status</span>
+              </button>
+            )}
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => onEdit?.(customer)}
+                className="flex h-10 items-center gap-1.5 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+              >
+                <Pencil className="h-4 w-4 text-primary" />
+                <span>Edit Details</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onSendMessage(customer);
+              }}
+              className="flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+            >
+              <Send className="h-4 w-4" />
+              <span>Send Message</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1449,18 +2316,35 @@ function CustomerDetailsModal({
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function CustomersPage() {
   const { t } = useI18n();
+  const {
+    canEditCustomer,
+    canDeleteCustomer,
+    canUpdateCustomerStatus,
+  } = usePermissions();
 
-  const [search,           setSearch]           = useState('');
-  const [debouncedSearch,  setDebouncedSearch]  = useState('');
-  const [page,             setPage]             = useState(1);
-  const [pageSize,         setPageSize]         = useState(20);
-  const [genderFilter,     setGenderFilter]     = useState('');
-  const [dateFilter,       setDateFilter]       = useState<DateFilterType>('all');
-  const [dateRange,        setDateRange]        = useState<DateRange>({});
-  const [whatsappOnly,     setWhatsappOnly]     = useState(false);
-  const [emailOnly,        setEmailOnly]        = useState(false);
-  const [viewMode,         setViewMode]         = useState<'grid' | 'list'>('list');
-  const [viewCustomer,     setViewCustomer]     = useState<Customer | null>(null);
+  const [search,               setSearch]               = useState('');
+  const [debouncedSearch,      setDebouncedSearch]      = useState('');
+  const [page,                 setPage]                 = useState(1);
+  const [pageSize,             setPageSize]             = useState(20);
+
+  // Filters
+  const [showFilterModal,      setShowFilterModal]      = useState(false);
+  const [accountStatusFilter,  setAccountStatusFilter]  = useState('');
+  const [genderFilter,         setGenderFilter]         = useState('');
+  const [whatsappFilter,       setWhatsappFilter]       = useState('');
+  const [emailFilter,          setEmailFilter]          = useState('');
+  const [mobileFilter,         setMobileFilter]         = useState('');
+  const [dateFilter,           setDateFilter]           = useState<DateFilterType>('all');
+  const [dateRange,            setDateRange]            = useState<DateRange>({});
+
+  const [viewMode,             setViewMode]             = useState<'grid' | 'list'>('list');
+  const [viewCustomer,         setViewCustomer]         = useState<Customer | null>(null);
+
+  // Action Modals State
+  const [editingCustomer,      setEditingCustomer]      = useState<Customer | null>(null);
+  const [statusModalCustomers, setStatusModalCustomers] = useState<Customer[]>([]);
+  const [deleteModalCustomers, setDeleteModalCustomers] = useState<Customer[]>([]);
+  const [actionSuccessToast,   setActionSuccessToast]   = useState<string | null>(null);
 
   // Debounce search so we query backend cleanly
   useEffect(() => {
@@ -1474,7 +2358,7 @@ export default function CustomersPage() {
   // Reset page when client filters change
   useEffect(() => {
     setPage(1);
-  }, [genderFilter, whatsappOnly, emailOnly, dateFilter, dateRange]);
+  }, [accountStatusFilter, genderFilter, whatsappFilter, emailFilter, mobileFilter, dateFilter, dateRange]);
 
   // Multi-select
   const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
@@ -1497,24 +2381,31 @@ export default function CustomersPage() {
 
   const customers = useMemo(() => rawCustomers.map(normalise), [rawCustomers]);
 
-  const genderOptions = useMemo(
-    () => ['female', 'male'],
-    [],
-  );
+  const activeModalFiltersCount = useMemo(() => {
+    let count = 0;
+    if (accountStatusFilter) count++;
+    if (genderFilter) count++;
+    if (whatsappFilter) count++;
+    if (emailFilter) count++;
+    if (mobileFilter) count++;
+    return count;
+  }, [accountStatusFilter, genderFilter, whatsappFilter, emailFilter, mobileFilter]);
 
   const filtered = useMemo(() => {
     const q = debouncedSearch ? '' : search.toLowerCase();
 
     return customers.filter((c) => {
       const matchSearch   = !q || c.name.toLowerCase().includes(q) || c.phone?.includes(q) || c.email?.toLowerCase().includes(q);
+      const matchStatus   = !accountStatusFilter || c.account_status === accountStatusFilter;
       const matchGender   = !genderFilter || c.gender === genderFilter;
-      const matchWhatsapp = !whatsappOnly || c.is_whatsapp_verified;
-      const matchEmail    = !emailOnly    || c.is_email_verified;
+      const matchWhatsapp = !whatsappFilter || (whatsappFilter === 'verified' ? c.is_whatsapp_verified : !c.is_whatsapp_verified);
+      const matchEmail    = !emailFilter || (emailFilter === 'verified' ? c.is_email_verified : !c.is_email_verified);
+      const matchMobile   = !mobileFilter || (mobileFilter === 'verified' ? c.is_mobile_verified : !c.is_mobile_verified);
       const matchSignupDate = matchesDateRange(parseCustomerDate(c.created_at), dateRange);
 
-      return matchSearch && matchGender && matchWhatsapp && matchEmail && matchSignupDate;
+      return matchSearch && matchStatus && matchGender && matchWhatsapp && matchEmail && matchMobile && matchSignupDate;
     });
-  }, [customers, search, debouncedSearch, genderFilter, whatsappOnly, emailOnly, dateRange]);
+  }, [customers, search, debouncedSearch, accountStatusFilter, genderFilter, whatsappFilter, emailFilter, mobileFilter, dateRange]);
 
   const totalCount  = pagination?.count ?? customers.length;
   const totalPages  = pagination?.total_pages ?? Math.max(1, Math.ceil(totalCount / pageSize));
@@ -1522,16 +2413,56 @@ export default function CustomersPage() {
   const hasPrevPage = pagination ? Boolean(pagination.previous) : page > 1;
   const pageNumbers = useMemo(() => getPageNumbers(page, totalPages), [page, totalPages]);
 
-  const hasFilter = search || genderFilter || dateFilter !== 'all' || whatsappOnly || emailOnly;
+  const hasFilter = Boolean(search || accountStatusFilter || genderFilter || whatsappFilter || emailFilter || mobileFilter || dateFilter !== 'all');
   const clearAll  = () => {
     setSearch('');
     setDebouncedSearch('');
+    setAccountStatusFilter('');
     setGenderFilter('');
+    setWhatsappFilter('');
+    setEmailFilter('');
+    setMobileFilter('');
     setDateFilter('all');
     setDateRange({});
-    setWhatsappOnly(false);
-    setEmailOnly(false);
     setPage(1);
+  };
+
+  const showToast = (msg: string) => {
+    setActionSuccessToast(msg);
+    setTimeout(() => setActionSuccessToast(null), 4000);
+  };
+
+  const handleCustomerSaved = (updated: Customer) => {
+    refetch();
+    if (viewCustomer && viewCustomer.id === updated.id) {
+      setViewCustomer(updated);
+    }
+    showToast(`Customer "${updated.name}" updated successfully.`);
+  };
+
+  const handleStatusUpdated = () => {
+    refetch();
+    clearSelection();
+    if (viewCustomer) {
+      fetch(`/api/v1/customers/${viewCustomer.id}`)
+        .then((r) => r.json())
+        .then((resData) => {
+          if (resData && (resData.data || resData.id)) {
+            setViewCustomer(normalise(resData.data || resData));
+          }
+        })
+        .catch(() => {});
+    }
+    showToast('Customer account status updated successfully.');
+  };
+
+  const handleCustomersDeleted = () => {
+    refetch();
+    clearSelection();
+    if (viewCustomer && deleteModalCustomers.some((c) => c.id === viewCustomer.id)) {
+      setViewCustomer(null);
+    }
+    showToast('Customer(s) deleted successfully.');
   };
 
   // Selection helpers
@@ -1610,9 +2541,12 @@ export default function CustomersPage() {
         {/* Search */}
         <div className="relative flex-1 min-w-48">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)}
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, phone, email…"
-            className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" />
+            className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-4 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
         </div>
 
         {/* Date Range Filter */}
@@ -1627,28 +2561,31 @@ export default function CustomersPage() {
           }}
         />
 
-        {/* Gender */}
-        <SelectFilter label="All Genders" value={genderFilter} options={genderOptions} onChange={setGenderFilter} />
-
-        {/* WhatsApp verified */}
-        <ToggleFilter
-          label="WhatsApp"
-          icon={<MessageCircle className="h-4 w-4" />}
-          active={whatsappOnly}
-          onClick={() => setWhatsappOnly((v) => !v)}
-        />
-
-        {/* Email verified */}
-        <ToggleFilter
-          label="Email Verified"
-          icon={<Mail className="h-4 w-4" />}
-          active={emailOnly}
-          onClick={() => setEmailOnly((v) => !v)}
-        />
+        {/* Filters Popup Button */}
+        <button
+          type="button"
+          onClick={() => setShowFilterModal(true)}
+          className={cn(
+            'flex h-10 items-center gap-2 rounded-xl border px-3.5 text-sm font-semibold transition cursor-pointer',
+            activeModalFiltersCount > 0
+              ? 'border-primary bg-primary/10 text-primary shadow-xs'
+              : 'border-border bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground',
+          )}
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          <span>Filters</span>
+          {activeModalFiltersCount > 0 && (
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-bold text-white font-mono">
+              {activeModalFiltersCount}
+            </span>
+          )}
+        </button>
 
         {hasFilter && (
-          <button onClick={clearAll}
-            className="h-10 rounded-xl border border-border bg-card px-3 text-sm text-muted-foreground hover:text-destructive transition cursor-pointer">
+          <button
+            onClick={clearAll}
+            className="h-10 rounded-xl border border-border bg-card px-3 text-sm text-muted-foreground hover:text-destructive transition cursor-pointer"
+          >
             Clear
           </button>
         )}
@@ -1671,10 +2608,15 @@ export default function CustomersPage() {
         {/* View toggle */}
         <div className="flex rounded-xl border border-border overflow-hidden">
           {(['list', 'grid'] as const).map((m) => (
-            <button key={m} onClick={() => setViewMode(m)}
-              className={cn('flex h-10 w-10 items-center justify-center transition cursor-pointer',
-                viewMode === m ? 'bg-primary text-white' : 'bg-card hover:bg-muted text-muted-foreground')}
-              aria-label={m === 'grid' ? 'Grid view' : 'List view'}>
+            <button
+              key={m}
+              onClick={() => setViewMode(m)}
+              className={cn(
+                'flex h-10 w-10 items-center justify-center transition cursor-pointer',
+                viewMode === m ? 'bg-primary text-white' : 'bg-card hover:bg-muted text-muted-foreground',
+              )}
+              aria-label={m === 'grid' ? 'Grid view' : 'List view'}
+            >
               {m === 'grid' ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
             </button>
           ))}
@@ -1692,9 +2634,106 @@ export default function CustomersPage() {
         }}
       />
 
+      {/* ── Active Modal Filters Badges ── */}
+      {activeModalFiltersCount > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+          <span className="font-semibold text-muted-foreground">Active filters:</span>
+          {accountStatusFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-semibold text-primary capitalize">
+              <span>Status: {accountStatusFilter}</span>
+              <button
+                type="button"
+                onClick={() => setAccountStatusFilter('')}
+                className="hover:text-destructive cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {genderFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-semibold text-primary capitalize">
+              <span>Gender: {genderFilter}</span>
+              <button
+                type="button"
+                onClick={() => setGenderFilter('')}
+                className="hover:text-destructive cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {whatsappFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-semibold text-primary">
+              <span>WhatsApp: {whatsappFilter === 'verified' ? 'Verified' : 'Unverified'}</span>
+              <button
+                type="button"
+                onClick={() => setWhatsappFilter('')}
+                className="hover:text-destructive cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {emailFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-semibold text-primary">
+              <span>Email: {emailFilter === 'verified' ? 'Verified' : 'Unverified'}</span>
+              <button
+                type="button"
+                onClick={() => setEmailFilter('')}
+                className="hover:text-destructive cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          {mobileFilter && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-semibold text-primary">
+              <span>Mobile: {mobileFilter === 'verified' ? 'Verified' : 'Unverified'}</span>
+              <button
+                type="button"
+                onClick={() => setMobileFilter('')}
+                className="hover:text-destructive cursor-pointer"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setAccountStatusFilter('');
+              setGenderFilter('');
+              setWhatsappFilter('');
+              setEmailFilter('');
+              setMobileFilter('');
+            }}
+            className="text-muted-foreground hover:text-destructive font-medium underline ml-1 cursor-pointer"
+          >
+            Clear all filters
+          </button>
+        </div>
+      )}
+
+      {/* ── Action Success Feedback Toast / Banner ── */}
+      {actionSuccessToast && (
+        <div className="mb-4 flex items-center justify-between rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 animate-fade-in">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{actionSuccessToast}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActionSuccessToast(null)}
+            className="hover:opacity-75 cursor-pointer ml-3"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* ── Selection action bar ── */}
       {someSelected && (
-        <div className="mb-4 flex items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-5 py-3 animate-fade-in-up">
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-5 py-3 animate-fade-in-up">
           <span className="text-sm font-semibold text-primary">
             {selectedIds.size} customer{selectedIds.size !== 1 ? 's' : ''} selected
           </span>
@@ -1705,6 +2744,28 @@ export default function CustomersPage() {
           >
             <Send className="h-3.5 w-3.5" /> Send Message
           </button>
+          {canUpdateCustomerStatus && (
+            <button
+              onClick={() => {
+                const selectedList = customers.filter((c) => selectedIds.has(c.id));
+                setStatusModalCustomers(selectedList);
+              }}
+              className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+            >
+              <UserCog className="h-3.5 w-3.5 text-amber-600" /> Change Status
+            </button>
+          )}
+          {canDeleteCustomer && (
+            <button
+              onClick={() => {
+                const selectedList = customers.filter((c) => selectedIds.has(c.id));
+                setDeleteModalCustomers(selectedList);
+              }}
+              className="flex h-9 items-center gap-2 rounded-xl border border-destructive/40 bg-card px-4 text-sm font-semibold text-destructive hover:bg-destructive/10 transition cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete Selected
+            </button>
+          )}
           <button
             onClick={clearSelection}
             className="flex h-9 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold text-muted-foreground hover:text-foreground transition cursor-pointer"
@@ -1800,25 +2861,66 @@ export default function CustomersPage() {
                   )}
                 </div>
 
-                {/* Verification badges & View details button */}
+                {/* Verification badges & Action buttons */}
                 <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-3 gap-2">
                   <div className="flex flex-wrap gap-1.5">
                     <VerifiedBadge ok={c.is_whatsapp_verified} label="WhatsApp" />
                     <VerifiedBadge ok={c.is_email_verified}    label="Email" />
                     <VerifiedBadge ok={c.is_mobile_verified}   label="Mobile" />
                   </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setViewCustomer(c);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-primary hover:text-white hover:border-primary transition cursor-pointer shrink-0 shadow-xs"
-                    title="View details"
-                  >
-                    <Eye className="h-3.5 w-3.5" />
-                    <span>View</span>
-                  </button>
+                  <div className="inline-flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewCustomer(c);
+                      }}
+                      className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-2.5 py-1 text-xs font-semibold text-foreground hover:bg-primary hover:text-white hover:border-primary transition cursor-pointer shadow-xs"
+                      title="View details"
+                    >
+                      <Eye className="h-3.5 w-3.5" />
+                      <span>View</span>
+                    </button>
+                    {canEditCustomer && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingCustomer(c);
+                        }}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-border bg-card text-muted-foreground hover:text-primary hover:border-primary/50 transition cursor-pointer"
+                        title="Edit details"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                    )}
+                    {canUpdateCustomerStatus && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusModalCustomers([c]);
+                        }}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-border bg-card text-muted-foreground hover:text-amber-600 hover:border-amber-500/50 transition cursor-pointer"
+                        title="Change status"
+                      >
+                        <UserCog className="h-3 w-3" />
+                      </button>
+                    )}
+                    {canDeleteCustomer && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteModalCustomers([c]);
+                        }}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-lg border border-border bg-card text-muted-foreground hover:text-destructive hover:border-destructive/50 transition cursor-pointer"
+                        title="Delete customer"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -1970,20 +3072,64 @@ export default function CustomersPage() {
                       </span>
                     </td>
 
-                    {/* Right-most Action button: View details in popup */}
+                    {/* Action buttons */}
                     <td className="px-4 py-3 text-right">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setViewCustomer(c);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-primary hover:text-white hover:border-primary transition shadow-xs cursor-pointer group"
-                        title="View customer details"
-                      >
-                        <Eye className="h-3.5 w-3.5 text-muted-foreground group-hover:text-white transition" />
-                        <span>View</span>
-                      </button>
+                      <div className="inline-flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewCustomer(c);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-foreground hover:bg-primary hover:text-white hover:border-primary transition shadow-xs cursor-pointer group"
+                          title="View customer details"
+                        >
+                          <Eye className="h-3.5 w-3.5 text-muted-foreground group-hover:text-white transition" />
+                          <span>View</span>
+                        </button>
+
+                        {canEditCustomer && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingCustomer(c);
+                            }}
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-xl border border-border bg-card text-muted-foreground hover:border-primary/60 hover:text-primary transition shadow-xs cursor-pointer"
+                            title="Edit customer details"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+
+                        {canUpdateCustomerStatus && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setStatusModalCustomers([c]);
+                            }}
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-xl border border-border bg-card text-muted-foreground hover:border-amber-500/60 hover:text-amber-600 transition shadow-xs cursor-pointer"
+                            title="Change account status"
+                          >
+                            <UserCog className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+
+                        {canDeleteCustomer && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteModalCustomers([c]);
+                            }}
+                            className="inline-flex items-center justify-center h-8 w-8 rounded-xl border border-border bg-card text-muted-foreground hover:border-destructive/60 hover:text-destructive hover:bg-destructive/5 transition shadow-xs cursor-pointer"
+                            title="Delete customer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -2164,8 +3310,65 @@ export default function CustomersPage() {
           customer={viewCustomer}
           onClose={() => setViewCustomer(null)}
           onSendMessage={handleSendMessageFromPopup}
+          onEdit={(c) => setEditingCustomer(c)}
+          onChangeStatus={(c) => setStatusModalCustomers([c])}
+          onDelete={(c) => setDeleteModalCustomers([c])}
+          canEdit={canEditCustomer}
+          canUpdateStatus={canUpdateCustomerStatus}
+          canDelete={canDeleteCustomer}
         />
       )}
+
+      {/* Filter Popup Modal */}
+      <CustomerFilterModal
+        isOpen={showFilterModal}
+        onClose={() => setShowFilterModal(false)}
+        criteria={{
+          accountStatus: accountStatusFilter,
+          gender: genderFilter,
+          whatsapp: whatsappFilter,
+          email: emailFilter,
+          mobile: mobileFilter,
+        }}
+        onApply={(next) => {
+          setAccountStatusFilter(next.accountStatus);
+          setGenderFilter(next.gender);
+          setWhatsappFilter(next.whatsapp);
+          setEmailFilter(next.email);
+          setMobileFilter(next.mobile);
+        }}
+        onReset={() => {
+          setAccountStatusFilter('');
+          setGenderFilter('');
+          setWhatsappFilter('');
+          setEmailFilter('');
+          setMobileFilter('');
+        }}
+      />
+
+      {/* Edit Customer Modal */}
+      <EditCustomerModal
+        customer={editingCustomer}
+        isOpen={Boolean(editingCustomer)}
+        onClose={() => setEditingCustomer(null)}
+        onSaved={handleCustomerSaved}
+      />
+
+      {/* Change Status Modal */}
+      <ChangeCustomerStatusModal
+        customers={statusModalCustomers}
+        isOpen={statusModalCustomers.length > 0}
+        onClose={() => setStatusModalCustomers([])}
+        onUpdated={handleStatusUpdated}
+      />
+
+      {/* Delete Customer Modal */}
+      <DeleteCustomerModal
+        customers={deleteModalCustomers}
+        isOpen={deleteModalCustomers.length > 0}
+        onClose={() => setDeleteModalCustomers([])}
+        onDeleted={handleCustomersDeleted}
+      />
 
       {/* Send Message Modal */}
       {showMsgModal && (

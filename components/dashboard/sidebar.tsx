@@ -41,6 +41,7 @@ import {
   Percent,
   Handshake,
   RotateCcw,
+  Star,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -77,7 +78,7 @@ export function Sidebar() {
     bookings:     pathname.startsWith('/bookings'),
     appointments: pathname.startsWith('/appointments'),
     finance:      pathname.startsWith('/finance'),
-    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services') || pathname.startsWith('/employees'),
+    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services') || pathname.startsWith('/employees') || pathname.startsWith('/feedback'),
     vendors:      pathname.startsWith('/vendors'),
   });
 
@@ -108,6 +109,7 @@ export function Sidebar() {
         { href: '/employees/working-hours', label: 'Working Hours',    icon: Clock,       permission: PERMISSIONS.USHSPA_WORKING_HOURS },
         { href: '/products',                label: t('navProducts'),   icon: Package,     permission: PERMISSIONS.USHSPA_PRODUCTS },
         { href: '/services',                label: t('navServices'),   icon: Sparkles,    permission: PERMISSIONS.USHSPA_SERVICES },
+        { href: '/feedback',                label: 'Feedback',         icon: Star,        permission: PERMISSIONS.USHSPA_FEEDBACK },
       ],
     },
     {

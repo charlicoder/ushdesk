@@ -487,6 +487,8 @@ export function RedeemVoucherModal({
 
   const [selectedTherapistId, setSelectedTherapistId] = useState<string>('');
   const [selectedTherapist, setSelectedTherapist] = useState<ApiTherapist | null>(null);
+  const [selectedSecondaryTherapistId, setSelectedSecondaryTherapistId] = useState<string>('');
+  const [selectedSecondaryTherapist, setSelectedSecondaryTherapist] = useState<ApiTherapist | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -687,11 +689,34 @@ export function RedeemVoucherModal({
       : [];
   }, [availabilitiesData]);
 
+  const selectedArrangement = useMemo(
+    () => arrangements.find((a) => a.id === selectedRoomId) || arrangements[0] || null,
+    [arrangements, selectedRoomId]
+  );
+
+  const isCoupleRoom = useMemo(() => {
+    const arrType = String(
+      selectedArrangement?.arrangement_type ||
+      selectedArrangement?.type ||
+      requiredArrType ||
+      ''
+    ).toLowerCase();
+    return (
+      arrType === 'couple_room' ||
+      arrType === 'double_room' ||
+      arrType.includes('couple') ||
+      arrType.includes('double') ||
+      Number((selectedArrangement as any)?.required_therapists ?? 1) > 1
+    );
+  }, [selectedArrangement, requiredArrType]);
+
   // Reset timeslot and therapist when room or date changes
   useEffect(() => {
     setSelectedTimeSlot('');
     setSelectedTherapistId('');
     setSelectedTherapist(null);
+    setSelectedSecondaryTherapistId('');
+    setSelectedSecondaryTherapist(null);
   }, [selectedDate, selectedRoomId]);
 
   // ── Compute Available Timeslots for Selected Date & Room ───────────────
@@ -707,12 +732,19 @@ export function RedeemVoucherModal({
       return;
     }
 
-    // 1. Therapist slots union for the selected day
+    // 1. Therapist slots union & count for the selected day
     const therapistSlotsForDay = new Set<number>();
+    const therapistCountByMin = new Map<number, number>();
     for (const t of therapists) {
       const tSlots: string[] = t.availabilities?.[selectedDate] || [];
+      const seenForTherapist = new Set<number>();
       for (const s of tSlots) {
-        therapistSlotsForDay.add(parseTimeToMinutes(s));
+        const m = parseTimeToMinutes(s);
+        therapistSlotsForDay.add(m);
+        if (!seenForTherapist.has(m)) {
+          seenForTherapist.add(m);
+          therapistCountByMin.set(m, (therapistCountByMin.get(m) ?? 0) + 1);
+        }
       }
     }
 
@@ -748,6 +780,7 @@ export function RedeemVoucherModal({
     const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
 
     const slots: { time: string; available: boolean }[] = [];
+    const minRequiredTherapists = isCoupleRoom && therapists.length >= 2 ? 2 : 1;
 
     for (const m of sortedMinutes) {
       // If today, drop slots in the past
@@ -761,7 +794,7 @@ export function RedeemVoucherModal({
       const hd = h % 12 === 0 ? 12 : h % 12;
       const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
 
-      const isAvailableInTherapists = therapistSlotsForDay.has(m);
+      const isAvailableInTherapists = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists;
       const isAvailableInArrangement = arrangementSlotsForDay.has(m);
       const available = isAvailableInTherapists && isAvailableInArrangement;
 
@@ -776,6 +809,7 @@ export function RedeemVoucherModal({
     therapists,
     availabilitiesData,
     todayStr,
+    isCoupleRoom,
   ]);
 
   // ── Available Therapists for Selected Timeslot ────────────────────────
@@ -788,26 +822,57 @@ export function RedeemVoucherModal({
     });
   }, [selectedTimeSlot, selectedDate, therapists]);
 
-  // ── Auto-Select Therapist when timeslot changes ───────────────────────
+  // ── Auto-Select Therapist(s) when timeslot changes ────────────────────
   useEffect(() => {
     if (availableTherapistsForSlot.length > 0) {
-      // Keep existing selection if still available
-      const exists = availableTherapistsForSlot.find(
+      // Primary therapist
+      let primaryId = selectedTherapistId;
+      const existsPrimary = availableTherapistsForSlot.find(
         (t) => (t.id ?? t.therapist_id) === selectedTherapistId
       );
-      if (exists) {
-        setSelectedTherapist(exists);
+      if (existsPrimary) {
+        setSelectedTherapist(existsPrimary);
       } else {
         const first = availableTherapistsForSlot[0];
-        const tid = first.id ?? first.therapist_id ?? '';
-        setSelectedTherapistId(tid);
+        primaryId = first.id ?? first.therapist_id ?? '';
+        setSelectedTherapistId(primaryId);
         setSelectedTherapist(first);
+      }
+
+      // Secondary therapist for couple rooms
+      if (isCoupleRoom && availableTherapistsForSlot.length > 1) {
+        const existsSecondary = availableTherapistsForSlot.find(
+          (t) => {
+            const tid = t.id ?? t.therapist_id ?? '';
+            return tid === selectedSecondaryTherapistId && tid !== primaryId;
+          }
+        );
+        if (existsSecondary) {
+          setSelectedSecondaryTherapist(existsSecondary);
+        } else {
+          const second = availableTherapistsForSlot.find(
+            (t) => (t.id ?? t.therapist_id ?? '') !== primaryId
+          );
+          if (second) {
+            const secId = second.id ?? second.therapist_id ?? '';
+            setSelectedSecondaryTherapistId(secId);
+            setSelectedSecondaryTherapist(second);
+          } else {
+            setSelectedSecondaryTherapistId('');
+            setSelectedSecondaryTherapist(null);
+          }
+        }
+      } else {
+        setSelectedSecondaryTherapistId('');
+        setSelectedSecondaryTherapist(null);
       }
     } else {
       setSelectedTherapistId('');
       setSelectedTherapist(null);
+      setSelectedSecondaryTherapistId('');
+      setSelectedSecondaryTherapist(null);
     }
-  }, [availableTherapistsForSlot, selectedTherapistId]);
+  }, [availableTherapistsForSlot, selectedTherapistId, selectedSecondaryTherapistId, isCoupleRoom]);
 
   // ── Available Dates list (between today and expire_date) ───────────────
   const dateOptions = useMemo<{ dateStr: string; label: string; weekday: string; dayNum: string; isToday: boolean }[]>(() => {
@@ -856,6 +921,10 @@ export function RedeemVoucherModal({
     const branchName = selBranch?.branch_name ?? selBranch?.name ?? 'Branch';
     const roomName = selRoom?.name ?? 'Room';
     const therapistName = getTherapistDisplayName(selectedTherapist);
+    const secondaryTherapistName =
+      isCoupleRoom && selectedSecondaryTherapist
+        ? getTherapistDisplayName(selectedSecondaryTherapist)
+        : undefined;
 
     try {
       // 1. Create Booking in booknpay
@@ -888,6 +957,13 @@ export function RedeemVoucherModal({
         therapist_id: selectedTherapistId,
         therapist_name: therapistName,
         therapist_data: selectedTherapist,
+        ...(isCoupleRoom && selectedSecondaryTherapistId
+          ? {
+              secondary_therapist_id: selectedSecondaryTherapistId,
+              secondary_therapist_name: secondaryTherapistName,
+              secondary_therapist_data: selectedSecondaryTherapist,
+            }
+          : {}),
         appointment_date: selectedDate,
         appointment_time: toHHMM(selectedTimeSlot),
         booking_type: 'branch_service',
@@ -952,6 +1028,18 @@ export function RedeemVoucherModal({
         throw new Error(bookingRes?.detail || 'Failed to create booking for voucher redemption');
       }
 
+      const resolvedSecTherapistData =
+        newBooking?.secondary_therapist_data ||
+        (isCoupleRoom && selectedSecondaryTherapist ? selectedSecondaryTherapist : undefined);
+      const resolvedSecTherapistId =
+        newBooking?.secondary_therapist_id ||
+        resolvedSecTherapistData?.id ||
+        resolvedSecTherapistData?.therapist_id ||
+        (isCoupleRoom && selectedSecondaryTherapistId ? selectedSecondaryTherapistId : undefined);
+      const resolvedSecTherapistName =
+        newBooking?.secondary_therapist_name ||
+        (resolvedSecTherapistData ? getTherapistDisplayName(resolvedSecTherapistData) : secondaryTherapistName);
+
       // 2. Update Voucher Status to redeemed
       const voucherUpdatePayload = {
         status: 'redeemed',
@@ -967,6 +1055,13 @@ export function RedeemVoucherModal({
           therapist_id: selectedTherapistId,
           therapist_name: therapistName,
           therapist_data: selectedTherapist,
+          ...(resolvedSecTherapistId || resolvedSecTherapistData
+            ? {
+                secondary_therapist_id: resolvedSecTherapistId,
+                secondary_therapist_name: resolvedSecTherapistName,
+                secondary_therapist_data: resolvedSecTherapistData,
+              }
+            : {}),
           branch_id: selectedBranchId,
           branch_name: branchName,
           branch_data: { branch_id: selectedBranchId, name: branchName },
@@ -1064,10 +1159,32 @@ export function RedeemVoucherModal({
                   <span className="text-muted-foreground">Recipient:</span>
                   <span className="font-bold text-foreground">{recipientName}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Therapist:</span>
-                  <span className="font-bold text-foreground">{getTherapistDisplayName(selectedTherapist)}</span>
-                </div>
+                {(() => {
+                  const secData = bookingSuccess?.secondary_therapist_data || (isCoupleRoom ? selectedSecondaryTherapist : null);
+                  const secName =
+                    bookingSuccess?.secondary_therapist_name ||
+                    (secData ? getTherapistDisplayName(secData) : null);
+                  if (secName) {
+                    return (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Primary Therapist:</span>
+                          <span className="font-bold text-foreground">{getTherapistDisplayName(selectedTherapist)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Secondary Therapist:</span>
+                          <span className="font-bold text-foreground">{secName}</span>
+                        </div>
+                      </>
+                    );
+                  }
+                  return (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Therapist:</span>
+                      <span className="font-bold text-foreground">{getTherapistDisplayName(selectedTherapist)}</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               <button
@@ -1305,7 +1422,7 @@ export function RedeemVoucherModal({
                       <div className="flex items-center justify-between">
                         <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                           <User className="h-3.5 w-3.5 text-violet-500" />
-                          Therapist
+                          {isCoupleRoom ? 'Therapists (Primary & Secondary)' : 'Therapist'}
                         </label>
                         {availableTherapistsForSlot.length > 1 && (
                           <span className="text-[11px] text-muted-foreground">
@@ -1320,7 +1437,9 @@ export function RedeemVoucherModal({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {availableTherapistsForSlot.map((t) => {
                             const tId = t.id ?? t.therapist_id ?? '';
-                            const isSel = tId === selectedTherapistId;
+                            const isPrimary = tId === selectedTherapistId;
+                            const isSecondary = isCoupleRoom && tId === selectedSecondaryTherapistId;
+                            const isSel = isPrimary || isSecondary;
                             const tName = getTherapistDisplayName(t);
                             const tAvatar = t.avatar || t.photo_url || t.profile_picture;
                             return (
@@ -1328,8 +1447,30 @@ export function RedeemVoucherModal({
                                 key={tId}
                                 type="button"
                                 onClick={() => {
-                                  setSelectedTherapistId(tId);
-                                  setSelectedTherapist(t);
+                                  if (!isCoupleRoom) {
+                                    setSelectedTherapistId(tId);
+                                    setSelectedTherapist(t);
+                                    return;
+                                  }
+                                  if (isPrimary) return;
+                                  if (isSecondary) {
+                                    // Swap primary and secondary when clicking secondary
+                                    const prevPrimaryId = selectedTherapistId;
+                                    const prevPrimary = selectedTherapist;
+                                    setSelectedTherapistId(tId);
+                                    setSelectedTherapist(t);
+                                    setSelectedSecondaryTherapistId(prevPrimaryId);
+                                    setSelectedSecondaryTherapist(prevPrimary);
+                                  } else {
+                                    // Assign as secondary therapist (or primary if none)
+                                    if (!selectedTherapistId) {
+                                      setSelectedTherapistId(tId);
+                                      setSelectedTherapist(t);
+                                    } else {
+                                      setSelectedSecondaryTherapistId(tId);
+                                      setSelectedSecondaryTherapist(t);
+                                    }
+                                  }
                                 }}
                                 className={cn(
                                   'flex items-center gap-3 rounded-xl border p-2.5 text-left transition cursor-pointer',
@@ -1351,7 +1492,13 @@ export function RedeemVoucherModal({
                                 )}
                                 <div className="min-w-0 flex-1">
                                   <p className="text-xs font-bold truncate text-foreground">{tName}</p>
-                                  <p className="text-[10px] text-muted-foreground">Available</p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {isCoupleRoom && isPrimary
+                                      ? 'Primary Therapist'
+                                      : isCoupleRoom && isSecondary
+                                      ? 'Secondary Therapist'
+                                      : 'Available'}
+                                  </p>
                                 </div>
                                 {isSel && (
                                   <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />

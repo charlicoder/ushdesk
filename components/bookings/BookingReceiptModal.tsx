@@ -27,6 +27,7 @@ export interface BookingReceiptData {
   branchName?: string | null;
   arrangementName?: string | null;
   therapistName?: string | null;
+  secondaryTherapistName?: string | null;
   serviceName?: string | null;
   serviceCategory?: string | null;
   servicePrice?: number | string | null;
@@ -43,6 +44,8 @@ export interface BookingReceiptData {
   extraPrice?: number | string | null;
   addons?: Array<{ name?: string; price?: number | string; duration?: number | string }>;
   currency?: string | null;
+  subtotal?: number | string | null;
+  discount?: number | string | null;
   totalAmount?: number | string | null;
   status?: string | null;
   paymentStatus?: string | null;
@@ -359,8 +362,14 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               )}
               {data.therapistName && (
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Therapist:</span>
+                  <span className="text-slate-500">Therapist{data.secondaryTherapistName ? ' 1' : ''}:</span>
                   <span className="font-semibold text-slate-800">{data.therapistName}</span>
+                </div>
+              )}
+              {data.secondaryTherapistName && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Therapist 2:</span>
+                  <span className="font-semibold text-slate-800">{data.secondaryTherapistName}</span>
                 </div>
               )}
               {data.arrangementName && (
@@ -448,8 +457,18 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="py-3 border-b border-dashed border-slate-300 space-y-1.5 text-xs">
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal:</span>
-                <span className="font-mono">{totalAmountNum.toFixed(3)} {currency}</span>
+                <span className="font-mono">
+                  {data.subtotal != null
+                    ? `${(parseFloat(String(data.subtotal)) || 0).toFixed(3)} ${currency}`
+                    : `${(totalAmountNum + (parseFloat(String(data.discount ?? '0')) || 0)).toFixed(3)} ${currency}`}
+                </span>
               </div>
+              {Number(data.discount ?? 0) > 0 && (
+                <div className="flex justify-between text-emerald-700">
+                  <span>Discount:</span>
+                  <span className="font-mono font-bold">-{(parseFloat(String(data.discount)) || 0).toFixed(3)} {currency}</span>
+                </div>
+              )}
               <div className="flex justify-between text-slate-600">
                 <span>Tax / VAT (0%):</span>
                 <span className="font-mono">0.000 {currency}</span>

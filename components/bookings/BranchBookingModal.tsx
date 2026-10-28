@@ -18,6 +18,7 @@ import { MakePaymentModal } from './MakePaymentModal';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 import { MultiSelectDrop } from './MultiSelectDrop';
 import { exceedsMaxDuration, maxDurationMessage } from '@/lib/booking-duration';
+import { usePermissions } from '@/hooks/use-permissions';
 
 // ── Exported types ─────────────────────────────────────────────────────────────
 
@@ -100,6 +101,9 @@ export interface BranchBookingForm {
   serviceSearch: string;
   therapistId: string;
   therapistSearch: string;
+  /** Second therapist for couple_room / double_room arrangements */
+  secondaryTherapistId: string;
+  secondaryTherapistSearch: string;
   customerId: string;
   customerSearch: string;
   addonIds: string[];
@@ -109,6 +113,7 @@ export interface BranchBookingForm {
 
 const INITIAL_FORM: BranchBookingForm = {
   serviceId: '', serviceIds: [], serviceSearch: '', therapistId: '', therapistSearch: '',
+  secondaryTherapistId: '', secondaryTherapistSearch: '',
   customerId: '', customerSearch: '', addonIds: [], extraMinutes: 0, notes: '',
 };
 
@@ -124,10 +129,16 @@ export const ARRANGEMENT_TYPE_CFG: Record<string, { label: string; Icon: React.E
   open_area:     { label: 'Open Area',     Icon: LayoutGrid, color: 'text-sky-500' },
   vip_suite:     { label: 'VIP Suite',     Icon: Crown,      color: 'text-amber-500' },
   couple_room:   { label: 'Couple Room',   Icon: Heart,      color: 'text-rose-500' },
+  double_room:   { label: 'Double Room',   Icon: Heart,      color: 'text-pink-500' },
   single_room:   { label: 'Single Room',   Icon: Sparkles,   color: 'text-violet-500' },
   private_suite: { label: 'Private Suite', Icon: Layers,     color: 'text-teal-500' },
   other:         { label: 'Other',         Icon: Store,      color: 'text-muted-foreground' },
 };
+
+/** Returns true when an arrangement type requires two therapists. */
+export function isDoubleOccupancy(type: string): boolean {
+  return type === 'couple_room' || type === 'double_room';
+}
 
 export function getArrangementType(type: string) {
   return ARRANGEMENT_TYPE_CFG[type] ?? ARRANGEMENT_TYPE_CFG['other'];
@@ -262,6 +273,7 @@ export function NewBranchBookingModal({
 }) {
   const { arrangement, timeSlot, date } = payload;
   const maxDuration = payload.maxDurationMinutes;
+  const { canApplyDiscount: allowDiscount } = usePermissions();
 
   const [step, setStep]           = useState<BookingStep>(1);
   const [form, setForm]           = useState<BranchBookingForm>(() => ({
@@ -271,6 +283,10 @@ export function NewBranchBookingModal({
       therapistSearch: preselectedTherapistName ?? '',
     } : {}),
   }));
+
+  /** True when the selected arrangement requires two therapists. */
+  const needsDualTherapist = isDoubleOccupancy(arrangement.arrangementType);
+  const [discount, setDiscount] = useState<string>('');
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [paymentOption, setPaymentOption] = useState<'pay_on_branch' | 'pay_now'>('pay_on_branch');
@@ -350,7 +366,8 @@ export function NewBranchBookingModal({
     return form.serviceIds.map(id => byId.get(id)).filter((s): s is ApiService => Boolean(s));
   }, [services, form.serviceIds]);
   const selectedService   = selectedServices[0] ?? null;
-  const selectedTherapist = useMemo(() => therapists.find(t => t.id === form.therapistId) ?? null, [therapists, form.therapistId]);
+  const selectedTherapist          = useMemo(() => therapists.find(t => t.id === form.therapistId)          ?? null, [therapists, form.therapistId]);
+  const selectedSecondaryTherapist = useMemo(() => therapists.find(t => t.id === form.secondaryTherapistId) ?? null, [therapists, form.secondaryTherapistId]);
   const selectedCustomer  = useMemo(() => {
     if (!form.customerId) return null;
     return customers.find(c => String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? '') === String(form.customerId)) ?? null;
@@ -366,6 +383,18 @@ export function NewBranchBookingModal({
       return name.includes(form.therapistSearch.toLowerCase());
     }) : therapists,
     [therapists, form.therapistSearch]);
+
+  // Therapists eligible for the secondary slot: all except the one already chosen as primary
+  const secondaryTherapistPool = useMemo(() =>
+    therapists.filter(t => t.id !== form.therapistId),
+    [therapists, form.therapistId]);
+
+  const filteredSecondaryTherapists = useMemo(() =>
+    form.secondaryTherapistSearch ? secondaryTherapistPool.filter(t => {
+      const name = (t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ')).toLowerCase();
+      return name.includes(form.secondaryTherapistSearch.toLowerCase());
+    }) : secondaryTherapistPool,
+    [secondaryTherapistPool, form.secondaryTherapistSearch]);
 
   const serviceAddons: ApiAddOn[] = useMemo(() => {
     const seen = new Set<string>();
@@ -402,7 +431,9 @@ export function NewBranchBookingModal({
   };
 
   const extraMinutesPrice = calcExtraPrice(form.extraMinutes);
-  const totalPrice        = servicePrice + addonTotal + extraMinutesPrice;
+  const subtotalPrice     = servicePrice + addonTotal + extraMinutesPrice;
+  const discountAmount    = allowDiscount ? Math.max(0, parseFloat(discount) || 0) : 0;
+  const totalPrice        = Math.max(0, subtotalPrice - discountAmount);
   const totalDuration     = (selectedService ? baseDuration : 0) + addonDuration + form.extraMinutes;
   const extraOptions      = [0, 30, 60] as const;
 
@@ -455,9 +486,34 @@ export function NewBranchBookingModal({
           common = common.filter(t => ids_i.has(t.id));
         }
         setTherapists(common);
-        // Drop a previously chosen therapist that can't do every selected service
-        setForm(p => (p.therapistId && !common.some(t => t.id === p.therapistId))
-          ? { ...p, therapistId: '', therapistSearch: '' } : p);
+        setForm(p => {
+          // Drop primary therapist if no longer available
+          const primaryOk = !p.therapistId || common.some(t => t.id === p.therapistId);
+          const newPrimaryId   = primaryOk ? p.therapistId   : '';
+          const newPrimaryName = primaryOk ? p.therapistSearch : '';
+
+          // For double-occupancy rooms: auto-assign first two available therapists if not already set
+          if (needsDualTherapist) {
+            const firstAvail  = common[0];
+            const secondAvail = common.find(t => t.id !== (newPrimaryId || firstAvail?.id));
+            const autoFirst  = newPrimaryId ? newPrimaryId   : (firstAvail?.id  ?? '');
+            const autoFirstN = newPrimaryId ? newPrimaryName : (firstAvail ? (firstAvail.full_name ?? [firstAvail.first_name, firstAvail.last_name].filter(Boolean).join(' ')) : '');
+            const existingSecOk = p.secondaryTherapistId && p.secondaryTherapistId !== autoFirst && common.some(t => t.id === p.secondaryTherapistId);
+            const autoSecond  = existingSecOk ? p.secondaryTherapistId   : (secondAvail?.id  ?? '');
+            const autoSecondN = existingSecOk ? p.secondaryTherapistSearch : (secondAvail ? (secondAvail.full_name ?? [secondAvail.first_name, secondAvail.last_name].filter(Boolean).join(' ')) : '');
+            return { ...p, therapistId: autoFirst, therapistSearch: autoFirstN, secondaryTherapistId: autoSecond, secondaryTherapistSearch: autoSecondN };
+          }
+
+          // Single-occupancy: just drop stale selection
+          const secondaryOk = !p.secondaryTherapistId || common.some(t => t.id === p.secondaryTherapistId);
+          return {
+            ...p,
+            therapistId:            newPrimaryId,
+            therapistSearch:        newPrimaryName,
+            secondaryTherapistId:   secondaryOk ? p.secondaryTherapistId   : '',
+            secondaryTherapistSearch: secondaryOk ? p.secondaryTherapistSearch : '',
+          };
+        });
       })
       .catch(() => setTherapists([]))
       .finally(() => setTherapistsLoading(false));
@@ -503,12 +559,23 @@ export function NewBranchBookingModal({
       return { ...p, serviceIds, serviceId: serviceIds[0] ?? '', therapistId: '', therapistSearch: '' };
     });
   const clearService    = () =>
-    setForm(p => ({ ...p, serviceId: '', serviceIds: [], serviceSearch: '', therapistId: '', therapistSearch: '', addonIds: [], extraMinutes: 0 }));
+    setForm(p => ({ ...p, serviceId: '', serviceIds: [], serviceSearch: '', therapistId: '', therapistSearch: '', secondaryTherapistId: '', secondaryTherapistSearch: '', addonIds: [], extraMinutes: 0 }));
   const selectTherapist = (t: ApiTherapist) => {
     const name = t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ');
-    setForm(p => ({ ...p, therapistId: t.id, therapistSearch: name }));
+    // If the chosen primary therapist was the secondary, clear the secondary
+    setForm(p => ({
+      ...p,
+      therapistId: t.id,
+      therapistSearch: name,
+      ...(p.secondaryTherapistId === t.id ? { secondaryTherapistId: '', secondaryTherapistSearch: '' } : {}),
+    }));
   };
   const clearTherapist  = () => setForm(p => ({ ...p, therapistId: '', therapistSearch: '' }));
+  const selectSecondaryTherapist = (t: ApiTherapist) => {
+    const name = t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ');
+    setForm(p => ({ ...p, secondaryTherapistId: t.id, secondaryTherapistSearch: name }));
+  };
+  const clearSecondaryTherapist = () => setForm(p => ({ ...p, secondaryTherapistId: '', secondaryTherapistSearch: '' }));
   const selectCustomer  = (c: ApiCustomer) => {
     const id = String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? '');
     const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
@@ -547,7 +614,7 @@ export function NewBranchBookingModal({
   };
   const goBack = () => {
     setSubmitError(null);
-    setForm(p => ({ ...p, therapistId: '', therapistSearch: '' }));
+    setForm(p => ({ ...p, therapistId: '', therapistSearch: '', secondaryTherapistId: '', secondaryTherapistSearch: '' }));
     setStep(1);
   };
   const goBackFromStep3 = () => {
@@ -640,6 +707,18 @@ export function NewBranchBookingModal({
         ...(selectedTherapist?.avatar || selectedTherapist?.photo_url ? { photo_url: selectedTherapist.avatar || selectedTherapist.photo_url } : {}),
         ...(selectedTherapist?.specialization || selectedTherapist?.specialties?.[0]?.name ? { specialization: selectedTherapist.specialization || selectedTherapist?.specialties?.[0]?.name } : {}),
       } : null,
+      // ── Secondary therapist (couple_room / double_room) ───────────────────
+      ...(needsDualTherapist && form.secondaryTherapistId ? {
+        secondary_therapist_id: form.secondaryTherapistId,
+        secondary_therapist_data: {
+          therapist_id:   form.secondaryTherapistId,
+          therapist_name: selectedSecondaryTherapist
+            ? ((selectedSecondaryTherapist.full_name ?? [selectedSecondaryTherapist.first_name, selectedSecondaryTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist')
+            : form.secondaryTherapistSearch,
+          ...(selectedSecondaryTherapist?.avatar || selectedSecondaryTherapist?.photo_url ? { photo_url: selectedSecondaryTherapist.avatar || selectedSecondaryTherapist.photo_url } : {}),
+          ...(selectedSecondaryTherapist?.specialization || selectedSecondaryTherapist?.specialties?.[0]?.name ? { specialization: selectedSecondaryTherapist.specialization || selectedSecondaryTherapist?.specialties?.[0]?.name } : {}),
+        },
+      } : {}),
       selected_addons: selectedAddons.map((a) => ({
         id: a.id, name: a.name,
         description: (a as unknown as Record<string, string>).description ?? '',
@@ -677,9 +756,14 @@ export function NewBranchBookingModal({
         addons: fmtPriceB(addonTotal), addons_price: fmtPriceB(addonTotal),
         extratime: fmtPriceB(extraMinutesPrice), extra_time: fmtPriceB(extraMinutesPrice),
         extra_time_price: fmtPriceB(extraMinutesPrice),
-        subtotal: fmtPriceB(totalPrice), total: fmtPriceB(totalPrice), total_price: fmtPriceB(totalPrice),
+        subtotal: fmtPriceB(subtotalPrice),
+        discount: fmtPriceB(discountAmount),
+        discount_amount: fmtPriceB(discountAmount),
+        total: fmtPriceB(totalPrice),
+        total_price: fmtPriceB(totalPrice),
         currency: 'KWD',
       },
+      discount: fmtPriceB(discountAmount),
       total_price: fmtPriceB(totalPrice), total_duration: totalDuration, currency: 'KWD',
       status:           'confirmed',
       payment_status:   'pending',
@@ -856,103 +940,225 @@ export function NewBranchBookingModal({
         </div>
 
         {/* Sub-header */}
-        <div className="shrink-0 border-b border-border/40 bg-muted/20">
-          <div className="flex items-stretch divide-x divide-border/40">
-            {/* LEFT: Arrangement or branch portrait */}
-            <div className="flex flex-col items-center justify-center gap-2 px-5 py-4 w-[30%] shrink-0">
-              <div className="relative">
-                <div className={cn('absolute -inset-1.5 rounded-full opacity-20 blur-xl bg-gradient-to-br', arrangement.color)} />
-                <div className="relative h-[64px] w-[64px] rounded-full p-[3px] shadow-xl"
-                  style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(200,200,200,0.4) 100%)' }}>
-                  <div className={cn('h-full w-full rounded-full grid place-items-center bg-gradient-to-br text-white text-lg font-black', arrangement.color)}>
-                    {arrangement.initials}
-                  </div>
-                </div>
-              </div>
-              <div className="text-center">
-                {!isDirect && arrangement.name && (
-                  <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[100px]">{arrangement.name}</p>
-                )}
-                <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{arrangement.branchName}</p>
-                {isDirect && (
-                  <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
-                    <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block" />
-                    Direct Booking
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {/* MIDDLE: Selected Therapist */}
-            <div className="flex flex-col items-center justify-center gap-1.5 px-4 py-4 w-[30%] shrink-0 border-x border-border/40">
-              {selectedTherapist ? (() => {
-                const tName = (selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist';
-                const tImg  = selectedTherapist.avatar ?? selectedTherapist.photo_url;
-                const tSpec = selectedTherapist.specialties?.[0]?.name ?? selectedTherapist.specialization ?? '';
-                return (
-                  <>
-                    <div className="relative">
-                      <div className="absolute -inset-1 rounded-full bg-primary/20 blur-md" />
-                      <div className="relative h-[60px] w-[60px] rounded-full ring-2 ring-primary/40 shadow-lg overflow-hidden">
-                        {tImg ? <img src={tImg} alt={tName} className="h-full w-full object-cover" />
-                          : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-lg font-black">{tName.slice(0, 2).toUpperCase()}</div>}
+        {(() => {
+          const showDualTherapists = needsDualTherapist || Boolean(form.secondaryTherapistId);
+          return (
+            <div className="shrink-0 border-b border-border/40 bg-muted/20">
+              <div className="flex items-stretch divide-x divide-border/40">
+                {/* LEFT: Arrangement or branch portrait */}
+                <div className={cn(
+                  "flex flex-col items-center justify-center gap-1.5 shrink-0",
+                  showDualTherapists ? "w-[24%] px-2.5 py-3" : "w-[30%] px-5 py-4 gap-2"
+                )}>
+                  <div className="relative">
+                    <div className={cn('absolute -inset-1.5 rounded-full opacity-20 blur-xl bg-gradient-to-br', arrangement.color)} />
+                    <div className={cn(
+                      "relative rounded-full p-[3px] shadow-xl",
+                      showDualTherapists ? "h-[54px] w-[54px]" : "h-[64px] w-[64px]"
+                    )}
+                      style={{ background: 'linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(200,200,200,0.4) 100%)' }}>
+                      <div className={cn('h-full w-full rounded-full grid place-items-center bg-gradient-to-br text-white text-base font-black', arrangement.color)}>
+                        {arrangement.initials}
                       </div>
-                      <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-card">
-                        <CheckCircle2 className="h-2.5 w-2.5 text-white" />
-                      </span>
                     </div>
-                    <div className="text-center">
-                      <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[110px]">{tName}</p>
-                      {tSpec && <p className="text-[10px] text-muted-foreground truncate max-w-[110px]">{tSpec}</p>}
-                      <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
-                        <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block" /> Therapist
-                      </span>
-                    </div>
-                  </>
-                );
-              })() : (
-                <div className="flex flex-col items-center gap-1 opacity-40">
-                  <div className="h-[60px] w-[60px] rounded-full border-2 border-dashed border-border grid place-items-center">
-                    <User className="h-6 w-6 text-muted-foreground" />
                   </div>
-                  <p className="text-[10px] text-muted-foreground text-center">No therapist<br/>selected</p>
+                  <div className="text-center">
+                    {!isDirect && arrangement.name && (
+                      <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[100px]">{arrangement.name}</p>
+                    )}
+                    <p className="text-[10px] text-muted-foreground truncate max-w-[100px]">{arrangement.branchName}</p>
+                    {isDirect && (
+                      <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
+                        <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block" />
+                        Direct Booking
+                      </span>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
 
-            {/* RIGHT: Date tile + Time slot */}
-            <div className="flex items-center justify-end gap-3.5 px-4 py-4 flex-1 min-w-0">
-              <div className="flex flex-col items-center justify-center w-[60px] h-[72px] rounded-2xl shrink-0 shadow-lg"
-                style={{ background: 'linear-gradient(160deg, #3b2f2f 0%, #4a3728 100%)' }}>
-                <p className="text-[11px] font-semibold text-white/70 uppercase tracking-widest leading-none mb-1">{dayName}</p>
-                <p className="text-[30px] font-black text-white leading-none">{dayNum}</p>
-              </div>
-              <div className="flex flex-col gap-2 min-w-0">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Date</p>
-                  <p className="text-sm font-extrabold text-foreground leading-tight">{monthFull} {dayNum}, {yearFull}</p>
-                </div>
-                <div className="inline-flex items-center gap-2 rounded-xl border border-violet-200/60 dark:border-violet-800/40 bg-violet-50 dark:bg-violet-950/30 px-3 py-1.5 w-fit">
-                  <div className="grid h-5 w-5 place-items-center rounded-lg bg-violet-500/15 text-violet-600 dark:text-violet-400 shrink-0">
-                    <Clock className="h-3 w-3" />
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-bold uppercase tracking-widest text-violet-500/70 leading-none">Time Slot</p>
-                    <p className="text-xs font-extrabold text-violet-700 dark:text-violet-300 leading-tight">{timeSlot}</p>
-                  </div>
-                  {totalDuration > 0 && (
-                    <>
-                      <span className="text-violet-300/60 text-xs">·</span>
-                      <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
-                        <Timer className="h-3 w-3" />{totalDuration}m
-                      </span>
-                    </>
+                {/* MIDDLE: Selected Therapist(s) */}
+                <div className={cn(
+                  "flex flex-col items-center justify-center shrink-0 border-x border-border/40",
+                  showDualTherapists ? "w-[46%] px-2.5 py-3 gap-1" : "w-[30%] px-4 py-4 gap-1.5"
+                )}>
+                  {showDualTherapists ? (() => {
+                    const t1Name = selectedTherapist
+                      ? ((selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist 1')
+                      : form.therapistSearch || '';
+                    const t1Img  = selectedTherapist?.avatar ?? selectedTherapist?.photo_url;
+                    const t1Spec = selectedTherapist?.specialties?.[0]?.name ?? selectedTherapist?.specialization ?? '';
+
+                    const t2Name = selectedSecondaryTherapist
+                      ? ((selectedSecondaryTherapist.full_name ?? [selectedSecondaryTherapist.first_name, selectedSecondaryTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist 2')
+                      : form.secondaryTherapistSearch || '';
+                    const t2Img  = selectedSecondaryTherapist?.avatar ?? selectedSecondaryTherapist?.photo_url;
+                    const t2Spec = selectedSecondaryTherapist?.specialties?.[0]?.name ?? selectedSecondaryTherapist?.specialization ?? '';
+
+                    return (
+                      <div className="w-full flex flex-col items-center gap-1.5">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">
+                          <Heart className="h-2.5 w-2.5 fill-rose-500" />
+                          <span>2 Therapists Assigned</span>
+                        </span>
+
+                        <div className="flex items-start justify-center gap-2 w-full">
+                          {/* Therapist 1 */}
+                          <div className="flex flex-col items-center flex-1 min-w-0">
+                            <div className="relative">
+                              <div className="absolute -inset-0.5 rounded-full bg-primary/20 blur-sm" />
+                              <div className="relative h-[48px] w-[48px] rounded-full ring-2 ring-primary/40 shadow-md overflow-hidden bg-muted">
+                                {t1Img ? (
+                                  <img src={t1Img} alt={t1Name || 'Therapist 1'} className="h-full w-full object-cover" />
+                                ) : t1Name ? (
+                                  <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-xs font-black">
+                                    {t1Name.slice(0, 2).toUpperCase()}
+                                  </div>
+                                ) : (
+                                  <div className="h-full w-full grid place-items-center bg-muted text-muted-foreground">
+                                    <User className="h-5 w-5" />
+                                  </div>
+                                )}
+                              </div>
+                              {t1Name && (
+                                <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-1.5 ring-card shadow-xs">
+                                  <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-[11px] font-extrabold text-foreground leading-tight truncate max-w-[90px] text-center" title={t1Name || 'Therapist 1'}>
+                              {t1Name || 'Therapist 1'}
+                            </p>
+                            {t1Spec && (
+                              <p className="text-[9px] text-muted-foreground truncate max-w-[90px] text-center" title={t1Spec}>{t1Spec}</p>
+                            )}
+                            <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold text-primary">
+                              <span className="h-1 w-1 rounded-full bg-primary inline-block" /> Therapist 1
+                            </span>
+                          </div>
+
+                          {/* Divider */}
+                          <div className="self-center flex flex-col items-center justify-center pt-2">
+                            <span className="text-[11px] font-black text-rose-400">&amp;</span>
+                          </div>
+
+                          {/* Therapist 2 */}
+                          <div className="flex flex-col items-center flex-1 min-w-0">
+                            <div className="relative">
+                              <div className="absolute -inset-0.5 rounded-full bg-rose-500/20 blur-sm" />
+                              <div className="relative h-[48px] w-[48px] rounded-full ring-2 ring-rose-400/40 shadow-md overflow-hidden bg-muted">
+                                {t2Img ? (
+                                  <img src={t2Img} alt={t2Name || 'Therapist 2'} className="h-full w-full object-cover" />
+                                ) : t2Name ? (
+                                  <div className="h-full w-full grid place-items-center bg-gradient-to-br from-rose-500 to-amber-500 text-white text-xs font-black">
+                                    {t2Name.slice(0, 2).toUpperCase()}
+                                  </div>
+                                ) : (
+                                  <div className="h-full w-full grid place-items-center bg-muted text-muted-foreground">
+                                    <User className="h-5 w-5" />
+                                  </div>
+                                )}
+                              </div>
+                              {t2Name && (
+                                <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-1.5 ring-card shadow-xs">
+                                  <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-[11px] font-extrabold text-foreground leading-tight truncate max-w-[90px] text-center" title={t2Name || 'Therapist 2'}>
+                              {t2Name || 'Therapist 2'}
+                            </p>
+                            {t2Spec && (
+                              <p className="text-[9px] text-muted-foreground truncate max-w-[90px] text-center" title={t2Spec}>{t2Spec}</p>
+                            )}
+                            <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 px-1.5 py-0.5 text-[9px] font-bold">
+                              <span className="h-1 w-1 rounded-full bg-rose-500 inline-block" /> Therapist 2
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })() : selectedTherapist ? (() => {
+                    const tName = (selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist';
+                    const tImg  = selectedTherapist.avatar ?? selectedTherapist.photo_url;
+                    const tSpec = selectedTherapist.specialties?.[0]?.name ?? selectedTherapist.specialization ?? '';
+                    return (
+                      <>
+                        <div className="relative">
+                          <div className="absolute -inset-1 rounded-full bg-primary/20 blur-md" />
+                          <div className="relative h-[60px] w-[60px] rounded-full ring-2 ring-primary/40 shadow-lg overflow-hidden">
+                            {tImg ? <img src={tImg} alt={tName} className="h-full w-full object-cover" />
+                              : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-lg font-black">{tName.slice(0, 2).toUpperCase()}</div>}
+                          </div>
+                          <span className="absolute -bottom-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-card">
+                            <CheckCircle2 className="h-2.5 w-2.5 text-white" />
+                          </span>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[110px]">{tName}</p>
+                          {tSpec && <p className="text-[10px] text-muted-foreground truncate max-w-[110px]">{tSpec}</p>}
+                          <span className="mt-0.5 inline-flex items-center gap-0.5 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary">
+                            <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block" /> Therapist
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })() : (
+                    <div className="flex flex-col items-center gap-1 opacity-40">
+                      <div className="h-[60px] w-[60px] rounded-full border-2 border-dashed border-border grid place-items-center">
+                        <User className="h-6 w-6 text-muted-foreground" />
+                      </div>
+                      <p className="text-[10px] text-muted-foreground text-center">No therapist<br/>selected</p>
+                    </div>
                   )}
                 </div>
+
+                {/* RIGHT: Date tile + Time slot */}
+                <div className={cn(
+                  "flex items-center justify-end min-w-0",
+                  showDualTherapists ? "w-[30%] shrink-0 px-3 py-3 gap-2.5" : "flex-1 px-4 py-4 gap-3.5"
+                )}>
+                  <div className={cn(
+                    "flex flex-col items-center justify-center rounded-2xl shrink-0 shadow-lg",
+                    showDualTherapists ? "w-[52px] h-[66px]" : "w-[60px] h-[72px]"
+                  )}
+                    style={{ background: 'linear-gradient(160deg, #3b2f2f 0%, #4a3728 100%)' }}>
+                    <p className="text-[10px] font-semibold text-white/70 uppercase tracking-widest leading-none mb-1">{dayName}</p>
+                    <p className={cn(
+                      "font-black text-white leading-none",
+                      showDualTherapists ? "text-[26px]" : "text-[30px]"
+                    )}>{dayNum}</p>
+                  </div>
+                  <div className="flex flex-col gap-1.5 min-w-0">
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wider text-muted-foreground">Appointment Date</p>
+                      <p className={cn(
+                        "font-extrabold text-foreground leading-tight",
+                        showDualTherapists ? "text-xs" : "text-sm"
+                      )}>{monthFull} {dayNum}, {yearFull}</p>
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 rounded-xl border border-violet-200/60 dark:border-violet-800/40 bg-violet-50 dark:bg-violet-950/30 px-2.5 py-1 w-fit">
+                      <div className="grid h-4 w-4 place-items-center rounded-md bg-violet-500/15 text-violet-600 dark:text-violet-400 shrink-0">
+                        <Clock className="h-2.5 w-2.5" />
+                      </div>
+                      <div>
+                        <p className="text-[8px] font-bold uppercase tracking-widest text-violet-500/70 leading-none">Time Slot</p>
+                        <p className="text-[11px] font-extrabold text-violet-700 dark:text-violet-300 leading-tight">{timeSlot}</p>
+                      </div>
+                      {totalDuration > 0 && (
+                        <>
+                          <span className="text-violet-300/60 text-xs">·</span>
+                          <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-0.5">
+                            <Timer className="h-2.5 w-2.5" />{totalDuration}m
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Scrollable form body */}
         <div className="flex-1 overflow-y-auto min-h-0">
@@ -1134,12 +1340,23 @@ export function NewBranchBookingModal({
             {/* STEP 2 */}
             {step === 2 && (
               <div className="px-6 py-5 space-y-5">
+
+                {/* Dual-therapist notice for couple/double rooms */}
+                {needsDualTherapist && (
+                  <div className="flex items-center gap-2.5 rounded-xl border border-rose-200/60 bg-rose-50/60 dark:bg-rose-950/20 dark:border-rose-800/30 px-3 py-2">
+                    <Heart className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                    <p className="text-xs text-rose-700 dark:text-rose-300">
+                      <span className="font-bold">{ARRANGEMENT_TYPE_CFG[arrangement.arrangementType]?.label ?? 'Double'} booking</span> — two therapists will be auto-assigned. You can change them below.
+                    </p>
+                  </div>
+                )}
+
                 <div>
                   <div className="flex items-center gap-2 mb-3">
                     <User className="h-4 w-4 text-primary" />
-                    <p className="text-sm font-extrabold">Therapist</p>
+                    <p className="text-sm font-extrabold">{needsDualTherapist ? 'Therapist 1 (Primary)' : 'Therapist'}</p>
                     {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                    <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Optional</span>
+                    {!needsDualTherapist && <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">Optional</span>}
                   </div>
                   <BFormLabel>Search &amp; Select Available Therapist</BFormLabel>
                   <BSearchDropdown<ApiTherapist>
@@ -1186,6 +1403,61 @@ export function NewBranchBookingModal({
                     </div>
                   )}
                 </div>
+
+                {/* Secondary therapist picker — only for couple_room / double_room */}
+                {needsDualTherapist && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Heart className="h-4 w-4 text-rose-500" />
+                      <p className="text-sm font-extrabold">Therapist 2 (Secondary)</p>
+                      {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                    </div>
+                    <BFormLabel>Search &amp; Select Second Available Therapist</BFormLabel>
+                    <BSearchDropdown<ApiTherapist>
+                      value={form.secondaryTherapistSearch}
+                      placeholder={
+                        therapistsLoading ? 'Loading available therapists\u2026'
+                          : secondaryTherapistPool.length === 0 ? 'No other therapists available'
+                          : 'Search second therapist\u2026'
+                      }
+                      loading={therapistsLoading}
+                      items={filteredSecondaryTherapists}
+                      getKey={(t, idx) => String(t.id ?? (t as any).therapist_id ?? (t as any).pk ?? idx)}
+                      isSelected={(t) => String(t.id ?? '') === form.secondaryTherapistId}
+                      selectedItem={selectedSecondaryTherapist}
+                      icon={Heart}
+                      onSearch={(q) => setForm(p => ({ ...p, secondaryTherapistSearch: q, secondaryTherapistId: '' }))}
+                      onSelect={selectSecondaryTherapist}
+                      onClear={clearSecondaryTherapist}
+                      renderItem={(t) => {
+                        const tName = (t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ')) || 'Therapist';
+                        const tImg  = t.avatar ?? t.photo_url;
+                        const tSpec = t.specialties?.[0]?.name ?? t.specialization ?? '';
+                        return (
+                          <div className="flex items-center gap-3 px-4 py-2.5">
+                            <div className="relative h-9 w-9 shrink-0 rounded-full overflow-hidden ring-2 ring-border shadow-sm">
+                              {tImg ? <img src={tImg} alt={tName} className="h-full w-full object-cover" />
+                                : <div className="h-full w-full grid place-items-center bg-gradient-to-br from-rose-400 to-pink-600 text-white text-xs font-bold">{tName.slice(0, 2).toUpperCase()}</div>}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold truncate">{tName}</p>
+                              {tSpec && <p className="text-[11px] text-muted-foreground truncate">{tSpec}</p>}
+                            </div>
+                            {t.id === form.secondaryTherapistId && <CheckCircle2 className="h-4 w-4 shrink-0 text-rose-500" />}
+                          </div>
+                        );
+                      }}
+                    />
+                    {selectedSecondaryTherapist && (
+                      <div className="mt-2 flex items-center gap-2 rounded-xl border border-rose-200/60 bg-rose-50/60 dark:bg-rose-950/20 dark:border-rose-800/30 px-3 py-2">
+                        <CheckCircle2 className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                        <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">
+                          {(selectedSecondaryTherapist.full_name ?? [selectedSecondaryTherapist.first_name, selectedSecondaryTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist'} assigned as 2nd therapist
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <div className="flex items-center gap-2 mb-3">
@@ -1469,11 +1741,11 @@ export function NewBranchBookingModal({
                   </div>
 
                   {/* Price Breakdown & Total Payable */}
-                  <div className="px-4 py-3 bg-muted/40 border-t border-border/40 space-y-2">
+                  <div className="px-4 py-3 bg-muted/40 border-t border-border/40 space-y-2.5">
                     {(selectedAddons.length > 0 || form.extraMinutes > 0) && (
                       <div className="space-y-1 pb-2 border-b border-border/40 text-xs">
                         <div className="flex justify-between text-muted-foreground">
-                          <span>Services Subtotal ({selectedServices.length}):</span>
+                          <span>Services ({selectedServices.length}):</span>
                           <span className="font-semibold text-foreground">{fmtPriceB(servicePrice)} KWD</span>
                         </div>
                         {selectedAddons.length > 0 && (
@@ -1490,11 +1762,51 @@ export function NewBranchBookingModal({
                         )}
                       </div>
                     )}
-                    <div className="flex items-center justify-between">
+
+                    {/* Subtotal */}
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-muted-foreground uppercase tracking-wider">Subtotal</span>
+                      <span className="font-extrabold text-foreground">{fmtPriceB(subtotalPrice)} <span className="text-[10px] font-semibold text-muted-foreground">KWD</span></span>
+                    </div>
+
+                    {/* Discount Amount Field */}
+                    {allowDiscount && (
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <label htmlFor="branch-discount-input" className="font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                          <DollarSign className="h-3 w-3 text-emerald-500" />
+                          <span>Discount Amount</span>
+                        </label>
+                        <div className="relative w-36">
+                          <input
+                            id="branch-discount-input"
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            placeholder="0.000"
+                            value={discount}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
+                                setDiscount(val);
+                              }
+                            }}
+                            className="w-full h-8 rounded-lg border border-border bg-background px-2.5 pr-8 text-right text-xs font-bold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/40"
+                          />
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
+                            KWD
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Total Amount */}
+                    <div className="flex items-center justify-between pt-2 border-t border-border/40">
                       <div>
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground block">Total Payable</span>
-                        {(selectedAddons.length > 0 || form.extraMinutes > 0) && (
-                          <span className="text-[10px] text-muted-foreground">Includes all services, add-ons and extra time</span>
+                        <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground block">Total Amount</span>
+                        {discountAmount > 0 && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            Discount of {fmtPriceB(discountAmount)} KWD applied
+                          </span>
                         )}
                       </div>
                       <div className="text-right">

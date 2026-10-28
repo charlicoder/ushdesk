@@ -8,7 +8,7 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw,
+  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -23,6 +23,8 @@ import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
 import { PaymentReferenceModal, type PaymentReferenceData, type PaymentProviderOption } from '@/components/bookings/PaymentReferenceModal';
+import { FeedbackLinkModal } from '@/components/bookings/FeedbackLinkModal';
+import type { CreateFeedbackLinkPayload } from '@/lib/feedback';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -38,6 +40,12 @@ export interface Booking {
   service_price: string;
   arrangement_name: string | null;
   therapist_name: string;
+  therapist_id?: string | null;
+  therapist_avatar?: string | null;
+  secondary_therapist_name?: string | null;
+  secondary_therapist_id?: string | null;
+  secondary_therapist_avatar?: string | null;
+  secondary_therapist_data?: Record<string, unknown> | null;
   appointment_start: string;
   appointment_end: string;
   duration_minutes: number;
@@ -69,6 +77,67 @@ export interface Booking {
   raw: Record<string, unknown>;
 }
 
+// ── Therapist extraction helpers ──────────────────────────────────────────────
+export function extractTherapistName(
+  data?: Record<string, unknown> | null,
+  directName?: string | null,
+  altObj?: Record<string, unknown> | null
+): string {
+  const d = (data || {}) as Record<string, any>;
+  const alt = (altObj || {}) as Record<string, any>;
+  const candidates = [
+    directName,
+    d.therapist_name,
+    d.name,
+    d.full_name,
+    d.first_name || d.last_name ? [d.first_name, d.last_name].filter(Boolean).join(' ') : null,
+    alt.therapist_name,
+    alt.name,
+    alt.full_name,
+    alt.first_name || alt.last_name ? [alt.first_name, alt.last_name].filter(Boolean).join(' ') : null,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim() && c.trim() !== '—') {
+      return c.trim();
+    }
+  }
+  return '';
+}
+
+export function extractTherapistAvatar(
+  data?: Record<string, unknown> | null,
+  directAvatar?: string | null,
+  altObj?: Record<string, unknown> | null
+): string {
+  const d = (data || {}) as Record<string, any>;
+  const alt = (altObj || {}) as Record<string, any>;
+  const candidates = [
+    directAvatar,
+    d.avatar,
+    d.photo_url,
+    d.photo,
+    d.image,
+    d.profile_picture,
+    (d.employee as any)?.avatar,
+    (d.employee as any)?.photo_url,
+    (d.user as any)?.avatar,
+    alt.avatar,
+    alt.photo_url,
+    alt.photo,
+    alt.image,
+    alt.profile_picture,
+    (alt.employee as any)?.avatar,
+    (alt.employee as any)?.photo_url,
+    (alt.user as any)?.avatar,
+  ];
+  for (const a of candidates) {
+    if (typeof a === 'string' && a.trim()) {
+      return a.trim();
+    }
+  }
+  return '';
+}
+
 // ── Normalise ──────────────────────────────────────────────────────────────────
 export function normalise(raw: Record<string, unknown>): Booking {
   const cd  = (raw.customer_data            ?? {}) as Record<string, unknown>;
@@ -76,10 +145,30 @@ export function normalise(raw: Record<string, unknown>): Booking {
   const sd  = (raw.service_data             ?? {}) as Record<string, unknown>;
   const sad = (raw.service_arrangement_data ?? {}) as Record<string, unknown>;
   const td  = (raw.therapist_data           ?? {}) as Record<string, unknown>;
+  const std = (raw.secondary_therapist_data ?? {}) as Record<string, unknown>;
   const pm  = (raw.payments_meta            ?? {}) as Record<string, unknown>;
   const pd  = (raw.payment_data             ?? {}) as Record<string, unknown>;
   const firstName = String(cd.first_name ?? '');
   const lastName  = String(cd.last_name  ?? '');
+
+  const tRawObj = (raw.therapist ?? {}) as Record<string, unknown>;
+  const secRawObj = (raw.secondary_therapist ?? {}) as Record<string, unknown>;
+
+  const primaryName =
+    extractTherapistName(td, raw.therapist_name as string, tRawObj) ||
+    '—';
+
+  const primaryAvatar =
+    extractTherapistAvatar(td, (raw.therapist_avatar || raw.therapist_photo) as string, tRawObj) ||
+    null;
+
+  const secName =
+    extractTherapistName(std, raw.secondary_therapist_name as string, secRawObj) ||
+    null;
+
+  const secAvatar =
+    extractTherapistAvatar(std, (raw.secondary_therapist_avatar || raw.secondary_therapist_photo) as string, secRawObj) ||
+    null;
 
   // Multi-service bookings carry a `services` array (legacy single-service bookings don't).
   const svcList = (Array.isArray(raw.services) ? raw.services : []) as Array<Record<string, unknown>>;
@@ -121,7 +210,13 @@ export function normalise(raw: Record<string, unknown>): Booking {
       service_category:  String(sd.category ?? sd.service_category ?? ''),
       service_price:     isMultiSvc && multiPrice > 0 ? String(multiPrice) : String(sd.base_price ?? sd.arrangement_price ?? raw.base_price ?? '0'),
       arrangement_name:  (sad.arrangement_name ?? sad.room_name ?? null) as string | null,
-      therapist_name:    String(td.therapist_name ?? td.name ?? '—'),
+      therapist_name:    primaryName,
+      therapist_id:      raw.therapist_id ? String(raw.therapist_id) : (td.id || td.therapist_id ? String(td.id || td.therapist_id) : null),
+      therapist_avatar:  primaryAvatar,
+      secondary_therapist_name: secName,
+      secondary_therapist_id: raw.secondary_therapist_id ? String(raw.secondary_therapist_id) : (std.id || std.therapist_id ? String(std.id || std.therapist_id) : null),
+      secondary_therapist_avatar: secAvatar,
+      secondary_therapist_data: (raw.secondary_therapist_data ?? null) as Record<string, unknown> | null,
       appointment_start: String(raw.appointment_start ?? ''),
       appointment_end:   String(raw.appointment_end   ?? ''),
       duration_minutes:  durSvc,
@@ -349,21 +444,21 @@ export const PAYMENT_PROVIDERS = [
     checkColor: 'text-primary',
   },
   {
-    id: 'tap',
+    id: 'deema',
     providerOption: 'Deema' as PaymentProviderOption,
-    name: 'Tap Providers',
-    description: 'Deema, KNET Card, Apple Pay',
-    tag: 'Online Payment',
+    name: 'Deema',
+    description: 'Buy now, pay later - Deema installment link',
+    tag: 'BNPL',
     tagColor: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
     borderColor: 'border-border',
     checkColor: 'text-primary',
   },
   {
-    id: 'other',
-    providerOption: 'Other' as PaymentProviderOption,
-    name: 'Cash Payment',
-    description: 'Cash payment at reception',
-    tag: 'Cash',
+    id: 'boubyan_link',
+    providerOption: 'Boubyan Link' as PaymentProviderOption,
+    name: 'Boubyan Link',
+    description: 'Pay via Boubyan Link & enter reference number',
+    tag: 'Boubyan Link',
     tagColor: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
     borderColor: 'border-emerald-400',
     checkColor: 'text-emerald-500',
@@ -474,7 +569,7 @@ function PaymentProviderModal({
             onClick={onContinue}
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 px-5 py-2.5 text-xs font-bold text-white shadow-md transition cursor-pointer active:scale-95"
           >
-            <span>{selected === 'paymentlink' || selected === 'tap' ? 'Continue to Create Payment Link' : 'Continue to Reference & Receipt'}</span>
+            <span>{selected === 'paymentlink' || selected === 'deema' ? 'Continue to Create Payment Link' : 'Continue to Reference & Receipt'}</span>
             <ArrowRight className="h-4 w-4" />
           </button>
         </div>
@@ -514,6 +609,7 @@ export function BookingDetailPopup({
     return PAYMENT_PROVIDERS.find((p) => p.id === selectedProviderId) || PAYMENT_PROVIDERS[0];
   }, [selectedProviderId]);
 
+  const [extraTherapistProfiles, setExtraTherapistProfiles] = useState<Record<string, { name?: string; avatar?: string }>>({});
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [updateFetchState, setUpdateFetchState] = useState<{
@@ -527,11 +623,18 @@ export function BookingDetailPopup({
     promise?: Promise<any>;
   } | null>(null);
   const [showChangeTherapistModal, setShowChangeTherapistModal] = useState(false);
+  const [changeTherapistTarget, setChangeTherapistTarget] = useState<'primary' | 'secondary'>('primary');
+
+  const openChangeTherapist = (slot: 'primary' | 'secondary' = 'primary') => {
+    setChangeTherapistTarget(slot);
+    setShowChangeTherapistModal(true);
+  };
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceRecord, setInvoiceRecord] = useState<Record<string, unknown> | null>(null);
   const [fetchedPaymentNumber, setFetchedPaymentNumber] = useState<string>('');
   const [completing, setCompleting] = useState(false);
+  const [showFeedbackPrompt, setShowFeedbackPrompt] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [advancingStep, setAdvancingStep] = useState(false);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
@@ -1064,6 +1167,119 @@ export function BookingDetailPopup({
     return () => { cancelled = true; };
   }, [invoiceNumber]);
 
+  // ── Dual therapist detection for couple room / double room ──
+  const sadObj = (detail?.service_arrangement_data || (booking?.raw as any)?.service_arrangement_data || {}) as Record<string, any>;
+  const arrType = String(
+    sadObj.arrangement_type ||
+    sadObj.type ||
+    (detail as any)?.arrangement_type ||
+    (booking?.raw as any)?.arrangement_type ||
+    ''
+  ).toLowerCase().trim().replace(/[\s-]+/g, '_');
+
+  const arrName = String(
+    booking?.arrangement_name ||
+    sadObj.arrangement_name ||
+    sadObj.name ||
+    (detail as any)?.arrangement_name ||
+    (booking?.raw as any)?.arrangement_name ||
+    ''
+  ).toLowerCase();
+
+  const rawBkObj = (detail || booking?.raw || {}) as Record<string, any>;
+  const isDualTherapistBooking =
+    arrType === 'couple_room' ||
+    arrType === 'double_room' ||
+    arrName.includes('couple') ||
+    arrName.includes('double') ||
+    Boolean(detail?.secondary_therapist_id) ||
+    Boolean(detail?.secondary_therapist_data) ||
+    Boolean(rawBkObj.secondary_therapist_id) ||
+    Boolean(rawBkObj.secondary_therapist_data) ||
+    Boolean(booking?.secondary_therapist_id) ||
+    Boolean(booking?.secondary_therapist_data);
+
+  const t1Data = (detail?.therapist_data || (booking?.raw as any)?.therapist_data || (detail as any)?.therapist || (booking?.raw as any)?.therapist || {}) as Record<string, any>;
+  const t2Data = (detail?.secondary_therapist_data || (booking?.raw as any)?.secondary_therapist_data || (detail as any)?.secondary_therapist || (booking?.raw as any)?.secondary_therapist || {}) as Record<string, any>;
+
+  const primaryTherapistId = String(
+    detail?.therapist_id ||
+    (booking?.raw as any)?.therapist_id ||
+    booking?.therapist_id ||
+    t1Data.id ||
+    t1Data.therapist_id ||
+    ''
+  ).trim();
+
+  const secondaryTherapistId = String(
+    detail?.secondary_therapist_id ||
+    (booking?.raw as any)?.secondary_therapist_id ||
+    booking?.secondary_therapist_id ||
+    t2Data.id ||
+    t2Data.therapist_id ||
+    ''
+  ).trim();
+
+  const primaryTherapistName =
+    extractTherapistName(t1Data, (detail as any)?.therapist_name, (booking?.raw as any)?.therapist_name ? { name: (booking?.raw as any).therapist_name } : undefined) ||
+    (booking?.therapist_name && booking?.therapist_name !== '—' ? booking.therapist_name : '') ||
+    extraTherapistProfiles[primaryTherapistId]?.name ||
+    '—';
+
+  const primaryTherapistImg =
+    extractTherapistAvatar(t1Data, (detail as any)?.therapist_avatar, (booking?.raw as any)?.therapist_avatar ? { avatar: (booking?.raw as any).therapist_avatar } : undefined) ||
+    booking?.therapist_avatar ||
+    extraTherapistProfiles[primaryTherapistId]?.avatar ||
+    '';
+
+  const secondaryTherapistName =
+    extractTherapistName(t2Data, (detail as any)?.secondary_therapist_name, (booking?.raw as any)?.secondary_therapist_name ? { name: (booking?.raw as any).secondary_therapist_name } : undefined) ||
+    booking?.secondary_therapist_name ||
+    extraTherapistProfiles[secondaryTherapistId]?.name ||
+    '';
+
+  const secondaryTherapistImg =
+    extractTherapistAvatar(t2Data, (detail as any)?.secondary_therapist_avatar, (booking?.raw as any)?.secondary_therapist_avatar ? { avatar: (booking?.raw as any).secondary_therapist_avatar } : undefined) ||
+    booking?.secondary_therapist_avatar ||
+    extraTherapistProfiles[secondaryTherapistId]?.avatar ||
+    '';
+
+  // Background fetch to populate missing therapist profile / avatar (called unconditionally before early return)
+  useEffect(() => {
+    if (!booking) return;
+    const idsToFetch: string[] = [];
+    if (primaryTherapistId && (!primaryTherapistImg || primaryTherapistName === '—') && !extraTherapistProfiles[primaryTherapistId]) {
+      idsToFetch.push(primaryTherapistId);
+    }
+    if (secondaryTherapistId && (!secondaryTherapistImg || !secondaryTherapistName) && !extraTherapistProfiles[secondaryTherapistId]) {
+      idsToFetch.push(secondaryTherapistId);
+    }
+    if (idsToFetch.length === 0) return;
+
+    let cancelled = false;
+    idsToFetch.forEach((tId) => {
+      authedFetch(`/uauth/api/v1/therapists/${tId}/`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (cancelled || !data) return;
+          const profile = (data.data || data) as Record<string, any>;
+          const name = profile.full_name || [profile.first_name, profile.last_name].filter(Boolean).join(' ') || profile.name || profile.therapist_name || '';
+          const avatar = profile.avatar || profile.photo_url || profile.photo || (profile.employee as any)?.avatar || '';
+          if (name || avatar) {
+            setExtraTherapistProfiles((prev) => ({
+              ...prev,
+              [tId]: { name, avatar },
+            }));
+          }
+        })
+        .catch(() => {});
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [booking, primaryTherapistId, secondaryTherapistId, primaryTherapistImg, primaryTherapistName, secondaryTherapistImg, secondaryTherapistName, extraTherapistProfiles]);
+
   if (!booking) return null;
   const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
   const normStatus = curStatus.replace(/[\s-]/g, '_');
@@ -1409,6 +1625,8 @@ export function BookingDetailPopup({
 
   const handleAdvanceNextStep = async (targetStatus: string, reason: string | null) => {
     if (!booking || advancingStep) return;
+    // Feedback prompt is offered only for the InProgress → Completed transition.
+    const wasInProgress = normStatus === 'in_progress';
     setAdvancingStep(true);
     setAdvanceError(null);
     try {
@@ -1449,6 +1667,7 @@ export function BookingDetailPopup({
         setDetail((prev) => (prev ? { ...prev, status: targetStatus } : { ...booking, status: targetStatus }));
       }
       onSuccess?.();
+      if (wasInProgress && targetStatus === 'completed') setShowFeedbackPrompt(true);
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error advancing booking status:', err);
       setAdvanceError(err instanceof Error ? err.message : `Failed to update status to ${targetStatus}`);
@@ -1459,6 +1678,7 @@ export function BookingDetailPopup({
 
   const handleCompleteBooking = async () => {
     if (!booking || isPaymentPending || completing) return;
+    const wasInProgress = normStatus === 'in_progress';
     setCompleting(true);
     setCompleteError(null);
     try {
@@ -1499,6 +1719,7 @@ export function BookingDetailPopup({
         setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
       }
       onSuccess?.();
+      if (wasInProgress) setShowFeedbackPrompt(true);
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error completing booking:', err);
       setCompleteError(err instanceof Error ? err.message : 'Failed to update status to completed');
@@ -1781,8 +2002,50 @@ export function BookingDetailPopup({
     }
   };
 
+  // Snapshot of the completed booking sent to ushanr when a feedback link is generated.
+  const buildFeedbackPayload = (): CreateFeedbackLinkPayload => {
+    const rb = { ...((booking.raw ?? {}) as Record<string, any>), ...((detail ?? {}) as Record<string, any>) };
+    const cd = (rb.customer_data ?? {}) as Record<string, any>;
+    const str = (v: unknown): string | null => {
+      const s = v === undefined || v === null ? '' : String(v).trim();
+      return s || null;
+    };
+    const uuid = (v: unknown): string | null => {
+      const s = str(v);
+      return s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) ? s : null;
+    };
+    const langRaw = String(rb.customer_language ?? rb.language_preference ?? cd.language_preference ?? cd.language ?? 'ar');
+    return {
+      booking_id: booking.id,
+      booking_number: str(rb.booking_number ?? booking.booking_number),
+      customer_id: uuid(rb.customer_id ?? cd.id),
+      customer_name: str(booking.customer_name ?? rb.customer_name),
+      customer_phone: str(booking.customer_phone ?? rb.customer_phone ?? cd.phone_number),
+      service_id: uuid(rb.service_id),
+      service_name: str(booking.service_name ?? rb.service_name),
+      services: Array.isArray(rb.services) ? rb.services : null,
+      therapist_id: uuid(primaryTherapistId),
+      therapist_name: str(primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name),
+      secondary_therapist_id: uuid(secondaryTherapistId),
+      secondary_therapist_name: str(secondaryTherapistName),
+      branch_id: uuid(rb.branch_id),
+      branch_name: str(booking.branch_name ?? rb.branch_name),
+      appointment_start: str(booking.appointment_start ?? rb.appointment_start),
+      language: langRaw.toLowerCase().startsWith('en') ? 'en' : 'ar',
+    };
+  };
+
   return (
     <>
+      {/* Feedback link prompt: InProgress → Completed */}
+      {showFeedbackPrompt && (
+        <FeedbackLinkModal
+          isOpen={showFeedbackPrompt}
+          onClose={() => setShowFeedbackPrompt(false)}
+          payload={buildFeedbackPayload()}
+        />
+      )}
+
       {/* Step 1: Payment Provider Modal (nested, z-60) */}
       {showPaymentModal && (
         <PaymentProviderModal
@@ -1795,7 +2058,7 @@ export function BookingDetailPopup({
           onContinue={() => {
             setPaymentError(null);
             setShowPaymentModal(false);
-            if (selectedProviderId === 'paymentlink' || selectedProviderId === 'tap') {
+            if (selectedProviderId === 'paymentlink' || selectedProviderId === 'deema') {
               setShowMakePaymentModal(true);
             } else {
               setShowPaymentRefModal(true);
@@ -1808,8 +2071,8 @@ export function BookingDetailPopup({
       {showMakePaymentModal && (
         <MakePaymentModal
           isOpen={showMakePaymentModal}
-          initialStep={selectedProviderId === 'tap' ? 1 : 2}
-          initialProviderId={selectedProviderId === 'tap' ? 'tap' : 'myfatoorah'}
+          initialStep={2}
+          initialProviderId={selectedProviderId === 'deema' ? 'deema' : 'myfatoorah'}
           onClose={() => setShowMakePaymentModal(false)}
           bookingId={booking.id}
           bookingNumber={booking.booking_number}
@@ -2264,37 +2527,170 @@ export function BookingDetailPopup({
                   <DRow icon={Home} label="Arrangement / Room">{booking.arrangement_name || '—'}</DRow>
                 </div>
 
-                {/* Therapist and Customer Notes in one row */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <DRow icon={User} label="Therapist">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate">
-                        {(detail?.therapist_data as any)?.therapist_name ??
-                          (detail?.therapist_data as any)?.name ??
-                          (detail?.therapist_data as any)?.full_name ??
-                          detail?.therapist_name ??
-                          booking.therapist_name ??
-                          '—'}
-                      </span>
-                      {canChangeTherapist && (
-                        <button
-                          type="button"
-                          onClick={() => setShowChangeTherapistModal(true)}
-                          className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer"
-                        >
-                          <UserCog className="h-3.5 w-3.5" />
-                          Change
-                        </button>
-                      )}
-                    </div>
-                  </DRow>
+                {/* Therapist(s) and Customer Notes */}
+                {isDualTherapistBooking ? (
+                  <>
+                    {/* Dual Therapists in one row */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <DRow icon={User} label="Therapist 1 (Primary)">
+                        <div className="flex items-center justify-between gap-3 pt-0.5">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            {/* Avatar */}
+                            <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-border/70 bg-muted shadow-xs">
+                              {primaryTherapistImg ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={primaryTherapistImg}
+                                  alt={primaryTherapistName || 'Therapist 1'}
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                              ) : primaryTherapistName && primaryTherapistName !== '—' ? (
+                                <div className="grid h-full w-full place-items-center bg-gradient-to-br from-primary/80 to-primary text-white text-[11px] font-bold">
+                                  {primaryTherapistName.slice(0, 2).toUpperCase()}
+                                </div>
+                              ) : (
+                                <div className="grid h-full w-full place-items-center bg-muted text-muted-foreground">
+                                  <User className="h-4 w-4" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <span className="truncate font-semibold text-foreground text-sm block" title={primaryTherapistName}>
+                                {primaryTherapistName}
+                              </span>
+                            </div>
+                          </div>
+                          {canChangeTherapist && (
+                            <button
+                              type="button"
+                              onClick={() => openChangeTherapist('primary')}
+                              className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer active:scale-95"
+                            >
+                              <UserCog className="h-3.5 w-3.5" />
+                              Change
+                            </button>
+                          )}
+                        </div>
+                      </DRow>
 
-                  <DRow icon={FileText} label="Customer Notes">
-                    <span className="text-foreground text-xs break-words">
-                      {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
-                    </span>
-                  </DRow>
-                </div>
+                      <DRow icon={Heart} label="Therapist 2 (Secondary)">
+                        <div className="flex items-center justify-between gap-3 pt-0.5">
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            {/* Avatar */}
+                            <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-rose-400/30 bg-muted shadow-xs">
+                              {secondaryTherapistImg ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={secondaryTherapistImg}
+                                  alt={secondaryTherapistName || 'Therapist 2'}
+                                  className="h-full w-full object-cover"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                              ) : secondaryTherapistName ? (
+                                <div className="grid h-full w-full place-items-center bg-gradient-to-br from-rose-500 to-rose-600 text-white text-[11px] font-bold">
+                                  {secondaryTherapistName.slice(0, 2).toUpperCase()}
+                                </div>
+                              ) : (
+                                <div className="grid h-full w-full place-items-center bg-muted text-muted-foreground">
+                                  <Heart className="h-4 w-4 text-muted-foreground/60" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <span
+                                className={cn(
+                                  "truncate font-semibold text-sm block",
+                                  secondaryTherapistName ? "text-foreground" : "text-muted-foreground italic font-normal"
+                                )}
+                                title={secondaryTherapistName || 'Not assigned'}
+                              >
+                                {secondaryTherapistName || 'Not assigned'}
+                              </span>
+                            </div>
+                          </div>
+                          {canChangeTherapist && (
+                            <button
+                              type="button"
+                              onClick={() => openChangeTherapist('secondary')}
+                              className={cn(
+                                "shrink-0 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-semibold transition cursor-pointer border active:scale-95",
+                                secondaryTherapistName
+                                  ? "border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400"
+                                  : "border-primary/20 bg-primary text-white hover:bg-primary/90"
+                              )}
+                            >
+                              <UserCog className="h-3.5 w-3.5" />
+                              {secondaryTherapistName ? 'Change' : 'Assign'}
+                            </button>
+                          )}
+                        </div>
+                      </DRow>
+                    </div>
+
+                    <DRow icon={FileText} label="Customer Notes">
+                      <span className="text-foreground text-xs break-words">
+                        {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
+                      </span>
+                    </DRow>
+                  </>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <DRow icon={User} label="Therapist">
+                      <div className="flex items-center justify-between gap-3 pt-0.5">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          {/* Avatar */}
+                          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-border/70 bg-muted shadow-xs">
+                            {primaryTherapistImg ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={primaryTherapistImg}
+                                alt={primaryTherapistName || 'Therapist'}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            ) : primaryTherapistName && primaryTherapistName !== '—' ? (
+                              <div className="grid h-full w-full place-items-center bg-gradient-to-br from-primary/80 to-primary text-white text-[11px] font-bold">
+                                {primaryTherapistName.slice(0, 2).toUpperCase()}
+                              </div>
+                            ) : (
+                              <div className="grid h-full w-full place-items-center bg-muted text-muted-foreground">
+                                <User className="h-4 w-4" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="truncate font-semibold text-foreground text-sm block" title={primaryTherapistName}>
+                              {primaryTherapistName}
+                            </span>
+                          </div>
+                        </div>
+                        {canChangeTherapist && (
+                          <button
+                            type="button"
+                            onClick={() => openChangeTherapist('primary')}
+                            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer active:scale-95"
+                          >
+                            <UserCog className="h-3.5 w-3.5" />
+                            Change
+                          </button>
+                        )}
+                      </div>
+                    </DRow>
+
+                    <DRow icon={FileText} label="Customer Notes">
+                      <span className="text-foreground text-xs break-words">
+                        {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
+                      </span>
+                    </DRow>
+                  </div>
+                )}
 
                 {/* Pricing Summary (Sum of all items: Service + Addons + Extra Minutes) */}
                 <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/30 to-muted/10 p-4 space-y-3">
@@ -3100,28 +3496,38 @@ export function BookingDetailPopup({
         <ChangeTherapistModal
           bookingId={booking.id}
           initialBooking={(detail || booking) as unknown as Record<string, any>}
-          currentTherapistName={
-            (detail?.therapist_data as any)?.therapist_name ??
-            (detail?.therapist_data as any)?.name ??
-            (detail?.therapist_data as any)?.full_name ??
-            booking.therapist_name
-          }
+          currentTherapistName={primaryTherapistName}
+          secondaryTherapistName={secondaryTherapistName}
+          targetSlot={changeTherapistTarget}
           onClose={() => setShowChangeTherapistModal(false)}
-          onSuccess={(updatedTherapist) => {
-            const tName =
-              updatedTherapist?.name ||
-              updatedTherapist?.full_name ||
-              updatedTherapist?.therapist_name ||
-              '';
-            setDetail((prev) => {
-              if (!prev) return prev;
-              return {
-                ...prev,
-                therapist_id: updatedTherapist.id || updatedTherapist.therapist_id,
-                therapist_data: updatedTherapist.therapist_data || updatedTherapist,
-                therapist_name: tName || (prev as any).therapist_name,
-              };
-            });
+          onSuccess={(updatedTherapist, slot, freshBooking) => {
+            if (freshBooking && typeof freshBooking === 'object') {
+              setDetail(freshBooking as Record<string, unknown>);
+            } else {
+              const tName =
+                updatedTherapist?.name ||
+                updatedTherapist?.full_name ||
+                updatedTherapist?.therapist_name ||
+                '';
+              const effectiveSlot = slot || changeTherapistTarget;
+              setDetail((prev) => {
+                if (!prev) return prev;
+                if (effectiveSlot === 'secondary') {
+                  return {
+                    ...prev,
+                    secondary_therapist_id: updatedTherapist.id || updatedTherapist.therapist_id,
+                    secondary_therapist_data: updatedTherapist.therapist_data || updatedTherapist,
+                    secondary_therapist_name: tName || (prev as any).secondary_therapist_name,
+                  };
+                }
+                return {
+                  ...prev,
+                  therapist_id: updatedTherapist.id || updatedTherapist.therapist_id,
+                  therapist_data: updatedTherapist.therapist_data || updatedTherapist,
+                  therapist_name: tName || (prev as any).therapist_name,
+                };
+              });
+            }
             // Refetch fresh booking detail
             authedFetch(`/booknpay/api/v1/bookings/${booking.id}/`)
               .then((r) => r.json())
@@ -3146,7 +3552,8 @@ export function BookingDetailPopup({
             customerEmail: booking.customer_email,
             branchName: booking.branch_name,
             arrangementName: booking.arrangement_name,
-            therapistName: booking.therapist_name,
+            therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
+            secondaryTherapistName: secondaryTherapistName || null,
             serviceName: booking.service_name,
             serviceCategory: booking.service_category,
             servicePrice: servicePrice,

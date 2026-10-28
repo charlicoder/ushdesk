@@ -208,6 +208,8 @@ export function RescheduleBookingModal({
   // Therapists Selection
   const [selectedTherapistId, setSelectedTherapistId] = useState<string>('');
   const [selectedTherapist, setSelectedTherapist] = useState<ApiTherapist | null>(null);
+  const [selectedSecondaryTherapistId, setSelectedSecondaryTherapistId] = useState<string>('');
+  const [selectedSecondaryTherapist, setSelectedSecondaryTherapist] = useState<ApiTherapist | null>(null);
 
   // Sync virtual loading states for existing UI indicators
   const arrangementsLoading = availabilitiesLoading;
@@ -556,11 +558,30 @@ export function RescheduleBookingModal({
       : [];
   }, [availabilitiesData]);
 
+  const selectedArrangement = arrangements.find((a) => a.id === selectedRoomId);
+  const isCoupleRoom = useMemo(() => {
+    const arrType = String(
+      selectedArrangement?.arrangement_type ||
+      selectedArrangement?.type ||
+      prevArrType ||
+      ''
+    ).toLowerCase();
+    return (
+      arrType === 'couple_room' ||
+      arrType === 'double_room' ||
+      arrType.includes('couple') ||
+      arrType.includes('double') ||
+      Number((selectedArrangement as any)?.required_therapists ?? 1) > 1
+    );
+  }, [selectedArrangement, prevArrType]);
+
   // Reset timeslot and therapist when room or date changes
   useEffect(() => {
     setSelectedTimeSlot('');
     setSelectedTherapistId('');
     setSelectedTherapist(null);
+    setSelectedSecondaryTherapistId('');
+    setSelectedSecondaryTherapist(null);
   }, [selectedDate, selectedRoomId]);
 
   // ── Timeslot Calculation: Merge therapist availabilities by day, then intersect with arrangement ──
@@ -578,10 +599,17 @@ export function RescheduleBookingModal({
 
     // 1. Merge all therapist availabilities for the selected day
     const therapistSlotsForDay = new Set<number>();
+    const therapistCountByMin = new Map<number, number>();
     for (const t of therapists) {
       const tSlots: string[] = t.availabilities?.[selectedDate] || [];
+      const seenForTherapist = new Set<number>();
       for (const s of tSlots) {
-        therapistSlotsForDay.add(parseTimeToMinutes(s));
+        const m = parseTimeToMinutes(s);
+        therapistSlotsForDay.add(m);
+        if (!seenForTherapist.has(m)) {
+          seenForTherapist.add(m);
+          therapistCountByMin.set(m, (therapistCountByMin.get(m) ?? 0) + 1);
+        }
       }
     }
 
@@ -625,6 +653,7 @@ export function RescheduleBookingModal({
     const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
 
     const slots: { time: string; available: boolean }[] = [];
+    const minRequiredTherapists = isCoupleRoom && therapists.length >= 2 ? 2 : 1;
 
     for (const m of sortedMinutes) {
       // Per requirement: If today, do not show timeslots smaller than or equal to current datetime
@@ -638,8 +667,8 @@ export function RescheduleBookingModal({
       const hd = h % 12 === 0 ? 12 : h % 12;
       const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
 
-      // Intersection: must be in therapist union AND arrangement availability
-      const isAvailableInTherapists = therapistSlotsForDay.has(m);
+      // Intersection: must have required therapists AND arrangement availability
+      const isAvailableInTherapists = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists;
       const isAvailableInArrangement = arrangementSlotsForDay.has(m);
       const available = isAvailableInTherapists && isAvailableInArrangement;
 
@@ -654,32 +683,46 @@ export function RescheduleBookingModal({
     therapists,
     availabilitiesData,
     todayStr,
+    isCoupleRoom,
   ]);
 
-  // ── Auto-Select Therapist when timeslot changes ───────────────────────
+  // ── Auto-Select Therapist(s) when timeslot changes ────────────────────
   useEffect(() => {
     if (!selectedTimeSlot || therapists.length === 0 || !selectedDate) {
       setSelectedTherapistId('');
       setSelectedTherapist(null);
+      setSelectedSecondaryTherapistId('');
+      setSelectedSecondaryTherapist(null);
       return;
     }
 
     const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
 
-    // Find the first therapist who is available at this timeslot on this date
-    const autoAssigned = therapists.find((t) => {
+    const availableAtSlot = therapists.filter((t) => {
       const daySlots: string[] = t.availabilities?.[selectedDate] || [];
       return daySlots.some((s) => parseTimeToMinutes(s) === slotStartMin);
     });
 
-    if (autoAssigned) {
+    if (availableAtSlot.length > 0) {
+      const autoAssigned = availableAtSlot[0];
       setSelectedTherapistId(autoAssigned.id);
       setSelectedTherapist(autoAssigned);
+
+      if (isCoupleRoom && availableAtSlot.length > 1) {
+        const secondAssigned = availableAtSlot[1];
+        setSelectedSecondaryTherapistId(secondAssigned.id);
+        setSelectedSecondaryTherapist(secondAssigned);
+      } else {
+        setSelectedSecondaryTherapistId('');
+        setSelectedSecondaryTherapist(null);
+      }
     } else {
       setSelectedTherapistId('');
       setSelectedTherapist(null);
+      setSelectedSecondaryTherapistId('');
+      setSelectedSecondaryTherapist(null);
     }
-  }, [selectedTimeSlot, therapists, selectedDate]);
+  }, [selectedTimeSlot, therapists, selectedDate, isCoupleRoom]);
 
   // ── Handle Submit Reschedule ──────────────────────────────────────────
   const handleUpdateBooking = async () => {
@@ -709,8 +752,14 @@ export function RescheduleBookingModal({
     const appointmentStartIso = apptWindow.appointment_start;
     const appointmentEndIso = apptWindow.appointment_end;
 
-    const buildPayload = (therapist: ApiTherapist | null, therapistId: string) => {
+    const buildPayload = (
+      therapist: ApiTherapist | null,
+      therapistId: string,
+      secTherapist?: ApiTherapist | null,
+      secTherapistId?: string
+    ) => {
       const therapistName = getTherapistDisplayName(therapist);
+      const secName = secTherapist ? getTherapistDisplayName(secTherapist) : undefined;
       return {
         branch_id: selectedBranchId,
         branch_data: {
@@ -739,6 +788,18 @@ export function RescheduleBookingModal({
           therapist_name: therapistName,
           name: therapistName,
         },
+        ...(isCoupleRoom && secTherapistId
+          ? {
+              secondary_therapist_id: secTherapistId,
+              secondary_therapist_name: secName,
+              secondary_therapist_data: {
+                id: secTherapistId,
+                therapist_id: secTherapistId,
+                therapist_name: secName,
+                name: secName,
+              },
+            }
+          : {}),
         source: 'ushdesk',
         reason: 'Rescheduled by desk staff',
       };
@@ -764,13 +825,18 @@ export function RescheduleBookingModal({
 
     try {
       for (const cand of candidates) {
+        const secCand = isCoupleRoom
+          ? (selectedSecondaryTherapistId && selectedSecondaryTherapistId !== cand.id
+              ? { id: selectedSecondaryTherapistId, therapist: selectedSecondaryTherapist }
+              : candidates.find((c) => c.id !== cand.id) || null)
+          : null;
         const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
           method: 'PATCH',
           headers: {
             'Content-Type': 'application/json',
             ...(authHeader ? { Authorization: authHeader } : {}),
           },
-          body: JSON.stringify(buildPayload(cand.therapist, cand.id)),
+          body: JSON.stringify(buildPayload(cand.therapist, cand.id, secCand?.therapist, secCand?.id)),
         });
 
         if (res.ok) {
@@ -810,7 +876,6 @@ export function RescheduleBookingModal({
     }
   };
 
-  const selectedArrangement = arrangements.find((a) => a.id === selectedRoomId);
   const RoomTypeIcon = TYPE_ICONS[selectedArrangement?.arrangement_type ?? selectedArrangement?.type ?? ''] ?? Building2;
 
   return (
@@ -1121,7 +1186,7 @@ export function RescheduleBookingModal({
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                       <User className="h-3.5 w-3.5 text-emerald-500" />
-                      Assigned Therapist
+                      {isCoupleRoom ? 'Assigned Therapists' : 'Assigned Therapist'}
                     </label>
                     <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
                       Auto-Selected by Availability
@@ -1134,21 +1199,43 @@ export function RescheduleBookingModal({
                       Checking therapist availability for {selectedTimeSlot}…
                     </div>
                   ) : selectedTherapist ? (
-                    <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20 px-4 py-3">
-                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500 text-white font-bold text-xs shadow-sm">
-                        {getInitials(getTherapistDisplayName(selectedTherapist))}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20 px-4 py-3">
+                        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500 text-white font-bold text-xs shadow-sm">
+                          {getInitials(getTherapistDisplayName(selectedTherapist))}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-bold text-foreground">
+                            {getTherapistDisplayName(selectedTherapist)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {isCoupleRoom ? 'Primary Therapist • ' : ''}
+                            {selectedTherapist.specialization || 'Spa Specialist'} • Available at {selectedTimeSlot}
+                          </p>
+                        </div>
+                        <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                          <CheckCircle2 className="h-3 w-3" /> Available
+                        </span>
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold text-foreground">
-                          {getTherapistDisplayName(selectedTherapist)}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {selectedTherapist.specialization || 'Spa Specialist'} • Available at {selectedTimeSlot}
-                        </p>
-                      </div>
-                      <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
-                        <CheckCircle2 className="h-3 w-3" /> Available
-                      </span>
+
+                      {isCoupleRoom && selectedSecondaryTherapist && (
+                        <div className="flex items-center gap-3 rounded-2xl border border-emerald-500/30 bg-emerald-50/40 dark:bg-emerald-950/20 px-4 py-3">
+                          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500 text-white font-bold text-xs shadow-sm">
+                            {getInitials(getTherapistDisplayName(selectedSecondaryTherapist))}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-bold text-foreground">
+                              {getTherapistDisplayName(selectedSecondaryTherapist)}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Secondary Therapist • {selectedSecondaryTherapist.specialization || 'Spa Specialist'} • Available at {selectedTimeSlot}
+                            </p>
+                          </div>
+                          <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300">
+                            <CheckCircle2 className="h-3 w-3" /> Available
+                          </span>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="rounded-xl border border-amber-300/40 bg-amber-50/50 dark:bg-amber-950/20 p-3.5 flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-300">

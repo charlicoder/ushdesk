@@ -10,6 +10,14 @@ import { useAppSelector } from '@/store/hooks';
 import {
   hasPermission,
   hasAnyPermission,
+  canApplyDiscount,
+  canEditGiftVoucher,
+  canDeleteGiftVoucher,
+  canUpdateVoucherStatus,
+  canGenerateVoucherReport,
+  canEditCustomer,
+  canDeleteCustomer,
+  canUpdateCustomerStatus,
   isAdmin as checkIsAdmin,
   isAdministratorRole,
   isSpaDirectorRole,
@@ -40,6 +48,30 @@ export function usePermissions() {
 
     /** True if user has access to Refunds and Finance submenus */
     isRefundsAndFinancePermitted: isRefundsAndFinanceAllowed,
+
+    /** True if the user is allowed to apply discounts to bookings */
+    canApplyDiscount: adminAccess || canApplyDiscount(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to edit and update gift voucher details */
+    canEditGiftVoucher: adminAccess || canEditGiftVoucher(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to delete gift vouchers */
+    canDeleteGiftVoucher: adminAccess || canDeleteGiftVoucher(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to update gift voucher status */
+    canUpdateVoucherStatus: adminAccess || canUpdateVoucherStatus(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to generate gift voucher reports */
+    canGenerateVoucherReport: adminAccess || canGenerateVoucherReport(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to edit customer profile details */
+    canEditCustomer: adminAccess || canEditCustomer(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to delete customers */
+    canDeleteCustomer: adminAccess || canDeleteCustomer(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to update customer account status */
+    canUpdateCustomerStatus: adminAccess || canUpdateCustomerStatus(userType, permissions, roleInfo, user),
 
     /** Check if the user has a specific permission string */
     can: (permission: string): boolean => {

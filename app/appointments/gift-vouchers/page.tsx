@@ -11,6 +11,8 @@ import {
   MessageSquare, Hash, Building2, Building, Smartphone, Truck, Phone, Mail, Calendar, CalendarDays,
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
   KeyRound, Globe, Send, QrCode, FileText, ShieldCheck, Receipt,
+  Trash2, Edit3, Pencil, SlidersHorizontal, Filter, History, UserCheck, FileSpreadsheet,
+  Printer, Download, CheckSquare, Square,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -110,8 +112,21 @@ interface BookingData {
     name?: string;
     first_name?: string;
     last_name?: string;
+    full_name?: string;
+    therapist_name?: string;
     [key: string]: any;
   };
+  secondary_therapist_id?: string;
+  secondary_therapist_name?: string;
+  secondary_therapist_data?: {
+    name?: string;
+    first_name?: string;
+    last_name?: string;
+    full_name?: string;
+    therapist_name?: string;
+    [key: string]: any;
+  };
+  therapist_ids?: string[];
   branch_name?: string;
   branch_data?: {
     name?: string;
@@ -206,6 +221,8 @@ interface Voucher {
   currency: string;
   gift_message: string;
   gift_template: string;
+  gift_from?: string | null;
+  gift_to?: string | null;
   secret_code: string;
   public_token: string;
   gift_category?: 'physical' | 'digital' | 'service' | string;
@@ -228,6 +245,7 @@ interface Voucher {
   payment_through?: string | null;
   created_at: string;
   updated_at: string;
+  update_history?: Array<Record<string, any>>;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -659,11 +677,226 @@ function VoucherShareDropdown({
   );
 }
 
+// ── Edit Voucher Modal ─────────────────────────────────────────────────────────
+
+function EditVoucherModal({
+  voucher,
+  onClose,
+  onSuccess,
+}: {
+  voucher: Voucher;
+  onClose: () => void;
+  onSuccess: (updated: Voucher) => void;
+}) {
+  const [senderName, setSenderName] = useState(voucher.sender_data?.name || voucher.sender_details?.name || '');
+  const [senderPhone, setSenderPhone] = useState(voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '');
+  const [giftFrom, setGiftFrom] = useState(voucher.gift_from || voucher.sender_data?.name || '');
+  const [recipientName, setRecipientName] = useState(voucher.recipient_data?.name || voucher.recipient_details?.name || '');
+  const [recipientPhone, setRecipientPhone] = useState(voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '');
+  const [giftMessage, setGiftMessage] = useState(voucher.gift_message || '');
+  const [updateNote, setUpdateNote] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const payload: Record<string, any> = {
+        sender_data: {
+          ...(voucher.sender_data || {}),
+          name: senderName.trim(),
+          phone_number: senderPhone.trim(),
+        },
+        recipient_phone: recipientPhone.trim(),
+        recipient_data: {
+          ...(voucher.recipient_data || {}),
+          name: recipientName.trim(),
+          phone_number: recipientPhone.trim(),
+        },
+        gift_message: giftMessage.trim(),
+        gift_from: giftFrom.trim() || senderName.trim(),
+        update_note: updateNote.trim() || undefined,
+      };
+
+      const res = await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail || body.message || `Failed to update voucher (Error ${res.status})`);
+      }
+
+      const resJson = await res.json();
+      const updatedVoucher: Voucher = (resJson?.data && typeof resJson.data === 'object') ? resJson.data : resJson;
+      onSuccess(updatedVoucher);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update voucher details');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-border bg-card shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between border-b border-border/50 bg-muted/30 px-6 py-4">
+          <div className="flex items-center gap-2.5">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Edit3 className="h-4 w-4" />
+            </div>
+            <div>
+              <h3 className="font-extrabold text-sm text-foreground">Edit Voucher Details</h3>
+              <p className="text-[11px] text-muted-foreground">Update sender, recipient, and message</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted transition">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 p-6 space-y-4 text-xs">
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* From / Sender */}
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+            <p className="font-bold uppercase tracking-wider text-[10px] text-primary flex items-center gap-1.5">
+              <User className="h-3 w-3" /> From (Sender Details)
+            </p>
+            <div className="space-y-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Sender Name</label>
+                <input
+                  type="text"
+                  value={senderName}
+                  onChange={(e) => setSenderName(e.target.value)}
+                  placeholder="e.g. Sarah Smith"
+                  required
+                  className="w-full h-9 rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Sender Phone</label>
+                  <input
+                    type="text"
+                    value={senderPhone}
+                    onChange={(e) => setSenderPhone(e.target.value)}
+                    placeholder="e.g. +965 99123456"
+                    className="w-full h-9 rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Gift From (Signature)</label>
+                  <input
+                    type="text"
+                    value={giftFrom}
+                    onChange={(e) => setGiftFrom(e.target.value)}
+                    placeholder="e.g. With love, Sarah"
+                    className="w-full h-9 rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* To / Recipient */}
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+            <p className="font-bold uppercase tracking-wider text-[10px] text-primary flex items-center gap-1.5">
+              <UserCheck className="h-3 w-3" /> To (Recipient Details)
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Recipient Name</label>
+                <input
+                  type="text"
+                  value={recipientName}
+                  onChange={(e) => setRecipientName(e.target.value)}
+                  placeholder="e.g. Fatima Al-Ali"
+                  className="w-full h-9 rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Recipient Phone</label>
+                <input
+                  type="text"
+                  value={recipientPhone}
+                  onChange={(e) => setRecipientPhone(e.target.value)}
+                  placeholder="e.g. +965 98765432"
+                  className="w-full h-9 rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Gift Message */}
+          <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2">
+            <p className="font-bold uppercase tracking-wider text-[10px] text-primary flex items-center gap-1.5">
+              <MessageSquare className="h-3 w-3" /> Gift Message
+            </p>
+            <textarea
+              rows={3}
+              value={giftMessage}
+              onChange={(e) => setGiftMessage(e.target.value)}
+              placeholder="Personal message for the recipient..."
+              className="w-full rounded-xl border border-border bg-card p-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary resize-none"
+            />
+          </div>
+
+          {/* Note */}
+          <div>
+            <label className="block text-[11px] font-semibold text-muted-foreground mb-1">Update Reason / Note (Optional)</label>
+            <input
+              type="text"
+              value={updateNote}
+              onChange={(e) => setUpdateNote(e.target.value)}
+              placeholder="e.g. Customer requested phone number correction"
+              className="w-full h-9 rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2 border-t border-border/40">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="flex-1 h-10 rounded-xl border border-border bg-muted/40 text-xs font-semibold hover:bg-muted transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex-1 h-10 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary/90 transition flex items-center justify-center gap-2 disabled:opacity-60 cursor-pointer"
+            >
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              <span>Save Changes</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Voucher Detail Modal ───────────────────────────────────────────────────────
 
 function VoucherDetailModal({
-  voucher,
+  voucher: initialVoucher,
   token,
+  employeeMap,
   onClose,
   onShare,
   onCopyUrl,
@@ -673,6 +906,7 @@ function VoucherDetailModal({
 }: {
   voucher: Voucher;
   token?: string | null;
+  employeeMap?: Record<string, string>;
   onClose: () => void;
   onShare?: (voucher: Voucher, channel: 'sms' | 'whatsapp') => void;
   onCopyUrl?: (voucher: Voucher) => void;
@@ -680,13 +914,21 @@ function VoucherDetailModal({
   onRedeem?: (voucher: Voucher, initialAvailabilitiesPromise?: Promise<any>) => void;
   onRefresh?: () => void;
 }) {
+  const [voucher, setVoucher] = useState<Voucher>(initialVoucher);
+  useEffect(() => {
+    setVoucher(initialVoucher);
+  }, [initialVoucher]);
+
+  const { canEditGiftVoucher } = usePermissions();
+  const [showEditModal, setShowEditModal] = useState(false);
+
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
-  const [activeTab, setActiveTab] = useState<'details' | 'payments'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'payments' | 'history'>('details');
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedType, setCopiedType] = useState<string | null>(null);
@@ -725,6 +967,8 @@ function VoucherDetailModal({
 
   const [fetchedBooking, setFetchedBooking] = useState<BookingData | null>(null);
   const [loadingBooking, setLoadingBooking] = useState(false);
+  const [resolvedPrimaryTherapist, setResolvedPrimaryTherapist] = useState<Record<string, any> | null>(null);
+  const [resolvedSecondaryTherapist, setResolvedSecondaryTherapist] = useState<Record<string, any> | null>(null);
 
   const handleRedeemClick = () => {
     const serviceId = voucher.service_id || (voucher.service_data as any)?.id;
@@ -1044,8 +1288,53 @@ function VoucherDetailModal({
     appointment_end: firstTruthy(fb.appointment_end, vb.appointment_end),
     appointment_time: firstTruthy(fb.appointment_time, vb.appointment_time, fb.time, vb.time, fb.time_slot, vb.time_slot),
     booking_number: firstTruthy(fb.booking_number, vb.booking_number, fb.booking_no, vb.booking_no),
-    therapist_name: firstTruthy(fb.therapist_name, vb.therapist_name, fb.therapist_data?.name, vb.therapist_data?.name),
-    therapist_data: fb.therapist_data || vb.therapist_data,
+    therapist_id: firstTruthy(
+      fb.therapist_id,
+      vb.therapist_id,
+      fb.therapist_data?.id,
+      fb.therapist_data?.therapist_id,
+      vb.therapist_data?.id,
+      vb.therapist_data?.therapist_id,
+      Array.isArray(fb.therapist_ids) && fb.therapist_ids.length > 0 ? fb.therapist_ids[0] : null,
+      Array.isArray(vb.therapist_ids) && vb.therapist_ids.length > 0 ? vb.therapist_ids[0] : null,
+    ),
+    therapist_name: firstTruthy(
+      fb.therapist_name,
+      vb.therapist_name,
+      fb.therapist_data?.name,
+      vb.therapist_data?.name,
+      fb.therapist_data?.therapist_name,
+      vb.therapist_data?.therapist_name,
+      fb.therapist_data?.full_name,
+      vb.therapist_data?.full_name,
+    ),
+    therapist_data: fb.therapist_data || vb.therapist_data || fb.therapist || vb.therapist,
+    secondary_therapist_id: firstTruthy(
+      fb.secondary_therapist_id,
+      vb.secondary_therapist_id,
+      fb.secondary_therapist_data?.id,
+      fb.secondary_therapist_data?.therapist_id,
+      vb.secondary_therapist_data?.id,
+      vb.secondary_therapist_data?.therapist_id,
+      Array.isArray(fb.therapist_ids) && fb.therapist_ids.length > 1 ? fb.therapist_ids[1] : null,
+      Array.isArray(vb.therapist_ids) && vb.therapist_ids.length > 1 ? vb.therapist_ids[1] : null,
+    ),
+    secondary_therapist_name: firstTruthy(
+      fb.secondary_therapist_name,
+      vb.secondary_therapist_name,
+      fb.secondary_therapist_data?.name,
+      vb.secondary_therapist_data?.name,
+      fb.secondary_therapist_data?.therapist_name,
+      vb.secondary_therapist_data?.therapist_name,
+      fb.secondary_therapist_data?.full_name,
+      vb.secondary_therapist_data?.full_name,
+    ),
+    secondary_therapist_data: fb.secondary_therapist_data || vb.secondary_therapist_data || fb.secondary_therapist || vb.secondary_therapist,
+    therapist_ids: Array.isArray(fb.therapist_ids) && fb.therapist_ids.length > 0
+      ? fb.therapist_ids
+      : Array.isArray(vb.therapist_ids)
+      ? vb.therapist_ids
+      : undefined,
     branch_name: firstTruthy(fb.branch_name, vb.branch_name, fb.branch_data?.name, vb.branch_data?.name, voucher.branch_data?.name),
     branch_data: fb.branch_data || vb.branch_data || voucher.branch_data,
     arrangement_name: firstTruthy(
@@ -1112,11 +1401,80 @@ function VoucherDetailModal({
       ? `${apptStartFormatted} – ${apptEndFormatted}`
       : apptStartFormatted || (apptDateRaw && String(apptDateRaw).includes('T') ? formatTime(apptDateRaw) : null);
 
+  const formatTherapistDisplayName = (tData: any, fallbackName?: any): string | null => {
+    const fullFromParts = tData?.first_name
+      ? `${tData.first_name} ${tData.last_name || ''}`.trim()
+      : tData?.user?.first_name
+      ? `${tData.user.first_name} ${tData.user.last_name || ''}`.trim()
+      : null;
+    return (
+      firstTruthy(
+        tData?.name,
+        tData?.therapist_name,
+        tData?.full_name,
+        fullFromParts,
+        tData?.user?.full_name,
+        tData?.user?.name,
+        typeof fallbackName === 'string' ? fallbackName : null,
+      ) || null
+    );
+  };
+
+  const rawPrimaryTherapistName =
+    formatTherapistDisplayName(booking?.therapist_data, booking?.therapist_name) ||
+    formatTherapistDisplayName(booking?.therapist) ||
+    formatTherapistDisplayName(Array.isArray(booking?.therapists) ? booking.therapists[0] : null);
+
+  const rawSecondaryTherapistName =
+    formatTherapistDisplayName(booking?.secondary_therapist_data, booking?.secondary_therapist_name) ||
+    formatTherapistDisplayName(booking?.secondary_therapist) ||
+    formatTherapistDisplayName(Array.isArray(booking?.therapists) && booking.therapists.length > 1 ? booking.therapists[1] : null);
+
+  const primaryTherapistId = booking?.therapist_id || null;
+  const secondaryTherapistId =
+    booking?.secondary_therapist_id && booking.secondary_therapist_id !== primaryTherapistId
+      ? booking.secondary_therapist_id
+      : null;
+
+  useEffect(() => {
+    if (!isRedeemed) return;
+    let cancelled = false;
+    const fetchTherapist = async (tId: string, setter: (d: Record<string, any>) => void) => {
+      try {
+        const res = await authedFetch(`/uauth/api/v1/therapists/${tId}/`);
+        if (!res.ok || cancelled) return;
+        const json = await res.json();
+        const data = json?.data ?? json;
+        if (!cancelled && data && typeof data === 'object') {
+          setter(data);
+        }
+      } catch {
+        // ignore fallback lookup errors
+      }
+    };
+    if (primaryTherapistId && !rawPrimaryTherapistName) {
+      fetchTherapist(String(primaryTherapistId), setResolvedPrimaryTherapist);
+    }
+    if (secondaryTherapistId && !rawSecondaryTherapistName) {
+      fetchTherapist(String(secondaryTherapistId), setResolvedSecondaryTherapist);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [isRedeemed, primaryTherapistId, secondaryTherapistId, rawPrimaryTherapistName, rawSecondaryTherapistName]);
+
   const therapistName =
-    booking?.therapist_data?.name ||
-    (booking?.therapist_data?.first_name ? `${booking.therapist_data.first_name} ${booking.therapist_data.last_name || ''}`.trim() : null) ||
-    booking?.therapist_name ||
-    null;
+    rawPrimaryTherapistName ||
+    formatTherapistDisplayName(resolvedPrimaryTherapist);
+
+  const rawResolvedSecondaryName =
+    rawSecondaryTherapistName ||
+    formatTherapistDisplayName(resolvedSecondaryTherapist);
+
+  const secondaryTherapistName =
+    rawResolvedSecondaryName && rawResolvedSecondaryName !== therapistName
+      ? rawResolvedSecondaryName
+      : null;
 
   const bookingBranch = booking?.branch_data?.name || booking?.branch_name || voucher.branch_data?.name;
   const bookingRoom =
@@ -1218,6 +1576,24 @@ function VoucherDetailModal({
               </span>
             ) : null}
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('history')}
+            className={cn(
+              'flex items-center gap-2 py-3 px-4 text-xs font-bold border-b-2 transition -mb-px cursor-pointer',
+              activeTab === 'history'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <History className="h-3.5 w-3.5" />
+            History &amp; Updates
+            {Array.isArray(voucher.update_history) && voucher.update_history.length > 0 && (
+              <span className="rounded-full px-2 py-0.5 text-[10px] font-bold bg-primary/10 text-primary">
+                {voucher.update_history.length}
+              </span>
+            )}
+          </button>
         </div>
 
         {/* Scrollable Body */}
@@ -1249,16 +1625,42 @@ function VoucherDetailModal({
 
               {/* Sender → Recipient */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">From (Sender)</p>
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 relative group">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">From (Sender)</p>
+                    {!isRedeemed && canEditGiftVoucher && (
+                      <button
+                        type="button"
+                        onClick={() => setShowEditModal(true)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 transition cursor-pointer p-0.5"
+                        title="Edit sender and voucher details"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        <span className="text-[10px]">Edit</span>
+                      </button>
+                    )}
+                  </div>
                   <p className="font-bold text-sm text-foreground">{voucher.sender_data?.name || voucher.sender_details?.name || '—'}</p>
                   <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                     <Phone className="h-3 w-3 text-primary" />
                     {voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '—'}
                   </p>
                 </div>
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">To (Recipient)</p>
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 relative group">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">To (Recipient)</p>
+                    {!isRedeemed && canEditGiftVoucher && (
+                      <button
+                        type="button"
+                        onClick={() => setShowEditModal(true)}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 transition cursor-pointer p-0.5"
+                        title="Edit recipient and voucher details"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        <span className="text-[10px]">Edit</span>
+                      </button>
+                    )}
+                  </div>
                   <p className="font-bold text-sm text-foreground">{voucher.recipient_data?.name || voucher.recipient_details?.name || '—'}</p>
                   <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1">
                     <Phone className="h-3 w-3 text-primary" />
@@ -1411,15 +1813,43 @@ function VoucherDetailModal({
               )}
 
               {/* Under Ordered Items: Gift Message */}
-              {voucher.gift_message && (
-                <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3">
+              {voucher.gift_message ? (
+                <div className="flex items-start gap-3 rounded-2xl border border-border/60 bg-gradient-to-br from-rose-50/60 to-pink-50/40 dark:from-rose-950/20 dark:to-pink-950/10 px-4 py-3 relative group">
                   <MessageSquare className="h-4 w-4 mt-0.5 shrink-0 text-rose-400" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Gift Message</p>
+                    <div className="flex items-center justify-between mb-1">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Gift Message</p>
+                      {!isRedeemed && canEditGiftVoucher && (
+                        <button
+                          type="button"
+                          onClick={() => setShowEditModal(true)}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:text-primary/80 transition cursor-pointer p-0.5"
+                          title="Edit gift message"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          <span className="text-[10px]">Edit</span>
+                        </button>
+                      )}
+                    </div>
                     <p className="text-xs text-foreground leading-relaxed italic">&ldquo;{voucher.gift_message}&rdquo;</p>
                   </div>
                 </div>
-              )}
+              ) : !isRedeemed && canEditGiftVoucher ? (
+                <div className="flex items-center justify-between rounded-2xl border border-dashed border-border/80 bg-muted/10 px-4 py-2.5">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <MessageSquare className="h-3.5 w-3.5 text-muted-foreground/60" />
+                    <span>No gift message attached.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowEditModal(true)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-primary hover:underline cursor-pointer"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    <span>Add Message</span>
+                  </button>
+                </div>
+              ) : null}
 
               {/* Delivery Status — only when the voucher actually contains products */}
               {Boolean(voucher.ordered_items?.length) && (
@@ -1615,12 +2045,31 @@ function VoucherDetailModal({
                               </span>
                             </div>
                           )}
-                          {therapistName && (
+                          {(therapistName || secondaryTherapistName) && (
                             <div className="col-span-1 sm:col-span-2 pt-1 border-t border-border/20">
-                              <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
-                              <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
-                                <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> {therapistName}
-                              </span>
+                              {therapistName && secondaryTherapistName ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  <div>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-bold block">Primary Therapist</span>
+                                    <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                                      <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> {therapistName}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-muted-foreground uppercase font-bold block">Secondary Therapist</span>
+                                    <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                                      <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> {secondaryTherapistName}
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <span className="text-[10px] text-muted-foreground uppercase font-bold block">Therapist</span>
+                                  <span className="font-semibold text-foreground flex items-center gap-1.5 mt-0.5">
+                                    <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" /> {therapistName || secondaryTherapistName}
+                                  </span>
+                                </>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1715,8 +2164,8 @@ function VoucherDetailModal({
                 </div>
               </div>
 
-              {/* Created & Expires Dates */}
-              <div className="grid grid-cols-2 gap-3">
+              {/* Created, Expires & Created By */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
                   <Calendar className="h-4 w-4 text-sky-500 shrink-0" />
                   <div className="min-w-0">
@@ -1734,9 +2183,19 @@ function VoucherDetailModal({
                     </p>
                   </div>
                 </div>
+
+                <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+                  <UserCheck className="h-4 w-4 text-emerald-500 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created By</p>
+                    <p className="font-semibold text-foreground truncate" title={employeeMap?.[voucher.created_by] || voucher.created_by || 'Online'}>
+                      {employeeMap?.[voucher.created_by] || voucher.created_by || 'Online / Customer'}
+                    </p>
+                  </div>
+                </div>
               </div>
             </>
-          ) : (
+          ) : activeTab === 'payments' ? (
             /* ── TAB 2: PAYMENT & INVOICES ── */
             <div className="space-y-4">
               {/* 1. Official Invoice Card */}
@@ -2193,6 +2652,166 @@ function VoucherDetailModal({
                 )}
               </div>
             </div>
+          ) : (
+            /* ── TAB 3: HISTORY & AUDIT LOG ── */
+            <div className="space-y-4">
+              {/* 1. Creation Record Card */}
+              <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-primary/5 via-card to-card p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Creation Record
+                    </h4>
+                  </div>
+                  <span className="rounded-full px-2.5 py-0.5 text-[10px] font-bold bg-primary/10 text-primary uppercase">
+                    Initial Record
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Created Timestamp</p>
+                    <p className="font-semibold text-foreground mt-0.5">
+                      {formatDateTime(voucher.created_at)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Created By</p>
+                    <p className="font-semibold text-foreground mt-0.5 truncate" title={employeeMap?.[voucher.created_by] || voucher.created_by || 'Online'}>
+                      {employeeMap?.[voucher.created_by] || voucher.created_by || 'Online / Customer'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Sales Channel</p>
+                    <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">
+                      {voucher.payment_through || 'USHDESK'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                    <p className="text-[10px] text-muted-foreground font-medium">Initial Total</p>
+                    <p className="font-bold text-primary mt-0.5 font-mono">
+                      {formatAmount(voucher.total_amount, voucher.currency)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Updates & Audit Trail */}
+              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <History className="h-4 w-4 text-primary" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                      Activity &amp; Updates Log
+                    </h4>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    {Array.isArray(voucher.update_history) ? `${voucher.update_history.length} event(s)` : 'No updates recorded'}
+                  </span>
+                </div>
+
+                {Array.isArray(voucher.update_history) && voucher.update_history.length > 0 ? (
+                  <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/60">
+                    {voucher.update_history.map((entry, idx) => {
+                      const action = String(entry.action || 'updated');
+                      const isCreated = action === 'voucher_created';
+                      const isStatus = action.includes('status');
+                      const timestamp = entry.timestamp || entry.created_at;
+                      const who = entry.performed_by_name || entry.performed_by || entry.created_by || entry.user || 'Staff';
+
+                      return (
+                        <div key={idx} className="relative group">
+                          {/* Dot on timeline */}
+                          <div className={cn(
+                            'absolute -left-6 top-1.5 h-3.5 w-3.5 rounded-full border-2 border-background flex items-center justify-center',
+                            isCreated ? 'bg-primary' : isStatus ? 'bg-amber-500' : 'bg-violet-500'
+                          )} />
+
+                          <div className="rounded-xl border border-border/50 bg-card p-3 space-y-1.5 shadow-xs">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-bold text-xs text-foreground capitalize">
+                                {action.replace(/_/g, ' ')}
+                              </span>
+                              <span className="text-[11px] text-muted-foreground font-mono">
+                                {formatDateTime(timestamp)}
+                              </span>
+                            </div>
+
+                            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                              <User className="h-3 w-3 text-primary shrink-0" />
+                              <span>Updated by: <strong className="text-foreground">{who}</strong></span>
+                              {entry.ip_address && (
+                                <span className="text-muted-foreground/60 font-mono text-[10px]">({entry.ip_address})</span>
+                              )}
+                            </p>
+
+                            {entry.note && (
+                              <div className="rounded-lg bg-muted/40 p-2 text-xs italic text-foreground">
+                                &ldquo;{entry.note}&rdquo;
+                              </div>
+                            )}
+
+                            {entry.changes && typeof entry.changes === 'object' && Object.keys(entry.changes).length > 0 && (
+                              <div className="pt-1.5 border-t border-border/40 space-y-1">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Changes Applied:</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
+                                  {Object.entries(entry.changes).map(([k, val]: [string, any]) => (
+                                    <div key={k} className="rounded-md bg-muted/30 px-2 py-1 border border-border/30">
+                                      <span className="font-semibold text-muted-foreground capitalize mr-1">
+                                        {k.replace(/_/g, ' ')}:
+                                      </span>
+                                      <span className="text-foreground font-mono">
+                                        {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/60 p-6 text-center text-xs text-muted-foreground">
+                    No field modifications or status changes have been recorded since voucher creation.
+                  </div>
+                )}
+              </div>
+
+              {/* 3. Milestones: Redemption & Payment */}
+              {(isPaid || isRedeemed) && (
+                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Key Milestones</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    {isPaid && (
+                      <div className="flex items-center gap-2.5 rounded-xl bg-card border border-emerald-500/30 p-2.5">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                        <div>
+                          <p className="font-bold text-foreground">Payment Settled</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {formatDateTime(latestPayment?.paid_at || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionDate || (voucher as any).paid_at || activePaymentLink?.paid_at || voucher.created_at)}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    {isRedeemed && (
+                      <div className="flex items-center gap-2.5 rounded-xl bg-card border border-violet-500/30 p-2.5">
+                        <Star className="h-4 w-4 text-violet-600 shrink-0" />
+                        <div>
+                          <p className="font-bold text-foreground">Voucher Redeemed</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {formatDateTime(voucher.redeemed_at)} by {redeemedByName}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -2311,48 +2930,231 @@ function VoucherDetailModal({
           }}
         />
       )}
+
+      {/* Edit Voucher Modal */}
+      {showEditModal && (
+        <EditVoucherModal
+          voucher={voucher}
+          onClose={() => setShowEditModal(false)}
+          onSuccess={(updated) => {
+            setVoucher(updated);
+            onRefresh?.();
+          }}
+        />
+      )}
     </div>
   );
 }
 
-// ── Status Filter Dropdown ─────────────────────────────────────────────────────
+// ── Voucher Filter Popover (Multi-Status, Channel, Created By) ─────────────────
 
-function StatusFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+interface VoucherFilterPopoverProps {
+  statusFilters: string[];
+  onStatusChange: (statuses: string[]) => void;
+  channelFilter: string;
+  onChannelChange: (channel: string) => void;
+  createdByFilter: string;
+  onCreatedByChange: (creator: string) => void;
+  creatorOptions: Array<{ id: string; name: string }>;
+  onReset: () => void;
+}
+
+function VoucherFilterPopover({
+  statusFilters,
+  onStatusChange,
+  channelFilter,
+  onChannelChange,
+  createdByFilter,
+  onCreatedByChange,
+  creatorOptions,
+  onReset,
+}: VoucherFilterPopoverProps) {
   const [open, setOpen] = useState(false);
-  const options = [
-    { val: 'all',      label: 'All Statuses' },
-    { val: 'active',   label: 'Active' },
-    { val: 'redeemed', label: 'Redeemed' },
-    { val: 'expired',  label: 'Expired' },
-    { val: 'pending',  label: 'Pending' },
+
+  const statusOptions = [
+    { id: 'active', label: 'Active' },
+    { id: 'pending', label: 'Pending' },
+    { id: 'redeemed', label: 'Redeemed' },
+    { id: 'expired', label: 'Expired' },
+    { id: 'cancelled', label: 'Cancelled' },
   ];
-  const current = options.find(o => o.val === value) ?? options[0];
+
+  const channelOptions = [
+    { id: 'all', label: 'All Channels' },
+    { id: 'desk', label: 'Desk' },
+    { id: 'ushweb', label: 'USHWeb' },
+    { id: 'ushspa', label: 'USHSpa' },
+  ];
+
+  const activeCount =
+    (statusFilters.length > 0 && statusFilters.length < statusOptions.length ? 1 : 0) +
+    (channelFilter !== 'all' ? 1 : 0) +
+    (createdByFilter !== 'all' ? 1 : 0);
+
+  const toggleStatus = (stId: string) => {
+    if (statusFilters.includes(stId)) {
+      onStatusChange(statusFilters.filter((s) => s !== stId));
+    } else {
+      onStatusChange([...statusFilters, stId]);
+    }
+  };
+
+  const handleSelectAllStatuses = () => {
+    onStatusChange(statusOptions.map((s) => s.id));
+  };
+
+  const handleClearStatuses = () => {
+    onStatusChange([]);
+  };
 
   return (
-    <div className="relative">
+    <div className="relative inline-block text-left">
       <button
-        onClick={() => setOpen(o => !o)}
-        className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={cn(
+          'flex h-10 items-center gap-2 rounded-xl border bg-card px-3.5 text-xs font-semibold shadow-xs transition hover:bg-muted/50 cursor-pointer',
+          activeCount > 0 ? 'border-primary/50 text-primary bg-primary/5' : 'border-border text-foreground'
+        )}
       >
-        <span>{current.label}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+        <SlidersHorizontal className="h-4 w-4" />
+        <span>Filters</span>
+        {activeCount > 0 && (
+          <span className="grid h-5 min-w-5 place-items-center rounded-full bg-primary text-white text-[10px] font-bold px-1">
+            {activeCount}
+          </span>
+        )}
+        <ChevronDown className={cn('h-3.5 w-3.5 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
+
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-2 z-50 w-44 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
-            {options.map(o => (
-              <button
-                key={o.val}
-                onClick={() => { onChange(o.val); setOpen(false); }}
-                className={cn(
-                  'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
-                  o.val === value ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
-                )}
+          <div className="absolute left-0 top-full mt-2 z-50 w-80 rounded-3xl border border-border/80 bg-card p-4 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-border/40 pb-2">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-primary" />
+                <span className="text-xs font-extrabold text-foreground">Filter Vouchers</span>
+              </div>
+              {activeCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onReset();
+                    setOpen(false);
+                  }}
+                  className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
+                >
+                  Reset all
+                </button>
+              )}
+            </div>
+
+            {/* 1. Status Multi-select */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Status (Multi-Select)
+                </label>
+                <div className="flex items-center gap-2 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={handleSelectAllStatuses}
+                    className="text-primary hover:underline font-semibold cursor-pointer"
+                  >
+                    Select all
+                  </button>
+                  <span className="text-border">•</span>
+                  <button
+                    type="button"
+                    onClick={handleClearStatuses}
+                    className="text-muted-foreground hover:text-foreground font-semibold cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {statusOptions.map((opt) => {
+                  const isChecked = statusFilters.includes(opt.id);
+                  return (
+                    <label
+                      key={opt.id}
+                      className={cn(
+                        'flex items-center gap-2 rounded-xl border p-2 text-xs font-medium cursor-pointer transition select-none',
+                        isChecked
+                          ? 'border-primary/50 bg-primary/5 text-foreground'
+                          : 'border-border/60 hover:bg-muted/30 text-muted-foreground'
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggleStatus(opt.id)}
+                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                      />
+                      <span>{opt.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 2. Channel Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                Sales Channel
+              </label>
+              <div className="grid grid-cols-2 gap-1.5">
+                {channelOptions.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => onChannelChange(opt.id)}
+                    className={cn(
+                      'rounded-xl border py-1.5 px-2.5 text-xs font-semibold text-center transition cursor-pointer',
+                      channelFilter === opt.id
+                        ? 'border-primary bg-primary text-white shadow-xs'
+                        : 'border-border/60 hover:bg-muted/40 text-muted-foreground'
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 3. Created By Filter */}
+            <div className="space-y-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                Created By
+              </label>
+              <select
+                value={createdByFilter}
+                onChange={(e) => onCreatedByChange(e.target.value)}
+                className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground outline-none focus:border-primary cursor-pointer"
               >
-                {o.label}
+                <option value="all">All Creators</option>
+                <option value="__online__">Online / Self-Service</option>
+                {creatorOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Done button */}
+            <div className="pt-2 border-t border-border/40">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="w-full h-9 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary/90 transition shadow-xs cursor-pointer"
+              >
+                Apply Filters
               </button>
-            ))}
+            </div>
           </div>
         </>
       )}
@@ -2360,7 +3162,1018 @@ function StatusFilter({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
-// ── Payment Through Config & Filter Dropdown ───────────────────────────────────
+// ── Bulk Action Modals ────────────────────────────────────────────────────────
+
+function BulkUpdateStatusModal({
+  selectedCount,
+  onClose,
+  onSubmit,
+}: {
+  selectedCount: number;
+  onClose: () => void;
+  onSubmit: (status: string, note?: string) => Promise<void>;
+}) {
+  const [targetStatus, setTargetStatus] = useState<string>('active');
+  const [note, setNote] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit(targetStatus, note.trim() || undefined);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update status');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between border-b border-border/40 pb-3">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-primary" />
+            <h3 className="font-extrabold text-sm text-foreground">Update Status ({selectedCount} Vouchers)</h3>
+          </div>
+          <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-lg text-muted-foreground hover:bg-muted">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+          {error && (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">
+              {error}
+            </div>
+          )}
+          <div>
+            <label className="block text-[11px] font-semibold text-muted-foreground mb-1.5">New Status</label>
+            <select
+              value={targetStatus}
+              onChange={(e) => setTargetStatus(e.target.value)}
+              className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs font-semibold outline-none focus:border-primary"
+            >
+              <option value="active">Active</option>
+              <option value="pending">Pending</option>
+              <option value="redeemed">Redeemed</option>
+              <option value="expired">Expired</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[11px] font-semibold text-muted-foreground mb-1.5">Update Reason / Note (Optional)</label>
+            <textarea
+              rows={3}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. Bulk status update approved by supervisor"
+              className="w-full rounded-xl border border-border bg-background p-3 text-xs outline-none focus:border-primary resize-none"
+            />
+          </div>
+          <div className="flex gap-2 pt-2 border-t border-border/40">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={submitting}
+              className="flex-1 h-9 rounded-xl border border-border bg-muted/40 font-semibold cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex-1 h-9 rounded-xl bg-primary text-white font-bold flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              <span>Apply Status</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+interface BulkDeleteModalProps {
+  selectedVouchers: Voucher[];
+  onClose: () => void;
+  onConfirm: (validIds: string[]) => Promise<void>;
+}
+
+function BulkDeleteModal({
+  selectedVouchers,
+  onClose,
+  onConfirm,
+}: BulkDeleteModalProps) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isPendingStatus = (status?: string | null) => {
+    const s = (status || '').trim().toLowerCase();
+    return s === 'pending' || s === 'created' || s === 'payment_pending';
+  };
+
+  const deletableVouchers = useMemo(
+    () => selectedVouchers.filter((v) => isPendingStatus(v.status)),
+    [selectedVouchers]
+  );
+
+  const protectedVouchers = useMemo(
+    () => selectedVouchers.filter((v) => !isPendingStatus(v.status)),
+    [selectedVouchers]
+  );
+
+  const canProceed = deletableVouchers.length > 0;
+
+  const handleDelete = async () => {
+    if (!canProceed) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onConfirm(deletableVouchers.map((v) => v.id));
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete vouchers');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-md rounded-3xl border border-destructive/30 bg-card p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-200">
+        <div className="flex items-center gap-3">
+          <div className="grid h-10 w-10 place-items-center rounded-2xl bg-destructive/15 text-destructive">
+            <Trash2 className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="font-extrabold text-sm text-foreground">
+              Delete {selectedVouchers.length} Voucher{selectedVouchers.length > 1 ? 's' : ''}
+            </h3>
+            <p className="text-[11px] text-muted-foreground">Only pending vouchers can be deleted</p>
+          </div>
+        </div>
+
+        {error && (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+            {error}
+          </div>
+        )}
+
+        {/* Protection / Status Warning */}
+        {protectedVouchers.length > 0 && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400 space-y-1">
+            <div className="flex items-center gap-1.5 font-bold">
+              <AlertCircle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>Active &amp; Redeemed Protection</span>
+            </div>
+            <p className="text-[11px] leading-relaxed">
+              {protectedVouchers.length} of {selectedVouchers.length} voucher(s) have an active, redeemed, or completed status and <strong>cannot be deleted</strong>.
+              {deletableVouchers.length > 0
+                ? ` Only the ${deletableVouchers.length} pending voucher(s) will be deleted.`
+                : ' None of the selected vouchers are pending. Deletion is not allowed.'}
+            </p>
+          </div>
+        )}
+
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          {canProceed ? (
+            <>
+              Are you sure you want to permanently delete the <strong className="text-foreground">{deletableVouchers.length}</strong> pending gift voucher{deletableVouchers.length > 1 ? 's' : ''}?
+              All associated records will be removed.
+            </>
+          ) : (
+            <>
+              No pending vouchers selected. Only pending vouchers can be deleted. Active and redeemed gift vouchers cannot be deleted.
+            </>
+          )}
+        </p>
+
+        <div className="flex gap-2 pt-2 border-t border-border/40 text-xs">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="flex-1 h-9 rounded-xl border border-border bg-muted/40 font-semibold cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={submitting || !canProceed}
+            className="flex-1 h-9 rounded-xl bg-destructive text-destructive-foreground font-bold flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {submitting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            <span>Confirm Delete ({deletableVouchers.length})</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Report Generator Definitions & Modal ───────────────────────────────────────
+
+type ReportFormat = 'csv' | 'xlsx' | 'pdf';
+
+interface ReportField {
+  id: string;
+  label: string;
+  category: 'General' | 'Service' | 'Financial' | 'Parties' | 'Audit';
+  defaultSelected: boolean;
+}
+
+const REPORT_FIELDS: ReportField[] = [
+  // General
+  { id: 'secret_code', label: 'Voucher Code', category: 'General', defaultSelected: true },
+  { id: 'voucher_number', label: 'Voucher Number', category: 'General', defaultSelected: true },
+  { id: 'status', label: 'Status', category: 'General', defaultSelected: true },
+  { id: 'payment_through', label: 'Sales Channel', category: 'General', defaultSelected: true },
+  { id: 'gift_category', label: 'Gift Category', category: 'General', defaultSelected: false },
+
+  // Service
+  { id: 'service_name', label: 'Service Name', category: 'Service', defaultSelected: true },
+  { id: 'duration', label: 'Duration (Mins)', category: 'Service', defaultSelected: true },
+  { id: 'branch_name', label: 'Branch', category: 'Service', defaultSelected: true },
+  { id: 'arrangement_name', label: 'Arrangement / Room', category: 'Service', defaultSelected: false },
+  { id: 'addons', label: 'Add-ons', category: 'Service', defaultSelected: false },
+
+  // Financial
+  { id: 'total_amount', label: 'Total Amount', category: 'Financial', defaultSelected: true },
+  { id: 'discount', label: 'Discount Amount', category: 'Financial', defaultSelected: true },
+  { id: 'currency', label: 'Currency', category: 'Financial', defaultSelected: true },
+  { id: 'payment_provider', label: 'Payment Gateway', category: 'Financial', defaultSelected: false },
+  { id: 'invoice_number', label: 'Invoice Number', category: 'Financial', defaultSelected: true },
+  { id: 'payment_number', label: 'Transaction / Payment ID', category: 'Financial', defaultSelected: false },
+
+  // Parties
+  { id: 'sender_name', label: 'Sender Name', category: 'Parties', defaultSelected: true },
+  { id: 'sender_phone', label: 'Sender Phone', category: 'Parties', defaultSelected: true },
+  { id: 'recipient_name', label: 'Recipient Name', category: 'Parties', defaultSelected: true },
+  { id: 'recipient_phone', label: 'Recipient Phone', category: 'Parties', defaultSelected: true },
+  { id: 'gift_message', label: 'Gift Message', category: 'Parties', defaultSelected: false },
+
+  // Audit
+  { id: 'created_at', label: 'Created At', category: 'Audit', defaultSelected: true },
+  { id: 'expire_date', label: 'Expires At', category: 'Audit', defaultSelected: true },
+  { id: 'redeemed_at', label: 'Redeemed At', category: 'Audit', defaultSelected: true },
+  { id: 'redeemed_by', label: 'Redeemed By (Staff)', category: 'Audit', defaultSelected: false },
+  { id: 'created_by', label: 'Created By (Staff)', category: 'Audit', defaultSelected: false },
+];
+
+function getVoucherFieldValue(
+  voucher: Voucher,
+  fieldId: string,
+  employeeMap?: Record<string, string>
+): string {
+  switch (fieldId) {
+    case 'secret_code':
+      return voucher.secret_code || '';
+    case 'voucher_number':
+      return voucher.voucher_number || '';
+    case 'status':
+      return voucher.status || '';
+    case 'payment_through':
+      return voucher.payment_through || 'USHDESK';
+    case 'gift_category':
+      return voucher.gift_category || 'service';
+    case 'service_name':
+      return voucher.service_data?.name || 'Gift Voucher';
+    case 'duration':
+      return `${getVoucherTotalDuration(voucher)} min`;
+    case 'branch_name':
+      return voucher.branch_data?.name || '';
+    case 'arrangement_name':
+      return voucher.service_arrangement_data?.arrangement_name || '';
+    case 'addons':
+      return Array.isArray(voucher.addons)
+        ? voucher.addons.map((a: any) => a.name || a.addon_name).filter(Boolean).join('; ')
+        : '';
+    case 'total_amount':
+      return String(voucher.total_amount ?? 0);
+    case 'discount':
+      return String(voucher.discount ?? 0);
+    case 'currency':
+      return voucher.currency || 'KWD';
+    case 'payment_provider':
+      return voucher.payment_provider || '';
+    case 'invoice_number':
+      return voucher.invoice_number || (voucher.payment_data as any)?.invoice_number || '';
+    case 'payment_number':
+      return voucher.payment_number || (voucher.payment_data as any)?.payment_number || '';
+    case 'sender_name':
+      return voucher.sender_data?.name || voucher.sender_details?.name || '';
+    case 'sender_phone':
+      return voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '';
+    case 'recipient_name':
+      return voucher.recipient_data?.name || voucher.recipient_details?.name || (voucher as any).gift_to || '';
+    case 'recipient_phone':
+      return voucher.recipient_phone || voucher.recipient_data?.phone_number || voucher.recipient_details?.phone_number || '';
+    case 'gift_message':
+      return voucher.gift_message || '';
+    case 'created_at':
+      return voucher.created_at ? fmtDate(voucher.created_at) : '';
+    case 'expire_date':
+      return voucher.expire_date ? fmtDate(voucher.expire_date) : '';
+    case 'redeemed_at':
+      return voucher.redeemed_at ? fmtDate(voucher.redeemed_at) : '';
+    case 'redeemed_by':
+      return voucher.redeemed_by ? (employeeMap?.[voucher.redeemed_by] || voucher.redeemed_by) : '';
+    case 'created_by':
+      return voucher.created_by ? (employeeMap?.[voucher.created_by] || voucher.created_by) : '';
+    default:
+      return '';
+  }
+}
+
+function exportToCsv(
+  selectedVouchers: Voucher[],
+  selectedFields: ReportField[],
+  employeeMap?: Record<string, string>
+) {
+  const headers = selectedFields.map((f) => f.label);
+  const rows = selectedVouchers.map((v) =>
+    selectedFields.map((f) => {
+      const val = getVoucherFieldValue(v, f.id, employeeMap);
+      return `"${val.replace(/"/g, '""')}"`;
+    })
+  );
+
+  const csvContent =
+    'data:text/csv;charset=utf-8,\uFEFF' +
+    [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+  const encodedUri = encodeURI(csvContent);
+  const link = document.createElement('a');
+  link.setAttribute('href', encodedUri);
+  const nowStr = new Date().toISOString().split('T')[0];
+  link.setAttribute('download', `ushspa_gift_vouchers_report_${nowStr}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+function exportToXlsx(
+  selectedVouchers: Voucher[],
+  selectedFields: ReportField[],
+  employeeMap?: Record<string, string>
+) {
+  const escapeXml = (str: string) =>
+    str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;');
+
+  const headerCells = selectedFields
+    .map((f) => `<Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(f.label)}</Data></Cell>`)
+    .join('');
+
+  const rowNodes = selectedVouchers
+    .map((v) => {
+      const cells = selectedFields
+        .map((f) => {
+          const val = getVoucherFieldValue(v, f.id, employeeMap);
+          const isNum = (f.id === 'total_amount' || f.id === 'discount') && !isNaN(Number(val));
+          if (isNum) {
+            return `<Cell ss:StyleID="Number"><Data ss:Type="Number">${val}</Data></Cell>`;
+          }
+          return `<Cell ss:StyleID="Data"><Data ss:Type="String">${escapeXml(val)}</Data></Cell>`;
+        })
+        .join('');
+      return `<Row>${cells}</Row>`;
+    })
+    .join('\n');
+
+  const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:html="http://www.w3.org/TR/REC-html40">
+ <Styles>
+  <Style ss:ID="Header">
+   <Font ss:Bold="1" ss:Color="#FFFFFF" ss:FontName="Calibri" ss:Size="11"/>
+   <Interior ss:Color="#1E293B" ss:Pattern="Solid"/>
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#0F172A"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="Data">
+   <Font ss:FontName="Calibri" ss:Size="11"/>
+   <Alignment ss:Vertical="Center"/>
+  </Style>
+  <Style ss:ID="Number">
+   <Font ss:FontName="Calibri" ss:Size="11"/>
+   <NumberFormat ss:Format="#,##0.000"/>
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Gift Vouchers">
+  <Table>
+   <Row ss:Height="24">${headerCells}</Row>
+   ${rowNodes}
+  </Table>
+ </Worksheet>
+</Workbook>`;
+
+  const blob = new Blob([xmlContent], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  const nowStr = new Date().toISOString().split('T')[0];
+  link.setAttribute('download', `ushspa_gift_vouchers_report_${nowStr}.xls`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function exportToPdf(
+  selectedVouchers: Voucher[],
+  selectedFields: ReportField[],
+  employeeMap?: Record<string, string>
+) {
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    alert('Please allow popups to export and print PDF reports.');
+    return;
+  }
+
+  const nowStr = new Date().toLocaleString();
+  const totalAmount = selectedVouchers.reduce((s, v) => s + (parseFloat(v.total_amount) || 0), 0);
+  const activeCount = selectedVouchers.filter((v) => v.status?.toLowerCase() === 'active').length;
+  const redeemedCount = selectedVouchers.filter((v) => v.status?.toLowerCase() === 'redeemed').length;
+
+  const escapeHtml = (str: string) =>
+    str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+  const headersHtml = selectedFields.map((f) => `<th>${escapeHtml(f.label)}</th>`).join('');
+
+  const rowsHtml = selectedVouchers
+    .map(
+      (v, idx) => `
+    <tr class="${idx % 2 === 0 ? 'even' : 'odd'}">
+      ${selectedFields
+        .map((f) => {
+          const val = getVoucherFieldValue(v, f.id, employeeMap);
+          const isNum = f.id === 'total_amount' || f.id === 'discount';
+          return `<td class="${isNum ? 'num' : ''}">${escapeHtml(val)}</td>`;
+        })
+        .join('')}
+    </tr>`
+    )
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>USH Spa - Gift Vouchers Report</title>
+  <style>
+    @page {
+      size: landscape;
+      margin: 10mm;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      color: #1e293b;
+      background: #fff;
+      font-size: 11px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 14px;
+      margin-bottom: 16px;
+    }
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #0f172a;
+    }
+    .brand p {
+      margin: 2px 0 0;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .meta {
+      text-align: right;
+      font-size: 10px;
+      color: #64748b;
+    }
+    .kpis {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .kpi {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px 12px;
+      min-width: 110px;
+    }
+    .kpi-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      font-weight: 700;
+      color: #64748b;
+    }
+    .kpi-val {
+      font-size: 14px;
+      font-weight: 800;
+      color: #0f172a;
+      margin-top: 2px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 10px;
+    }
+    th {
+      background-color: #0f172a;
+      color: #fff;
+      text-align: left;
+      padding: 6px 8px;
+      font-weight: 700;
+      border: 1px solid #0f172a;
+      white-space: nowrap;
+    }
+    td {
+      padding: 5px 8px;
+      border: 1px solid #e2e8f0;
+      vertical-align: top;
+    }
+    tr.even {
+      background-color: #ffffff;
+    }
+    tr.odd {
+      background-color: #f8fafc;
+    }
+    td.num {
+      text-align: right;
+      font-family: monospace;
+    }
+    .no-print {
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      border: 1px solid #0f172a;
+      background: #0f172a;
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    @media print {
+      .no-print { display: none !important; }
+      body { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="no-print">
+    <button class="btn" onclick="window.print()">Print / Save as PDF</button>
+  </div>
+  <div class="header">
+    <div class="brand">
+      <h1>USH SPA — GIFT VOUCHERS REPORT</h1>
+      <p>Luxury Wellness &amp; Day Spa Appointments &amp; Vouchers</p>
+    </div>
+    <div class="meta">
+      <div><strong>Generated:</strong> ${nowStr}</div>
+      <div><strong>Records:</strong> ${selectedVouchers.length} Vouchers</div>
+    </div>
+  </div>
+  <div class="kpis">
+    <div class="kpi">
+      <div class="kpi-label">Total Selected</div>
+      <div class="kpi-val">${selectedVouchers.length}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Total Value</div>
+      <div class="kpi-val">${totalAmount.toFixed(3)} KWD</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Active</div>
+      <div class="kpi-val">${activeCount}</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Redeemed</div>
+      <div class="kpi-val">${redeemedCount}</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>${headersHtml}</tr>
+    </thead>
+    <tbody>
+      ${rowsHtml}
+    </tbody>
+  </table>
+  <script>
+    window.onload = function() {
+      setTimeout(function() {
+        window.print();
+      }, 300);
+    };
+  </script>
+</body>
+</html>`;
+
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
+
+interface VoucherReportModalProps {
+  selectedVouchers: Voucher[];
+  allFilteredVouchers: Voucher[];
+  employeeMap: Record<string, string>;
+  onClose: () => void;
+}
+
+function VoucherReportModal({
+  selectedVouchers,
+  allFilteredVouchers,
+  employeeMap,
+  onClose,
+}: VoucherReportModalProps) {
+  const [format, setFormat] = useState<ReportFormat>('xlsx');
+  const [scope, setScope] = useState<'selected' | 'all'>(
+    selectedVouchers.length > 0 ? 'selected' : 'all'
+  );
+  const [selectedFieldIds, setSelectedFieldIds] = useState<Set<string>>(() => {
+    return new Set(REPORT_FIELDS.filter((f) => f.defaultSelected).map((f) => f.id));
+  });
+  const [generating, setGenerating] = useState(false);
+
+  const targetVouchers = scope === 'selected' ? selectedVouchers : allFilteredVouchers;
+
+  const categories: Array<ReportField['category']> = ['General', 'Service', 'Financial', 'Parties', 'Audit'];
+
+  const handleToggleField = (id: string) => {
+    setSelectedFieldIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAll = () => {
+    setSelectedFieldIds(new Set(REPORT_FIELDS.map((f) => f.id)));
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedFieldIds(new Set());
+  };
+
+  const handleToggleCategory = (cat: ReportField['category']) => {
+    const catFields = REPORT_FIELDS.filter((f) => f.category === cat);
+    const allSelected = catFields.every((f) => selectedFieldIds.has(f.id));
+    setSelectedFieldIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        catFields.forEach((f) => next.delete(f.id));
+      } else {
+        catFields.forEach((f) => next.add(f.id));
+      }
+      return next;
+    });
+  };
+
+  const handleGenerate = () => {
+    if (selectedFieldIds.size === 0 || targetVouchers.length === 0) return;
+    setGenerating(true);
+
+    const orderedFields = REPORT_FIELDS.filter((f) => selectedFieldIds.has(f.id));
+
+    setTimeout(() => {
+      try {
+        if (format === 'csv') {
+          exportToCsv(targetVouchers, orderedFields, employeeMap);
+        } else if (format === 'xlsx') {
+          exportToXlsx(targetVouchers, orderedFields, employeeMap);
+        } else if (format === 'pdf') {
+          exportToPdf(targetVouchers, orderedFields, employeeMap);
+        }
+        onClose();
+      } catch (err) {
+        console.error('Failed to export report:', err);
+      } finally {
+        setGenerating(false);
+      }
+    }, 150);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-2xl max-h-[92vh] flex flex-col rounded-3xl border border-border/80 bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-border/40 px-6 py-4.5 bg-muted/20 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-2xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+              <FileSpreadsheet className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-foreground leading-tight">
+                Generate Gift Vouchers Report
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Select columns and export format ({targetVouchers.length} record{targetVouchers.length > 1 ? 's' : ''})
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            type="button"
+            className="grid h-8 w-8 place-items-center rounded-xl bg-muted/60 hover:bg-muted transition text-muted-foreground hover:text-foreground cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
+          {/* 1. Scope selection (if some selected) */}
+          {selectedVouchers.length > 0 && selectedVouchers.length < allFilteredVouchers.length && (
+            <div className="rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                Records To Include:
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setScope('selected')}
+                  className={cn(
+                    'flex items-center justify-between p-2.5 rounded-xl border font-semibold transition cursor-pointer',
+                    scope === 'selected'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <span>Selected Vouchers</span>
+                  <span className="font-mono font-bold text-foreground">{selectedVouchers.length}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setScope('all')}
+                  className={cn(
+                    'flex items-center justify-between p-2.5 rounded-xl border font-semibold transition cursor-pointer',
+                    scope === 'all'
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  <span>All Filtered Vouchers</span>
+                  <span className="font-mono font-bold text-foreground">{allFilteredVouchers.length}</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 2. Format Selection */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+              1. Choose Report Format
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              {/* XLSX */}
+              <button
+                type="button"
+                onClick={() => setFormat('xlsx')}
+                className={cn(
+                  'flex flex-col items-start p-3.5 rounded-2xl border text-left transition cursor-pointer',
+                  format === 'xlsx'
+                    ? 'border-emerald-500/80 bg-emerald-500/10 ring-1 ring-emerald-500/30'
+                    : 'border-border bg-card hover:bg-muted/40'
+                )}
+              >
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                    <FileSpreadsheet className="h-4 w-4" />
+                  </div>
+                  {format === 'xlsx' && (
+                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  )}
+                </div>
+                <span className="font-bold text-xs text-foreground">Excel Workbook</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5">
+                  Formatted spreadsheet (.xlsx / .xls)
+                </span>
+              </button>
+
+              {/* CSV */}
+              <button
+                type="button"
+                onClick={() => setFormat('csv')}
+                className={cn(
+                  'flex flex-col items-start p-3.5 rounded-2xl border text-left transition cursor-pointer',
+                  format === 'csv'
+                    ? 'border-blue-500/80 bg-blue-500/10 ring-1 ring-blue-500/30'
+                    : 'border-border bg-card hover:bg-muted/40'
+                )}
+              >
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-500/15 text-blue-600 dark:text-blue-400">
+                    <FileText className="h-4 w-4" />
+                  </div>
+                  {format === 'csv' && (
+                    <span className="h-2 w-2 rounded-full bg-blue-500" />
+                  )}
+                </div>
+                <span className="font-bold text-xs text-foreground">CSV Table</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5">
+                  UTF-8 comma-separated (.csv)
+                </span>
+              </button>
+
+              {/* PDF */}
+              <button
+                type="button"
+                onClick={() => setFormat('pdf')}
+                className={cn(
+                  'flex flex-col items-start p-3.5 rounded-2xl border text-left transition cursor-pointer',
+                  format === 'pdf'
+                    ? 'border-violet-500/80 bg-violet-500/10 ring-1 ring-violet-500/30'
+                    : 'border-border bg-card hover:bg-muted/40'
+                )}
+              >
+                <div className="flex items-center justify-between w-full mb-1.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-violet-500/15 text-violet-600 dark:text-violet-400">
+                    <Printer className="h-4 w-4" />
+                  </div>
+                  {format === 'pdf' && (
+                    <span className="h-2 w-2 rounded-full bg-violet-500" />
+                  )}
+                </div>
+                <span className="font-bold text-xs text-foreground">Printable PDF</span>
+                <span className="text-[10px] text-muted-foreground mt-0.5">
+                  Landscape layout with spa branding
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* 3. Field Selection */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  2. Select Report Fields
+                </label>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  <strong className="text-foreground">{selectedFieldIds.size}</strong> of {REPORT_FIELDS.length} fields selected
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="text-xs font-semibold text-primary hover:underline cursor-pointer"
+                >
+                  Select All
+                </button>
+                <span className="text-muted-foreground/40">•</span>
+                <button
+                  type="button"
+                  onClick={handleDeselectAll}
+                  className="text-xs font-semibold text-muted-foreground hover:text-foreground cursor-pointer"
+                >
+                  Deselect All
+                </button>
+              </div>
+            </div>
+
+            {/* Category Filter Chips */}
+            <div className="flex flex-wrap gap-1.5">
+              {categories.map((cat) => {
+                const catFields = REPORT_FIELDS.filter((f) => f.category === cat);
+                const count = catFields.filter((f) => selectedFieldIds.has(f.id)).length;
+                const isAll = count === catFields.length;
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onClick={() => handleToggleCategory(cat)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-semibold border transition cursor-pointer',
+                      isAll
+                        ? 'bg-primary/10 border-primary/40 text-primary'
+                        : count > 0
+                        ? 'bg-muted border-border text-foreground'
+                        : 'bg-background border-border/60 text-muted-foreground hover:bg-muted/40'
+                    )}
+                  >
+                    <span>{cat}</span>
+                    <span className="text-[10px] px-1 rounded-md bg-background/80 font-mono font-bold">
+                      {count}/{catFields.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Checkbox Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto p-1 border border-border/50 rounded-2xl bg-muted/10">
+              {REPORT_FIELDS.map((field) => {
+                const isChecked = selectedFieldIds.has(field.id);
+                return (
+                  <label
+                    key={field.id}
+                    className={cn(
+                      'flex items-center gap-2.5 p-2 rounded-xl border text-xs cursor-pointer select-none transition',
+                      isChecked
+                        ? 'border-primary/30 bg-card text-foreground font-semibold shadow-xs'
+                        : 'border-transparent bg-transparent text-muted-foreground hover:bg-muted/40'
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => handleToggleField(field.id)}
+                      className="h-4 w-4 rounded text-primary focus:ring-primary/20 cursor-pointer"
+                    />
+                    <span className="min-w-0 flex-1 truncate">{field.label}</span>
+                    <span className="text-[9px] uppercase tracking-wider text-muted-foreground/60 px-1 py-0.5 rounded bg-muted">
+                      {field.category}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between border-t border-border/40 px-6 py-4 bg-muted/20 shrink-0">
+          <p className="text-xs text-muted-foreground">
+            Target: <strong className="text-foreground">{targetVouchers.length}</strong> vouchers •{' '}
+            <strong className="text-foreground">{selectedFieldIds.size}</strong> columns
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={generating}
+              className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={generating || selectedFieldIds.size === 0 || targetVouchers.length === 0}
+              className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {generating ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>Preparing...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5" />
+                  <span>Download {format.toUpperCase()}</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Payment Through Config ─────────────────────────────────────────────────────
 
 function getPaymentThroughConfig(ptRaw?: string | null) {
   if (!ptRaw) return null;
@@ -2391,48 +4204,6 @@ function getPaymentThroughConfig(ptRaw?: string | null) {
     badgeClass: 'bg-muted text-muted-foreground border-border',
     dotClass: 'bg-muted-foreground',
   };
-}
-
-function PaymentThroughFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const options = [
-    { val: 'all',    label: 'All Channels' },
-    { val: 'ushweb', label: 'USHWeb' },
-    { val: 'desk',   label: 'Desk' },
-    { val: 'ushspa', label: 'USHSpa' },
-  ];
-  const current = options.find(o => o.val === value) ?? options[0];
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
-      >
-        <span>{current.label}</span>
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-      </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute top-full left-0 mt-2 z-50 w-44 rounded-2xl border border-border bg-card shadow-2xl py-2 overflow-hidden">
-            {options.map(o => (
-              <button
-                key={o.val}
-                onClick={() => { onChange(o.val); setOpen(false); }}
-                className={cn(
-                  'w-full text-left px-4 py-2.5 text-sm font-medium transition hover:bg-muted/60',
-                  o.val === value ? 'text-primary font-bold bg-primary/5' : 'text-foreground',
-                )}
-              >
-                {o.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  );
 }
 
 // ── Share Voucher Modal ────────────────────────────────────────────────────────
@@ -2659,7 +4430,16 @@ function ShareVoucherModal({ voucher, channel = 'whatsapp', onClose, onSend }: S
 export default function GiftVouchersPage() {
   const token = useAppSelector((s) => s.auth.token);
   const user = useAppSelector((s) => s.auth.user);
-  const { isAdmin, isSpaDirector, isFinanceManager, isRefundsAndFinancePermitted, roleInfo } = usePermissions();
+  const {
+    isAdmin,
+    isSpaDirector,
+    isFinanceManager,
+    isRefundsAndFinancePermitted,
+    roleInfo,
+    canDeleteGiftVoucher,
+    canUpdateVoucherStatus,
+    canGenerateVoucherReport,
+  } = usePermissions();
 
   const canViewVoucherNumber = useMemo(() => {
     if (isAdmin || isSpaDirector || isFinanceManager || isRefundsAndFinancePermitted) {
@@ -2679,9 +4459,47 @@ export default function GiftVouchersPage() {
   const [loading,         setLoading]         = useState(false);
   const [error,           setError]           = useState<string | null>(null);
   const [selectedVoucher, setSelectedVoucher] = useState<Voucher | null>(null);
-  const [statusFilter,          setStatusFilter]          = useState<string>('all');
-  const [paymentThroughFilter,  setPaymentThroughFilter]  = useState<string>('all');
-  const [showCreate,            setShowCreate]            = useState(false);
+  const [statusFilters,   setStatusFilters]   = useState<string[]>([]);
+  const [channelFilter,   setChannelFilter]   = useState<string>('all');
+  const [createdByFilter, setCreatedByFilter] = useState<string>('all');
+  const [showCreate,      setShowCreate]      = useState(false);
+
+  // Multi-select and bulk actions
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkStatusModal, setShowBulkStatusModal] = useState(false);
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    authedFetch('/uauth/api/v1/employees/')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data?.data ?? data?.results ?? [];
+        const map: Record<string, string> = {};
+        list.forEach((emp: any) => {
+          const name = emp.full_name || emp.name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || emp.user?.first_name || emp.username;
+          if (emp.id && name) map[String(emp.id)] = name;
+          if (emp.user_id && name) map[String(emp.user_id)] = name;
+          if (emp.user?.id && name) map[String(emp.user.id)] = name;
+        });
+        setEmployeeMap(map);
+      })
+      .catch(() => {});
+  }, []);
+
+  const creatorOptions = useMemo(() => {
+    const ids = new Set<string>();
+    vouchers.forEach((v) => {
+      if (v.created_by && v.created_by !== 'online' && v.created_by !== 'web' && v.created_by !== 'customer') {
+        ids.add(v.created_by);
+      }
+    });
+    return Array.from(ids).map((id) => ({
+      id,
+      name: employeeMap[id] || (user?.id === id && user?.name ? user.name : (id.length > 20 ? `Staff (${id.slice(0, 6)})` : id)),
+    }));
+  }, [vouchers, employeeMap, user]);
 
   // Date filters & pagination
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
@@ -2689,11 +4507,12 @@ export default function GiftVouchersPage() {
   const [page,       setPage]       = useState(1);
   const [pageSize,   setPageSize]   = useState(20);
 
-  const [searchQuery,     setSearchQuery]     = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, statusFilter, paymentThroughFilter, dateFilter, dateRange]);
+    setSelectedIds(new Set());
+  }, [searchQuery, statusFilters, channelFilter, createdByFilter, dateFilter, dateRange]);
   const [shareVoucher,     setShareVoucher]     = useState<Voucher | null>(null);
   const [shareChannel,     setShareChannel]     = useState<'sms' | 'whatsapp'>('whatsapp');
   const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
@@ -2806,38 +4625,49 @@ export default function GiftVouchersPage() {
   // ── Derived / filtered ──────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     return vouchers.filter((v) => {
-      // 1. Status filter
-      if (statusFilter !== 'all') {
+      // 1. Status multi-select filter
+      if (statusFilters.length > 0 && statusFilters.length < 5) {
         const s = v.status?.toLowerCase() ?? '';
-        if (statusFilter === 'pending') {
-          const isPending =
-            s === 'pending' ||
-            s === 'payment_pending' ||
-            s === 'created' ||
-            s.includes('pending');
-          if (!isPending) return false;
-        } else if (statusFilter === 'active') {
-          if (s !== 'active') return false;
-        } else if (statusFilter === 'redeemed') {
-          if (s !== 'redeemed' && !v.redeemed_at) return false;
-        } else if (statusFilter === 'expired') {
-          if (s !== 'expired') return false;
-        } else if (s !== statusFilter) {
+        const isPending =
+          s === 'pending' ||
+          s === 'payment_pending' ||
+          s === 'created' ||
+          s.includes('pending');
+        const isRedeemed = s === 'redeemed' || Boolean(v.redeemed_at);
+
+        const matchesAny = statusFilters.some((target) => {
+          if (target === 'pending') return isPending;
+          if (target === 'redeemed') return isRedeemed;
+          if (target === 'active') return s === 'active' && !isRedeemed;
+          if (target === 'expired') return s === 'expired';
+          if (target === 'cancelled') return s === 'cancelled';
+          return s === target;
+        });
+
+        if (!matchesAny) return false;
+      }
+
+      // 1b. Payment through channel filter (ushweb, desk, ushspa)
+      if (channelFilter !== 'all') {
+        const pt = (v.payment_through || (v as any).payment_data?.payment_through || (v as any).channel || '').trim().toLowerCase();
+        if (channelFilter === 'ushweb') {
+          if (pt !== 'ushweb' && pt !== 'web') return false;
+        } else if (channelFilter === 'desk') {
+          if (pt !== 'desk' && pt !== 'ushdesk') return false;
+        } else if (channelFilter === 'ushspa') {
+          if (pt !== 'ushspa' && pt !== 'spa' && pt !== 'app') return false;
+        } else if (pt !== channelFilter.toLowerCase()) {
           return false;
         }
       }
 
-      // 1b. Payment through filter (ushweb, desk, ushspa)
-      if (paymentThroughFilter !== 'all') {
-        const pt = (v.payment_through || (v as any).payment_data?.payment_through || (v as any).channel || '').trim().toLowerCase();
-        if (paymentThroughFilter === 'ushweb') {
-          if (pt !== 'ushweb' && pt !== 'web') return false;
-        } else if (paymentThroughFilter === 'desk') {
-          if (pt !== 'desk' && pt !== 'ushdesk') return false;
-        } else if (paymentThroughFilter === 'ushspa') {
-          if (pt !== 'ushspa' && pt !== 'spa' && pt !== 'app') return false;
-        } else if (pt !== paymentThroughFilter.toLowerCase()) {
-          return false;
+      // 1c. Created By filter
+      if (createdByFilter !== 'all') {
+        if (createdByFilter === '__online__') {
+          const cb = (v.created_by || '').toLowerCase();
+          if (cb && cb !== 'online' && cb !== 'web' && cb !== 'customer') return false;
+        } else {
+          if (v.created_by !== createdByFilter) return false;
         }
       }
 
@@ -2922,13 +4752,136 @@ export default function GiftVouchersPage() {
 
       return true;
     });
-  }, [vouchers, statusFilter, paymentThroughFilter, searchQuery, dateRange]);
+  }, [vouchers, statusFilters, channelFilter, createdByFilter, searchQuery, dateRange]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginatedVouchers = useMemo(() => {
     const start = (page - 1) * pageSize;
     return filtered.slice(start, start + pageSize);
   }, [filtered, page, pageSize]);
+
+  // Bulk action helpers
+  const handleBulkDelete = async (idsToDelete?: string[]) => {
+    const ids = idsToDelete && idsToDelete.length > 0 ? idsToDelete : Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const res = await authedFetch('/booknpay/api/v1/vouchers/batch-delete/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voucher_ids: ids }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || err.message || `Failed to delete vouchers (HTTP ${res.status})`);
+    }
+    const data = await res.json().catch(() => ({}));
+    if (data.errors && data.errors.length > 0 && (!data.deleted_ids || data.deleted_ids.length === 0)) {
+      throw new Error(data.errors[0]?.error || 'Failed to delete selected vouchers');
+    }
+    setSelectedIds(new Set());
+    fetchVouchers();
+  };
+
+  const handleBulkUpdateStatus = async (status: string, note?: string) => {
+    const ids = Array.from(selectedIds);
+    const res = await authedFetch('/booknpay/api/v1/vouchers/batch-update-status/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voucher_ids: ids, status, note }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || err.message || `Failed to update status (HTTP ${res.status})`);
+    }
+    setSelectedIds(new Set());
+    fetchVouchers();
+  };
+
+  const handleExportSelectedReport = () => {
+    const selectedVouchers = vouchers.filter((v) => selectedIds.has(v.id));
+    if (selectedVouchers.length === 0) return;
+
+    const headers = [
+      'Voucher Code',
+      'Voucher Number',
+      'Status',
+      'Channel',
+      'Amount',
+      'Currency',
+      'Service',
+      'Sender Name',
+      'Sender Phone',
+      'Recipient Name',
+      'Recipient Phone',
+      'Created At',
+      'Expires At',
+      'Redeemed At',
+    ];
+
+    const rows = selectedVouchers.map((v) => [
+      `"${(v.secret_code || '').replace(/"/g, '""')}"`,
+      `"${(v.voucher_number || '').replace(/"/g, '""')}"`,
+      `"${(v.status || '').replace(/"/g, '""')}"`,
+      `"${(v.payment_through || 'USHDESK').replace(/"/g, '""')}"`,
+      `"${v.total_amount || 0}"`,
+      `"${v.currency || 'KWD'}"`,
+      `"${(v.service_data?.name || 'Gift Voucher').replace(/"/g, '""')}"`,
+      `"${(v.sender_data?.name || v.sender_details?.name || '').replace(/"/g, '""')}"`,
+      `"${(v.sender_data?.phone_number || v.sender_details?.phone_number || '').replace(/"/g, '""')}"`,
+      `"${(v.recipient_data?.name || v.recipient_details?.name || '').replace(/"/g, '""')}"`,
+      `"${(v.recipient_phone || v.recipient_data?.phone_number || v.recipient_details?.phone_number || '').replace(/"/g, '""')}"`,
+      `"${v.created_at || ''}"`,
+      `"${v.expire_date || ''}"`,
+      `"${v.redeemed_at || ''}"`,
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    const nowStr = new Date().toISOString().split('T')[0];
+    link.setAttribute('download', `gift_vouchers_report_${nowStr}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const pageIds = useMemo(() => paginatedVouchers.map((v) => v.id), [paginatedVouchers]);
+  const isAllPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const isSomePageSelected = pageIds.some((id) => selectedIds.has(id)) && !isAllPageSelected;
+
+  const handleToggleSelectAllPage = () => {
+    if (isAllPageSelected) {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        pageIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } else {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        pageIds.forEach((id) => next.add(id));
+        return next;
+      });
+    }
+  };
+
+  const handleToggleSelect = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAllFiltered = () => {
+    setSelectedIds(new Set(filtered.map((v) => v.id)));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedIds(new Set());
+  };
 
   // Aggregate stats across all matching filtered records (not just current page)
   const stats = useMemo(() => {
@@ -2989,7 +4942,7 @@ export default function GiftVouchersPage() {
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || statusFilter !== 'all' || paymentThroughFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
+          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
           { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
           { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
@@ -3027,8 +4980,23 @@ export default function GiftVouchersPage() {
               </button>
             )}
           </div>
-          <StatusFilter value={statusFilter} onChange={(v) => { setStatusFilter(v); setPage(1); }} />
-          <PaymentThroughFilter value={paymentThroughFilter} onChange={(v) => { setPaymentThroughFilter(v); setPage(1); }} />
+
+          {/* Filter Icon Popover (Status multi-select, Channel, Created By) */}
+          <VoucherFilterPopover
+            statusFilters={statusFilters}
+            onStatusChange={(statuses) => setStatusFilters(statuses)}
+            channelFilter={channelFilter}
+            onChannelChange={(ch) => setChannelFilter(ch)}
+            createdByFilter={createdByFilter}
+            onCreatedByChange={(cr) => setCreatedByFilter(cr)}
+            creatorOptions={creatorOptions}
+            onReset={() => {
+              setStatusFilters([]);
+              setChannelFilter('all');
+              setCreatedByFilter('all');
+            }}
+          />
+
           <DateRangeFilter
             buttonLabelPrefix="Date Filters"
             dateFilter={dateFilter}
@@ -3057,7 +5025,7 @@ export default function GiftVouchersPage() {
         </button>
       </div>
 
-      {/* ── Active Date / Channel Filter Badge ── */}
+      {/* ── Active Date / Channel / Status / Created By Filter Badges ── */}
       <div className="flex flex-wrap items-center gap-2">
         <DateFilterActiveBadge
           dateFilter={dateFilter}
@@ -3068,26 +5036,49 @@ export default function GiftVouchersPage() {
             setPage(1);
           }}
         />
-        {paymentThroughFilter !== 'all' && (
-          <div className="mt-2.5 flex items-center gap-2 animate-in fade-in">
-            <span className="text-xs text-muted-foreground">Channel:</span>
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              <CreditCard className="h-3 w-3" />
-              <span>
-                {paymentThroughFilter === 'ushweb' ? 'USHWeb' : paymentThroughFilter === 'desk' ? 'Desk' : paymentThroughFilter === 'ushspa' ? 'USHSpa' : paymentThroughFilter}
-              </span>
-              <button
-                type="button"
-                onClick={() => {
-                  setPaymentThroughFilter('all');
-                  setPage(1);
-                }}
-                className="hover:text-primary/70 transition-colors"
-                title="Clear channel filter"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
+        {statusFilters.length > 0 && statusFilters.length < 5 && (
+          <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary animate-in fade-in">
+            <span>Status: {statusFilters.join(', ')}</span>
+            <button
+              type="button"
+              onClick={() => setStatusFilters([])}
+              className="hover:text-primary/70 transition-colors ml-0.5"
+              title="Clear status filter"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        {channelFilter !== 'all' && (
+          <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary animate-in fade-in">
+            <CreditCard className="h-3 w-3" />
+            <span>
+              Channel: {channelFilter === 'ushweb' ? 'USHWeb' : channelFilter === 'desk' ? 'Desk' : channelFilter === 'ushspa' ? 'USHSpa' : channelFilter}
+            </span>
+            <button
+              type="button"
+              onClick={() => setChannelFilter('all')}
+              className="hover:text-primary/70 transition-colors ml-0.5"
+              title="Clear channel filter"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+        {createdByFilter !== 'all' && (
+          <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary animate-in fade-in">
+            <UserCheck className="h-3 w-3" />
+            <span>
+              Created By: {createdByFilter === '__online__' ? 'Online' : (creatorOptions.find((c) => c.id === createdByFilter)?.name || createdByFilter)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCreatedByFilter('all')}
+              className="hover:text-primary/70 transition-colors ml-0.5"
+              title="Clear created by filter"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         )}
       </div>
@@ -3125,16 +5116,17 @@ export default function GiftVouchersPage() {
               ? `No vouchers match "${searchQuery}"`
               : 'No vouchers match the selected filter'}
           </p>
-          {(searchQuery.trim() || statusFilter !== 'all' || paymentThroughFilter !== 'all' || dateFilter !== 'all') && (
+          {(searchQuery.trim() || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || dateFilter !== 'all') && (
             <button
               onClick={() => {
                 setSearchQuery('');
-                setStatusFilter('all');
-                setPaymentThroughFilter('all');
+                setStatusFilters([]);
+                setChannelFilter('all');
+                setCreatedByFilter('all');
                 setDateFilter('all');
                 setDateRange({});
               }}
-              className="mt-3 text-xs font-bold text-primary hover:underline"
+              className="mt-3 text-xs font-bold text-primary hover:underline cursor-pointer"
             >
               Clear filters
             </button>
@@ -3149,13 +5141,25 @@ export default function GiftVouchersPage() {
             <table className="w-full min-w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border/60 bg-muted/30">
+                  <th className="w-10 px-3 py-3 text-center align-middle first:rounded-tl-2xl">
+                    <input
+                      type="checkbox"
+                      checked={isAllPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = isSomePageSelected;
+                      }}
+                      onChange={handleToggleSelectAllPage}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                      title="Select all on page"
+                    />
+                  </th>
                   {[
                     'Voucher Code', 'Sender → Recipient', 'Service',
                     'Price & Duration', 'Payment Through', 'Expires', 'Status',
                   ].map(col => (
                     <th
                       key={col}
-                      className="whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground first:rounded-tl-2xl last:rounded-tr-2xl text-left"
+                      className="whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground last:rounded-tr-2xl text-left"
                     >
                       {col}
                     </th>
@@ -3180,8 +5184,18 @@ export default function GiftVouchersPage() {
                   return (
                     <tr
                       key={v.id}
-                      className="transition hover:bg-muted/20"
+                      className={cn('transition hover:bg-muted/20', selectedIds.has(v.id) && 'bg-primary/5 hover:bg-primary/10')}
                     >
+                      {/* Selection Checkbox */}
+                      <td className="w-10 px-3 py-3 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(v.id)}
+                          onChange={(e) => handleToggleSelect(v.id, e)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                        />
+                      </td>
+
                       {/* Voucher Code */}
                       <td
                         onClick={() => setSelectedVoucher(v)}
@@ -3458,6 +5472,7 @@ export default function GiftVouchersPage() {
         <VoucherDetailModal
           voucher={selectedVoucher}
           token={token}
+          employeeMap={employeeMap}
           onClose={() => setSelectedVoucher(null)}
           onShare={(v, channel) => {
             setSelectedVoucher(null);
@@ -3577,6 +5592,97 @@ export default function GiftVouchersPage() {
             <X className="h-4 w-4" />
           </button>
         </div>
+      )}
+
+      {/* ── Sticky Bulk Actions Bar ── */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-2xl border border-primary/30 bg-card/95 backdrop-blur-md px-5 py-3 shadow-2xl animate-in fade-in slide-in-from-bottom-4 duration-200">
+          <div className="flex items-center gap-2 pr-3 border-r border-border/60 text-xs">
+            <span className="font-bold text-foreground">{selectedIds.size}</span>
+            <span className="text-muted-foreground">selected</span>
+            {selectedIds.size < filtered.length && (
+              <button
+                type="button"
+                onClick={handleSelectAllFiltered}
+                className="text-[11px] text-primary hover:underline font-semibold ml-1 cursor-pointer"
+              >
+                Select all {filtered.length}
+              </button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            {canUpdateVoucherStatus && (
+              <button
+                type="button"
+                onClick={() => setShowBulkStatusModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer shadow-xs"
+              >
+                <RefreshCw className="h-3.5 w-3.5 text-primary" />
+                <span>Update Status</span>
+              </button>
+            )}
+
+            {canGenerateVoucherReport && (
+              <button
+                type="button"
+                onClick={() => setShowReportModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer shadow-xs"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Generate Report</span>
+              </button>
+            )}
+
+            {canDeleteGiftVoucher && (
+              <button
+                type="button"
+                onClick={() => setShowBulkDeleteModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-bold text-destructive hover:bg-destructive/20 transition cursor-pointer shadow-xs"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={handleClearSelection}
+              className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer ml-1"
+              title="Clear selection"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk Status Modal ── */}
+      {showBulkStatusModal && (
+        <BulkUpdateStatusModal
+          selectedCount={selectedIds.size}
+          onClose={() => setShowBulkStatusModal(false)}
+          onSubmit={handleBulkUpdateStatus}
+        />
+      )}
+
+      {/* ── Bulk Delete Modal ── */}
+      {showBulkDeleteModal && (
+        <BulkDeleteModal
+          selectedVouchers={vouchers.filter((v) => selectedIds.has(v.id))}
+          onClose={() => setShowBulkDeleteModal(false)}
+          onConfirm={handleBulkDelete}
+        />
+      )}
+
+      {/* ── Voucher Report Modal ── */}
+      {showReportModal && (
+        <VoucherReportModal
+          selectedVouchers={vouchers.filter((v) => selectedIds.has(v.id))}
+          allFilteredVouchers={filtered}
+          employeeMap={employeeMap}
+          onClose={() => setShowReportModal(false)}
+        />
       )}
     </DashboardShell>
   );
