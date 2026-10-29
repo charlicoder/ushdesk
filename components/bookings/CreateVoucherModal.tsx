@@ -20,10 +20,11 @@ import {
   MapPin, Scissors, Package, Timer, User, MessageSquare,
   Sparkles, ChevronRight, ChevronLeft, AlertCircle,
   CreditCard, Calendar, Hash, Banknote, ArrowRight,
-  CheckCircle2, ShoppingBag, Phone, FileText,
+  CheckCircle2, ShoppingBag, Phone, FileText, DollarSign,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { usePermissions } from '@/hooks/use-permissions';
 import { CreateCustomerModal, COUNTRY_CODES, type CreatedCustomer } from './CreateCustomerModal';
 import { MakePaymentModal } from './MakePaymentModal';
 import { sanitizeLocalPhone, isValidLocalPhone, phoneErrorMessage, toKuwaitLocal, KUWAIT_CODE } from '@/lib/phone';
@@ -959,6 +960,8 @@ function SectionLabel({ icon: Icon, label }: { icon: React.ElementType; label: s
 export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const authHeader = `Bearer ${token}`;
   const currentUser = useAppSelector((s) => s.auth.user);
+  const { canApplyDiscount: allowDiscount } = usePermissions();
+  const [discount, setDiscount] = useState<string>('');
 
   // ── Categories State (Step 1) ──
   const [categories, setCategories] = useState<GiftCategory[]>([]);
@@ -1268,7 +1271,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   }, [hasExtraTime, extraTime]);
 
   const extraTimePrice = calcExtraPrice(extraTime);
-  const totalPrice = productPrice + (arrangPrice || basePrice) + addonPrice + extraTimePrice;
+  const subtotalPrice = productPrice + (arrangPrice || basePrice) + addonPrice + extraTimePrice;
+  const discountAmount = allowDiscount
+    ? Math.min(subtotalPrice, Math.max(0, parseFloat(discount) || 0))
+    : 0;
+  const totalPrice = Math.max(0, subtotalPrice - discountAmount);
   const totalDuration = (baseDuration || 60) + addonDur + extraTime;
 
   // Branches & Arrangements lists
@@ -1448,6 +1455,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       price_for_extra_time: extraTimePrice,
       total_duration: totalDuration,
       total_amount: totalPrice,
+      discount: discountAmount,
       currency,
       recipient_phone: computedRecipientPhone,
       recipient_id: recipient?.id || null,
@@ -2113,6 +2121,39 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                         {selectedBranch?.name} • {selectedArrangt?.arrangement_name}
                       </span>
                     </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Subtotal:</span>
+                      <span className="font-bold">{fmtPrice(subtotalPrice, currency)}</span>
+                    </div>
+                    {allowDiscount && (
+                      <div className="flex items-center justify-between gap-3">
+                        <label htmlFor="voucher-discount-input" className="text-muted-foreground flex items-center gap-1.5">
+                          <DollarSign className="h-3 w-3 text-emerald-500" />
+                          Discount Amount:
+                        </label>
+                        <div className="relative w-36">
+                          <input
+                            id="voucher-discount-input"
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            placeholder="0.000"
+                            value={discount}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
+                                setDiscount(val);
+                              }
+                            }}
+                            className="w-full h-8 rounded-lg border bg-background px-2.5 pr-10 text-right text-xs font-bold outline-none transition focus:border-primary"
+                            style={{ borderColor: B.lineMuted }}
+                          />
+                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
+                            {currency}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex justify-between pt-1 border-t" style={{ borderColor: B.lineMuted }}>
                       <span className="font-extrabold text-sm" style={{ color: B.textMain }}>
                         Total Amount Due:
