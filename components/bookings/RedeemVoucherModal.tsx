@@ -98,6 +98,14 @@ function isSimilarArrangementType(typeA: string, typeB: string): boolean {
   const a = typeA.toLowerCase().replace(/[^a-z0-9]/g, '');
   const b = typeB.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (a === b) return true;
+  // If either type is generic ('room', 'suite', 'arrangement'), consider them compatible
+  if (
+    a === 'room' || b === 'room' ||
+    a === 'suite' || b === 'suite' ||
+    a === 'arrangement' || b === 'arrangement'
+  ) {
+    return true;
+  }
   const categories = ['vip', 'couple', 'single', 'open', 'private'];
   for (const cat of categories) {
     if (a.includes(cat) && b.includes(cat)) return true;
@@ -434,6 +442,8 @@ export function RedeemVoucherModal({
   const requiredArrType = firstTruthy(
     voucher.service_arrangement_data?.arrangement_type,
     voucher.service_arrangement_data?.type,
+    voucher.service_arrangement_data?.arrangement_name?.toLowerCase().includes('suite') ? 'vip_suite' : null,
+    voucher.service_arrangement_data?.name?.toLowerCase().includes('suite') ? 'vip_suite' : null,
     'room'
   );
 
@@ -654,6 +664,13 @@ export function RedeemVoucherModal({
     }
   }, [availabilitiesData]);
 
+  // Keep selectedBranchId in sync if originalBranchId becomes available
+  useEffect(() => {
+    if (originalBranchId && !selectedBranchId) {
+      setSelectedBranchId(originalBranchId);
+    }
+  }, [originalBranchId, selectedBranchId]);
+
   // ── Compute Compatible Arrangements from availabilitiesData ──────────
   const arrangements = useMemo<ApiArrangement[]>(() => {
     const list = Array.isArray(availabilitiesData?.service_arrangements)
@@ -662,10 +679,18 @@ export function RedeemVoucherModal({
       ? availabilitiesData.arrangements
       : [];
     return list.filter((a: any) => {
+      // 1. Direct match on originally booked arrangement ID
+      if (originalArrangementId && (a.id === originalArrangementId || a.arrangement_id === originalArrangementId)) {
+        return true;
+      }
+      // 2. If requiredArrType is generic 'room' or 'suite', allow any arrangement
+      if (!requiredArrType || requiredArrType === 'room' || requiredArrType === 'suite') {
+        return true;
+      }
       const type = a.arrangement_type || a.type || '';
       return isSimilarArrangementType(type, requiredArrType);
     });
-  }, [availabilitiesData, requiredArrType]);
+  }, [availabilitiesData, requiredArrType, originalArrangementId]);
 
   // Pre-select arrangement when arrangements change
   useEffect(() => {

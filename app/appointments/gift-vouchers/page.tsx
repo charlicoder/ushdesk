@@ -218,6 +218,7 @@ interface Voucher {
   created_by: string;
   total_duration: number;
   total_amount: string;
+  discount?: string | number | null;
   currency: string;
   gift_message: string;
   gift_template: string;
@@ -4865,7 +4866,7 @@ export default function GiftVouchersPage() {
     }
   };
 
-  const handleToggleSelect = (id: string, e?: React.MouseEvent) => {
+  const handleToggleSelect = (id: string, e?: React.SyntheticEvent) => {
     e?.stopPropagation();
     setSelectedIds((prev) => {
       const next = new Set(prev);
