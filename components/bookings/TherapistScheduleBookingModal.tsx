@@ -10,7 +10,7 @@ import {
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
   CreditCard, Hash, Fingerprint, Calendar, Building2, Wallet,
-  Receipt, Printer, Link2,
+  Receipt, Printer, Link2, Trash2, Plus, Users,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PaymentLinkPanel } from '@/components/payments/PaymentLinkPanel';
@@ -324,6 +324,7 @@ interface Form {
   arrangementId: string;
   arrangementName: string;
   arrangementType: string;
+  allowSingleTherapist?: boolean;
 }
 
 // ── Main Modal ─────────────────────────────────────────────────────────────────
@@ -346,6 +347,7 @@ export function TherapistScheduleBookingModal({
     customerId: '', customerSearch: '',
     addonIds: [], arrangementAddonIds: [], extraMinutes: 0, notes: '',
     arrangementId: '', arrangementName: '', arrangementType: '',
+    allowSingleTherapist: false,
   });
 
   /** True when the currently selected arrangement type requires two therapists. */
@@ -642,7 +644,9 @@ export function TherapistScheduleBookingModal({
 
   // Load therapists on step 2
   useEffect(() => {
-    if (step !== 2 || !form.serviceId) { setTherapists([]); return; }
+    if (!form.serviceId) { setTherapists([]); return; }
+    if (step < 2) return;
+    if (therapists.length > 0 && step > 2) return;
     setTherapistsLoading(true);
     const qs = new URLSearchParams({
       branch_id:              branchId,
@@ -682,8 +686,8 @@ export function TherapistScheduleBookingModal({
               : (list[0] ? (list[0].full_name ?? [list[0].first_name, list[0].last_name].filter(Boolean).join(' ')) : '');
             const secondAvail = list.find(t => t.id !== chosenPrimaryId);
             const existingSecOk = p.secondaryTherapistId && p.secondaryTherapistId !== chosenPrimaryId && list.some(t => t.id === p.secondaryTherapistId);
-            const chosenSecondId   = existingSecOk ? p.secondaryTherapistId   : (secondAvail?.id ?? '');
-            const chosenSecondName = existingSecOk ? p.secondaryTherapistSearch : (secondAvail ? (secondAvail.full_name ?? [secondAvail.first_name, secondAvail.last_name].filter(Boolean).join(' ')) : '');
+            const chosenSecondId   = p.allowSingleTherapist ? '' : (existingSecOk ? p.secondaryTherapistId   : (secondAvail?.id ?? ''));
+            const chosenSecondName = p.allowSingleTherapist ? '' : (existingSecOk ? p.secondaryTherapistSearch : (secondAvail ? (secondAvail.full_name ?? [secondAvail.first_name, secondAvail.last_name].filter(Boolean).join(' ')) : ''));
             return { ...p, therapistId: chosenPrimaryId, therapistSearch: chosenPrimaryName, secondaryTherapistId: chosenSecondId, secondaryTherapistSearch: chosenSecondName };
           });
         }
@@ -747,7 +751,46 @@ export function TherapistScheduleBookingModal({
     const name = t.full_name ?? [t.first_name, t.last_name].filter(Boolean).join(' ');
     setForm(p => ({ ...p, secondaryTherapistId: t.id, secondaryTherapistSearch: name }));
   };
-  const clearSecondaryTherapist = () => setForm(p => ({ ...p, secondaryTherapistId: '', secondaryTherapistSearch: '' }));
+  const clearSecondaryTherapist = () => setForm(p => ({ ...p, secondaryTherapistId: '', secondaryTherapistSearch: '', allowSingleTherapist: true }));
+
+  const removePrimaryTherapist = () => {
+    if (!form.secondaryTherapistId) return;
+    setForm(p => ({
+      ...p,
+      therapistId: p.secondaryTherapistId,
+      therapistSearch: p.secondaryTherapistSearch,
+      secondaryTherapistId: '',
+      secondaryTherapistSearch: '',
+      allowSingleTherapist: true,
+    }));
+  };
+
+  const removeSecondaryTherapist = () => {
+    setForm(p => ({
+      ...p,
+      secondaryTherapistId: '',
+      secondaryTherapistSearch: '',
+      allowSingleTherapist: true,
+    }));
+  };
+
+  const readdSecondaryTherapist = () => {
+    const candidate = secondaryTherapistPool[0];
+    if (candidate) {
+      const name = (candidate.full_name ?? [candidate.first_name, candidate.last_name].filter(Boolean).join(' ')) || 'Therapist';
+      setForm(p => ({
+        ...p,
+        secondaryTherapistId: candidate.id,
+        secondaryTherapistSearch: name,
+        allowSingleTherapist: false,
+      }));
+    } else {
+      setForm(p => ({
+        ...p,
+        allowSingleTherapist: false,
+      }));
+    }
+  };
   const selectCustomer  = (c: ApiCustomer) => {
     const id = String(c.id ?? (c as any).customer_id ?? (c as any).pk ?? (c as any).uuid ?? '');
     const name = (c.full_name ?? [c.first_name, c.last_name].filter(Boolean).join(' ')) || c.email || '';
@@ -917,6 +960,9 @@ export function TherapistScheduleBookingModal({
           ...(selectedSecondaryTherapist?.avatar || selectedSecondaryTherapist?.photo_url ? { photo_url: selectedSecondaryTherapist.avatar || selectedSecondaryTherapist.photo_url } : {}),
           ...(selectedSecondaryTherapist?.specialization || selectedSecondaryTherapist?.specialties?.[0]?.name ? { specialization: selectedSecondaryTherapist.specialization || selectedSecondaryTherapist?.specialties?.[0]?.name } : {}),
         },
+      } : {}),
+      ...(needsDualTherapist && !form.secondaryTherapistId ? {
+        allow_single_therapist: true,
       } : {}),
       // ── Add-ons ─────────────────────────────────────────────────────────────
       selected_addons: allSelectedAddons.map(a => ({
@@ -1395,10 +1441,11 @@ export function TherapistScheduleBookingModal({
   const monthFull = dateObj.toLocaleDateString('en-US', { month: 'long' });
   const yearFull  = dateObj.getFullYear();
 
-  const activeThImg          = selectedTherapist?.avatar ?? selectedTherapist?.photo_url ?? therapistPhoto ?? '';
+  const activeThImg          = selectedTherapist?.avatar ?? selectedTherapist?.photo_url ?? (form.therapistId === therapistId ? therapistPhoto : '') ?? '';
   const activeThDisplayName  = selectedTherapist
-    ? ((selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || therapistName)
-    : therapistName;
+    ? ((selectedTherapist.full_name ?? [selectedTherapist.first_name, selectedTherapist.last_name].filter(Boolean).join(' ')) || form.therapistSearch || therapistName)
+    : (form.therapistSearch || therapistName);
+  const activeThSpec = selectedTherapist?.specialties?.[0]?.name ?? selectedTherapist?.specialization ?? '';
 
   // If payment modal is opened for "Pay now", close the booking popup window and render MakePaymentModal
   if (showMakePayment && createdBookingInfo) {
@@ -1479,7 +1526,7 @@ export function TherapistScheduleBookingModal({
 
         {/* Sub-header */}
         {(() => {
-          const showDualTherapists = needsDualTherapist || Boolean(form.secondaryTherapistId);
+          const showDualTherapists = Boolean(form.secondaryTherapistId);
           return (
             <div className="shrink-0 border-b border-border/40 bg-muted/20">
               <div className="flex items-stretch divide-x border-border/40">
@@ -2377,6 +2424,128 @@ export function TherapistScheduleBookingModal({
                     <div className="text-right shrink-0 pl-3">
                       <p className="text-xs font-bold text-foreground">{date}</p>
                       <p className="text-[11px] text-muted-foreground font-semibold">{timeSlot}</p>
+                    </div>
+                  </div>
+
+                  {/* Assigned Therapist(s) */}
+                  <div className="border-t border-border/40 bg-card">
+                    <div className="flex items-center justify-between px-4 py-2 bg-muted/30">
+                      <div className="flex items-center gap-2">
+                        <Users className="h-3.5 w-3.5 text-primary" />
+                        <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Assigned Therapist{form.secondaryTherapistId ? 's (2)' : ' (1)'}
+                        </span>
+                      </div>
+                      {needsDualTherapist && !form.secondaryTherapistId ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                          <AlertCircle className="h-2.5 w-2.5" />
+                          1 therapist (single)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-muted-foreground">
+                          {form.secondaryTherapistId ? 'Double occupancy' : 'Single therapist'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="divide-y divide-border/30">
+                      {/* Primary Therapist */}
+                      <div className="flex items-center justify-between px-4 py-2.5">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="relative h-8 w-8 shrink-0 rounded-full overflow-hidden ring-1.5 ring-primary/30 shadow-xs bg-muted">
+                            {activeThImg ? (
+                              <img src={activeThImg} alt={activeThDisplayName} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="h-full w-full grid place-items-center bg-gradient-to-br from-primary/80 to-accent text-white text-[11px] font-bold">
+                                {activeThDisplayName.slice(0, 2).toUpperCase()}
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-xs font-bold text-foreground truncate">{activeThDisplayName}</p>
+                              <span className="text-[9px] font-bold rounded-full bg-primary/10 text-primary px-1.5 py-0.2">
+                                {form.secondaryTherapistId ? 'Therapist 1' : 'Therapist'}
+                              </span>
+                            </div>
+                            {activeThSpec && <p className="text-[10px] text-muted-foreground truncate">{activeThSpec}</p>}
+                          </div>
+                        </div>
+
+                        {Boolean(form.secondaryTherapistId) && (
+                          <button
+                            type="button"
+                            onClick={removePrimaryTherapist}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-2 py-1 rounded-md transition border border-rose-200 dark:border-rose-900/50"
+                            title="Remove this therapist and keep only Therapist 2"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            <span>Remove</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Secondary Therapist (if assigned) */}
+                      {Boolean(form.secondaryTherapistId) && (() => {
+                        const t2Name = selectedSecondaryTherapist
+                          ? ((selectedSecondaryTherapist.full_name ?? [selectedSecondaryTherapist.first_name, selectedSecondaryTherapist.last_name].filter(Boolean).join(' ')) || 'Therapist 2')
+                          : form.secondaryTherapistSearch || 'Therapist 2';
+                        const t2Img = selectedSecondaryTherapist?.avatar ?? selectedSecondaryTherapist?.photo_url;
+                        const t2Spec = selectedSecondaryTherapist?.specialties?.[0]?.name ?? selectedSecondaryTherapist?.specialization ?? '';
+                        return (
+                          <div className="flex items-center justify-between px-4 py-2.5">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="relative h-8 w-8 shrink-0 rounded-full overflow-hidden ring-1.5 ring-rose-400/30 shadow-xs bg-muted">
+                                {t2Img ? (
+                                  <img src={t2Img} alt={t2Name} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="h-full w-full grid place-items-center bg-gradient-to-br from-rose-500 to-amber-500 text-white text-[11px] font-bold">
+                                    {t2Name.slice(0, 2).toUpperCase()}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5">
+                                  <p className="text-xs font-bold text-foreground truncate">{t2Name}</p>
+                                  <span className="text-[9px] font-bold rounded-full bg-rose-500/10 text-rose-600 dark:text-rose-400 px-1.5 py-0.2">
+                                    Therapist 2
+                                  </span>
+                                </div>
+                                {t2Spec && <p className="text-[10px] text-muted-foreground truncate">{t2Spec}</p>}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={removeSecondaryTherapist}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30 px-2 py-1 rounded-md transition border border-rose-200 dark:border-rose-900/50"
+                              title="Remove second therapist and proceed with single therapist"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              <span>Remove</span>
+                            </button>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Re-add button if couple/double room has only 1 therapist */}
+                      {needsDualTherapist && !form.secondaryTherapistId && (
+                        <div className="flex items-center justify-between px-4 py-2 bg-amber-500/[0.04]">
+                          <span className="text-[11px] text-amber-700 dark:text-amber-300">
+                            Booking with 1 therapist for couple/double room
+                          </span>
+                          {secondaryTherapistPool.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={readdSecondaryTherapist}
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:text-primary/80 hover:bg-primary/10 px-2 py-1 rounded-md transition border border-primary/30"
+                            >
+                              <Plus className="h-3 w-3" />
+                              <span>Re-add 2nd Therapist</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 

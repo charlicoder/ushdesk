@@ -8,7 +8,7 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart,
+  FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -74,6 +74,11 @@ export interface Booking {
   created_by_user_data: Record<string, unknown> | null;
   addons: Array<Record<string, unknown>>;
   pricing: Record<string, unknown> | null;
+  discount?: string | null;
+  arrangement_price?: string | null;
+  addon_price?: string | null;
+  total_price?: string | null;
+  services?: Array<Record<string, unknown>>;
   raw: Record<string, unknown>;
 }
 
@@ -236,16 +241,21 @@ export function normalise(raw: Record<string, unknown>): Booking {
       source:            String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || defaultChannel).trim(),
       payment_through:   String(raw.source || raw.payment_through || raw.booking_source || raw.channel || pm.payment_through || pd.payment_through || defaultChannel).trim(),
       is_paid:           pm.is_paid === true || pd.is_paid === true || pd.status === 'success' || raw.payment_status === 'success' || raw.payment_status === 'rewarded' || raw.payment_status === 'paid',
-      total_amount:      String(raw.total_amount ?? '0'),
-      currency:          String(raw.currency     ?? 'KWD'),
+      total_amount:      String(raw.total_amount ?? raw.total_price ?? (raw.pricing as any)?.total ?? (raw.pricing as any)?.total_price ?? (pd as any)?.total_amount ?? '0'),
+      discount:          String(raw.discount ?? (raw.pricing as any)?.discount ?? (raw.pricing as any)?.discount_amount ?? (raw.pricing_details as any)?.discount ?? '0'),
+      arrangement_price: String(raw.arrangement_price ?? (raw.pricing as any)?.arrangement_price ?? sd.arrangement_price ?? '0'),
+      addon_price:       String(raw.addon_price ?? (raw.pricing as any)?.addon_price ?? '0'),
+      total_price:       String(raw.total_price ?? raw.total_amount ?? (raw.pricing as any)?.total ?? '0'),
+      currency:          String(raw.currency ?? (raw.pricing as any)?.currency ?? 'KWD'),
       created_at:        String(raw.created_at   ?? ''),
-    created_by_user:   raw.created_by_user ? String(raw.created_by_user) : (raw.created_by ? String(raw.created_by) : null),
-    created_by_user_data: (raw.created_by_user_data ?? null) as Record<string, unknown> | null,
-    customer_notes:    (raw.customer_notes ?? raw.customer_message ?? raw.notes ?? (raw.customer_data as any)?.customer_notes ?? null) as string | null,
-    addons:            rawAddons,
-    pricing:           (raw.pricing ?? raw.pricing_details ?? null) as Record<string, unknown> | null,
-    raw,
-  };
+      created_by_user:   raw.created_by_user ? String(raw.created_by_user) : (raw.created_by ? String(raw.created_by) : null),
+      created_by_user_data: (raw.created_by_user_data ?? null) as Record<string, unknown> | null,
+      customer_notes:    (raw.customer_notes ?? raw.customer_message ?? raw.notes ?? (raw.customer_data as any)?.customer_notes ?? null) as string | null,
+      addons:            rawAddons,
+      services:          svcList,
+      pricing:           (raw.pricing ?? raw.pricing_details ?? null) as Record<string, unknown> | null,
+      raw,
+    };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1499,9 +1509,11 @@ export function BookingDetailPopup({
 
   const extraPrice = parseFloat(String(pricingObj?.price_for_extra_minutes ?? pricingObj?.extra_price ?? detail?.price_for_extra_minutes ?? booking.price_for_extra_minutes ?? '0')) || 0;
 
-  const totalCalculated = servicePrice + addonsPrice + extraPrice;
-  const rawTotal = parseFloat(String(pricingObj?.total ?? detail?.total_amount ?? booking.total_amount ?? '0')) || 0;
-  const computedTotal = (totalCalculated > 0) ? totalCalculated : rawTotal;
+  const rawDiscount = parseFloat(String(pricingObj?.discount ?? pricingObj?.discount_amount ?? detail?.discount ?? booking.discount ?? (booking as any)?.discount ?? (booking.raw as any)?.discount ?? '0')) || 0;
+  const rawTotal = parseFloat(String(pricingObj?.total_price ?? pricingObj?.total ?? detail?.total_amount ?? detail?.total_price ?? booking.total_amount ?? booking.total_price ?? '0')) || 0;
+  const subtotalPrice = servicePrice + addonsPrice + extraPrice;
+  const discountAmount = rawDiscount > 0 ? rawDiscount : (rawTotal > 0 && subtotalPrice > rawTotal ? (subtotalPrice - rawTotal) : 0);
+  const computedTotal = rawTotal > 0 ? rawTotal : Math.max(0, subtotalPrice - discountAmount);
   const currency = booking.currency || 'KWD';
 
   // ── History & Creator & Payment references ──────────────────────────
@@ -2495,6 +2507,18 @@ export function BookingDetailPopup({
                         </div>
                       </div>
                     )}
+                    {discountAmount > 0 && (
+                      <div className="flex items-center justify-between gap-2 bg-rose-50/50 dark:bg-rose-950/20 px-4 py-2.5">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400"><Tag className="h-3.5 w-3.5" /></span>
+                          <p className="text-xs font-bold text-foreground">Discount Applied</p>
+                        </div>
+                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
+                          <span className="text-muted-foreground">—</span>
+                          <span className="font-mono font-bold text-rose-700 dark:text-rose-300">-{discountAmount.toFixed(3)} {currency}</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-primary/5 px-4 py-3">
                     <p className="text-xs font-extrabold uppercase tracking-wider text-foreground">Total</p>
@@ -2719,6 +2743,12 @@ export function BookingDetailPopup({
                       <div className="flex justify-between text-muted-foreground">
                         <span>Extra Minutes (+{extraMinutes} min):</span>
                         <span className="font-mono font-semibold text-foreground">+{extraPrice.toFixed(3)} {currency}</span>
+                      </div>
+                    )}
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-rose-600 dark:text-rose-400">
+                        <span>Discount:</span>
+                        <span className="font-mono font-semibold">-{discountAmount.toFixed(3)} {currency}</span>
                       </div>
                     )}
                     <div className="border-t border-border/50 pt-2 flex justify-between items-baseline">
@@ -3573,6 +3603,8 @@ export function BookingDetailPopup({
               duration: Number(a.duration_minutes ?? a.duration ?? 0),
             })),
             currency: currency,
+            subtotal: subtotalPrice,
+            discount: discountAmount,
             totalAmount: computedTotal,
             status: 'completed',
             paymentStatus: String(detail?.payment_status ?? booking.payment_status ?? 'success'),

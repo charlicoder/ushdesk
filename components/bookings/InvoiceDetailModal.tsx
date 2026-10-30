@@ -329,8 +329,8 @@ export function InvoiceDetailModal({
                 const lineName = line.name || line.product_name || `Line Item #${idx + 1}`;
                 const lineDesc = line.description || line.notes || '';
                 const lineQty = line.quantity || 1;
-                const linePrice = parseFloat(String(line.price_unit ?? line.price ?? 0)) || 0;
-                const lineSubtotal = parseFloat(String(line.price_subtotal ?? linePrice * lineQty)) || 0;
+                const linePrice = parseFloat(String(line.unit_price ?? line.price_unit ?? line.price ?? 0)) || 0;
+                const lineSubtotal = parseFloat(String(line.subtotal ?? line.price_subtotal ?? linePrice * lineQty)) || 0;
 
                 return (
                   <div key={idx} className="px-4 py-3 flex items-center justify-between gap-4 text-xs hover:bg-muted/10 transition">
