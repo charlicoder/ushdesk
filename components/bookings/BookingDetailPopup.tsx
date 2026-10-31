@@ -628,6 +628,7 @@ export function BookingDetailPopup({
       arrangementType: string;
       branchId: string;
       appointmentDate: string;
+      appointmentTime?: string;
       daysCount: number;
     };
     promise?: Promise<any>;
@@ -1034,12 +1035,23 @@ export function BookingDetailPopup({
           })
       : undefined;
 
+    const apptTime = String(
+      rawBk.appointment_time ||
+      rawBk.time ||
+      rawBk.booking_time ||
+      (apptStart && (apptStart.includes('T') || apptStart.includes(' '))
+        ? (apptStart.includes('T') ? apptStart.split('T')[1] : apptStart.split(' ')[1]).slice(0, 5)
+        : '') ||
+      ''
+    );
+
     setUpdateFetchState({
       params: {
         serviceId,
         arrangementType,
         branchId,
         appointmentDate,
+        appointmentTime: apptTime,
         daysCount,
       },
       promise: fetchPromise,

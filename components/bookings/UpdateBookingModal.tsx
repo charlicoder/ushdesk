@@ -1,6 +1,6 @@
 'use client';
 
-import { buildAppointmentWindow, kuwaitDateString } from '@/lib/datetime';
+import { buildAppointmentWindow, kuwaitDateString, parseClockToMinutes } from '@/lib/datetime';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   CalendarDays, Clock, Building2, Scissors,
@@ -26,6 +26,7 @@ export interface UpdateBookingModalProps {
     arrangementType: string;
     branchId: string;
     appointmentDate: string;
+    appointmentTime?: string;
     daysCount: number;
   };
   initialAvailabilitiesPromise?: Promise<any>;
@@ -221,10 +222,60 @@ function getInitials(name: string): string {
 
 function parseTimeToMinutes(t: string): number {
   if (!t) return 0;
-  const parts = t.trim().split(':');
-  const h = parseInt(parts[0], 10) || 0;
-  const m = parseInt(parts[1], 10) || 0;
-  return h * 60 + m;
+  return parseClockToMinutes(t);
+}
+
+function to12h(t: string): string {
+  if (!t) return '';
+  const trimmed = t.trim();
+  const ampm = trimmed.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
+  if (ampm) {
+    const h = parseInt(ampm[1], 10);
+    const m = ampm[2];
+    const period = ampm[3].toUpperCase();
+    return `${String(h).padStart(2, '0')}:${m} ${period}`;
+  }
+  const m = trimmed.match(/^(\d{1,2}):(\d{2})/);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const period = h >= 12 ? 'PM' : 'AM';
+    const hd = h % 12 === 0 ? 12 : h % 12;
+    return `${String(hd).padStart(2, '0')}:${min} ${period}`;
+  }
+  return trimmed;
+}
+
+function extractBookingDate(bk: AnyRecord | null | undefined): string {
+  if (!bk) return '';
+  const isoStart = bk.appointment_start ?? bk.appointment_datetime ?? '';
+  const dateFromIso = isoStart ? (isoStart.includes('T') ? isoStart.split('T')[0] : isoStart.split(' ')[0]) : '';
+  return firstTruthy(
+    dateFromIso,
+    bk.appointment_date,
+    bk.date,
+    bk.booking_date
+  );
+}
+
+function extractBookingTime12h(bk: AnyRecord | null | undefined): string {
+  if (!bk) return '';
+  const timeRaw = firstTruthy(
+    bk.appointment_time,
+    bk.time,
+    bk.booking_time
+  );
+  if (timeRaw) {
+    return to12h(timeRaw);
+  }
+  const isoStart = bk.appointment_start ?? bk.appointment_datetime ?? '';
+  if (isoStart && (isoStart.includes('T') || isoStart.includes(' '))) {
+    const timePart = isoStart.includes('T') ? isoStart.split('T')[1] : isoStart.split(' ')[1];
+    if (timePart) {
+      return to12h(timePart.slice(0, 5));
+    }
+  }
+  return '';
 }
 
 function toHHMM(slotStr: string): string {
@@ -309,12 +360,33 @@ export function UpdateBookingModal({
   // Extra Time Selection (Requirement 3.ii)
   const [selectedExtraMinutes, setSelectedExtraMinutes] = useState<number>(0);
   const [extraMinutesInitialized, setExtraMinutesInitialized] = useState(false);
+  const [serviceDetail, setServiceDetail] = useState<AnyRecord | null>(null);
+
+  // Derived initial values from booking data
+  const todayStr = useMemo(() => kuwaitDateString(), []);
+  const initialDate = useMemo(() => {
+    const fromBk = extractBookingDate(initialBooking);
+    return firstTruthy(
+      initialUpdateParams?.appointmentDate,
+      fromBk,
+      todayStr
+    );
+  }, [initialBooking, initialUpdateParams?.appointmentDate, todayStr]);
+
+  const initialTime12h = useMemo(() => {
+    if (initialUpdateParams?.appointmentTime) {
+      return to12h(initialUpdateParams.appointmentTime);
+    }
+    return extractBookingTime12h(initialBooking);
+  }, [initialBooking, initialUpdateParams?.appointmentTime]);
 
   // Date & Timeslots
-  const todayStr = useMemo(() => kuwaitDateString(), []);
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const [selectedDate, setSelectedDate] = useState<string>(initialDate);
   const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
-  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>(initialTime12h);
+  const timeSlotInitialized = React.useRef(Boolean(initialTime12h));
+  const prevRoomIdRef = React.useRef<string | null>(null);
+  const prevDateRef = React.useRef<string | null>(null);
 
   // Therapists Selection
   const [selectedTherapistId, setSelectedTherapistId] = useState<string>('');
@@ -439,6 +511,28 @@ export function UpdateBookingModal({
 
   const daysCount = initialUpdateParams?.daysCount ?? 30;
 
+  // Fetch service details for accurate extra_minutes and price_for_extra_minutes
+  useEffect(() => {
+    if (!serviceId) return;
+    let active = true;
+    fetchJson(`/uauth/api/v1/services/${serviceId}/`)
+      .then((data) => {
+        if (!active || !data) return;
+        const s = (data && typeof data === 'object' && 'data' in data && data.data) ? data.data : data;
+        setServiceDetail(s);
+      })
+      .catch(() => {
+        fetchJson(`/api/v1/services/${serviceId}/`)
+          .then((data) => {
+            if (!active || !data) return;
+            const s = (data && typeof data === 'object' && 'data' in data && data.data) ? data.data : data;
+            setServiceDetail(s);
+          })
+          .catch(() => {});
+      });
+    return () => { active = false; };
+  }, [serviceId, fetchJson]);
+
   // Initialize selected branch, date, extra minutes, and notes from booking
   useEffect(() => {
     if (!bk) return;
@@ -452,11 +546,15 @@ export function UpdateBookingModal({
     );
     setSelectedBranchId((prev) => prev || initialBranchId);
 
-    const dateRaw = firstTruthy(bk?.date, bk?.booking_date, bk?.appointment_date, isoStart ? isoStart.split('T')[0] : '');
-    if (dateRaw && dateRaw >= todayStr) {
+    const dateRaw = firstTruthy(bk?.date, bk?.booking_date, bk?.appointment_date, isoStart ? (isoStart.includes('T') ? isoStart.split('T')[0] : isoStart.split(' ')[0]) : '');
+    if (dateRaw) {
       setSelectedDate(dateRaw);
-    } else {
-      setSelectedDate(todayStr);
+    }
+
+    const timeRaw = extractBookingTime12h(bk);
+    if (timeRaw && !timeSlotInitialized.current) {
+      setSelectedTimeSlot(timeRaw);
+      timeSlotInitialized.current = true;
     }
 
     if (!extraMinutesInitialized) {
@@ -682,11 +780,25 @@ export function UpdateBookingModal({
       : [];
   }, [availabilitiesData]);
 
-  // Reset timeslot and therapist when room or date changes
+  // Reset timeslot and therapist ONLY when room or date actually changes after initial mount
   useEffect(() => {
-    setSelectedTimeSlot('');
-    setSelectedTherapistId('');
-    setSelectedTherapist(null);
+    if (prevRoomIdRef.current === null) {
+      prevRoomIdRef.current = selectedRoomId;
+      prevDateRef.current = selectedDate;
+      return;
+    }
+
+    const roomChanged = prevRoomIdRef.current !== '' && selectedRoomId !== '' && prevRoomIdRef.current !== selectedRoomId;
+    const dateChanged = prevDateRef.current !== null && prevDateRef.current !== selectedDate;
+
+    if (roomChanged || dateChanged) {
+      setSelectedTimeSlot('');
+      setSelectedTherapistId('');
+      setSelectedTherapist(null);
+    }
+
+    prevRoomIdRef.current = selectedRoomId;
+    prevDateRef.current = selectedDate;
   }, [selectedDate, selectedRoomId]);
 
   // Timeslot Calculation
@@ -733,6 +845,16 @@ export function UpdateBookingModal({
     therapistSlotsForDay.forEach((m) => allKnownMinutes.add(m));
     arrangementSlotsForDay.forEach((m) => allKnownMinutes.add(m));
 
+    const bookingExistingDate = extractBookingDate(bk);
+    const bookingExistingTime12h = extractBookingTime12h(bk);
+    const bookingExistingMin = (selectedDate === bookingExistingDate && bookingExistingTime12h)
+      ? parseClockToMinutes(bookingExistingTime12h)
+      : null;
+
+    if (bookingExistingMin !== null) {
+      allKnownMinutes.add(bookingExistingMin);
+    }
+
     const sortedMinutes: number[] = Array.from(allKnownMinutes).sort((a, b) => a - b);
 
     const now = new Date();
@@ -743,7 +865,9 @@ export function UpdateBookingModal({
 
     for (const m of sortedMinutes) {
       if (isToday && m <= currentTotalMinutes) {
-        continue;
+        if (bookingExistingMin === null || m !== bookingExistingMin) {
+          continue;
+        }
       }
 
       const h = Math.floor(m / 60);
@@ -752,9 +876,10 @@ export function UpdateBookingModal({
       const hd = h % 12 === 0 ? 12 : h % 12;
       const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
 
-      const isAvailableInTherapists = therapistSlotsForDay.has(m);
-      const isAvailableInArrangement = arrangementSlotsForDay.has(m);
-      const available = isAvailableInTherapists && isAvailableInArrangement;
+      const isBookingOwnSlot = bookingExistingMin !== null && m === bookingExistingMin;
+      const isAvailableInTherapists = therapistSlotsForDay.has(m) || isBookingOwnSlot;
+      const isAvailableInArrangement = arrangementSlotsForDay.has(m) || isBookingOwnSlot;
+      const available = (isAvailableInTherapists && isAvailableInArrangement) || isBookingOwnSlot;
 
       slots.push({ time: timeLabel, available });
     }
@@ -767,34 +892,104 @@ export function UpdateBookingModal({
     therapists,
     availabilitiesData,
     todayStr,
+    bk,
   ]);
 
-  // Auto-Select Therapist when timeslot changes
-  useEffect(() => {
+  // Therapists available for the currently selected slot
+  const availableTherapists = useMemo<ApiTherapist[]>(() => {
     if (!selectedTimeSlot || therapists.length === 0 || !selectedDate) {
+      return [];
+    }
+    const slotStartMin = parseClockToMinutes(selectedTimeSlot);
+    const bookingDate = extractBookingDate(bk);
+    const bookingMin = extractBookingTime12h(bk) ? parseClockToMinutes(extractBookingTime12h(bk)) : null;
+    const isBookingSlot = selectedDate === bookingDate && bookingMin !== null && slotStartMin === bookingMin;
+    const prevTherapistId = firstTruthy(
+      bk?.therapist_id,
+      bk?.therapist_data?.id,
+      bk?.therapist_data?.therapist_id
+    );
+
+    return therapists.filter((t) => {
+      const daySlots: string[] = t.availabilities?.[selectedDate] || [];
+      const isFree = daySlots.some((s) => parseClockToMinutes(s) === slotStartMin);
+      if (isFree) return true;
+      if (isBookingSlot && (t.id === prevTherapistId || (t as any).employee_id === prevTherapistId)) {
+        return true;
+      }
+      return false;
+    });
+  }, [selectedTimeSlot, therapists, selectedDate, bk]);
+
+  // Auto-Select Therapist when timeslot or available therapists change
+  useEffect(() => {
+    if (!selectedTimeSlot || !selectedDate) {
       setSelectedTherapistId('');
       setSelectedTherapist(null);
       return;
     }
 
-    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
-    const autoAssigned = therapists.find((t) => {
-      const daySlots: string[] = t.availabilities?.[selectedDate] || [];
-      return daySlots.some((s) => parseTimeToMinutes(s) === slotStartMin);
-    });
-
-    if (autoAssigned) {
-      setSelectedTherapistId(autoAssigned.id);
-      setSelectedTherapist(autoAssigned);
-    } else {
+    if (availableTherapists.length === 0) {
+      if (availabilitiesLoading) return;
       setSelectedTherapistId('');
       setSelectedTherapist(null);
+      return;
     }
-  }, [selectedTimeSlot, therapists, selectedDate]);
 
-  // ── Extra Time Price Calculation (Requirement 3.ii) ────────────────────
-  const extraMinutesUnit = Number(svcData?.extra_minutes ?? 0);
-  const extraPricePerUnit = parseFloat(String(svcData?.price_for_extra_minutes ?? '0')) || 0;
+    // 1. Keep currently selected if it is still available in this slot
+    if (selectedTherapistId && availableTherapists.some((t) => t.id === selectedTherapistId)) {
+      const current = availableTherapists.find((t) => t.id === selectedTherapistId);
+      if (current) setSelectedTherapist(current);
+      return;
+    }
+
+    // 2. If previous booking therapist is available in this slot, prefer that therapist!
+    const prevTherapistId = firstTruthy(
+      bk?.therapist_id,
+      bk?.therapist_data?.id,
+      bk?.therapist_data?.therapist_id
+    );
+    const matchedPrev = availableTherapists.find(
+      (t) => t.id === prevTherapistId || (t as any).employee_id === prevTherapistId
+    );
+    if (matchedPrev) {
+      setSelectedTherapistId(matchedPrev.id);
+      setSelectedTherapist(matchedPrev);
+      return;
+    }
+
+    // 3. Otherwise auto-select the first available therapist
+    setSelectedTherapistId(availableTherapists[0].id);
+    setSelectedTherapist(availableTherapists[0]);
+  }, [selectedTimeSlot, selectedDate, availableTherapists, selectedTherapistId, bk, availabilitiesLoading]);
+
+  // ── Extra Time Price Calculation (Requirement 1) ────────────────────
+  const extraMinutesUnit = useMemo(() => {
+    const val = Number(
+      serviceDetail?.extra_minutes ??
+      availabilitiesData?.service?.extra_minutes ??
+      svcData?.extra_minutes ??
+      bk?.extra_minutes_unit ??
+      30
+    );
+    return val > 0 ? val : 30;
+  }, [serviceDetail, availabilitiesData?.service, svcData, bk]);
+
+  const extraPricePerUnit = useMemo(() => {
+    const raw = firstTruthy(
+      serviceDetail?.price_for_extra_minutes,
+      serviceDetail?.price_for_extra_time,
+      availabilitiesData?.service?.price_for_extra_minutes,
+      availabilitiesData?.service?.price_for_extra_time,
+      svcData?.price_for_extra_minutes,
+      svcData?.price_for_extra_time,
+      bk?.price_for_extra_minutes,
+      bk?.price_for_extra_time,
+      '0'
+    );
+    return parseFloat(String(raw)) || 0;
+  }, [serviceDetail, availabilitiesData?.service, svcData, bk]);
+
   const baseServicePriceNum = parseFloat(String(svcPrice || '0')) || 0;
 
   const calcExtraPrice = useCallback((mins: number) => {
@@ -805,18 +1000,19 @@ export function UpdateBookingModal({
     if (extraPricePerUnit > 0) {
       return (mins / 30) * extraPricePerUnit;
     }
-    const effDur = durationVal > 0 ? durationVal : 60;
-    return (baseServicePriceNum / effDur) * mins;
-  }, [extraPricePerUnit, extraMinutesUnit, baseServicePriceNum, durationVal]);
+    // Must NOT calculate from service price
+    return 0;
+  }, [extraPricePerUnit, extraMinutesUnit]);
 
   const extraOptions = useMemo(() => {
-    const defaultOpts = [0, 30, 60];
+    const unit = extraMinutesUnit > 0 ? extraMinutesUnit : 30;
+    const defaultOpts = [0, unit, unit * 2];
     const initialExtra = Number(bk?.extra_minutes ?? 0);
     if (initialExtra > 0 && !defaultOpts.includes(initialExtra)) {
       return [...defaultOpts, initialExtra].sort((a, b) => a - b);
     }
     return defaultOpts;
-  }, [bk?.extra_minutes]);
+  }, [extraMinutesUnit, bk?.extra_minutes]);
 
   // ── Total Pricing Calculation (Requirement 3.iv) ──────────────────────
   const selectedAddonObjs = useMemo(() => {
@@ -952,7 +1148,8 @@ export function UpdateBookingModal({
 
     const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
     const isFreeAtSlot = (t: ApiTherapist) =>
-      (t.availabilities?.[selectedDate] || []).some((s: string) => parseTimeToMinutes(s) === slotStartMin);
+      (t.availabilities?.[selectedDate] || []).some((s: string) => parseTimeToMinutes(s) === slotStartMin) ||
+      (t.id === selectedTherapistId);
     const candidates: { id: string; therapist: ApiTherapist | null }[] = [
       { id: selectedTherapistId, therapist: selectedTherapist },
       ...therapists
@@ -1327,7 +1524,7 @@ export function UpdateBookingModal({
                 <div className="flex items-center gap-2">
                   <input
                     type="date"
-                    min={todayStr}
+                    min={initialDate && initialDate < todayStr ? initialDate : todayStr}
                     max={maxDateStr}
                     value={selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
@@ -1381,28 +1578,74 @@ export function UpdateBookingModal({
                   Assigned Therapist
                 </label>
 
-                {selectedTherapist ? (
-                  <div className="rounded-xl border border-emerald-300/50 bg-emerald-50/50 dark:bg-emerald-950/20 p-3 flex items-center gap-3">
-                    <div className="relative h-9 w-9 shrink-0 rounded-full bg-emerald-600 text-white font-bold text-xs grid place-items-center overflow-hidden">
-                      {selectedTherapist.avatar || selectedTherapist.photo_url ? (
-                        <img
-                          src={selectedTherapist.avatar || selectedTherapist.photo_url}
-                          alt={getTherapistDisplayName(selectedTherapist)}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        getInitials(getTherapistDisplayName(selectedTherapist))
-                      )}
+                {availabilitiesLoading ? (
+                  <div className="rounded-xl border border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-500" />
+                    <span>Checking therapist availability for {selectedTimeSlot || 'selected slot'}…</span>
+                  </div>
+                ) : selectedTherapist ? (
+                  <div className="space-y-2">
+                    <div className="rounded-xl border border-emerald-300/50 bg-emerald-50/50 dark:bg-emerald-950/20 p-3 flex items-center gap-3">
+                      <div className="relative h-9 w-9 shrink-0 rounded-full bg-emerald-600 text-white font-bold text-xs grid place-items-center overflow-hidden">
+                        {selectedTherapist.avatar || selectedTherapist.photo_url ? (
+                          <img
+                            src={selectedTherapist.avatar || selectedTherapist.photo_url}
+                            alt={getTherapistDisplayName(selectedTherapist)}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          getInitials(getTherapistDisplayName(selectedTherapist))
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-foreground">
+                          {getTherapistDisplayName(selectedTherapist)}
+                        </p>
+                        <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
+                          {selectedTherapist.specialization || 'Spa Specialist'} • Available at {selectedTimeSlot}
+                        </p>
+                      </div>
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-bold text-foreground">
-                        {getTherapistDisplayName(selectedTherapist)}
-                      </p>
-                      <p className="text-[10px] text-emerald-700 dark:text-emerald-400">
-                        Available at {selectedTimeSlot}
-                      </p>
-                    </div>
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+
+                    {availableTherapists.length > 1 && (
+                      <div className="pt-1">
+                        <p className="text-[11px] text-muted-foreground mb-1.5 font-medium">
+                          Switch therapist ({availableTherapists.length} available):
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {availableTherapists.map((t) => {
+                            const isSelected = t.id === selectedTherapistId;
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTherapistId(t.id);
+                                  setSelectedTherapist(t);
+                                }}
+                                className={cn(
+                                  'flex items-center gap-2.5 p-2 rounded-xl border text-left transition cursor-pointer text-xs',
+                                  isSelected
+                                    ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 font-bold text-foreground ring-1 ring-emerald-500/30'
+                                    : 'border-border/70 bg-card hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                                )}
+                              >
+                                <div className="relative h-6 w-6 shrink-0 rounded-full bg-emerald-600 text-white font-bold text-[10px] grid place-items-center overflow-hidden">
+                                  {t.avatar || t.photo_url ? (
+                                    <img src={t.avatar || t.photo_url} alt={getTherapistDisplayName(t)} className="h-full w-full object-cover" />
+                                  ) : (
+                                    getInitials(getTherapistDisplayName(t))
+                                  )}
+                                </div>
+                                <span className="truncate flex-1">{getTherapistDisplayName(t)}</span>
+                                {isSelected && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="rounded-xl border border-dashed border-border/70 bg-muted/20 p-3 text-xs text-muted-foreground italic">
