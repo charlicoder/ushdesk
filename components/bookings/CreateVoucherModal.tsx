@@ -20,7 +20,7 @@ import {
   MapPin, Scissors, Package, Timer, User, MessageSquare,
   Sparkles, ChevronRight, ChevronLeft, AlertCircle,
   CreditCard, Calendar, Hash, Banknote, ArrowRight,
-  CheckCircle2, ShoppingBag, Phone, FileText, DollarSign,
+  CheckCircle2, ShoppingBag, Phone, FileText, DollarSign, Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -1005,6 +1005,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [recipientEmail, setRecipientEmail] = useState('');
   const [giftMessage, setGiftMessage] = useState('');
   const [giftTemplate, setGiftTemplate] = useState(GIFT_TEMPLATES[0]);
+  const [deliveryMode, setDeliveryMode] = useState<'on_activation' | 'scheduled'>('on_activation');
+  const [scheduledDeliveryDate, setScheduledDeliveryDate] = useState('');
+  const [scheduledDeliveryTime, setScheduledDeliveryTime] = useState('12:00');
 
   const [injectedCustomer, setInjectedCustomer] = useState<Customer | null>(null);
   const [sender, setSender] = useState<Customer | null>(null);
@@ -1312,11 +1315,18 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const recipientPhoneValid = isValidLocalPhone(recipientLocalPhone, recipientCountryCode);
   const senderPhoneValid = isValidLocalPhone(senderPhone, KUWAIT_CODE);
   const senderNameValid = (senderName.trim() || (sender ? customerLabel(sender) : '')).trim().length > 0;
+  const scheduledValid =
+    deliveryMode === 'on_activation' ||
+    (deliveryMode === 'scheduled' &&
+      Boolean(scheduledDeliveryDate) &&
+      Boolean(scheduledDeliveryTime) &&
+      new Date(`${scheduledDeliveryDate}T${scheduledDeliveryTime}:00`).getTime() > Date.now());
   const stepRecipientValid =
     recipientName.trim().length > 0 &&
     recipientPhoneValid &&
     senderNameValid &&
-    senderPhoneValid;
+    senderPhoneValid &&
+    scheduledValid;
 
   // ── Navigation Logic ──
   const serviceStepNumber = isPhysical ? 3 : 2;
@@ -1474,12 +1484,21 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       },
       gift_message: giftMessage,
       gift_template: giftTemplate,
+      delivery_mode: deliveryMode,
+      scheduled_delivery_at:
+        deliveryMode === 'scheduled' && scheduledDeliveryDate && scheduledDeliveryTime
+          ? `${scheduledDeliveryDate}T${scheduledDeliveryTime}:00`
+          : null,
       payment_provider: 'MyFatoorah',
       payment_method: 'DirectLink',
       payment_through: 'desk',
       source: 'desk',
       payment_status: isLinkFlow ? 'initiated' : 'success',
-      status: isLinkFlow ? 'payment_pending' : 'active',
+      status: isLinkFlow
+        ? 'payment_pending'
+        : deliveryMode === 'scheduled'
+        ? 'scheduled'
+        : 'active',
       transaction_id: null,
       reference_id: null,
       receipt_image: null,
@@ -2095,6 +2114,123 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   />
                 </div>
 
+                {/* Delivery Timing (Instant vs Scheduled) */}
+                <div className="space-y-3">
+                  <SectionLabel icon={Clock} label="Delivery Timing" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryMode('on_activation')}
+                      className={cn(
+                        'flex items-center gap-3 p-3.5 rounded-2xl border text-left transition cursor-pointer',
+                        deliveryMode === 'on_activation'
+                          ? 'border-[#543c30] bg-[#faf7f5] shadow-xs'
+                          : 'border-border bg-white hover:border-muted-foreground/30'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0',
+                          deliveryMode === 'on_activation' ? 'border-[#543c30] bg-[#543c30]' : 'border-muted-foreground/40'
+                        )}
+                      >
+                        {deliveryMode === 'on_activation' && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </span>
+                      <div>
+                        <span className="text-xs font-bold block" style={{ color: B.textMain }}>
+                          Instant Delivery
+                        </span>
+                        <span className="text-[11px] text-muted-foreground block">
+                          Dispatched upon payment
+                        </span>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDeliveryMode('scheduled');
+                        if (!scheduledDeliveryDate) {
+                          const tmrw = new Date();
+                          tmrw.setDate(tmrw.getDate() + 1);
+                          setScheduledDeliveryDate(tmrw.toISOString().split('T')[0]);
+                        }
+                      }}
+                      className={cn(
+                        'flex items-center gap-3 p-3.5 rounded-2xl border text-left transition cursor-pointer',
+                        deliveryMode === 'scheduled'
+                          ? 'border-[#543c30] bg-[#faf7f5] shadow-xs'
+                          : 'border-border bg-white hover:border-muted-foreground/30'
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0',
+                          deliveryMode === 'scheduled' ? 'border-[#543c30] bg-[#543c30]' : 'border-muted-foreground/40'
+                        )}
+                      >
+                        {deliveryMode === 'scheduled' && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </span>
+                      <div>
+                        <span className="text-xs font-bold block" style={{ color: B.textMain }}>
+                          Schedule Delivery
+                        </span>
+                        <span className="text-[11px] text-muted-foreground block">
+                          Deliver on a future date
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+
+                  {deliveryMode === 'scheduled' && (
+                    <div
+                      className="p-3.5 rounded-2xl border space-y-3"
+                      style={{ borderColor: B.linen, background: B.pillBg }}
+                    >
+                      <div className="flex items-center gap-1.5 text-xs font-bold" style={{ color: B.textMain }}>
+                        <Calendar className="h-3.5 w-3.5 text-primary" />
+                        <span>Kuwait Time (Asia/Kuwait)</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                            Delivery Date:
+                          </label>
+                          <input
+                            type="date"
+                            min={new Date().toISOString().split('T')[0]}
+                            max={new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                            value={scheduledDeliveryDate}
+                            onChange={(e) => setScheduledDeliveryDate(e.target.value)}
+                            className="w-full h-9 rounded-xl border bg-background px-3 text-xs outline-none focus:border-primary"
+                            style={{ borderColor: B.lineMuted }}
+                            required
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+                            Delivery Time:
+                          </label>
+                          <input
+                            type="time"
+                            value={scheduledDeliveryTime}
+                            onChange={(e) => setScheduledDeliveryTime(e.target.value)}
+                            className="w-full h-9 rounded-xl border bg-background px-3 text-xs outline-none focus:border-primary"
+                            style={{ borderColor: B.lineMuted }}
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        ✨ Status will be set to <strong>Scheduled</strong>. Recipient SMS is dispatched automatically at the chosen Kuwait time, activating the voucher with 60 days validity.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {/* Order Summary Review Card */}
                 <div className="rounded-2xl border p-4 space-y-2" style={{ borderColor: B.lineMuted, background: B.pillBg }}>
                   <p className="text-[11px] font-bold uppercase tracking-wider" style={{ color: B.textMuted }}>
@@ -2121,6 +2257,14 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                         {selectedBranch?.name} • {selectedArrangt?.arrangement_name}
                       </span>
                     </div>
+                    {deliveryMode === 'scheduled' && scheduledDeliveryDate && (
+                      <div className="flex justify-between text-sky-800 dark:text-sky-300">
+                        <span className="font-medium">Scheduled Delivery:</span>
+                        <span className="font-bold">
+                          {scheduledDeliveryDate} {scheduledDeliveryTime} (Kuwait)
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Subtotal:</span>
                       <span className="font-bold">{fmtPrice(subtotalPrice, currency)}</span>

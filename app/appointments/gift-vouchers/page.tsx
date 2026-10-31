@@ -244,6 +244,13 @@ interface Voucher {
   payment_url: string | null;
   payment_provider?: string | null;
   payment_through?: string | null;
+  delivery_mode?: string | null;
+  scheduled_delivery_at?: string | null;
+  delivery_schedule_name?: string | null;
+  delivery_schedule_arn?: string | null;
+  delivered_at?: string | null;
+  delivery_result?: Record<string, any> | null;
+  reschedule_count?: number;
   created_at: string;
   updated_at: string;
   update_history?: Array<Record<string, any>>;
@@ -417,6 +424,11 @@ const ORDER_STATUS_CONFIG: Record<
     badgeClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300',
     dotClass: 'bg-emerald-500',
   },
+  scheduled: {
+    label: 'Scheduled',
+    badgeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300',
+    dotClass: 'bg-sky-500 animate-pulse',
+  },
   redeemed: {
     label: 'Redeemed',
     badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
@@ -453,10 +465,11 @@ function getOrderStatusConfig(status?: string | null) {
 }
 
 const STATUS_CFG: Record<string, { label: string; pill: string; dot: string; icon: React.ElementType }> = {
-  active:   { label: 'Active',   pill: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300', dot: 'bg-emerald-500',            icon: CheckCircle2 },
-  redeemed: { label: 'Redeemed', pill: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',     dot: 'bg-violet-500',             icon: Star },
-  expired:  { label: 'Expired',  pill: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',             dot: 'bg-rose-500',               icon: XCircle },
-  pending:  { label: 'Pending',  pill: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',         dot: 'bg-amber-500 animate-pulse', icon: Clock },
+  active:   { label: 'Active',    pill: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300', dot: 'bg-emerald-500',            icon: CheckCircle2 },
+  scheduled:{ label: 'Scheduled', pill: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',              dot: 'bg-sky-500 animate-pulse',   icon: Calendar },
+  redeemed: { label: 'Redeemed',  pill: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',     dot: 'bg-violet-500',             icon: Star },
+  expired:  { label: 'Expired',   pill: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',             dot: 'bg-rose-500',               icon: XCircle },
+  pending:  { label: 'Pending',   pill: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',         dot: 'bg-amber-500 animate-pulse', icon: Clock },
 };
 
 function statusCfg(s: string) {
@@ -892,6 +905,190 @@ function EditVoucherModal({
   );
 }
 
+// ── Reschedule Gift Delivery Modal ─────────────────────────────────────────────
+
+interface RescheduleDeliveryModalProps {
+  voucher: Voucher;
+  token?: string | null;
+  onClose: () => void;
+  onSuccess: (updated: Partial<Voucher>) => void;
+}
+
+function RescheduleDeliveryModal({
+  voucher,
+  token,
+  onClose,
+  onSuccess,
+}: RescheduleDeliveryModalProps) {
+  const existingDt = voucher.scheduled_delivery_at ? new Date(voucher.scheduled_delivery_at) : null;
+  const initialDate = existingDt ? existingDt.toISOString().split('T')[0] : '';
+  const initialTime = existingDt
+    ? `${String(existingDt.getHours()).padStart(2, '0')}:${String(existingDt.getMinutes()).padStart(2, '0')}`
+    : '12:00';
+
+  const [deliveryDate, setDeliveryDate] = useState(initialDate);
+  const [deliveryTime, setDeliveryTime] = useState(initialTime);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!deliveryDate || !deliveryTime) {
+      setError('Please choose both a delivery date and time.');
+      return;
+    }
+
+    const targetDt = new Date(`${deliveryDate}T${deliveryTime}:00`);
+    const now = new Date();
+    if (isNaN(targetDt.getTime())) {
+      setError('Invalid date or time selected.');
+      return;
+    }
+    if (targetDt.getTime() < now.getTime() + 4 * 60 * 1000) {
+      setError('Scheduled delivery time must be in the future (at least 5 minutes from now).');
+      return;
+    }
+    const maxDt = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+    if (targetDt.getTime() > maxDt.getTime()) {
+      setError('Delivery cannot be scheduled more than 2 months (60 days) in advance.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    const newScheduledAt = `${deliveryDate}T${deliveryTime}:00`;
+
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/schedule/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          scheduled_delivery_at: newScheduledAt,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || `Failed to reschedule (HTTP ${res.status})`);
+      }
+
+      onSuccess({
+        scheduled_delivery_at: newScheduledAt,
+        reschedule_count: (voucher.reschedule_count || 0) + 1,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reschedule delivery');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+      <div className="relative w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between pb-3 border-b border-border/60">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300">
+              <Calendar className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="font-bold text-base text-foreground">Reschedule Gift Delivery</h3>
+              <p className="text-xs text-muted-foreground">Code: {voucher.secret_code || voucher.id}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-full hover:bg-muted text-muted-foreground transition cursor-pointer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs font-semibold">
+            {error}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">
+                New Delivery Date:
+              </label>
+              <input
+                type="date"
+                min={new Date().toISOString().split('T')[0]}
+                max={new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                value={deliveryDate}
+                onChange={(e) => setDeliveryDate(e.target.value)}
+                className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs outline-none focus:border-primary"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1">
+                New Delivery Time (Kuwait Time - Asia/Kuwait):
+              </label>
+              <input
+                type="time"
+                value={deliveryTime}
+                onChange={(e) => setDeliveryTime(e.target.value)}
+                className="w-full h-10 rounded-xl border border-border bg-background px-3 text-xs outline-none focus:border-primary"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-muted/40 border border-border/40 text-[11px] text-muted-foreground leading-relaxed space-y-1">
+            <p className="font-bold text-foreground">Important Policy:</p>
+            <p>• Delivery can be rescheduled up to 2 months from today.</p>
+            <p>• The EventBridge schedule will be updated immediately.</p>
+            <p>• The 60-day voucher validity starts upon actual delivery.</p>
+            {Boolean(voucher.reschedule_count) && (
+              <p className="text-amber-700 dark:text-amber-400 font-semibold">
+                Previously rescheduled: {voucher.reschedule_count} time(s).
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isSubmitting}
+              className="px-4 py-2 rounded-xl text-xs font-semibold hover:bg-muted text-muted-foreground transition cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="px-5 py-2 rounded-xl text-xs font-bold text-white bg-sky-600 hover:bg-sky-700 shadow-sm transition flex items-center gap-1.5 disabled:opacity-60 cursor-pointer"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Confirm Reschedule'
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ── Voucher Detail Modal ───────────────────────────────────────────────────────
 
 function VoucherDetailModal({
@@ -945,6 +1142,7 @@ function VoucherDetailModal({
   const [renewError, setRenewError] = useState<string | null>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [showMakePaymentModal, setShowMakePaymentModal] = useState(false);
+  const [showRescheduleDeliveryModal, setShowRescheduleDeliveryModal] = useState(false);
   const [invoiceRecord, setInvoiceRecord] = useState<Record<string, any> | null>(null);
 
   const catCfg = getCategoryConfig(voucher.gift_category, voucher);
@@ -957,6 +1155,7 @@ function VoucherDetailModal({
   const isExpired = voucher.expire_date && new Date(voucher.expire_date) < new Date();
   const canRedeem = !isExpired && voucher.status?.toLowerCase() === 'active';
   const isRedeemed = voucher.status?.toLowerCase() === 'redeemed' || !!voucher.redeemed_at;
+  const isDeliveryScheduled = voucher.status?.toLowerCase() === 'scheduled';
   const bookingId =
     voucher.redeemed_booking_id ||
     voucher.booking_id ||
@@ -1622,7 +1821,49 @@ function VoucherDetailModal({
                     <XCircle className="h-3 w-3" /> Expired
                   </span>
                 )}
+                {isDeliveryScheduled && (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+                    <Calendar className="h-3 w-3 animate-pulse" /> Scheduled
+                  </span>
+                )}
               </div>
+
+              {/* Scheduled Delivery Banner if scheduled_delivery_at */}
+              {voucher.scheduled_delivery_at && (
+                <div className="rounded-2xl border border-sky-200 bg-sky-50/70 dark:bg-sky-950/30 dark:border-sky-850 p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-900/50 dark:text-sky-300">
+                      <Calendar className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+                        Scheduled Delivery (Kuwait Time)
+                      </p>
+                      <p className="text-sm font-extrabold text-foreground">
+                        {new Date(voucher.scheduled_delivery_at).toLocaleString('en-GB', {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                          timeZone: 'Asia/Kuwait',
+                        })}
+                      </p>
+                      {Boolean(voucher.reschedule_count) && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Rescheduled: {voucher.reschedule_count} time(s)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  {isDeliveryScheduled && (
+                    <button
+                      type="button"
+                      onClick={() => setShowRescheduleDeliveryModal(true)}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white shadow-xs transition cursor-pointer"
+                    >
+                      Reschedule
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Sender → Recipient */}
               <div className="grid grid-cols-2 gap-3">
@@ -2847,6 +3088,15 @@ function VoucherDetailModal({
                   </div>
                 )
               )}
+              {isDeliveryScheduled && (
+                <button
+                  type="button"
+                  onClick={() => setShowRescheduleDeliveryModal(true)}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-bold text-white bg-sky-600 hover:bg-sky-700 shadow-sm transition active:scale-[0.98] cursor-pointer"
+                >
+                  <Calendar className="h-4 w-4" /> Reschedule Delivery
+                </button>
+              )}
               {canRedeem && (
                 <button
                   type="button"
@@ -2943,6 +3193,19 @@ function VoucherDetailModal({
           }}
         />
       )}
+
+      {/* Reschedule Gift Delivery Modal */}
+      {showRescheduleDeliveryModal && (
+        <RescheduleDeliveryModal
+          voucher={voucher}
+          token={token}
+          onClose={() => setShowRescheduleDeliveryModal(false)}
+          onSuccess={(updated) => {
+            setVoucher((prev) => ({ ...prev, ...updated }));
+            onRefresh?.();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -2974,6 +3237,7 @@ function VoucherFilterPopover({
 
   const statusOptions = [
     { id: 'active', label: 'Active' },
+    { id: 'scheduled', label: 'Scheduled' },
     { id: 'pending', label: 'Pending' },
     { id: 'redeemed', label: 'Redeemed' },
     { id: 'expired', label: 'Expired' },
@@ -4627,7 +4891,7 @@ export default function GiftVouchersPage() {
   const filtered = useMemo(() => {
     return vouchers.filter((v) => {
       // 1. Status multi-select filter
-      if (statusFilters.length > 0 && statusFilters.length < 5) {
+      if (statusFilters.length > 0 && statusFilters.length < 6) {
         const s = v.status?.toLowerCase() ?? '';
         const isPending =
           s === 'pending' ||
@@ -4637,6 +4901,7 @@ export default function GiftVouchersPage() {
         const isRedeemed = s === 'redeemed' || Boolean(v.redeemed_at);
 
         const matchesAny = statusFilters.some((target) => {
+          if (target === 'scheduled') return s === 'scheduled';
           if (target === 'pending') return isPending;
           if (target === 'redeemed') return isRedeemed;
           if (target === 'active') return s === 'active' && !isRedeemed;
@@ -5037,7 +5302,7 @@ export default function GiftVouchersPage() {
             setPage(1);
           }}
         />
-        {statusFilters.length > 0 && statusFilters.length < 5 && (
+        {statusFilters.length > 0 && statusFilters.length < 6 && (
           <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary animate-in fade-in">
             <span>Status: {statusFilters.join(', ')}</span>
             <button
@@ -5287,9 +5552,24 @@ export default function GiftVouchersPage() {
 
                       {/* Expires */}
                       <td className="px-4 py-3 align-top whitespace-nowrap">
-                        <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
-                          {fmtDate(v.expire_date)}
-                        </p>
+                        {v.status?.toLowerCase() === 'scheduled' && v.scheduled_delivery_at ? (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Deliver At
+                            </span>
+                            <p className="text-[12px] font-bold text-sky-700 dark:text-sky-300 tabular-nums">
+                              {new Date(v.scheduled_delivery_at).toLocaleString('en-GB', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                                timeZone: 'Asia/Kuwait',
+                              })}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
+                            {fmtDate(v.expire_date)}
+                          </p>
+                        )}
                       </td>
 
                       {/* Status */}
