@@ -686,6 +686,16 @@ export function RescheduleBookingModal({
     isCoupleRoom,
   ]);
 
+  // ── Available Therapists at selected timeslot ────────────────────────
+  const availableTherapistsAtSlot = useMemo(() => {
+    if (!selectedTimeSlot || therapists.length === 0 || !selectedDate) return [];
+    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
+    return therapists.filter((t) => {
+      const daySlots: string[] = t.availabilities?.[selectedDate] || [];
+      return daySlots.some((s) => parseTimeToMinutes(s) === slotStartMin);
+    });
+  }, [selectedTimeSlot, therapists, selectedDate]);
+
   // ── Auto-Select Therapist(s) when timeslot changes ────────────────────
   useEffect(() => {
     if (!selectedTimeSlot || therapists.length === 0 || !selectedDate) {
@@ -696,22 +706,37 @@ export function RescheduleBookingModal({
       return;
     }
 
-    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
+    if (availableTherapistsAtSlot.length > 0) {
+      // 1. Keep currently selected therapist if still available
+      const currentStillAvailable = availableTherapistsAtSlot.find((t) => t.id === selectedTherapistId);
+      // 2. Booking's previous/original therapist if available
+      const prevTherapistId = String(initialBooking?.therapist_id || bk?.therapist_id || '');
+      const prevStillAvailable = availableTherapistsAtSlot.find((t) => t.id === prevTherapistId);
 
-    const availableAtSlot = therapists.filter((t) => {
-      const daySlots: string[] = t.availabilities?.[selectedDate] || [];
-      return daySlots.some((s) => parseTimeToMinutes(s) === slotStartMin);
-    });
+      const assigned = currentStillAvailable || prevStillAvailable || availableTherapistsAtSlot[0];
+      setSelectedTherapistId(assigned.id);
+      setSelectedTherapist(assigned);
 
-    if (availableAtSlot.length > 0) {
-      const autoAssigned = availableAtSlot[0];
-      setSelectedTherapistId(autoAssigned.id);
-      setSelectedTherapist(autoAssigned);
+      if (isCoupleRoom && availableTherapistsAtSlot.length > 1) {
+        const prevSecId = String(initialBooking?.secondary_therapist_id || bk?.secondary_therapist_id || '');
+        const currentSecAvailable = availableTherapistsAtSlot.find(
+          (t) => t.id === selectedSecondaryTherapistId && t.id !== assigned.id
+        );
+        const prevSecAvailable = availableTherapistsAtSlot.find(
+          (t) => t.id === prevSecId && t.id !== assigned.id
+        );
+        const secondAssigned =
+          currentSecAvailable ||
+          prevSecAvailable ||
+          availableTherapistsAtSlot.find((t) => t.id !== assigned.id);
 
-      if (isCoupleRoom && availableAtSlot.length > 1) {
-        const secondAssigned = availableAtSlot[1];
-        setSelectedSecondaryTherapistId(secondAssigned.id);
-        setSelectedSecondaryTherapist(secondAssigned);
+        if (secondAssigned) {
+          setSelectedSecondaryTherapistId(secondAssigned.id);
+          setSelectedSecondaryTherapist(secondAssigned);
+        } else {
+          setSelectedSecondaryTherapistId('');
+          setSelectedSecondaryTherapist(null);
+        }
       } else {
         setSelectedSecondaryTherapistId('');
         setSelectedSecondaryTherapist(null);
@@ -722,7 +747,7 @@ export function RescheduleBookingModal({
       setSelectedSecondaryTherapistId('');
       setSelectedSecondaryTherapist(null);
     }
-  }, [selectedTimeSlot, therapists, selectedDate, isCoupleRoom]);
+  }, [selectedTimeSlot, availableTherapistsAtSlot, isCoupleRoom, selectedTherapistId, selectedSecondaryTherapistId, initialBooking, bk]);
 
   // ── Handle Submit Reschedule ──────────────────────────────────────────
   const handleUpdateBooking = async () => {
@@ -751,6 +776,57 @@ export function RescheduleBookingModal({
     const apptWindow = buildAppointmentWindow(selectedDate, selectedTimeSlot, durationVal);
     const appointmentStartIso = apptWindow.appointment_start;
     const appointmentEndIso = apptWindow.appointment_end;
+
+    const rawSessions = (bk?.sessions || initialBooking?.sessions || []) as any[];
+    let updatedSessions: any[] | undefined = undefined;
+    if (rawSessions.length > 0) {
+      const oldStartIso = bk?.appointment_start || rawSessions[0]?.appointment_start;
+      const oldStartTime = oldStartIso ? new Date(oldStartIso).getTime() : 0;
+      const newStartTime = new Date(appointmentStartIso).getTime();
+      const timeDiffMs = oldStartTime && newStartTime ? newStartTime - oldStartTime : 0;
+
+      updatedSessions = rawSessions.map((s, idx) => {
+        const sOldStart = s.appointment_start ? new Date(s.appointment_start).getTime() : null;
+        const sOldEnd = s.appointment_end ? new Date(s.appointment_end).getTime() : null;
+
+        let sNewStartIso = s.appointment_start;
+        let sNewEndIso = s.appointment_end;
+
+        if (sOldStart && sOldEnd && timeDiffMs) {
+          sNewStartIso = new Date(sOldStart + timeDiffMs).toISOString();
+          sNewEndIso = new Date(sOldEnd + timeDiffMs).toISOString();
+        } else if (idx === 0) {
+          sNewStartIso = appointmentStartIso;
+          sNewEndIso = appointmentEndIso;
+        }
+
+        const sObj: Record<string, any> = {
+          ...s,
+          appointment_start: sNewStartIso,
+          appointment_end: sNewEndIso,
+        };
+
+        if (idx === 0) {
+          sObj.therapist_id = selectedTherapistId;
+          sObj.therapist_data = {
+            id: selectedTherapistId,
+            therapist_id: selectedTherapistId,
+            therapist_name: getTherapistDisplayName(selectedTherapist),
+            name: getTherapistDisplayName(selectedTherapist),
+          };
+          if (isCoupleRoom && selectedSecondaryTherapistId) {
+            sObj.secondary_therapist_id = selectedSecondaryTherapistId;
+            sObj.secondary_therapist_data = {
+              id: selectedSecondaryTherapistId,
+              therapist_id: selectedSecondaryTherapistId,
+              therapist_name: getTherapistDisplayName(selectedSecondaryTherapist),
+              name: getTherapistDisplayName(selectedSecondaryTherapist),
+            };
+          }
+        }
+        return sObj;
+      });
+    }
 
     const buildPayload = (
       therapist: ApiTherapist | null,
@@ -800,75 +876,42 @@ export function RescheduleBookingModal({
               },
             }
           : {}),
+        ...(updatedSessions ? { sessions: updatedSessions } : {}),
         source: 'ushdesk',
         reason: 'Rescheduled by desk staff',
       };
     };
 
-    // Candidates: the auto-selected therapist first, then every other therapist in the
-    // list who is available at this slot (availability data can be stale, so the backend
-    // may still reject a therapist as already booked).
-    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
-    const isFreeAtSlot = (t: ApiTherapist) =>
-      (t.availabilities?.[selectedDate] || []).some((s: string) => parseTimeToMinutes(s) === slotStartMin);
-    const candidates: { id: string; therapist: ApiTherapist | null }[] = [
-      { id: selectedTherapistId, therapist: selectedTherapist },
-      ...therapists
-        .filter((t) => t.id && t.id !== selectedTherapistId && isFreeAtSlot(t))
-        .map((t) => ({ id: t.id, therapist: t })),
-    ];
-
-    // Errors that mean "this therapist cannot take the slot" → try the next one.
-    const isTherapistConflict = (status: number, msg: string) =>
-      /therapist/i.test(msg) && /(already booked|not available|unavailable|conflict|overlap|busy)/i.test(msg)
-      || (status === 409 && /therapist/i.test(msg));
-
     try {
-      for (const cand of candidates) {
-        const secCand = isCoupleRoom
-          ? (selectedSecondaryTherapistId && selectedSecondaryTherapistId !== cand.id
-              ? { id: selectedSecondaryTherapistId, therapist: selectedSecondaryTherapist }
-              : candidates.find((c) => c.id !== cand.id) || null)
-          : null;
-        const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(authHeader ? { Authorization: authHeader } : {}),
-          },
-          body: JSON.stringify(buildPayload(cand.therapist, cand.id, secCand?.therapist, secCand?.id)),
-        });
+      const secTherapist = isCoupleRoom ? selectedSecondaryTherapist : null;
+      const secTherapistId = isCoupleRoom ? selectedSecondaryTherapistId : undefined;
+      const payload = buildPayload(selectedTherapist, selectedTherapistId, secTherapist, secTherapistId);
 
-        if (res.ok) {
-          if (cand.id !== selectedTherapistId) {
-            // Reflect the therapist that was actually assigned.
-            setSelectedTherapistId(cand.id);
-            setSelectedTherapist(cand.therapist);
-          }
-          setSubmitSuccess(true);
-          setTimeout(() => {
-            onSuccess?.();
-            onClose();
-          }, 900);
-          return;
-        }
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
 
-        const errData = await res.json().catch(() => ({}));
-        const msg = String(
-          errData.detail || errData.message ||
-          (typeof errData.error === 'string' ? errData.error : errData.error?.message) ||
-          `Error ${res.status}`,
-        );
-        if (!isTherapistConflict(res.status, msg)) {
-          throw new Error(msg);
-        }
-        // Conflict for this therapist → continue with the next available one.
+      if (res.ok) {
+        setSubmitSuccess(true);
+        setTimeout(() => {
+          onSuccess?.();
+          onClose();
+        }, 900);
+        return;
       }
 
-      // Every therapist in the list is booked for this slot.
-      throw new Error(
-        `No therapist is available at ${selectedTimeSlot} on ${selectedDate}. Please choose a different time slot.`,
+      const errData = await res.json().catch(() => ({}));
+      const msg = String(
+        errData.detail || errData.message ||
+        (typeof errData.error === 'string' ? errData.error : errData.error?.message) ||
+        `Error ${res.status}`,
       );
+      throw new Error(msg);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to update booking. Please try again.');
     } finally {
@@ -1192,6 +1235,34 @@ export function RescheduleBookingModal({
                       Auto-Selected by Availability
                     </span>
                   </div>
+
+                  {availableTherapistsAtSlot.length > 1 && (
+                    <div className="flex items-center gap-1.5 flex-wrap pt-1 pb-1">
+                      <span className="text-[11px] text-muted-foreground font-semibold">Change Therapist:</span>
+                      {availableTherapistsAtSlot.map((t) => {
+                        const isSelected = t.id === selectedTherapistId;
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedTherapistId(t.id);
+                              setSelectedTherapist(t);
+                            }}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition border cursor-pointer',
+                              isSelected
+                                ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                                : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                            )}
+                          >
+                            <User className="h-3 w-3" />
+                            {getTherapistDisplayName(t)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {therapistsLoading ? (
                     <div className="flex items-center gap-2 py-3 px-4 rounded-xl border border-border/50 bg-muted/20 text-xs text-muted-foreground">

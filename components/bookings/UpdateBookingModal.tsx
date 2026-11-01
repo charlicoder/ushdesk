@@ -361,6 +361,7 @@ export function UpdateBookingModal({
   const [selectedExtraMinutes, setSelectedExtraMinutes] = useState<number>(0);
   const [extraMinutesInitialized, setExtraMinutesInitialized] = useState(false);
   const [serviceDetail, setServiceDetail] = useState<AnyRecord | null>(null);
+  const [selectedExtraSession, setSelectedExtraSession] = useState<'all' | number>('all');
 
   // Derived initial values from booking data
   const todayStr = useMemo(() => kuwaitDateString(), []);
@@ -445,6 +446,13 @@ export function UpdateBookingModal({
 
   // Derived booking info
   const bk = booking;
+  const rawSessions = useMemo(() => {
+    const list = bk?.sessions || initialBooking?.sessions;
+    if (Array.isArray(list) && list.length > 0) {
+      return list as AnyRecord[];
+    }
+    return [];
+  }, [bk, initialBooking]);
   const status = (bk?.status ?? 'payment_pending').toLowerCase();
   const ss = statusStyle(status);
   const bookingNum = firstTruthy(bk?.booking_number, bk?.number, bk?.id?.slice(0, 8));
@@ -1028,16 +1036,34 @@ export function UpdateBookingModal({
   }, [selectedAddonObjs]);
 
   const extraTimePrice = useMemo(() => {
+    if (rawSessions.length > 0) {
+      if (selectedExtraSession === 'all') {
+        return calcExtraPrice(selectedExtraMinutes) * rawSessions.length;
+      }
+      return calcExtraPrice(selectedExtraMinutes);
+    }
     return calcExtraPrice(selectedExtraMinutes);
-  }, [calcExtraPrice, selectedExtraMinutes]);
+  }, [rawSessions, selectedExtraSession, selectedExtraMinutes, calcExtraPrice]);
 
   const totalCalculatedPrice = useMemo(() => {
     return baseServicePriceNum + addonsTotalPrice + extraTimePrice;
   }, [baseServicePriceNum, addonsTotalPrice, extraTimePrice]);
 
   const totalCalculatedDuration = useMemo(() => {
+    if (rawSessions.length > 0) {
+      const baseMins = rawSessions.reduce(
+        (acc, s) => acc + Number(s.services_duration || s.duration_minutes || 0) + Number(s.addons_duration || 0),
+        0
+      );
+      const totalExtra =
+        selectedExtraSession === 'all'
+          ? selectedExtraMinutes * rawSessions.length
+          : selectedExtraMinutes +
+            rawSessions.reduce((acc, s, idx) => (idx === selectedExtraSession ? 0 : acc + Number(s.extra_minutes || 0)), 0);
+      return (baseMins || durationVal) + totalExtra;
+    }
     return durationVal + selectedExtraMinutes + addonsTotalDuration;
-  }, [durationVal, selectedExtraMinutes, addonsTotalDuration]);
+  }, [rawSessions, selectedExtraSession, selectedExtraMinutes, durationVal, addonsTotalDuration]);
 
   // ── Handle Submit Update Booking (Requirement 3.v) ────────────────────
   const handleUpdateBooking = async () => {
@@ -1065,6 +1091,76 @@ export function UpdateBookingModal({
     const appointmentStartIso = apptWindow.appointment_start;
     const appointmentEndIso = apptWindow.appointment_end;
 
+    let updatedSessions: AnyRecord[] | undefined = undefined;
+    if (rawSessions.length > 0) {
+      let currentEnd = new Date(appointmentStartIso);
+      updatedSessions = rawSessions.map((s, idx) => {
+        let sessionExtra = 0;
+        if (selectedExtraSession === 'all') {
+          sessionExtra = selectedExtraMinutes;
+        } else if (selectedExtraSession === idx) {
+          sessionExtra = selectedExtraMinutes;
+        } else {
+          sessionExtra = Number(s.extra_minutes || 0);
+        }
+
+        const sessionExtraPrice = calcExtraPrice(sessionExtra);
+        const svcDur = Number(s.services_duration || s.duration_minutes || 60);
+        const addDur = Number(s.addons_duration || 0);
+        const sessionTotalDuration = svcDur + addDur + sessionExtra;
+
+        let sStart = idx === 0
+          ? new Date(appointmentStartIso)
+          : (s.appointment_start ? new Date(s.appointment_start) : currentEnd);
+
+        if (sStart.getTime() < currentEnd.getTime()) {
+          sStart = new Date(currentEnd);
+        }
+        const sEnd = new Date(sStart.getTime() + sessionTotalDuration * 60 * 1000);
+        currentEnd = sEnd;
+
+        const sObj: Record<string, any> = {
+          ...s,
+          extra_minutes: sessionExtra,
+          price_for_extra_minutes: fmtPrice(sessionExtraPrice),
+          total_session_duration: sessionTotalDuration,
+          appointment_start: sStart.toISOString(),
+          appointment_end: sEnd.toISOString(),
+        };
+
+        if (idx === 0) {
+          sObj.therapist_id = selectedTherapistId;
+          sObj.therapist_data = {
+            id: selectedTherapistId,
+            therapist_id: selectedTherapistId,
+            therapist_name: getTherapistDisplayName(selectedTherapist),
+            name: getTherapistDisplayName(selectedTherapist),
+          };
+          if (selectedRoomId) {
+            sObj.service_arrangement_id = selectedRoomId;
+            sObj.service_arrangement_data = {
+              id: selectedRoomId,
+              arrangement_id: selectedRoomId,
+              arrangement_name: roomName,
+              name: roomName,
+              arrangement_type: roomType,
+            };
+          }
+        }
+        return sObj;
+      });
+    }
+
+    const calculatedTotalExtraMinutes = selectedExtraSession === 'all'
+      ? (selectedExtraMinutes * (rawSessions.length || 1))
+      : (rawSessions.length > 0
+          ? rawSessions.reduce((acc, s, idx) => acc + (idx === selectedExtraSession ? selectedExtraMinutes : Number(s.extra_minutes || 0)), 0)
+          : selectedExtraMinutes);
+
+    const calculatedFinalEndIso = (updatedSessions && updatedSessions.length > 0)
+      ? updatedSessions[updatedSessions.length - 1].appointment_end
+      : appointmentEndIso;
+
     const buildPayload = (therapist: ApiTherapist | null, therapistId: string) => {
       const therapistName = getTherapistDisplayName(therapist);
       return {
@@ -1087,7 +1183,7 @@ export function UpdateBookingModal({
         appointment_date: selectedDate,
         appointment_time: formattedTime,
         appointment_start: appointmentStartIso,
-        appointment_end: appointmentEndIso,
+        appointment_end: calculatedFinalEndIso,
         duration: durationVal,
         duration_minutes: durationVal,
         total_duration: totalCalculatedDuration,
@@ -1117,7 +1213,7 @@ export function UpdateBookingModal({
         addons_price: fmtPrice(addonsTotalPrice),
         addons_duration: addonsTotalDuration,
         // Extra Time (Requirement 3.ii)
-        extra_minutes: selectedExtraMinutes,
+        extra_minutes: calculatedTotalExtraMinutes,
         price_for_extra_minutes: fmtPrice(extraTimePrice),
         extra_price: fmtPrice(extraTimePrice),
         // Pricing breakdown (Requirement 3.iv)
@@ -1141,79 +1237,51 @@ export function UpdateBookingModal({
         total_price: fmtPrice(totalCalculatedPrice),
         total_amount: fmtPrice(totalCalculatedPrice),
         customer_notes: customerNotes,
+        ...(updatedSessions ? { sessions: updatedSessions } : {}),
         source: 'ushdesk',
         reason: 'Service booking updated by desk staff',
       };
     };
 
-    const slotStartMin = parseTimeToMinutes(selectedTimeSlot);
-    const isFreeAtSlot = (t: ApiTherapist) =>
-      (t.availabilities?.[selectedDate] || []).some((s: string) => parseTimeToMinutes(s) === slotStartMin) ||
-      (t.id === selectedTherapistId);
-    const candidates: { id: string; therapist: ApiTherapist | null }[] = [
-      { id: selectedTherapistId, therapist: selectedTherapist },
-      ...therapists
-        .filter((t) => t.id && t.id !== selectedTherapistId && isFreeAtSlot(t))
-        .map((t) => ({ id: t.id, therapist: t })),
-    ];
-
-    const isTherapistConflict = (status: number, msg: string) =>
-      /therapist/i.test(msg) && /(already booked|not available|unavailable|conflict|overlap|busy)/i.test(msg)
-      || (status === 409 && /therapist/i.test(msg));
-
     try {
-      for (const cand of candidates) {
-        // Requirement 3.v: PUT /booknpay/api/v1/bookings/{booking_id}/
-        const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(authHeader ? { Authorization: authHeader } : {}),
-          },
-          body: JSON.stringify(buildPayload(cand.therapist, cand.id)),
-        });
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify(buildPayload(selectedTherapist, selectedTherapistId)),
+      });
 
-        if (res.ok) {
-          if (cand.id !== selectedTherapistId) {
-            setSelectedTherapistId(cand.id);
-            setSelectedTherapist(cand.therapist);
-          }
-
-          // In Booking Details popup window for a Booking when paymentlink/payment_url is available
-          // and payment_status=pending, updating the booking details using update button and if the
-          // updated amount is different then the current amount in paymentlink then cancel that
-          // paymentlink and create new paymentlink for that booking.
-          try {
-            await syncPaymentLinkOnAmountChange(bookingId, totalCalculatedPrice, {
-              ...(initialBooking || {}),
-              ...(booking || {}),
-            });
-          } catch (syncErr) {
-            console.error('Error syncing payment link on amount change:', syncErr);
-          }
-
-          setSubmitSuccess(true);
-          setTimeout(() => {
-            onSuccess?.();
-            onClose();
-          }, 900);
-          return;
+      if (res.ok) {
+        // In Booking Details popup window for a Booking when paymentlink/payment_url is available
+        // and payment_status=pending, updating the booking details using update button and if the
+        // updated amount is different then the current amount in paymentlink then cancel that
+        // paymentlink and create new paymentlink for that booking.
+        try {
+          await syncPaymentLinkOnAmountChange(bookingId, totalCalculatedPrice, {
+            ...(initialBooking || {}),
+            ...(booking || {}),
+          });
+        } catch (syncErr) {
+          console.error('Error syncing payment link on amount change:', syncErr);
         }
 
-        const errData = await res.json().catch(() => ({}));
-        const msg = String(
-          errData.detail || errData.message ||
-          (typeof errData.error === 'string' ? errData.error : errData.error?.message) ||
-          `Error ${res.status}`,
-        );
-        if (!isTherapistConflict(res.status, msg)) {
-          throw new Error(msg);
-        }
+        setSubmitSuccess(true);
+        setTimeout(() => {
+          onSuccess?.();
+          onClose();
+        }, 900);
+        return;
       }
 
-      throw new Error(
-        `No therapist is available at ${selectedTimeSlot} on ${selectedDate}. Please choose a different time slot.`,
+      const errData = await res.json().catch(() => ({}));
+      const msg = String(
+        errData.detail || errData.message ||
+        (typeof errData.error === 'string' ? errData.error : errData.error?.message) ||
+        `Error ${res.status}`,
       );
+      throw new Error(msg);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Failed to update booking. Please try again.');
     } finally {
@@ -1478,10 +1546,55 @@ export function UpdateBookingModal({
                   </label>
                   {selectedExtraMinutes > 0 && (
                     <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400">
-                      +{selectedExtraMinutes} min (+{fmtPrice(extraTimePrice)} {currency})
+                      +{selectedExtraMinutes} min ({selectedExtraSession === 'all' && rawSessions.length > 1 ? `x${rawSessions.length} sessions, ` : ''}+{fmtPrice(extraTimePrice)} {currency})
                     </span>
                   )}
                 </div>
+
+                {/* Session selector for extra minutes when multiple sessions exist */}
+                {rawSessions.length > 1 && (
+                  <div className="space-y-1.5 rounded-xl border border-border/60 bg-muted/20 p-2.5">
+                    <p className="text-[11px] font-bold text-muted-foreground">Select session for extra time:</p>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedExtraSession('all')}
+                        className={cn(
+                          'rounded-lg px-2.5 py-1 text-xs font-bold transition border cursor-pointer',
+                          selectedExtraSession === 'all'
+                            ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                            : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                        )}
+                      >
+                        All Sessions ({rawSessions.length})
+                      </button>
+                      {rawSessions.map((s, idx) => {
+                        const sName =
+                          s.service_name ||
+                          (s.services && s.services[0]?.name) ||
+                          `Session ${idx + 1}`;
+                        const tName = s.therapist_data?.name || s.therapist_name || '';
+                        const isSelected = selectedExtraSession === idx;
+                        return (
+                          <button
+                            key={s.session_id || idx}
+                            type="button"
+                            onClick={() => setSelectedExtraSession(idx)}
+                            className={cn(
+                              'rounded-lg px-2.5 py-1 text-xs font-bold transition border cursor-pointer truncate max-w-[200px]',
+                              isSelected
+                                ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                                : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
+                            )}
+                            title={`Session ${idx + 1}: ${sName} ${tName ? `(${tName})` : ''}`}
+                          >
+                            Session {idx + 1}: {sName} {tName ? `(${tName})` : ''}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 sm:grid-cols-3 gap-2">
                   {extraOptions.map((mins) => {
