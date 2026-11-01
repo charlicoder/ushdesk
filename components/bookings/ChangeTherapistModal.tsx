@@ -18,6 +18,8 @@ export interface ChangeTherapistModalProps {
   currentTherapistName?: string;
   secondaryTherapistName?: string;
   targetSlot?: 'primary' | 'secondary';
+  /** When given, only this session of a multi-session booking is re-assigned. */
+  session?: AnyRecord | null;
   onClose: () => void;
   onSuccess: (updatedTherapist: AnyRecord, targetSlot?: 'primary' | 'secondary', freshBooking?: AnyRecord) => void;
 }
@@ -128,6 +130,7 @@ export function ChangeTherapistModal({
   currentTherapistName,
   secondaryTherapistName,
   targetSlot = 'primary',
+  session,
   onClose,
   onSuccess,
 }: ChangeTherapistModalProps) {
@@ -146,8 +149,28 @@ export function ChangeTherapistModal({
 
   // Extract raw booking and related fields
   const raw = useMemo(() => {
-    return (initialBooking?.raw ?? initialBooking ?? {}) as AnyRecord;
-  }, [initialBooking]);
+    const base = (initialBooking?.raw ?? initialBooking ?? {}) as AnyRecord;
+    if (!session) return base;
+    // Session mode: every field below is taken from the session itself.
+    const sSvcs = (Array.isArray(session.services) ? session.services : []) as AnyRecord[];
+    const firstSvc = sSvcs[0] ?? {};
+    return {
+      ...base,
+      timeslots: undefined,
+      time_slots: undefined,
+      service_id: firstSvc.service_id ?? session.service_ids?.[0] ?? base.service_id,
+      service_data: firstSvc.service_data ?? session.service_data ?? base.service_data,
+      service_arrangement_id: session.service_arrangement_id ?? base.service_arrangement_id,
+      service_arrangement_data: session.service_arrangement_data ?? base.service_arrangement_data,
+      therapist_id: session.therapist_id ?? undefined,
+      therapist_data: session.therapist_data ?? {},
+      secondary_therapist_id: session.secondary_therapist_id ?? undefined,
+      secondary_therapist_data: session.secondary_therapist_data ?? undefined,
+      appointment_start: session.appointment_start ?? base.appointment_start,
+      appointment_end: session.appointment_end ?? base.appointment_end,
+      total_duration: session.total_session_duration ?? base.total_duration,
+    } as AnyRecord;
+  }, [initialBooking, session]);
 
   const sd = (raw.service_data ?? {}) as AnyRecord;
   const sad = (raw.service_arrangement_data ?? raw.arrangement ?? raw.service_arrangement ?? {}) as AnyRecord;
@@ -215,10 +238,10 @@ export function ChangeTherapistModal({
   const timeslots = useMemo(() => {
     return computeBookingTimeslots(
       raw,
-      initialBooking?.appointment_start,
-      initialBooking?.appointment_end
+      session?.appointment_start ?? initialBooking?.appointment_start,
+      session?.appointment_end ?? initialBooking?.appointment_end
     );
-  }, [raw, initialBooking]);
+  }, [raw, initialBooking, session]);
 
   const timeslotsQueryParam = useMemo(() => {
     return `[${timeslots.join(', ')}]`;
@@ -395,7 +418,10 @@ export function ChangeTherapistModal({
         therapist_data: therapistData,
       };
 
-      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
+      const updateUrl = session?.session_id
+        ? `/booknpay/api/v1/bookings/${bookingId}/sessions/${session.session_id}/therapist/`
+        : `/booknpay/api/v1/bookings/${bookingId}/`;
+      const res = await authedFetch(updateUrl, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

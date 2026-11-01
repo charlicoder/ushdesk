@@ -949,6 +949,42 @@ function buildScheduleFromApi(
     };
     const durationMin = bk.duration_minutes ?? (em - sm);
     const paymentStatus = (bk.payment_status ?? (bk as any).paymentStatus ?? '').toString().toLowerCase().trim();
+
+    // Multi-session support: if booking contains sessions, block per session and per arrangement!
+    if (Array.isArray((bk as any).sessions) && (bk as any).sessions.length > 0) {
+      for (const sess of (bk as any).sessions) {
+        const arrId = String(sess.service_arrangement_id || (sess.service_arrangement_data as any)?.id || bk.arrangement_id);
+        if (!arrId) continue;
+        if (!bookingMap[arrId]) bookingMap[arrId] = [];
+        const sessStart = sess.appointment_start || sess.start || bk.start;
+        const sessEnd = sess.appointment_end || sess.end || bk.end;
+        const ss = kuwaitWallClockDate(sessStart);
+        const se = kuwaitWallClockDate(sessEnd);
+        const ssm = ss.getUTCHours() * 60 + ss.getUTCMinutes();
+        const sem = se.getUTCHours() * 60 + se.getUTCMinutes();
+        const sessDurMin = sess.total_session_duration || sess.services_duration || sess.duration_minutes || (sem - ssm);
+        const sessServiceName =
+          sess.service_name ||
+          (sess.services?.[0]?.name || (sess.services?.[0] as any)?.service_name) ||
+          bk.service_name ||
+          '';
+
+        bookingMap[arrId].push({
+          startMin:    ssm,
+          endMin:      sem,
+          startLabel:  fmt(ss.getUTCHours(), ss.getUTCMinutes()),
+          endLabel:    fmt(se.getUTCHours(), se.getUTCMinutes()),
+          duration:    `${sessDurMin}m`,
+          reference:   bk.id,
+          bookingsId:  bk.bookings_id,
+          status:      bk.status ?? (bk as any).booking_status ?? 'confirmed',
+          serviceName: sessServiceName,
+          payment_status: paymentStatus || undefined,
+        });
+      }
+      continue;
+    }
+
     bookingMap[bk.arrangement_id].push({
       startMin:    sm,
       endMin:      em,
@@ -1239,6 +1275,7 @@ export default function BranchAppointmentsPage() {
                 const list = Array.isArray(bpJson) ? bpJson : (bpJson?.data ?? bpJson?.results ?? []);
                 const payMap: Record<string, string> = {};
                 const statusMap: Record<string, string> = {};
+                const sessionsMap: Record<string, any[]> = {};
                 for (const item of list) {
                   const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
                   const st = String(item?.status ?? (item as any)?.booking_status ?? '').toLowerCase().trim();
@@ -1246,20 +1283,24 @@ export default function BranchAppointmentsPage() {
                   for (const id of ids) {
                     if (ps) payMap[id] = ps;
                     if (st) statusMap[id] = st;
+                    if (Array.isArray(item.sessions) && item.sessions.length > 0) {
+                      sessionsMap[id] = item.sessions as any[];
+                    }
                   }
                 }
-                if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0) {
+                if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0 || Object.keys(sessionsMap).length > 0) {
                   record.bookings = record.bookings.map(bk => {
                     const matchId = [
                       String((bk as any).booking_id ?? bk.bookings_id ?? ''),
                       String(bk.bookings_id ?? ''),
                       String(bk.id ?? ''),
-                    ].find(id => id && (payMap[id] || statusMap[id]));
+                    ].find(id => id && (payMap[id] || statusMap[id] || sessionsMap[id]));
                     if (!matchId) return bk;
                     return {
                       ...bk,
                       ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
                       ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
+                      ...(sessionsMap[matchId] ? { sessions: sessionsMap[matchId] } : {}),
                     };
                   });
                 }

@@ -9,11 +9,12 @@ import {
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
   FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
+  Trash2,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
-import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString, nowWithTimezone } from '@/lib/datetime';
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, kuwaitDateString, nowWithTimezone, parseClockToMinutes } from '@/lib/datetime';
 import { useAppSelector } from '@/store/hooks';
 import { checkBookingCancellationEligibility, getBookingAppointmentDateTime } from '@/lib/cancellation-policy';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
@@ -79,6 +80,7 @@ export interface Booking {
   addon_price?: string | null;
   total_price?: string | null;
   services?: Array<Record<string, unknown>>;
+  sessions?: Array<Record<string, unknown>>;
   raw: Record<string, unknown>;
 }
 
@@ -253,6 +255,7 @@ export function normalise(raw: Record<string, unknown>): Booking {
       customer_notes:    (raw.customer_notes ?? raw.customer_message ?? raw.notes ?? (raw.customer_data as any)?.customer_notes ?? null) as string | null,
       addons:            rawAddons,
       services:          svcList,
+      sessions:          (Array.isArray(raw.sessions) ? raw.sessions : []) as Array<Record<string, unknown>>,
       pricing:           (raw.pricing ?? raw.pricing_details ?? null) as Record<string, unknown> | null,
       raw,
     };
@@ -351,6 +354,31 @@ export function formatTime(iso: string) {
     hour12: true,
     timeZone: KUWAIT_TZ,
   });
+}
+
+const minutesToClock12 = (min: number) => {
+  let h = Math.floor(min / 60) % 24;
+  const m = min % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+};
+
+export function formatTimeRange(startIsoOrTime: string, endIsoOrTime?: string | null, durationMinutes?: number) {
+  const startFmt = formatTime(startIsoOrTime);
+  let endFmt = endIsoOrTime ? formatTime(endIsoOrTime) : '';
+  if (!endFmt && startIsoOrTime && durationMinutes && durationMinutes > 0) {
+    try {
+      const startMin = parseClockToMinutes(startFmt || startIsoOrTime);
+      if (typeof startMin === 'number' && !isNaN(startMin) && startMin >= 0) {
+        endFmt = minutesToClock12(startMin + durationMinutes);
+      }
+    } catch {}
+  }
+  if (startFmt && endFmt && startFmt !== endFmt) {
+    return `${startFmt} – ${endFmt}`;
+  }
+  return startFmt || '';
 }
 export function initials(name: string) {
   return name.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() || '?';
@@ -635,6 +663,10 @@ export function BookingDetailPopup({
   } | null>(null);
   const [showChangeTherapistModal, setShowChangeTherapistModal] = useState(false);
   const [changeTherapistTarget, setChangeTherapistTarget] = useState<'primary' | 'secondary'>('primary');
+
+  // Session details popup + per-session therapist change
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [showSessionTherapistModal, setShowSessionTherapistModal] = useState(false);
 
   const openChangeTherapist = (slot: 'primary' | 'secondary' = 'primary') => {
     setChangeTherapistTarget(slot);
@@ -1527,6 +1559,160 @@ export function BookingDetailPopup({
   const discountAmount = rawDiscount > 0 ? rawDiscount : (rawTotal > 0 && subtotalPrice > rawTotal ? (subtotalPrice - rawTotal) : 0);
   const computedTotal = rawTotal > 0 ? rawTotal : Math.max(0, subtotalPrice - discountAmount);
   const currency = booking.currency || 'KWD';
+
+  // ── Session-wise breakdown (matches attached session card design) ───────────
+  const rawSessions = (
+    Array.isArray(detail?.sessions) && (detail?.sessions as unknown[]).length > 0
+      ? detail?.sessions
+      : (Array.isArray(booking.sessions) && booking.sessions.length > 0
+        ? booking.sessions
+        : (Array.isArray(booking.raw?.sessions) ? booking.raw.sessions : []))
+  ) as Array<Record<string, unknown>>;
+
+  const displaySessions = (() => {
+    if (rawSessions.length > 0) {
+      return rawSessions.map((s, idx) => {
+        const sArrData = (s.service_arrangement_data ?? {}) as Record<string, unknown>;
+        const sTherapistData = (s.therapist_data ?? {}) as Record<string, unknown>;
+        const sSecTherapistData = (s.secondary_therapist_data ?? {}) as Record<string, unknown>;
+
+        // 1. Resolve session services (fall back to matching by session_id or position in booking.services)
+        let sServices = (Array.isArray(s.services) ? s.services : []) as Array<Record<string, unknown>>;
+        if (sServices.length === 0) {
+          const allSvcs = (
+            (Array.isArray(detail?.services) ? detail?.services : null) ||
+            (Array.isArray(booking.services) ? booking.services : null) ||
+            (Array.isArray(booking.raw?.services) ? booking.raw?.services : null) ||
+            []
+          ) as Array<Record<string, unknown>>;
+          if (s.session_id) {
+            sServices = allSvcs.filter(sv => String(sv.session_id) === String(s.session_id));
+          }
+          if (sServices.length === 0 && allSvcs.length > idx) {
+            sServices = [allSvcs[idx]];
+          }
+        }
+
+        // 2. Extract service name(s) specifically for THIS session
+        const sServiceNames = sServices.map((sv) => {
+          const sd = (sv.service_data ?? {}) as Record<string, unknown>;
+          return String(
+            sv.name ??
+            sv.service_name ??
+            sd.name ??
+            sd.service_name ??
+            ''
+          ).trim();
+        }).filter(Boolean);
+
+        const sName =
+          (sServiceNames.length > 0 ? sServiceNames.join(' + ') : '') ||
+          (typeof s.service_name === 'string' && s.service_name.trim() ? s.service_name.trim() : '') ||
+          ((s.service_data as any)?.name ?? (s.service_data as any)?.service_name ?? '') ||
+          (multiItems[idx]?.name ? multiItems[idx].name : '') ||
+          (rawSessions.length === 1 ? (booking.service_name || 'Service') : `Session ${idx + 1}`);
+
+        const sRoom =
+          String(sArrData.name ?? sArrData.arrangement_name ?? s.service_arrangement_name ?? s.room_name ?? booking.arrangement_name ?? 'Single Room').trim() ||
+          'Single Room';
+
+        const sTherapist =
+          extractTherapistName(sTherapistData, s.therapist_name as string) ||
+          primaryTherapistName ||
+          booking.therapist_name ||
+          '—';
+
+        const sSecTherapist =
+          extractTherapistName(sSecTherapistData, s.secondary_therapist_name as string) ||
+          null;
+
+        const sStart = String(s.appointment_start ?? s.appointment_time ?? (idx === 0 ? booking.appointment_start : '') ?? '');
+        const sEnd = String(s.appointment_end ?? s.appointment_endtime ?? '');
+
+        const sDur = Number(
+          s.total_session_duration ??
+          s.duration_minutes ??
+          s.services_duration ??
+          (sServices[0]?.duration_minutes || sServices[0]?.base_duration) ??
+          60
+        );
+
+        const timeRange = formatTimeRange(sStart, sEnd, sDur);
+        const timeLabel = timeRange ? `${timeRange} (${sDur} min)` : `${sDur} min`;
+
+        const sPrice = parseFloat(
+          String(
+            s.session_price ??
+            s.services_price ??
+            sServices[0]?.base_price ??
+            sServices[0]?.arrangement_price ??
+            sServices[0]?.price ??
+            '0'
+          )
+        ) || 0;
+
+        return {
+          id: String(s.session_id ?? `session_${idx}`),
+          position: typeof s.position === 'number' ? s.position : idx,
+          number: idx + 1,
+          serviceName: String(sName).toUpperCase(),
+          roomName: sRoom,
+          therapistName: sTherapist,
+          secondaryTherapistName: sSecTherapist,
+          timeLabel,
+          price: sPrice,
+          raw: { ...s, services: sServices } as Record<string, unknown> | null,
+          durationMin: sDur,
+          rangeLabel: timeRange,
+        };
+      });
+    }
+
+    if (isMultiService && multiItems.length > 0) {
+      let cumulativeOffset = 0;
+      return multiItems.map((it, idx) => {
+        const itemDur = it.duration || serviceDuration || 60;
+        let itemStart = booking.appointment_start;
+        try {
+          const bMin = parseClockToMinutes(formatTime(booking.appointment_start));
+          if (typeof bMin === 'number' && !isNaN(bMin) && bMin >= 0) {
+            itemStart = minutesToClock12(bMin + cumulativeOffset);
+          }
+        } catch {}
+        cumulativeOffset += itemDur;
+        return {
+          id: `ms_${idx}`,
+          position: idx,
+          number: idx + 1,
+          serviceName: String(it.name).toUpperCase(),
+          roomName: booking.arrangement_name || 'Single Room',
+          therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
+          secondaryTherapistName: secondaryTherapistName || null,
+          timeLabel: `${formatTimeRange(itemStart, null, itemDur)} (${itemDur} min)`,
+          price: it.price,
+          raw: null as Record<string, unknown> | null,
+          durationMin: itemDur,
+          rangeLabel: formatTimeRange(itemStart, null, itemDur),
+        };
+      });
+    }
+
+    const singleDur = totalDuration || serviceDuration || 60;
+    return [{
+      id: 'single_session',
+      position: 0,
+      number: 1,
+      serviceName: String(booking.service_name || 'Service').toUpperCase(),
+      roomName: booking.arrangement_name || 'Single Room',
+      therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
+      secondaryTherapistName: secondaryTherapistName || null,
+      timeLabel: `${formatTimeRange(booking.appointment_start, booking.appointment_end, singleDur)} (${singleDur} min)`,
+      price: servicePrice > 0 ? servicePrice : computedTotal,
+      raw: null as Record<string, unknown> | null,
+      durationMin: singleDur,
+      rangeLabel: formatTimeRange(booking.appointment_start, booking.appointment_end, singleDur),
+    }];
+  })();
 
   // ── History & Creator & Payment references ──────────────────────────
   const historyList = (detail?.status_history && Array.isArray(detail.status_history))
@@ -2461,84 +2647,134 @@ export function BookingDetailPopup({
                   </DRow>
                 </div>
 
-                {/* Row 2: Services, Add-ons & Extra time — itemised with price and duration */}
-                <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs">
-                  <div className="flex items-center justify-between gap-2 border-b border-border/50 bg-gradient-to-r from-primary/10 to-transparent px-4 py-2.5">
+                {/* Row 2: Session-wise Breakdown matching attached screenshot */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
                     <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                       <Scissors className="h-3.5 w-3.5 text-primary" />
-                      {serviceItems.length > 1 ? `Services (${serviceItems.length})` : 'Service'}
+                      {displaySessions.length > 1 ? `Sessions (${displaySessions.length})` : 'Session'}
                     </p>
-                    <div className="grid grid-cols-[64px_96px] gap-2 text-right text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                      <span>Duration</span><span>Price</span>
-                    </div>
                   </div>
-                  <div className="divide-y divide-border/40">
-                    {serviceItems.map((it, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 px-4 py-2.5">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-primary/10 text-[11px] font-extrabold text-primary">{i + 1}</span>
+
+                  <div className="space-y-3">
+                    {displaySessions.map((sess) => (
+                      <div
+                        key={sess.id}
+                        role={sess.raw?.session_id ? 'button' : undefined}
+                        tabIndex={sess.raw?.session_id ? 0 : undefined}
+                        onClick={() => { if (sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
+                        className={cn(
+                          'flex items-center justify-between gap-3 rounded-2xl border border-[#f4cfd3] bg-white p-3.5 sm:p-4 shadow-xs hover:border-[#e8b5bb] transition-colors',
+                          Boolean(sess.raw?.session_id) && 'cursor-pointer'
+                        )}
+                      >
+                        {/* Left: Number circle + Info */}
+                        <div className="flex min-w-0 items-center gap-3">
+                          {/* Solid Circular Badge */}
+                          <span className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-[#b85d63] text-sm font-bold text-white shadow-xs">
+                            {sess.number}
+                          </span>
+
                           <div className="min-w-0">
-                            <p className="truncate text-xs font-bold text-foreground">{it.name}</p>
-                            {it.category && <p className="text-[10px] text-muted-foreground">{it.category}</p>}
+                            {/* Service Name (bold uppercase) + Room Pill */}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-sm sm:text-base font-extrabold tracking-wide text-foreground">
+                                {sess.serviceName}
+                              </h4>
+                              <span className="inline-flex items-center rounded-full bg-[#faebea] px-2.5 py-0.5 text-xs font-semibold text-[#b85d63]">
+                                {sess.roomName}
+                              </span>
+                            </div>
+
+                            {/* Subtitle: User icon + Therapist name · Clock icon + Time (duration) */}
+                            <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                              <User className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <span className="font-medium text-foreground/80">
+                                {sess.therapistName}
+                                {sess.secondaryTherapistName ? ` + ${sess.secondaryTherapistName}` : ''}
+                              </span>
+                              <span className="font-bold text-muted-foreground/60 mx-1">·</span>
+                              <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                              <span className="font-medium text-foreground/80">{sess.timeLabel}</span>
+                            </div>
                           </div>
                         </div>
-                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
-                          <span className="text-muted-foreground">{it.duration > 0 ? `${it.duration} min` : '—'}</span>
-                          <span className="font-mono font-bold text-foreground">{it.price.toFixed(3)} {currency}</span>
+
+                        {/* Right: Price + Trash Action Button */}
+                        <div className="flex shrink-0 items-center gap-3">
+                          <span className="font-mono text-sm sm:text-base font-extrabold text-[#b85d63]">
+                            {sess.price.toFixed(3)} {currency}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleCancel(); }}
+                            disabled={!canShowCancel || isCancelled || isCompleted}
+                            title={canShowCancel && !isCancelled && !isCompleted ? 'Cancel / Remove' : undefined}
+                            className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-[#fdeeee] text-[#d9534f] hover:bg-rose-100 hover:text-red-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
                         </div>
                       </div>
                     ))}
-                    {addons.length > 0 && (
-                      <div className="bg-muted/20 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                        <Plus className="h-3 w-3 text-primary" /> Add-ons ({addons.length})
-                      </div>
-                    )}
-                    {addons.map((addon, idx) => {
-                      const aName = String(addon.name ?? addon.addon_name ?? `Addon #${idx + 1}`);
-                      const aPrice = parseFloat(String(addon.price ?? addon.base_price ?? '0')) || 0;
-                      const aDur = Number(addon.duration_minutes ?? addon.duration ?? 0) || 0;
-                      return (
-                        <div key={`a${idx}`} className="flex items-center justify-between gap-2 px-4 py-2">
-                          <p className="min-w-0 truncate pl-8 text-xs font-medium text-foreground">{aName}</p>
+                  </div>
+
+                  {/* Summary for add-ons, extra minutes, discount, and total */}
+                  {(addons.length > 0 || extraMinutes > 0 || discountAmount > 0) && (
+                    <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs divide-y divide-border/40">
+                      {addons.length > 0 && (
+                        <div className="bg-muted/20 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <Plus className="h-3 w-3 text-primary" /> Add-ons ({addons.length})
+                        </div>
+                      )}
+                      {addons.map((addon, idx) => {
+                        const aName = String(addon.name ?? addon.addon_name ?? `Addon #${idx + 1}`);
+                        const aPrice = parseFloat(String(addon.price ?? addon.base_price ?? '0')) || 0;
+                        const aDur = Number(addon.duration_minutes ?? addon.duration ?? 0) || 0;
+                        return (
+                          <div key={`a${idx}`} className="flex items-center justify-between gap-2 px-4 py-2">
+                            <p className="min-w-0 truncate pl-8 text-xs font-medium text-foreground">{aName}</p>
+                            <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
+                              <span className="text-muted-foreground">{aDur > 0 ? `+${aDur} min` : '—'}</span>
+                              <span className="font-mono font-semibold text-primary">+{aPrice.toFixed(3)} {currency}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {extraMinutes > 0 && (
+                        <div className="flex items-center justify-between gap-2 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-2.5">
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400"><Clock className="h-3.5 w-3.5" /></span>
+                            <p className="text-xs font-bold text-foreground">Extra Time ({extraMinutes} min)</p>
+                          </div>
                           <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
-                            <span className="text-muted-foreground">{aDur > 0 ? `+${aDur} min` : '—'}</span>
-                            <span className="font-mono font-semibold text-primary">+{aPrice.toFixed(3)} {currency}</span>
+                            <span className="text-muted-foreground">+{extraMinutes} min</span>
+                            <span className="font-mono font-bold text-amber-700 dark:text-amber-300">+{extraPrice.toFixed(3)} {currency}</span>
                           </div>
                         </div>
-                      );
-                    })}
-                    {extraMinutes > 0 && (
-                      <div className="flex items-center justify-between gap-2 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-2.5">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400"><Clock className="h-3.5 w-3.5" /></span>
-                          <p className="text-xs font-bold text-foreground">Extra Time ({extraMinutes} min)</p>
+                      )}
+                      {discountAmount > 0 && (
+                        <div className="flex items-center justify-between gap-2 bg-rose-50/50 dark:bg-rose-950/20 px-4 py-2.5">
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400"><Tag className="h-3.5 w-3.5" /></span>
+                            <p className="text-xs font-bold text-foreground">Discount Applied</p>
+                          </div>
+                          <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
+                            <span className="text-muted-foreground">—</span>
+                            <span className="font-mono font-bold text-rose-700 dark:text-rose-300">-{discountAmount.toFixed(3)} {currency}</span>
+                          </div>
                         </div>
-                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
-                          <span className="text-muted-foreground">+{extraMinutes} min</span>
-                          <span className="font-mono font-bold text-amber-700 dark:text-amber-300">+{extraPrice.toFixed(3)} {currency}</span>
-                        </div>
-                      </div>
-                    )}
-                    {discountAmount > 0 && (
-                      <div className="flex items-center justify-between gap-2 bg-rose-50/50 dark:bg-rose-950/20 px-4 py-2.5">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-rose-500/15 text-rose-600 dark:text-rose-400"><Tag className="h-3.5 w-3.5" /></span>
-                          <p className="text-xs font-bold text-foreground">Discount Applied</p>
-                        </div>
-                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
-                          <span className="text-muted-foreground">—</span>
-                          <span className="font-mono font-bold text-rose-700 dark:text-rose-300">-{discountAmount.toFixed(3)} {currency}</span>
+                      )}
+                      <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-primary/5 px-4 py-3">
+                        <p className="text-xs font-extrabold uppercase tracking-wider text-foreground">Total</p>
+                        <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right">
+                          <span className="text-xs font-bold text-primary">{totalDuration} min</span>
+                          <span className="font-mono text-sm font-extrabold text-primary">{computedTotal.toFixed(3)} {currency}</span>
                         </div>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between gap-2 border-t border-border/60 bg-primary/5 px-4 py-3">
-                    <p className="text-xs font-extrabold uppercase tracking-wider text-foreground">Total</p>
-                    <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right">
-                      <span className="text-xs font-bold text-primary">{totalDuration} min</span>
-                      <span className="font-mono text-sm font-extrabold text-primary">{computedTotal.toFixed(3)} {currency}</span>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Date & Time + Duration Breakdown (Service + Addons + Extra) */}
@@ -2557,176 +2793,15 @@ export function BookingDetailPopup({
                   </DRow>
                 </div>
 
-                {/* Branch and Arrangement / Room in one row */}
+                {/* Branch and Customer Notes */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <DRow icon={MapPin} label="Branch">{booking.branch_name || '—'}</DRow>
-                  <DRow icon={Home} label="Arrangement / Room">{booking.arrangement_name || '—'}</DRow>
+                  <DRow icon={FileText} label="Customer Notes">
+                    <span className="text-foreground text-xs break-words">
+                      {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
+                    </span>
+                  </DRow>
                 </div>
-
-                {/* Therapist(s) and Customer Notes */}
-                {isDualTherapistBooking ? (
-                  <>
-                    {/* Dual Therapists in one row */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <DRow icon={User} label="Therapist 1 (Primary)">
-                        <div className="flex items-center justify-between gap-3 pt-0.5">
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            {/* Avatar */}
-                            <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-border/70 bg-muted shadow-xs">
-                              {primaryTherapistImg ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={primaryTherapistImg}
-                                  alt={primaryTherapistName || 'Therapist 1'}
-                                  className="h-full w-full object-cover"
-                                  onError={(e) => {
-                                    (e.target as HTMLElement).style.display = 'none';
-                                  }}
-                                />
-                              ) : primaryTherapistName && primaryTherapistName !== '—' ? (
-                                <div className="grid h-full w-full place-items-center bg-gradient-to-br from-primary/80 to-primary text-white text-[11px] font-bold">
-                                  {primaryTherapistName.slice(0, 2).toUpperCase()}
-                                </div>
-                              ) : (
-                                <div className="grid h-full w-full place-items-center bg-muted text-muted-foreground">
-                                  <User className="h-4 w-4" />
-                                </div>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <span className="truncate font-semibold text-foreground text-sm block" title={primaryTherapistName}>
-                                {primaryTherapistName}
-                              </span>
-                            </div>
-                          </div>
-                          {canChangeTherapist && (
-                            <button
-                              type="button"
-                              onClick={() => openChangeTherapist('primary')}
-                              className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer active:scale-95"
-                            >
-                              <UserCog className="h-3.5 w-3.5" />
-                              Change
-                            </button>
-                          )}
-                        </div>
-                      </DRow>
-
-                      <DRow icon={Heart} label="Therapist 2 (Secondary)">
-                        <div className="flex items-center justify-between gap-3 pt-0.5">
-                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                            {/* Avatar */}
-                            <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-rose-400/30 bg-muted shadow-xs">
-                              {secondaryTherapistImg ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={secondaryTherapistImg}
-                                  alt={secondaryTherapistName || 'Therapist 2'}
-                                  className="h-full w-full object-cover"
-                                  onError={(e) => {
-                                    (e.target as HTMLElement).style.display = 'none';
-                                  }}
-                                />
-                              ) : secondaryTherapistName ? (
-                                <div className="grid h-full w-full place-items-center bg-gradient-to-br from-rose-500 to-rose-600 text-white text-[11px] font-bold">
-                                  {secondaryTherapistName.slice(0, 2).toUpperCase()}
-                                </div>
-                              ) : (
-                                <div className="grid h-full w-full place-items-center bg-muted text-muted-foreground">
-                                  <Heart className="h-4 w-4 text-muted-foreground/60" />
-                                </div>
-                              )}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <span
-                                className={cn(
-                                  "truncate font-semibold text-sm block",
-                                  secondaryTherapistName ? "text-foreground" : "text-muted-foreground italic font-normal"
-                                )}
-                                title={secondaryTherapistName || 'Not assigned'}
-                              >
-                                {secondaryTherapistName || 'Not assigned'}
-                              </span>
-                            </div>
-                          </div>
-                          {canChangeTherapist && (
-                            <button
-                              type="button"
-                              onClick={() => openChangeTherapist('secondary')}
-                              className={cn(
-                                "shrink-0 inline-flex items-center gap-1.5 rounded-xl px-2.5 py-1 text-xs font-semibold transition cursor-pointer border active:scale-95",
-                                secondaryTherapistName
-                                  ? "border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400"
-                                  : "border-primary/20 bg-primary text-white hover:bg-primary/90"
-                              )}
-                            >
-                              <UserCog className="h-3.5 w-3.5" />
-                              {secondaryTherapistName ? 'Change' : 'Assign'}
-                            </button>
-                          )}
-                        </div>
-                      </DRow>
-                    </div>
-
-                    <DRow icon={FileText} label="Customer Notes">
-                      <span className="text-foreground text-xs break-words">
-                        {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
-                      </span>
-                    </DRow>
-                  </>
-                ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <DRow icon={User} label="Therapist">
-                      <div className="flex items-center justify-between gap-3 pt-0.5">
-                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          {/* Avatar */}
-                          <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full border border-border/70 bg-muted shadow-xs">
-                            {primaryTherapistImg ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={primaryTherapistImg}
-                                alt={primaryTherapistName || 'Therapist'}
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  (e.target as HTMLElement).style.display = 'none';
-                                }}
-                              />
-                            ) : primaryTherapistName && primaryTherapistName !== '—' ? (
-                              <div className="grid h-full w-full place-items-center bg-gradient-to-br from-primary/80 to-primary text-white text-[11px] font-bold">
-                                {primaryTherapistName.slice(0, 2).toUpperCase()}
-                              </div>
-                            ) : (
-                              <div className="grid h-full w-full place-items-center bg-muted text-muted-foreground">
-                                <User className="h-4 w-4" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <span className="truncate font-semibold text-foreground text-sm block" title={primaryTherapistName}>
-                              {primaryTherapistName}
-                            </span>
-                          </div>
-                        </div>
-                        {canChangeTherapist && (
-                          <button
-                            type="button"
-                            onClick={() => openChangeTherapist('primary')}
-                            className="shrink-0 inline-flex items-center gap-1.5 rounded-xl border border-primary/20 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1 text-xs font-semibold transition cursor-pointer active:scale-95"
-                          >
-                            <UserCog className="h-3.5 w-3.5" />
-                            Change
-                          </button>
-                        )}
-                      </div>
-                    </DRow>
-
-                    <DRow icon={FileText} label="Customer Notes">
-                      <span className="text-foreground text-xs break-words">
-                        {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
-                      </span>
-                    </DRow>
-                  </div>
-                )}
 
                 {/* Pricing Summary (Sum of all items: Service + Addons + Extra Minutes) */}
                 <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/30 to-muted/10 p-4 space-y-3">
@@ -3532,6 +3607,92 @@ export function BookingDetailPopup({
           initialAvailabilitiesPromise={updateFetchState?.promise}
         />
       )}
+
+      {/* Session Details popup */}
+      {(() => {
+        const activeSess = activeSessionId
+          ? displaySessions.find((x) => String(x.raw?.session_id ?? '') === activeSessionId)
+          : null;
+        if (!activeSess || showSessionTherapistModal) return null;
+        const canChange = !isCancelled && !isCompleted;
+        return (
+          <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" onClick={() => setActiveSessionId(null)}>
+            <div className="w-full max-w-md rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between border-b border-border/50 bg-muted/20 px-5 py-4">
+                <div className="flex items-center gap-3">
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-[#b85d63] text-sm font-bold text-white">{activeSess.number}</span>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Session {activeSess.number}</p>
+                    <h3 className="text-sm font-extrabold text-foreground">{activeSess.serviceName}</h3>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setActiveSessionId(null)} className="rounded-full p-2 text-muted-foreground hover:bg-muted cursor-pointer">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="space-y-3 px-5 py-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Time</span>
+                  <span className="font-semibold text-foreground">{activeSess.timeLabel}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Arrangement / Room</span>
+                  <span className="font-semibold text-foreground">{activeSess.roomName}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Therapist</span>
+                  <span className="flex items-center gap-2 font-semibold text-foreground text-right">
+                    {activeSess.therapistName}
+                    {activeSess.secondaryTherapistName ? ` + ${activeSess.secondaryTherapistName}` : ''}
+                    {canChange && (
+                      <button
+                        type="button"
+                        onClick={() => setShowSessionTherapistModal(true)}
+                        className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/15 transition cursor-pointer"
+                      >
+                        <UserCog className="h-3 w-3" /> Change
+                      </button>
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-3 border-t border-border/40 pt-3">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Session price</span>
+                  <span className="font-mono font-extrabold text-[#b85d63]">{activeSess.price.toFixed(3)} {currency}</span>
+                </div>
+              </div>
+              <div className="flex justify-end border-t border-border/50 bg-muted/20 px-5 py-3">
+                <button type="button" onClick={() => setActiveSessionId(null)} className="rounded-xl border border-border/60 bg-background px-4 py-2 text-xs font-semibold hover:bg-muted transition cursor-pointer">
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Change Therapist Modal (single session) */}
+      {showSessionTherapistModal && (() => {
+        const activeSess = displaySessions.find((x) => String(x.raw?.session_id ?? '') === activeSessionId);
+        if (!activeSess?.raw) return null;
+        return (
+          <ChangeTherapistModal
+            bookingId={booking.id}
+            initialBooking={(detail || booking) as unknown as Record<string, any>}
+            session={activeSess.raw as Record<string, any>}
+            currentTherapistName={activeSess.therapistName}
+            secondaryTherapistName={activeSess.secondaryTherapistName ?? undefined}
+            targetSlot="primary"
+            onClose={() => setShowSessionTherapistModal(false)}
+            onSuccess={(_t, _slot, freshBooking) => {
+              if (freshBooking && typeof freshBooking === 'object') {
+                setDetail(freshBooking as Record<string, unknown>);
+              }
+              setShowSessionTherapistModal(false);
+              onSuccess?.();
+            }}
+          />
+        );
+      })()}
 
       {/* Change Therapist Modal */}
       {showChangeTherapistModal && (

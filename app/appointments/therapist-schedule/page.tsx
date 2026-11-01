@@ -14,8 +14,8 @@ import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { isBranchRestrictedScheduleRole } from '@/lib/permissions';
 import {
-  TherapistScheduleBookingModal,
-} from '@/components/bookings/TherapistScheduleBookingModal';
+  NewAppointmentBookingModal,
+} from '@/components/bookings/NewAppointmentBookingModal';
 import { computeMaxContiguousMinutes } from '@/lib/booking-duration';
 import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
 import { TherapistDayWorkingHoursModal } from '@/components/employees/DaySlotDetailModal';
@@ -977,6 +977,64 @@ function buildScheduleFromApi(
     const paymentStatus = (bk.payment_status ?? (bk as any).paymentStatus ?? '').toString().toLowerCase().trim();
     const bookingType = String(bk.booking_type ?? (bk as any).type ?? '').toLowerCase().trim();
 
+    // Multi-session support: if booking contains a sessions array, block per session and per therapist!
+    const sessionsList = Array.isArray((bk as any).sessions) && (bk as any).sessions.length > 0
+      ? (bk as any).sessions
+      : null;
+
+    if (sessionsList) {
+      for (const sess of sessionsList) {
+        const sessTherapistId = String(sess.therapist_id || (sess.therapist_data as any)?.id || bk.therapist_id);
+        if (!sessTherapistId) continue;
+        if (!bookingMap[sessTherapistId]) bookingMap[sessTherapistId] = [];
+        const sessStart = sess.appointment_start || sess.start || bk.start;
+        const sessEnd = sess.appointment_end || sess.end || bk.end;
+        const ss = kuwaitWallClockDate(sessStart);
+        const se = kuwaitWallClockDate(sessEnd);
+        const ssm = ss.getUTCHours() * 60 + ss.getUTCMinutes();
+        const sem = se.getUTCHours() * 60 + se.getUTCMinutes();
+        const sessDurMin = sess.total_session_duration || sess.services_duration || sess.duration_minutes || (sem - ssm);
+        const sessServiceName =
+          sess.service_name ||
+          (sess.services?.[0]?.name || (sess.services?.[0] as any)?.service_name) ||
+          serviceName;
+
+        bookingMap[sessTherapistId].push({
+          startMin:   ssm,
+          endMin:     sem,
+          client:     clientName,
+          service:    sessServiceName,
+          startLabel: fmt(ss.getUTCHours(), ss.getUTCMinutes()),
+          endLabel:   fmt(se.getUTCHours(), se.getUTCMinutes()),
+          duration:   `${sessDurMin}m`,
+          reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
+          status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
+          payment_status: paymentStatus || undefined,
+          booking_type: bookingType || undefined,
+        });
+
+        // Also check if session has secondary therapist
+        const sessSecId = sess.secondary_therapist_id ? String(sess.secondary_therapist_id) : null;
+        if (sessSecId && sessSecId !== sessTherapistId) {
+          if (!bookingMap[sessSecId]) bookingMap[sessSecId] = [];
+          bookingMap[sessSecId].push({
+            startMin:   ssm,
+            endMin:     sem,
+            client:     clientName,
+            service:    sessServiceName,
+            startLabel: fmt(ss.getUTCHours(), ss.getUTCMinutes()),
+            endLabel:   fmt(se.getUTCHours(), se.getUTCMinutes()),
+            duration:   `${sessDurMin}m`,
+            reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
+            status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
+            payment_status: paymentStatus || undefined,
+            booking_type: bookingType || undefined,
+          });
+        }
+      }
+      continue;
+    }
+
     bookingMap[bk.therapist_id].push({
       startMin:   sm,
       endMin:     em,
@@ -1422,6 +1480,7 @@ export default function TherapistSchedulePage() {
 
             const payMap: Record<string, string> = {};
             const statusMap: Record<string, string> = {};
+            const sessionsMap: Record<string, any[]> = {};
 
             // Process booknpay bookings
             if (bpResult) {
@@ -1435,6 +1494,9 @@ export default function TherapistSchedulePage() {
                 for (const id of ids) {
                   if (ps) payMap[id] = ps;
                   if (st) statusMap[id] = st;
+                  if (Array.isArray(bk.sessions) && bk.sessions.length > 0) {
+                    sessionsMap[id] = bk.sessions as any[];
+                  }
                 }
               }
             }
@@ -1456,18 +1518,19 @@ export default function TherapistSchedulePage() {
               }
             }
 
-            if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0) {
+            if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0 || Object.keys(sessionsMap).length > 0) {
               record.bookings = record.bookings.map(bk => {
                 const matchId = [
                   String(bk.booking_id ?? ''),
                   String(bk.bookings_id ?? ''),
                   String(bk.id ?? ''),
-                ].find(id => id && (payMap[id] || statusMap[id]));
+                ].find(id => id && (payMap[id] || statusMap[id] || sessionsMap[id]));
                 if (!matchId) return bk;
                 return {
                   ...bk,
                   ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
                   ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
+                  ...(sessionsMap[matchId] ? { sessions: sessionsMap[matchId] } : {}),
                 };
               });
             }
@@ -2403,23 +2466,23 @@ export default function TherapistSchedulePage() {
         />
       )}
 
-      {/* ── New Therapist Schedule Booking Modal ── */}
+      {/* ── New Appointment Booking Modal (multi-session) ── */}
       {bookingModal && token && (
-        <TherapistScheduleBookingModal
+        <NewAppointmentBookingModal
           token={token}
-          timeSlot={bookingModal.timeSlot}
+          defaultTimeSlot={bookingModal.timeSlot}
           date={selectedDate}
           branchId={bookingModal.therapist.branchId || selectedBranchId}
           branchName={bookingModal.therapist.branchName || branchLabel}
-          therapistId={bookingModal.therapist.id}
-          therapistName={bookingModal.therapist.name}
-          therapistPhoto={bookingModal.therapist.photoUrl ?? null}
-          maxDurationMinutes={bookingModal.maxDurationMinutes}
+          defaultTherapistId={bookingModal.therapist.id}
+          defaultTherapistName={bookingModal.therapist.name}
+          defaultTherapistPhoto={bookingModal.therapist.photoUrl ?? null}
           onClose={() => {
             setBookingModal(null);
             setScheduleRefreshKey(k => k + 1);
           }}
           onSuccess={() => {
+            setBookingModal(null);
             setScheduleRefreshKey(k => k + 1);
           }}
         />

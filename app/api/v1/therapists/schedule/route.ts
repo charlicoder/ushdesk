@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
 
         const payMap = new Map<string, string>();
         const statusMap = new Map<string, string>();
+        const sessionsMap = new Map<string, any[]>();
 
         try {
           const fetchPromises: Promise<any>[] = [];
@@ -55,6 +56,9 @@ export async function GET(req: NextRequest) {
                   for (const id of ids) {
                     if (ps) payMap.set(id, ps);
                     if (st) statusMap.set(id, st);
+                    if (Array.isArray(item.sessions) && item.sessions.length > 0) {
+                      sessionsMap.set(id, item.sessions);
+                    }
                   }
                 }
               })
@@ -89,7 +93,7 @@ export async function GET(req: NextRequest) {
 
           await Promise.allSettled(fetchPromises);
 
-          if (payMap.size > 0 || statusMap.size > 0) {
+          if (payMap.size > 0 || statusMap.size > 0 || sessionsMap.size > 0) {
             for (const record of data) {
               if (!Array.isArray(record?.bookings)) continue;
               for (const bk of record.bookings) {
@@ -97,7 +101,7 @@ export async function GET(req: NextRequest) {
                   String(bk.booking_id ?? ''),
                   String(bk.bookings_id ?? ''),
                   String(bk.id ?? ''),
-                ].find(id => id && (payMap.has(id) || statusMap.has(id)));
+                ].find(id => id && (payMap.has(id) || statusMap.has(id) || sessionsMap.has(id)));
 
                 if (matchId) {
                   if (payMap.has(matchId)) {
@@ -105,6 +109,9 @@ export async function GET(req: NextRequest) {
                   }
                   if (statusMap.has(matchId)) {
                     bk.status = statusMap.get(matchId);
+                  }
+                  if (sessionsMap.has(matchId)) {
+                    bk.sessions = sessionsMap.get(matchId);
                   }
                 }
               }
