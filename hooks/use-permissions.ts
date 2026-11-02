@@ -18,6 +18,12 @@ import {
   canEditCustomer,
   canDeleteCustomer,
   canUpdateCustomerStatus,
+  canRescheduleBooking,
+  canCancelBooking,
+  canMakePayment,
+  canAdvanceBookingStatus,
+  canMarkNoShowBooking,
+  canPrintReceipt,
   isAdmin as checkIsAdmin,
   isAdministratorRole,
   isSpaDirectorRole,
@@ -72,6 +78,24 @@ export function usePermissions() {
 
     /** True if user has permission to update customer account status */
     canUpdateCustomerStatus: adminAccess || canUpdateCustomerStatus(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to reschedule bookings */
+    canRescheduleBooking: adminAccess || canRescheduleBooking(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to cancel bookings */
+    canCancelBooking: adminAccess || canCancelBooking(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to make or manage booking payments */
+    canMakePayment: adminAccess || canMakePayment(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to advance booking status steps */
+    canAdvanceBookingStatus: adminAccess || canAdvanceBookingStatus(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to mark bookings as no-show */
+    canMarkNoShowBooking: adminAccess || canMarkNoShowBooking(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to print booking receipts */
+    canPrintReceipt: adminAccess || canPrintReceipt(userType, permissions, roleInfo, user),
 
     /** Check if the user has a specific permission string */
     can: (permission: string): boolean => {

@@ -35,6 +35,12 @@ export const PERMISSIONS = {
   BOOKINGS_REFUNDS:        'deskmenu.bookings.refunds',
   BOOKINGS_BOOKING_REPORT: 'deskmenu.bookings.booking_report',
   BOOKINGS_DISCOUNT:       'deskmenu.bookings.discount',
+  BOOKINGS_RESCHEDULE:     'deskmenu.bookings.reschedule',
+  BOOKINGS_CANCEL:         'deskmenu.bookings.cancel',
+  BOOKINGS_MAKE_PAYMENT:   'deskmenu.bookings.make_payment',
+  BOOKINGS_ADVANCE_STATUS: 'deskmenu.bookings.advance_status',
+  BOOKINGS_NO_SHOW:        'deskmenu.bookings.no_show',
+  BOOKINGS_PRINT_RECEIPT:  'deskmenu.bookings.print_receipt',
 
   // ── UshSpa submenus ──────────────────────────────────────────────────────────
   USHSPA_BRANCHES:          'deskmenu.ushspa.branches',
@@ -262,6 +268,30 @@ export function isCustomerSupportAgentRole(roleInfo?: RoleInfoLike | null, user?
 }
 
 /**
+ * Checks whether the current user has the Call Center Agent role.
+ */
+export function isCallCenterAgentRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['call center', 'call_center', 'callcenter'];
+  return candidates.some((c) => {
+    const norm = c.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    return patterns.some((p) => norm === p || norm.includes(p));
+  });
+}
+
+/**
+ * Checks whether the current user has the Receptionist role.
+ */
+export function isReceptionistRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['receptionist', 'reception', 'front desk', 'frontdesk'];
+  return candidates.some((c) => {
+    const norm = c.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    return patterns.some((p) => norm === p || norm.includes(p));
+  });
+}
+
+/**
  * Checks whether the employee has one of the roles that should only see
  * their assigned branch in the branch dropdown on Therapist Schedule and Room Schedule:
  * - Branch Manager
@@ -462,6 +492,164 @@ export function canUpdateCustomerStatus(
   if (isAdministratorRole(roleInfo, user)) return true;
   if (roleInfo?.is_superuser === true) return true;
   return CUSTOMER_STATUS_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+// ─── Booking Action Button Permissions ────────────────────────────────────────
+
+export const BOOKING_RESCHEDULE_PERMISSIONS = [
+  'deskmenu.bookings.reschedule',
+  'bookings.reschedule',
+  'deskmenu.appointments.reschedule',
+  'appointments.reschedule',
+  'reschedule',
+  'deskmenu.bookings.booking_list',
+  'deskmenu.bookings',
+] as const;
+
+export const BOOKING_CANCEL_PERMISSIONS = [
+  'deskmenu.bookings.cancel',
+  'bookings.cancel',
+  'deskmenu.appointments.cancel',
+  'appointments.cancel',
+  'cancel',
+  'deskmenu.bookings.refunds',
+  'deskmenu.bookings.booking_list',
+  'deskmenu.bookings',
+] as const;
+
+export const BOOKING_PAYMENT_PERMISSIONS = [
+  'deskmenu.bookings.payments',
+  'deskmenu.bookings.make_payment',
+  'bookings.payments',
+  'bookings.make_payment',
+  'make_payment',
+  'deskmenu.finance.invoices_and_bills',
+  'deskmenu.bookings',
+] as const;
+
+export const BOOKING_ADVANCE_STATUS_PERMISSIONS = [
+  'deskmenu.bookings.advance_status',
+  'bookings.advance_status',
+  'bookings.update_status',
+  'bookings.status',
+  'bookings.complete',
+  'deskmenu.bookings.booking_list',
+  'deskmenu.bookings',
+  'deskmenu.appointments.therapist_schedule',
+  'deskmenu.appointments.branch_appointments',
+] as const;
+
+export const BOOKING_NO_SHOW_PERMISSIONS = [
+  'deskmenu.bookings.no_show',
+  'bookings.no_show',
+  'no_show',
+  'deskmenu.bookings.booking_list',
+  'deskmenu.bookings',
+  'deskmenu.appointments.branch_appointments',
+  'deskmenu.appointments.therapist_schedule',
+] as const;
+
+export const BOOKING_PRINT_RECEIPT_PERMISSIONS = [
+  'deskmenu.bookings.print_receipt',
+  'bookings.print_receipt',
+  'print_receipt',
+  'deskmenu.bookings.payments',
+  'deskmenu.bookings.booking_list',
+  'deskmenu.bookings',
+] as const;
+
+export function canRescheduleBooking(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  if (isSpaDirectorRole(roleInfo, user)) return true;
+  if (isBranchManagerRole(roleInfo, user)) return true;
+  if (isCallCenterAgentRole(roleInfo, user)) return true;
+  if (isReceptionistRole(roleInfo, user)) return true;
+  return BOOKING_RESCHEDULE_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canCancelBooking(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  if (isRefundsAndFinancePermittedRole(roleInfo, user)) return true;
+  if (isBranchManagerRole(roleInfo, user)) return true;
+  if (isCallCenterAgentRole(roleInfo, user)) return true;
+  if (isReceptionistRole(roleInfo, user)) return true;
+  return BOOKING_CANCEL_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canMakePayment(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  if (isRefundsAndFinancePermittedRole(roleInfo, user)) return true;
+  if (isBranchManagerRole(roleInfo, user)) return true;
+  if (isCallCenterAgentRole(roleInfo, user)) return true;
+  if (isReceptionistRole(roleInfo, user)) return true;
+  return BOOKING_PAYMENT_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canAdvanceBookingStatus(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  if (isSpaDirectorRole(roleInfo, user)) return true;
+  if (isBranchManagerRole(roleInfo, user)) return true;
+  if (isReceptionistRole(roleInfo, user)) return true;
+  return BOOKING_ADVANCE_STATUS_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canMarkNoShowBooking(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  if (isSpaDirectorRole(roleInfo, user)) return true;
+  if (isBranchManagerRole(roleInfo, user)) return true;
+  if (isReceptionistRole(roleInfo, user)) return true;
+  return BOOKING_NO_SHOW_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canPrintReceipt(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  if (isRefundsAndFinancePermittedRole(roleInfo, user)) return true;
+  if (isBranchManagerRole(roleInfo, user)) return true;
+  if (isCallCenterAgentRole(roleInfo, user)) return true;
+  if (isReceptionistRole(roleInfo, user)) return true;
+  return BOOKING_PRINT_RECEIPT_PERMISSIONS.some((p) => permissions.includes(p));
 }
 
 /**

@@ -756,11 +756,6 @@ export function RescheduleBookingModal({
       return;
     }
 
-    if (selectedDate > maxDateStr) {
-      setSubmitError(`Reschedule is allowed only max 30 days from current appointment start datetime (${maxDateStr}).`);
-      return;
-    }
-
     setSubmitting(true);
     setSubmitError(null);
 
@@ -1138,7 +1133,6 @@ export function RescheduleBookingModal({
                       <input
                         type="date"
                         min={todayStr}
-                        max={maxDateStr}
                         value={selectedDate}
                         onChange={(e) => setSelectedDate(e.target.value)}
                         className="rounded-xl border border-border/70 bg-card px-3.5 py-2 text-sm font-semibold shadow-sm focus:border-primary focus:outline-none transition cursor-pointer"
@@ -1162,7 +1156,7 @@ export function RescheduleBookingModal({
                           const d = new Date();
                           d.setDate(d.getDate() + 1);
                           const tomorrowStr = kuwaitDateString(d);
-                          setSelectedDate(tomorrowStr <= maxDateStr ? tomorrowStr : maxDateStr);
+                          setSelectedDate(tomorrowStr);
                         }}
                         className={cn(
                           'rounded-xl px-3 py-2 text-xs font-bold transition cursor-pointer border',
@@ -1359,7 +1353,6 @@ export function RescheduleBookingModal({
               !selectedBranchId ||
               !selectedRoomId ||
               !selectedDate ||
-              selectedDate > maxDateStr ||
               !selectedTimeSlot ||
               !selectedTherapistId
             }
