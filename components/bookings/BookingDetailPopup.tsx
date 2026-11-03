@@ -680,6 +680,19 @@ export function BookingDetailPopup({
   onClose: () => void;
   onSuccess?: () => void;
 }) {
+  if (!booking) return null;
+  return <BookingDetailPopupContent booking={booking} onClose={onClose} onSuccess={onSuccess} />;
+}
+
+function BookingDetailPopupContent({
+  booking,
+  onClose,
+  onSuccess,
+}: {
+  booking: Booking;
+  onClose: () => void;
+  onSuccess?: () => void;
+}) {
   const [activeTab, setActiveTab] = useState<'details' | 'payment'>('details');
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -1309,7 +1322,6 @@ export function BookingDetailPopup({
     };
   }, [booking, primaryTherapistId, secondaryTherapistId, primaryTherapistImg, primaryTherapistName, secondaryTherapistImg, secondaryTherapistName, extraTherapistProfiles]);
 
-  if (!booking) return null;
   const curStatus = String(detail?.status ?? booking.status ?? '').toLowerCase();
   const normStatus = curStatus.replace(/[\s-]/g, '_');
   const isNoShow =

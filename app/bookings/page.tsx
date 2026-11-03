@@ -717,7 +717,13 @@ export default function BookingListPage() {
       )}
 
       {/* ── Detail Modal ── */}
-      <BookingDetailPopup booking={selectedBooking} onClose={() => setSelectedBooking(null)} onSuccess={refetch} />
+      {selectedBooking && (
+        <BookingDetailPopup
+          booking={selectedBooking}
+          onClose={() => setSelectedBooking(null)}
+          onSuccess={refetch}
+        />
+      )}
     </DashboardShell>
   );
 }
