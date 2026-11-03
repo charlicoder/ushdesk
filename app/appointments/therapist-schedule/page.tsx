@@ -1,6 +1,7 @@
 'use client';
 // v2 – live API, calendar picker, dynamic branch/date
-import { kuwaitWallClockDate } from '@/lib/datetime';
+import { kuwaitWallClockDate, buildAppointmentWindow } from '@/lib/datetime';
+import { toast } from 'sonner';
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   Search, Plus, ChevronDown, Store, CalendarDays,
@@ -45,6 +46,7 @@ interface ApiAvailability {
 interface ApiBooking {
   id: string;
   therapist_id: string;
+  secondary_therapist_id?: string;
   start: string;
   end: string;
   duration_minutes?: number;
@@ -53,6 +55,7 @@ interface ApiBooking {
   booking_id?: string;
   bookings_id?: string;
   payment_status?: string;
+  sessions?: any[];
   customer?: {
     name?: string;
     phone?: string;
@@ -111,6 +114,41 @@ interface Slot {
   duration?: string;
   reference?: string;
   booking_type?: string;
+  bookingId?: string;
+  sessionId?: string;
+  sessionIndex?: number;
+  durationMinutes?: number;
+  serviceId?: string;
+  serviceName?: string;
+  isSecondaryTherapist?: boolean;
+  primaryTherapistId?: string;
+  secondaryTherapistId?: string;
+  arrangementType?: string;
+  sessions?: any[];
+  rawBooking?: any;
+}
+
+interface DraggedBookingData {
+  bookingId: string;
+  sessionId?: string;
+  sessionIndex?: number;
+  durationMinutes: number;
+  serviceId?: string;
+  serviceName?: string;
+  isSecondaryTherapist: boolean;
+  sourceTherapistId: string;
+  sourceTherapistName: string;
+  primaryTherapistId?: string;
+  secondaryTherapistId?: string;
+  arrangementType?: string;
+  isCoupleRoom: boolean;
+  originalTimeSlot: string;
+  sessions?: any[];
+  rawBooking?: any;
+}
+
+function isDoubleOccupancy(type?: string): boolean {
+  return type === 'couple_room' || type === 'double_room';
 }
 
 // ── Therapist model used in UI ─────────────────────────────────────────────────
@@ -529,33 +567,33 @@ function SlotCell({
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
         className={cn(
-          "flex h-full min-h-[82px] flex-col items-center justify-between rounded-xl border border-teal-300 dark:border-teal-700/60 bg-teal-50/90 dark:bg-teal-950/50 p-1.5 text-center select-none transition group shadow-xs cursor-grab active:cursor-grabbing hover:border-teal-500 hover:bg-teal-100 dark:hover:bg-teal-900/60 hover:shadow-md",
-          isDragging && "opacity-40 border-dashed border-teal-500 scale-95"
+          "flex h-full min-h-[82px] flex-col items-center justify-between rounded-xl border border-orange-300 dark:border-orange-700/60 bg-orange-50/90 dark:bg-orange-950/50 p-1.5 text-center select-none transition group shadow-xs cursor-grab active:cursor-grabbing hover:border-orange-500 hover:bg-orange-100 dark:hover:bg-orange-900/60 hover:shadow-md",
+          isDragging && "opacity-40 border-dashed border-orange-500 scale-95"
         )}
         title="Break Time — Drag vertically to move, or click to view working hours"
       >
-        <div className="w-full flex items-center justify-between text-teal-600/70 dark:text-teal-400/70 px-0.5">
-          <GripVertical className="h-3 w-3 shrink-0 cursor-grab active:cursor-grabbing text-teal-600 dark:text-teal-400" />
-          <span className="text-[9px] font-extrabold uppercase tracking-wider text-teal-900 dark:text-teal-200">
+        <div className="w-full flex items-center justify-between text-orange-600/70 dark:text-orange-400/70 px-0.5">
+          <GripVertical className="h-3 w-3 shrink-0 cursor-grab active:cursor-grabbing text-orange-600 dark:text-orange-400" />
+          <span className="text-[9px] font-extrabold uppercase tracking-wider text-orange-900 dark:text-orange-200">
             Break
           </span>
-          <Coffee className="h-3.5 w-3.5 shrink-0 group-hover:scale-110 transition-transform text-teal-600 dark:text-teal-400" />
+          <Coffee className="h-3.5 w-3.5 shrink-0 group-hover:scale-110 transition-transform text-orange-600 dark:text-orange-400" />
         </div>
         <div className="flex flex-col items-center justify-center gap-0.5 w-full my-auto">
           {slot.start && slot.end && (
-            <span className="text-[8px] font-bold text-teal-900 dark:text-teal-100 tabular-nums leading-tight">
+            <span className="text-[8px] font-bold text-orange-950 dark:text-orange-100 tabular-nums leading-tight">
               {slot.start}
               <br />
               {slot.end}
             </span>
           )}
           {slot.duration && (
-            <span className="text-[8px] font-medium text-teal-700/80 dark:text-teal-300/80">
+            <span className="text-[8px] font-medium text-orange-700/80 dark:text-orange-300/80">
               ({slot.duration})
             </span>
           )}
         </div>
-        <div className="text-[7.5px] text-teal-600/80 dark:text-teal-400/80 font-bold uppercase tracking-tight">
+        <div className="text-[7.5px] text-orange-600/80 dark:text-orange-400/80 font-bold uppercase tracking-tight">
           Drag to move
         </div>
       </div>
@@ -666,12 +704,17 @@ function SlotCell({
     <div
       role="button"
       tabIndex={0}
+      draggable={isDraggable ?? false}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
       style={isCompleted ? { backgroundColor: '#D3C0B2', borderColor: '#B8A394', color: '#2D241E' } : undefined}
       className={cn(
         'group relative h-full min-h-[82px] w-full flex rounded-xl overflow-hidden cursor-pointer select-none',
         'border transition-all duration-200 active:scale-[0.98]',
+        isDraggable && !isCompleted && 'cursor-grab active:cursor-grabbing hover:shadow-md',
+        isDragging && 'opacity-40 border-dashed scale-95 ring-2 ring-primary',
         cardBorderBg,
       )}
     >
@@ -683,13 +726,18 @@ function SlotCell({
 
         {/* Row 1: status badge + icon */}
         <div className="flex items-center justify-between gap-1">
-          <span className={cn(
-            'inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[8px] font-extrabold uppercase tracking-wider leading-none truncate max-w-[65px]',
-            pillCls,
-          )}>
-            <span className={cn('h-[4px] w-[4px] rounded-full shrink-0', dotCls)} />
-            <span className="truncate">{badgeLabel}</span>
-          </span>
+          <div className="flex items-center gap-1 min-w-0">
+            {isDraggable && !isCompleted && (
+              <GripVertical className="h-3 w-3 shrink-0 text-muted-foreground/50 group-hover:text-foreground/80 cursor-grab active:cursor-grabbing -ml-0.5" />
+            )}
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[8px] font-extrabold uppercase tracking-wider leading-none truncate max-w-[65px]',
+              pillCls,
+            )}>
+              <span className={cn('h-[4px] w-[4px] rounded-full shrink-0', dotCls)} />
+              <span className="truncate">{badgeLabel}</span>
+            </span>
+          </div>
           <div className={cn('grid h-4 w-4 shrink-0 place-items-center rounded-md', iconBgCls)}>
             <Icon className={cn('h-2.5 w-2.5', iconCls)} />
           </div>
@@ -893,6 +941,30 @@ function minutesToTime24(min: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
 }
 
+function toHHMM(label: string): string {
+  if (!label || typeof label !== 'string') return '00:00';
+  const clean = label.trim();
+  if (!clean) return '00:00';
+  const parts = clean.split(/\s+/);
+  if (!parts[0] || !parts[0].includes(':')) return '00:00';
+  const [hStr, mStr] = parts[0].split(':');
+  const ampm = (parts[1] ?? '').toUpperCase();
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr || '0', 10);
+  if (isNaN(h) || isNaN(m)) return '00:00';
+  if (ampm === 'AM' && h === 12) h = 0;
+  if (ampm === 'PM' && h !== 12) h += 12;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function minutesToSlotLabel(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hd = h % 12 === 0 ? 12 : h % 12;
+  return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
 function getBreakDurationMinutes(slot: Slot): number {
   if (slot.start && slot.end) {
     const diff = slotToMinutes(slot.end) - slotToMinutes(slot.start);
@@ -927,11 +999,13 @@ function buildScheduleFromApi(
 
   const availMap: Record<string, { startMin: number; endMin: number }[]> = {};
   for (const av of availability) {
-    availMap[av.therapist_id] = av.intervals.map(iv => {
-      const s = new Date(iv.start);
-      const e = new Date(iv.end);
-      return { startMin: s.getHours() * 60 + s.getMinutes(), endMin: e.getHours() * 60 + e.getMinutes() };
-    });
+    const tId = String(av.therapist_id ?? '').toLowerCase().trim();
+    if (!availMap[tId]) availMap[tId] = [];
+    availMap[tId].push(...av.intervals.map(iv => {
+      const s = kuwaitWallClockDate(iv.start);
+      const e = kuwaitWallClockDate(iv.end);
+      return { startMin: s.getUTCHours() * 60 + s.getUTCMinutes(), endMin: e.getUTCHours() * 60 + e.getUTCMinutes() };
+    }));
   }
 
   type BkEntry = {
@@ -946,6 +1020,18 @@ function buildScheduleFromApi(
     status: string;
     payment_status?: string;
     booking_type?: string;
+    bookingId?: string;
+    sessionId?: string;
+    sessionIndex?: number;
+    durationMinutes?: number;
+    serviceId?: string;
+    serviceName?: string;
+    isSecondaryTherapist?: boolean;
+    primaryTherapistId?: string;
+    secondaryTherapistId?: string;
+    arrangementType?: string;
+    sessions?: any[];
+    rawBooking?: any;
   };
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
@@ -953,7 +1039,8 @@ function buildScheduleFromApi(
     if (rawStatus === 'cancelled' || rawStatus === 'refunded') {
       continue;
     }
-    if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
+    const primaryId = String(bk.therapist_id ?? '').toLowerCase().trim();
+    if (primaryId && !bookingMap[primaryId]) bookingMap[primaryId] = [];
     const s = kuwaitWallClockDate(bk.start);
     const e = kuwaitWallClockDate(bk.end);
     const sm = s.getUTCHours() * 60 + s.getUTCMinutes();
@@ -976,6 +1063,7 @@ function buildScheduleFromApi(
       undefined;
     const paymentStatus = (bk.payment_status ?? (bk as any).paymentStatus ?? '').toString().toLowerCase().trim();
     const bookingType = String(bk.booking_type ?? (bk as any).type ?? '').toLowerCase().trim();
+    const bId = String(bk.booking_id ?? bk.bookings_id ?? bk.id);
 
     // Multi-session support: if booking contains a sessions array, block per session and per therapist!
     const sessionsList = Array.isArray((bk as any).sessions) && (bk as any).sessions.length > 0
@@ -983,9 +1071,9 @@ function buildScheduleFromApi(
       : null;
 
     if (sessionsList) {
-      for (const sess of sessionsList) {
-        const sessTherapistId = String(sess.therapist_id || (sess.therapist_data as any)?.id || bk.therapist_id);
-        if (!sessTherapistId) continue;
+      sessionsList.forEach((sess: any, sessIdx: number) => {
+        const sessTherapistId = String(sess.therapist_id || (sess.therapist_data as any)?.id || bk.therapist_id).toLowerCase().trim();
+        if (!sessTherapistId) return;
         if (!bookingMap[sessTherapistId]) bookingMap[sessTherapistId] = [];
         const sessStart = sess.appointment_start || sess.start || bk.start;
         const sessEnd = sess.appointment_end || sess.end || bk.end;
@@ -998,6 +1086,10 @@ function buildScheduleFromApi(
           sess.service_name ||
           (sess.services?.[0]?.name || (sess.services?.[0] as any)?.service_name) ||
           serviceName;
+        const sessId = sess.id || sess.session_id || (sess as any).sessionId || String(sessIdx);
+        const sessSvcId = sess.service_id || (sess.services?.[0]?.id) || (bk.service as any)?.id || (bk as any).service_id;
+        const sessArrType = sess.service_arrangement_data?.arrangement_type || sess.arrangement_type || (bk as any).service_arrangement_data?.arrangement_type || '';
+        const sessSecId = sess.secondary_therapist_id ? String(sess.secondary_therapist_id).toLowerCase().trim() : null;
 
         bookingMap[sessTherapistId].push({
           startMin:   ssm,
@@ -1007,14 +1099,25 @@ function buildScheduleFromApi(
           startLabel: fmt(ss.getUTCHours(), ss.getUTCMinutes()),
           endLabel:   fmt(se.getUTCHours(), se.getUTCMinutes()),
           duration:   `${sessDurMin}m`,
-          reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
+          reference:  bId,
           status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
           payment_status: paymentStatus || undefined,
           booking_type: bookingType || undefined,
+          bookingId:  bId,
+          sessionId:  String(sessId),
+          sessionIndex: sessIdx,
+          durationMinutes: sessDurMin,
+          serviceId:  sessSvcId ? String(sessSvcId) : undefined,
+          serviceName: sessServiceName,
+          isSecondaryTherapist: false,
+          primaryTherapistId: sessTherapistId,
+          secondaryTherapistId: sessSecId || undefined,
+          arrangementType: sessArrType,
+          sessions:   sessionsList,
+          rawBooking: bk,
         });
 
         // Also check if session has secondary therapist
-        const sessSecId = sess.secondary_therapist_id ? String(sess.secondary_therapist_id) : null;
         if (sessSecId && sessSecId !== sessTherapistId) {
           if (!bookingMap[sessSecId]) bookingMap[sessSecId] = [];
           bookingMap[sessSecId].push({
@@ -1025,36 +1128,90 @@ function buildScheduleFromApi(
             startLabel: fmt(ss.getUTCHours(), ss.getUTCMinutes()),
             endLabel:   fmt(se.getUTCHours(), se.getUTCMinutes()),
             duration:   `${sessDurMin}m`,
-            reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
+            reference:  bId,
             status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
             payment_status: paymentStatus || undefined,
             booking_type: bookingType || undefined,
+            bookingId:  bId,
+            sessionId:  String(sessId),
+            sessionIndex: sessIdx,
+            durationMinutes: sessDurMin,
+            serviceId:  sessSvcId ? String(sessSvcId) : undefined,
+            serviceName: sessServiceName,
+            isSecondaryTherapist: true,
+            primaryTherapistId: sessTherapistId,
+            secondaryTherapistId: sessSecId,
+            arrangementType: sessArrType,
+            sessions:   sessionsList,
+            rawBooking: bk,
           });
         }
-      }
+      });
       continue;
     }
 
-    bookingMap[bk.therapist_id].push({
-      startMin:   sm,
-      endMin:     em,
-      client:     clientName,
-      service:    serviceName,
-      startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
-      endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
-      duration:   `${durationMin}m`,
-      reference:  bk.booking_id ?? bk.bookings_id ?? bk.id,
-      status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
-      payment_status: paymentStatus || undefined,
-      booking_type: bookingType || undefined,
-    });
+    const bkArrType = (bk as any).service_arrangement_data?.arrangement_type || (bk as any).arrangement_type || '';
+    const bkSecId = (bk as any).secondary_therapist_id ? String((bk as any).secondary_therapist_id).toLowerCase().trim() : null;
+    const bkSvcId = (bk.service as any)?.id || (bk as any).service_id;
+
+    if (primaryId) {
+      bookingMap[primaryId].push({
+        startMin:   sm,
+        endMin:     em,
+        client:     clientName,
+        service:    serviceName,
+        startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
+        endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
+        duration:   `${durationMin}m`,
+        reference:  bId,
+        status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
+        payment_status: paymentStatus || undefined,
+        booking_type: bookingType || undefined,
+        bookingId:  bId,
+        durationMinutes: durationMin,
+        serviceId:  bkSvcId ? String(bkSvcId) : undefined,
+        serviceName: serviceName,
+        isSecondaryTherapist: false,
+        primaryTherapistId: primaryId,
+        secondaryTherapistId: bkSecId || undefined,
+        arrangementType: bkArrType,
+        rawBooking: bk,
+      });
+    }
+
+    if (bkSecId && bkSecId !== primaryId) {
+      if (!bookingMap[bkSecId]) bookingMap[bkSecId] = [];
+      bookingMap[bkSecId].push({
+        startMin:   sm,
+        endMin:     em,
+        client:     clientName,
+        service:    serviceName,
+        startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
+        endLabel:   fmt(e.getUTCHours(), e.getUTCMinutes()),
+        duration:   `${durationMin}m`,
+        reference:  bId,
+        status:     bk.status ?? (bk as any).booking_status ?? 'scheduled',
+        payment_status: paymentStatus || undefined,
+        booking_type: bookingType || undefined,
+        bookingId:  bId,
+        durationMinutes: durationMin,
+        serviceId:  bkSvcId ? String(bkSvcId) : undefined,
+        serviceName: serviceName,
+        isSecondaryTherapist: true,
+        primaryTherapistId: primaryId,
+        secondaryTherapistId: bkSecId,
+        arrangementType: bkArrType,
+        rawBooking: bk,
+      });
+    }
   }
 
   const therapistBreakMap: Record<string, { startMin: number; endMin: number; startLabel: string; endLabel: string }[]> = {};
   for (const av of availability) {
+    const tId = String(av.therapist_id ?? '').toLowerCase().trim();
     const rawBreaks = (av as any).break_intervals ?? (av as any).break_times;
     if (Array.isArray(rawBreaks)) {
-      if (!therapistBreakMap[av.therapist_id]) therapistBreakMap[av.therapist_id] = [];
+      if (!therapistBreakMap[tId]) therapistBreakMap[tId] = [];
       for (const brk of rawBreaks) {
         if (brk.start && brk.end) {
           const s = kuwaitWallClockDate(brk.start);
@@ -1066,7 +1223,7 @@ function buildScheduleFromApi(
             const hd = h % 12 === 0 ? 12 : h % 12;
             return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
           };
-          therapistBreakMap[av.therapist_id].push({
+          therapistBreakMap[tId].push({
             startMin: sm,
             endMin: em,
             startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
@@ -1075,7 +1232,7 @@ function buildScheduleFromApi(
         } else if (brk.start_time && brk.end_time) {
           const sm = slotToMinutes(brk.start_time);
           const em = slotToMinutes(brk.end_time);
-          therapistBreakMap[av.therapist_id].push({
+          therapistBreakMap[tId].push({
             startMin: sm,
             endMin: em,
             startLabel: brk.start_time,
@@ -1087,9 +1244,10 @@ function buildScheduleFromApi(
   }
 
   for (const t of therapists) {
+    const tId = String(t.id ?? '').toLowerCase().trim();
     const rawBreaks = (t as any).break_intervals ?? (t as any).break_times;
     if (Array.isArray(rawBreaks)) {
-      if (!therapistBreakMap[t.id]) therapistBreakMap[t.id] = [];
+      if (!therapistBreakMap[tId]) therapistBreakMap[tId] = [];
       for (const brk of rawBreaks) {
         if (brk.start && brk.end) {
           const s = kuwaitWallClockDate(brk.start);
@@ -1101,7 +1259,7 @@ function buildScheduleFromApi(
             const hd = h % 12 === 0 ? 12 : h % 12;
             return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
           };
-          therapistBreakMap[t.id].push({
+          therapistBreakMap[tId].push({
             startMin: sm,
             endMin: em,
             startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()),
@@ -1110,7 +1268,7 @@ function buildScheduleFromApi(
         } else if (brk.start_time && brk.end_time) {
           const sm = slotToMinutes(brk.start_time);
           const em = slotToMinutes(brk.end_time);
-          therapistBreakMap[t.id].push({
+          therapistBreakMap[tId].push({
             startMin: sm,
             endMin: em,
             startLabel: brk.start_time,
@@ -1122,9 +1280,12 @@ function buildScheduleFromApi(
   }
 
   for (const therapist of therapists) {
+    const tId = String(therapist.id ?? '').toLowerCase().trim();
     sched[therapist.id] = {};
-    const avIntervals = availMap[therapist.id]  ?? [];
-    const bkSlots     = bookingMap[therapist.id] ?? [];
+    sched[tId] = sched[therapist.id];
+    const avIntervals = availMap[tId] ?? availMap[therapist.id] ?? [];
+    const bkSlots     = bookingMap[tId] ?? bookingMap[therapist.id] ?? [];
+    const brkIntervals = therapistBreakMap[tId] ?? therapistBreakMap[therapist.id] ?? [];
 
     for (const slotLabel of timeSlots) {
       const slotStart = slotToMinutes(slotLabel);
@@ -1194,12 +1355,24 @@ function buildScheduleFromApi(
           reference: bk.reference,
           payment_status: bk.payment_status,
           booking_type: bk.booking_type,
+          bookingId: bk.bookingId,
+          sessionId: bk.sessionId,
+          sessionIndex: bk.sessionIndex,
+          durationMinutes: bk.durationMinutes,
+          serviceId: bk.serviceId,
+          serviceName: bk.serviceName,
+          isSecondaryTherapist: bk.isSecondaryTherapist,
+          primaryTherapistId: bk.primaryTherapistId,
+          secondaryTherapistId: bk.secondaryTherapistId,
+          arrangementType: bk.arrangementType,
+          sessions: bk.sessions,
+          rawBooking: bk.rawBooking,
         };
         continue;
       }
 
       // Check if slot falls in break intervals
-      const brk = therapistBreakMap[therapist.id]?.find(b => b.startMin < slotEnd && b.endMin > slotStart);
+      const brk = brkIntervals.find(b => b.startMin < slotEnd && b.endMin > slotStart);
       if (brk) {
         sched[therapist.id][slotLabel] = {
           status: 'break_time',
@@ -1310,6 +1483,16 @@ export default function TherapistSchedulePage() {
   const [updatingBreak, setUpdatingBreak] = useState(false);
   const [breakToast, setBreakToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const dragJustEndedRef = useRef(false);
+
+  // Drag-and-drop state for bookings / sessions / couple therapists
+  const [draggedBooking, setDraggedBooking] = useState<DraggedBookingData | null>(null);
+  const [dragOverBookingSlot, setDragOverBookingSlot] = useState<{
+    therapistId: string;
+    time: string;
+    isValid: boolean;
+    reason?: string;
+  } | null>(null);
+  const serviceTherapistsMapRef = useRef<Record<string, Set<string>>>({});
 
   // State for selecting contiguous unavailable slots & adding extra hours
   const [selectedUnavailable, setSelectedUnavailable] = useState<{
@@ -1443,8 +1626,9 @@ export default function TherapistSchedulePage() {
         const data: ApiScheduleRecord[] = await res.json();
         const record = data?.[0] ?? null;
 
-        // ── Secondary fetch: enrich bookings with status and payment_status from booknpay ──
-        if (record?.bookings?.length) {
+        // ── Secondary fetch: enrich bookings with status and payment_status from booknpay and append missing bookings ──
+        if (record) {
+          record.bookings = Array.isArray(record.bookings) ? record.bookings : [];
           try {
             const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedBranchId);
             const branchParam = isUuid ? `&branch_id=${selectedBranchId}` : '';
@@ -1481,6 +1665,7 @@ export default function TherapistSchedulePage() {
             const payMap: Record<string, string> = {};
             const statusMap: Record<string, string> = {};
             const sessionsMap: Record<string, any[]> = {};
+            const bpBookings: any[] = [];
 
             // Process booknpay bookings
             if (bpResult) {
@@ -1488,9 +1673,10 @@ export default function TherapistSchedulePage() {
                 ? bpResult
                 : (bpResult?.data ?? bpResult?.results ?? []);
               for (const bk of bkList) {
+                bpBookings.push(bk);
                 const ps = String(bk.payment_status ?? (bk.payment_data as any)?.status ?? '').toLowerCase().trim();
                 const st = String(bk.status ?? (bk as any).booking_status ?? '').toLowerCase().trim();
-                const ids = [bk.id, bk.booking_id, bk.bookings_id].filter(Boolean).map(String);
+                const ids = [bk.id, bk.booking_id, bk.bookings_id, (bk as any).booking_number].filter(Boolean).map(String);
                 for (const id of ids) {
                   if (ps) payMap[id] = ps;
                   if (st) statusMap[id] = st;
@@ -1509,7 +1695,7 @@ export default function TherapistSchedulePage() {
                 for (const bk of bks) {
                   const ps = String(bk?.payment_status ?? '').toLowerCase().trim();
                   const st = String(bk?.status ?? (bk as any)?.booking_status ?? '').toLowerCase().trim();
-                  const ids = [bk.id, bk.booking_id, bk.bookings_id].filter(Boolean).map(String);
+                  const ids = [bk.id, bk.booking_id, bk.bookings_id, (bk as any).booking_number].filter(Boolean).map(String);
                   for (const id of ids) {
                     if (ps) payMap[id] = ps;
                     if (st) statusMap[id] = st;
@@ -1518,21 +1704,68 @@ export default function TherapistSchedulePage() {
               }
             }
 
-            if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0 || Object.keys(sessionsMap).length > 0) {
-              record.bookings = record.bookings.map(bk => {
-                const matchId = [
-                  String(bk.booking_id ?? ''),
-                  String(bk.bookings_id ?? ''),
-                  String(bk.id ?? ''),
-                ].find(id => id && (payMap[id] || statusMap[id] || sessionsMap[id]));
-                if (!matchId) return bk;
-                return {
-                  ...bk,
-                  ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
-                  ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
-                  ...(sessionsMap[matchId] ? { sessions: sessionsMap[matchId] } : {}),
-                };
+            const existingIds = new Set<string>();
+
+            // Enrich existing bookings in record.bookings
+            record.bookings = record.bookings.map(bk => {
+              [bk.booking_id, bk.bookings_id, bk.id, (bk as any).booking_number].filter(Boolean).forEach(id => {
+                existingIds.add(String(id).toLowerCase().trim());
               });
+
+              const matchId = [
+                String(bk.booking_id ?? ''),
+                String(bk.bookings_id ?? ''),
+                String(bk.id ?? ''),
+                String((bk as any).booking_number ?? ''),
+              ].find(id => id && (payMap[id] || statusMap[id] || sessionsMap[id]));
+
+              if (!matchId) return bk;
+              return {
+                ...bk,
+                ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
+                ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
+                ...(sessionsMap[matchId] ? { sessions: sessionsMap[matchId] } : {}),
+              };
+            });
+
+            // Append missing bookings from booknpay
+            for (const item of bpBookings) {
+              const rawSt = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+              if (rawSt === 'cancelled' || rawSt === 'refunded') continue;
+
+              const itemIds = [item.id, item.booking_id, item.bookings_id, item.booking_number]
+                .filter(Boolean)
+                .map((id: any) => String(id).toLowerCase().trim());
+              const alreadyExists = itemIds.some(id => existingIds.has(id));
+
+              if (!alreadyExists) {
+                const rawCust = item.customer || item.customer_data;
+                const rawSvc = item.service || item.service_data;
+                const newBk: ApiBooking = {
+                  id: String(item.id || item.booking_id || item.bookings_id),
+                  booking_id: String(item.id || item.booking_id || item.bookings_id),
+                  therapist_id: String(item.therapist_id || (item.therapist_data as any)?.id || ''),
+                  secondary_therapist_id: item.secondary_therapist_id ? String(item.secondary_therapist_id) : undefined,
+                  start: item.appointment_start || item.start,
+                  end: item.appointment_end || item.end,
+                  duration_minutes: item.duration_minutes || item.total_duration,
+                  status: rawSt || 'scheduled',
+                  payment_status: String(item.payment_status ?? item.payment_data?.status ?? '').toLowerCase().trim() || undefined,
+                  booking_type: item.booking_type || item.type,
+                  customer: rawCust ? {
+                    name: rawCust.name || rawCust.full_name || `${rawCust.first_name ?? ''} ${rawCust.last_name ?? ''}`.trim(),
+                    phone: rawCust.phone,
+                    first_name: rawCust.first_name,
+                    last_name: rawCust.last_name,
+                  } : null,
+                  service: rawSvc ? {
+                    name: rawSvc.name || rawSvc.service_name,
+                  } : null,
+                  sessions: Array.isArray(item.sessions) ? item.sessions : undefined,
+                };
+                record.bookings.push(newBk);
+                itemIds.forEach(id => existingIds.add(id));
+              }
             }
           } catch {
             // Secondary fetch failure is non-fatal — schedule still shows
@@ -1832,6 +2065,216 @@ export default function TherapistSchedulePage() {
       setTimeout(() => setBreakToast(null), 4000);
     }
   }, [selectedDate, scheduleData, preserveScroll]);
+
+  // Check if therapist provides the required service (with client-side memoized cache)
+  const checkTherapistProvidesService = useCallback(async (serviceId: string, therapistId: string): Promise<boolean> => {
+    if (!serviceId) return true;
+    if (serviceTherapistsMapRef.current[serviceId]) {
+      return serviceTherapistsMapRef.current[serviceId].has(therapistId);
+    }
+    try {
+      const res = await authedFetch(`/api/v1/services/${serviceId}/therapists?branch_id=${selectedBranchId}&no_service_list=true`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (res.ok) {
+        const d = await res.json();
+        const list: any[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        const set = new Set(list.map((t: any) => String(t.id)));
+        serviceTherapistsMapRef.current[serviceId] = set;
+        return set.has(therapistId);
+      }
+    } catch {
+      // fallback allow
+    }
+    return true;
+  }, [selectedBranchId, token]);
+
+  // Validate drag-and-drop target for bookings
+  const validateBookingDrop = useCallback((
+    targetTherapist: Therapist,
+    targetTimeSlot: string,
+    bookingData: DraggedBookingData,
+  ): { isValid: boolean; reason?: string } => {
+    // 1. Couple/Double room rule: must keep the exact same timeslot
+    if (bookingData.isCoupleRoom) {
+      if (targetTimeSlot !== bookingData.originalTimeSlot) {
+        return { isValid: false, reason: 'Couple room must keep the same timeslot' };
+      }
+      if (targetTherapist.id === bookingData.sourceTherapistId) {
+        return { isValid: false, reason: 'Already assigned to this therapist' };
+      }
+      const otherId = bookingData.isSecondaryTherapist
+        ? bookingData.primaryTherapistId
+        : bookingData.secondaryTherapistId;
+      if (otherId && targetTherapist.id === otherId) {
+        return { isValid: false, reason: 'Therapist is already assigned to the other couple room slot' };
+      }
+    } else {
+      // Non-couple session: cannot drop onto the exact same therapist at the exact same timeslot
+      if (targetTherapist.id === bookingData.sourceTherapistId && targetTimeSlot === bookingData.originalTimeSlot) {
+        return { isValid: false, reason: 'Current slot' };
+      }
+    }
+
+    // 2. Service qualification check (if preloaded)
+    if (bookingData.serviceId && serviceTherapistsMapRef.current[bookingData.serviceId]) {
+      if (!serviceTherapistsMapRef.current[bookingData.serviceId].has(targetTherapist.id)) {
+        return { isValid: false, reason: `${targetTherapist.name} does not provide ${bookingData.serviceName || 'this service'}` };
+      }
+    }
+
+    // 3. Therapist availability check across the entire duration
+    const startMin = slotToMinutes(targetTimeSlot);
+    const dur = bookingData.durationMinutes > 0 ? bookingData.durationMinutes : grid.slot_duration_minutes;
+    const endMin = startMin + dur;
+
+    for (let m = startMin; m < endMin; m += grid.slot_duration_minutes) {
+      const slotLabel = minutesToSlotLabel(m);
+      const slot = schedule[targetTherapist.id]?.[slotLabel];
+      if (!slot) {
+        return { isValid: false, reason: `${targetTherapist.name} is unavailable at ${slotLabel}` };
+      }
+      const isSelfBooking = slot.reference && slot.reference === bookingData.bookingId;
+      if (!isSelfBooking && slot.status !== 'available') {
+        const reasonLabel = slot.status === 'break_time' ? 'on break' : slot.status === 'on_leave' ? 'on leave' : 'busy';
+        return { isValid: false, reason: `${targetTherapist.name} is ${reasonLabel} at ${slotLabel}` };
+      }
+    }
+
+    return { isValid: true };
+  }, [schedule, grid.slot_duration_minutes]);
+
+  // Execute booking reassignment on drop
+  const handleDropBooking = useCallback(async (
+    targetTherapist: Therapist,
+    targetTimeSlot: string,
+    bookingData: DraggedBookingData,
+  ) => {
+    setDraggedBooking(null);
+    setDragOverBookingSlot(null);
+
+    const restoreScroll = preserveScroll();
+    const loadingToast = toast.loading(`Reassigning booking to ${targetTherapist.name}…`);
+
+    try {
+      // Check service qualification
+      if (bookingData.serviceId) {
+        const isQualified = await checkTherapistProvidesService(bookingData.serviceId, targetTherapist.id);
+        if (!isQualified) {
+          throw new Error(`${targetTherapist.name} does not provide ${bookingData.serviceName || 'this service'}`);
+        }
+      }
+
+      // Multi-session booking
+      if (bookingData.sessions && bookingData.sessions.length > 0) {
+        const updatedSessions = bookingData.sessions.map((sess: any, idx: number) => {
+          const match =
+            (bookingData.sessionId && (sess.id === bookingData.sessionId || sess.session_id === bookingData.sessionId)) ||
+            (typeof bookingData.sessionIndex === 'number' && idx === bookingData.sessionIndex);
+          if (!match) return sess;
+
+          const sObj = { ...sess };
+          if (bookingData.isSecondaryTherapist) {
+            sObj.secondary_therapist_id = targetTherapist.id;
+            sObj.secondary_therapist_name = targetTherapist.name;
+            sObj.secondary_therapist_data = {
+              id: targetTherapist.id,
+              therapist_id: targetTherapist.id,
+              therapist_name: targetTherapist.name,
+              name: targetTherapist.name,
+            };
+          } else {
+            sObj.therapist_id = targetTherapist.id;
+            sObj.therapist_name = targetTherapist.name;
+            sObj.therapist_data = {
+              id: targetTherapist.id,
+              therapist_id: targetTherapist.id,
+              therapist_name: targetTherapist.name,
+              name: targetTherapist.name,
+            };
+            if (targetTimeSlot !== bookingData.originalTimeSlot) {
+              const window = buildAppointmentWindow(selectedDate, toHHMM(targetTimeSlot), bookingData.durationMinutes);
+              sObj.appointment_start = window.appointment_start;
+              sObj.appointment_end = window.appointment_end;
+              sObj.startTime = targetTimeSlot;
+            }
+          }
+          return sObj;
+        });
+
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingData.bookingId}/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            sessions: updatedSessions,
+            source: 'ushdesk',
+            reason: 'Therapist reassigned via schedule drag-and-drop',
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || errData.message || 'Failed to reassign therapist');
+        }
+      } else {
+        // Single session booking
+        const payload: Record<string, unknown> = {
+          source: 'ushdesk',
+          reason: 'Therapist reassigned via schedule drag-and-drop',
+        };
+
+        if (bookingData.isSecondaryTherapist) {
+          payload.secondary_therapist_id = targetTherapist.id;
+          payload.secondary_therapist_name = targetTherapist.name;
+          payload.secondary_therapist_data = {
+            id: targetTherapist.id,
+            therapist_id: targetTherapist.id,
+            therapist_name: targetTherapist.name,
+            name: targetTherapist.name,
+          };
+        } else {
+          payload.therapist_id = targetTherapist.id;
+          payload.therapist_name = targetTherapist.name;
+          payload.therapist_data = {
+            id: targetTherapist.id,
+            therapist_id: targetTherapist.id,
+            therapist_name: targetTherapist.name,
+            name: targetTherapist.name,
+          };
+          if (targetTimeSlot !== bookingData.originalTimeSlot) {
+            const window = buildAppointmentWindow(selectedDate, toHHMM(targetTimeSlot), bookingData.durationMinutes);
+            payload.appointment_start = window.appointment_start;
+            payload.appointment_end = window.appointment_end;
+            payload.appointment_time = targetTimeSlot;
+          }
+        }
+
+        const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingData.bookingId}/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || errData.message || 'Failed to reassign therapist');
+        }
+      }
+
+      toast.success(`Booking reassigned to ${targetTherapist.name}`, { id: loadingToast });
+      setScheduleRefreshKey(k => k + 1);
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to reassign therapist', { id: loadingToast });
+    } finally {
+      restoreScroll();
+    }
+  }, [selectedDate, token, preserveScroll, checkTherapistProvidesService]);
 
   // Handle clicking an unavailable slot (supports selecting multiple contiguous slots)
   const handleUnavailableClick = useCallback((therapist: Therapist, time: string) => {
@@ -2200,6 +2643,7 @@ export default function TherapistSchedulePage() {
               { label: 'Pending Payment', color: 'bg-rose-500' },
               { label: 'Available',       color: 'bg-card border border-dashed border-border' },
               { label: 'On Leave',        color: 'bg-amber-400' },
+              { label: 'Break Time',      color: 'bg-orange-400' },
               { label: 'Unavailable',     color: 'bg-[#707070]/30 border border-border/40' },
             ].map((l) => (
               <span key={l.label} className="flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
@@ -2276,6 +2720,7 @@ export default function TherapistSchedulePage() {
                         const time = timeSlots[rowIdx];
                         const slot = schedule[t.id]?.[time] ?? { status: 'unavailable' as SlotStatus };
                         const isBooked = slot.status === 'booking' || slot.status === 'scheduled' || slot.status === 'in_progress' || slot.status === 'completed';
+                        const isSlotCompleted = slot.status === 'completed' || (slot.booking_status ?? '').toLowerCase().trim() === 'completed';
                         const isOnLeave = slot.status === 'on_leave';
                         const isBreak = slot.status === 'break_time';
                         let span = 1;
@@ -2314,11 +2759,11 @@ export default function TherapistSchedulePage() {
                           }
                         }
                         const isThisSlotDragging =
-                          draggedBreak?.therapistId === t.id &&
-                          draggedBreak?.originalTimeSlot === time;
+                          (draggedBreak?.therapistId === t.id && draggedBreak?.originalTimeSlot === time) ||
+                          (draggedBooking?.sourceTherapistId === t.id && draggedBooking?.originalTimeSlot === time);
                         const isThisSlotDragOver =
-                          dragOverSlot?.therapistId === t.id &&
-                          dragOverSlot?.time === time;
+                          (dragOverSlot?.therapistId === t.id && dragOverSlot?.time === time) ||
+                          (dragOverBookingSlot?.therapistId === t.id && dragOverBookingSlot?.time === time);
                         const isSameTherapistCol =
                           Boolean(draggedBreak && draggedBreak.therapistId === t.id);
 
@@ -2342,17 +2787,27 @@ export default function TherapistSchedulePage() {
                                 : undefined
                             }
                             onDragOver={(e) => {
-                              if (isSameTherapistCol) {
+                              if (draggedBreak && isSameTherapistCol) {
                                 e.preventDefault();
                                 e.dataTransfer.dropEffect = 'move';
                                 if (dragOverSlot?.therapistId !== t.id || dragOverSlot?.time !== time) {
                                   setDragOverSlot({ therapistId: t.id, time });
+                                }
+                              } else if (draggedBooking) {
+                                e.preventDefault();
+                                const val = validateBookingDrop(t, time, draggedBooking);
+                                e.dataTransfer.dropEffect = val.isValid ? 'move' : 'none';
+                                if (dragOverBookingSlot?.therapistId !== t.id || dragOverBookingSlot?.time !== time) {
+                                  setDragOverBookingSlot({ therapistId: t.id, time, ...val });
                                 }
                               }
                             }}
                             onDragLeave={() => {
                               if (dragOverSlot?.therapistId === t.id && dragOverSlot?.time === time) {
                                 setDragOverSlot(null);
+                              }
+                              if (dragOverBookingSlot?.therapistId === t.id && dragOverBookingSlot?.time === time) {
+                                setDragOverBookingSlot(null);
                               }
                             }}
                             onDrop={(e) => {
@@ -2361,25 +2816,60 @@ export default function TherapistSchedulePage() {
                                 e.stopPropagation();
                                 setDragOverSlot(null);
                                 handleDropBreak(t, time, draggedBreak);
+                              } else if (draggedBooking) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const val = validateBookingDrop(t, time, draggedBooking);
+                                if (!val.isValid) {
+                                  toast.error(val.reason || 'Cannot move booking here');
+                                  setDragOverBookingSlot(null);
+                                  setDraggedBooking(null);
+                                  return;
+                                }
+                                handleDropBooking(t, time, draggedBooking);
                               }
                             }}
                             className={cn(
                               'p-2 border-t border-l border-border/30 transition-all first:border-l-0 relative',
                               COL_TINTS[tIdx % COL_TINTS.length],
-                              isThisSlotDragOver && !isThisSlotDragging && 'ring-2 ring-teal-500 ring-inset bg-teal-100/70 dark:bg-teal-900/50',
+                              dragOverSlot?.therapistId === t.id && dragOverSlot?.time === time && !isThisSlotDragging && 'ring-2 ring-orange-500 ring-inset bg-orange-100/70 dark:bg-orange-900/50',
+                              dragOverBookingSlot?.therapistId === t.id && dragOverBookingSlot?.time === time && !isThisSlotDragging && (
+                                dragOverBookingSlot.isValid
+                                  ? 'ring-2 ring-emerald-500 ring-inset bg-emerald-100/70 dark:bg-emerald-950/60 shadow-lg scale-[0.98]'
+                                  : 'ring-2 ring-rose-500/80 ring-inset bg-rose-100/60 dark:bg-rose-950/50'
+                              ),
                               isSlotSelected && 'ring-2 ring-emerald-500 ring-inset bg-emerald-100/50 dark:bg-emerald-950/40'
                             )}
                           >
-                            {isThisSlotDragOver && !isThisSlotDragging && (
-                              <div className="absolute inset-1 pointer-events-none rounded-lg border-2 border-dashed border-teal-500 bg-teal-500/10 flex items-center justify-center z-10">
-                                <span className="text-[10px] font-extrabold text-teal-800 dark:text-teal-200 bg-white/95 dark:bg-slate-900/95 px-2 py-0.5 rounded shadow-sm border border-teal-300">
+                            {dragOverSlot?.therapistId === t.id && dragOverSlot?.time === time && !isThisSlotDragging && (
+                              <div className="absolute inset-1 pointer-events-none rounded-lg border-2 border-dashed border-orange-500 bg-orange-500/10 flex items-center justify-center z-10">
+                                <span className="text-[10px] font-extrabold text-orange-800 dark:text-orange-200 bg-white/95 dark:bg-slate-900/95 px-2 py-0.5 rounded shadow-sm border border-orange-300">
                                   Move break to {time}
+                                </span>
+                              </div>
+                            )}
+                            {dragOverBookingSlot?.therapistId === t.id && dragOverBookingSlot?.time === time && !isThisSlotDragging && (
+                              <div className={cn(
+                                "absolute inset-1 pointer-events-none rounded-lg border-2 border-dashed flex items-center justify-center z-20 shadow-md",
+                                dragOverBookingSlot.isValid
+                                  ? "border-emerald-500 bg-emerald-500/10"
+                                  : "border-rose-500 bg-rose-500/10"
+                              )}>
+                                <span className={cn(
+                                  "text-[9px] font-extrabold px-2 py-0.5 rounded shadow-sm border",
+                                  dragOverBookingSlot.isValid
+                                    ? "text-emerald-800 dark:text-emerald-200 bg-white/95 dark:bg-slate-900/95 border-emerald-300"
+                                    : "text-rose-800 dark:text-rose-200 bg-white/95 dark:bg-slate-900/95 border-rose-300"
+                                )}>
+                                  {dragOverBookingSlot.isValid
+                                    ? `Move to ${t.name} (${time})`
+                                    : (dragOverBookingSlot.reason || 'Unavailable')}
                                 </span>
                               </div>
                             )}
                             <SlotCell
                               slot={slot}
-                              isDraggable={isBreak}
+                              isDraggable={isBreak || (!isSlotCompleted && isBooked)}
                               isDragging={isThisSlotDragging}
                               isSelected={isSlotSelected}
                               onDragStart={(e) => {
@@ -2393,6 +2883,37 @@ export default function TherapistSchedulePage() {
                                   });
                                   e.dataTransfer.setData('text/plain', t.id);
                                   e.dataTransfer.effectAllowed = 'move';
+                                } else if (isBooked && !isSlotCompleted) {
+                                  const bookingId = slot.bookingId || slot.reference || '';
+                                  if (!bookingId) return;
+
+                                  const durMin = slot.durationMinutes || getBreakDurationMinutes(slot);
+                                  const isCouple = isDoubleOccupancy(slot.arrangementType) || Boolean(slot.secondaryTherapistId);
+
+                                  if (slot.serviceId) {
+                                    checkTherapistProvidesService(slot.serviceId, t.id);
+                                  }
+
+                                  setDraggedBooking({
+                                    bookingId,
+                                    sessionId: slot.sessionId,
+                                    sessionIndex: slot.sessionIndex,
+                                    durationMinutes: durMin,
+                                    serviceId: slot.serviceId,
+                                    serviceName: slot.service,
+                                    isSecondaryTherapist: Boolean(slot.isSecondaryTherapist),
+                                    sourceTherapistId: t.id,
+                                    sourceTherapistName: t.name,
+                                    primaryTherapistId: slot.primaryTherapistId || t.id,
+                                    secondaryTherapistId: slot.secondaryTherapistId,
+                                    arrangementType: slot.arrangementType,
+                                    isCoupleRoom: isCouple,
+                                    originalTimeSlot: time,
+                                    sessions: slot.sessions,
+                                    rawBooking: slot.rawBooking,
+                                  });
+                                  e.dataTransfer.setData('text/plain', bookingId);
+                                  e.dataTransfer.effectAllowed = 'move';
                                 }
                               }}
                               onDragEnd={() => {
@@ -2402,6 +2923,8 @@ export default function TherapistSchedulePage() {
                                 }, 150);
                                 setDraggedBreak(null);
                                 setDragOverSlot(null);
+                                setDraggedBooking(null);
+                                setDragOverBookingSlot(null);
                               }}
                               onClick={
                                 isBreak
@@ -2477,6 +3000,8 @@ export default function TherapistSchedulePage() {
           defaultTherapistId={bookingModal.therapist.id}
           defaultTherapistName={bookingModal.therapist.name}
           defaultTherapistPhoto={bookingModal.therapist.photoUrl ?? null}
+          schedule={schedule}
+          scheduleData={scheduleData}
           onClose={() => {
             setBookingModal(null);
             setScheduleRefreshKey(k => k + 1);
@@ -2633,7 +3158,7 @@ export default function TherapistSchedulePage() {
 
       {/* ── Break Moving Indicator & Toast ── */}
       {updatingBreak && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl bg-teal-600 text-white px-4 py-2.5 shadow-xl text-sm font-semibold animate-in fade-in slide-in-from-bottom-2">
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl bg-orange-600 text-white px-4 py-2.5 shadow-xl text-sm font-semibold animate-in fade-in slide-in-from-bottom-2">
           <Loader2 className="h-4 w-4 animate-spin shrink-0" />
           <span>Updating break time on server...</span>
         </div>

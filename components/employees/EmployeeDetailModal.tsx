@@ -1,18 +1,19 @@
 'use client';
 
 import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   X, Phone, Mail, Building2, Briefcase, CalendarDays,
   Home, ShieldCheck, AlertCircle, RefreshCw,
   MapPin, Clock, Copy, Check, Sparkles, HeartHandshake,
   FileText, TrendingUp, BarChart3, DollarSign, Users,
   Award, Activity, CheckCircle2, XCircle, ArrowUpRight,
-  PieChart, Calendar, ChevronRight,
+  PieChart, Calendar, ChevronRight, Edit3, Camera, Save, Loader2, Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
+import { usePermissions } from '@/hooks/use-permissions';
 
 export interface BranchInfo {
   id: string;
@@ -186,6 +187,7 @@ interface Props {
   employeeId: string;
   initialEmployee?: Partial<EmployeeDetailData> | null;
   onClose: () => void;
+  onUpdated?: (updated: EmployeeDetailData) => void;
 }
 
 const ROLE_COLORS: Record<string, { bg: string; text: string; border: string }> = {
@@ -227,14 +229,29 @@ function formatDateTime(date: string | null | undefined) {
 
 type TabKey = 'overview' | 'sales' | 'marketing' | 'financials' | 'performance';
 
-export function EmployeeDetailModal({ employeeId, initialEmployee, onClose }: Props) {
+export function EmployeeDetailModal({ employeeId, initialEmployee, onClose, onUpdated }: Props) {
   const token = useAppSelector((s) => s.auth.token);
+  const { canEditEmployee } = usePermissions();
 
   const [detail, setDetail]   = useState<EmployeeDetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [avatarErr, setAvatarErr] = useState(false);
+
+  // Edit employee state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editGender, setEditGender] = useState<'male' | 'female' | 'other' | ''>('');
+  const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(null);
+  const [editAvatarData, setEditAvatarData] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Analytics states
   const [analytics, setAnalytics] = useState<TherapistAnalytics | null>(null);
@@ -401,6 +418,137 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose }: Pr
   const roleStyle = getRoleStyle(current?.role_name ?? 'staff');
   const isActive = current?.status === 'active';
 
+  const startEditing = () => {
+    const first = current?.first_name || (current?.name ? current.name.split(' ')[0] : '');
+    const last = current?.last_name || (current?.name ? current.name.split(' ').slice(1).join(' ') : '');
+    setEditFirstName(first);
+    setEditLastName(last);
+    setEditPhone(current?.phone || '');
+    setEditEmail(current?.email || '');
+    const g = (current?.gender || '').toLowerCase();
+    setEditGender(g === 'male' || g === 'female' || g === 'other' ? (g as 'male' | 'female' | 'other') : '');
+    setEditAvatarPreview(current?.avatar || null);
+    setEditAvatarData(null);
+    setSaveError(null);
+    setSaveSuccess(false);
+    setIsEditing(true);
+    setActiveTab('overview');
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setSaveError('Please select a valid image file (JPG, PNG, WebP).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setSaveError('Image file size must be less than 5MB.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUri = reader.result as string;
+      setEditAvatarPreview(dataUri);
+      setEditAvatarData(dataUri);
+      setSaveError(null);
+    };
+    reader.onerror = () => {
+      setSaveError('Failed to read image file.');
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveEmployee = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editFirstName.trim()) {
+      setSaveError('First name is required.');
+      return;
+    }
+    if (!editPhone.trim()) {
+      setSaveError('Phone number is required.');
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+
+    const payload: Record<string, any> = {
+      first_name: editFirstName.trim(),
+      last_name: editLastName.trim(),
+      name: `${editFirstName.trim()} ${editLastName.trim()}`.trim(),
+      phone_number: editPhone.trim(),
+      phone: editPhone.trim(),
+      email: editEmail.trim(),
+    };
+
+    if (editGender) {
+      payload.gender = editGender;
+    }
+
+    if (editAvatarData !== null) {
+      payload.avatar = editAvatarData;
+    }
+
+    try {
+      const res = await authedFetch(`/api/v1/employees/${employeeId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errDetail =
+          resData?.detail ||
+          resData?.message ||
+          (typeof resData === 'object'
+            ? Object.entries(resData)
+                .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`)
+                .join(' | ')
+            : null) ||
+          'Failed to update employee details';
+        throw new Error(errDetail);
+      }
+
+      const updatedFirst = editFirstName.trim();
+      const updatedLast = editLastName.trim();
+      const updatedFullName = `${updatedFirst} ${updatedLast}`.trim() || current?.name || '';
+      const updatedAvatar = editAvatarData !== null ? (editAvatarData === '' ? null : editAvatarData) : (current?.avatar || null);
+
+      const updatedEmployee: EmployeeDetailData = {
+        ...(current as EmployeeDetailData),
+        name: updatedFullName,
+        first_name: updatedFirst,
+        last_name: updatedLast,
+        phone: editPhone.trim() || null,
+        email: editEmail.trim() || null,
+        gender: editGender || null,
+        avatar: (resData?.avatar && typeof resData.avatar === 'string') ? resData.avatar : updatedAvatar,
+      };
+
+      setDetail(updatedEmployee);
+      setAvatarErr(false);
+      setSaveSuccess(true);
+      setIsEditing(false);
+
+      if (onUpdated) {
+        onUpdated(updatedEmployee);
+      }
+      setTimeout(() => setSaveSuccess(false), 4000);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to update employee');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md animate-fade-in"
@@ -442,6 +590,29 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose }: Pr
             </div>
 
             <div className="flex items-center gap-2">
+              {canEditEmployee && !isEditing && (
+                <button
+                  type="button"
+                  onClick={startEditing}
+                  className="flex items-center gap-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white border border-white/25 px-3 py-1.5 text-xs font-bold transition backdrop-blur-md cursor-pointer shadow-xs"
+                  title="Edit employee details"
+                >
+                  <Edit3 className="h-3.5 w-3.5 text-white" />
+                  <span>Edit</span>
+                </button>
+              )}
+
+              {isEditing && (
+                <button
+                  type="button"
+                  onClick={() => setIsEditing(false)}
+                  className="flex items-center gap-1.5 rounded-full bg-white/15 hover:bg-white/25 text-white border border-white/25 px-3 py-1.5 text-xs font-bold transition backdrop-blur-md cursor-pointer shadow-xs"
+                  title="Cancel editing"
+                >
+                  <span>Cancel Edit</span>
+                </button>
+              )}
+
               {isTherapistRole && (
                 <button
                   onClick={() => {
@@ -672,238 +843,507 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose }: Pr
           {/* ──────────────────────────────────────────────────────────── */}
           {(!isTherapistRole || activeTab === 'overview') && (
             <div className="space-y-5 animate-fade-in">
-              {/* Quick Metrics Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Department</span>
-                  <span className="mt-1 text-sm font-bold text-foreground truncate">
-                    {current?.department_name || 'General'}
-                  </span>
+              {saveSuccess && (
+                <div className="flex items-center gap-2 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 animate-fade-in">
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                  <span>Employee profile updated successfully!</span>
                 </div>
+              )}
 
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Hired On</span>
-                  <span className="mt-1 text-sm font-bold text-foreground">
-                    {formatDate(current?.hire_date) || '—'}
-                  </span>
-                </div>
-
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Type</span>
-                  <span className="mt-1 text-sm font-bold text-foreground capitalize">
-                    {current?.employment_type || 'Full Time'}
-                  </span>
-                </div>
-
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
-                  <span className="text-[10px] uppercase font-bold text-muted-foreground">Branches</span>
-                  <span className="mt-1 text-sm font-bold text-foreground">
-                    {current?.branches && current.branches.length > 0 ? `${current.branches.length} Assigned` : 'All'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Contact Information */}
-              <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <Phone className="h-3.5 w-3.5 text-primary" />
-                  Contact Information
-                </h4>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Phone */}
-                  <div className="flex items-center justify-between rounded-xl bg-card border border-border/50 p-3">
-                    <div className="min-w-0 flex items-center gap-2.5">
-                      <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
-                        <Phone className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] uppercase font-bold text-muted-foreground">Phone Number</p>
-                        {current?.phone ? (
-                          <a href={`tel:${current.phone}`} className="text-xs font-bold text-foreground hover:text-primary transition truncate block">
-                            {current.phone}
-                          </a>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">Not provided</p>
-                        )}
-                      </div>
+              {isEditing ? (
+                <form onSubmit={handleSaveEmployee} className="space-y-5 animate-fade-in">
+                  {/* Edit Header / Notice */}
+                  <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                    <div>
+                      <h3 className="text-sm sm:text-base font-extrabold text-foreground flex items-center gap-2">
+                        <Edit3 className="h-4 w-4 text-primary" />
+                        Edit Employee Profile
+                      </h3>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Update employee name, phone number, email, gender, and profile photo.
+                      </p>
                     </div>
-
-                    {current?.phone && (
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => copyToClipboard(current.phone!, 'phone')}
-                        className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition"
-                        title="Copy phone"
+                        disabled={saving}
+                        onClick={() => setIsEditing(false)}
+                        className="rounded-xl border border-border px-3.5 py-1.5 text-xs font-semibold hover:bg-muted transition cursor-pointer"
                       >
-                        {copiedField === 'phone' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        Cancel
                       </button>
-                    )}
+                      <button
+                        type="submit"
+                        disabled={saving}
+                        className="flex items-center gap-1.5 rounded-xl bg-primary text-primary-foreground px-4 py-1.5 text-xs font-bold shadow-sm hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+                      >
+                        {saving ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Saving…</span>
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-3.5 w-3.5" />
+                            <span>Save Changes</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Email */}
-                  <div className="flex items-center justify-between rounded-xl bg-card border border-border/50 p-3">
-                    <div className="min-w-0 flex items-center gap-2.5">
-                      <div className="grid h-8 w-8 place-items-center rounded-lg bg-sky-500/10 text-sky-500 shrink-0">
-                        <Mail className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-[10px] uppercase font-bold text-muted-foreground">Email Address</p>
-                        {current?.email ? (
-                          <a href={`mailto:${current.email}`} className="text-xs font-bold text-foreground hover:text-primary transition truncate block">
-                            {current.email}
-                          </a>
-                        ) : (
-                          <p className="text-xs text-muted-foreground">Not provided</p>
-                        )}
+                  {saveError && (
+                    <div className="flex items-start gap-2.5 rounded-2xl bg-destructive/10 border border-destructive/30 p-3 text-xs text-destructive animate-fade-in">
+                      <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-bold">Error updating employee</p>
+                        <p className="mt-0.5">{saveError}</p>
                       </div>
                     </div>
-
-                    {current?.email && (
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(current.email!, 'email')}
-                        className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition"
-                        title="Copy email"
-                      >
-                        {copiedField === 'email' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Assigned Branches */}
-              <div>
-                <div className="flex items-center justify-between mb-2.5">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <Building2 className="h-3.5 w-3.5 text-primary" />
-                    Assigned Branches
-                  </h4>
-                  {current?.branches && current.branches.length > 0 && (
-                    <span className="text-xs text-muted-foreground font-medium">
-                      {current.branches.length} locations
-                    </span>
                   )}
-                </div>
 
-                {current?.branches && current.branches.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                    {current.branches.map((b, idx) => (
-                      <div
-                        key={b.id || idx}
-                        className="flex items-start gap-3 rounded-2xl border border-border/60 bg-muted/20 p-3.5 transition hover:border-primary/40 hover:bg-muted/40"
-                      >
-                        <div className="grid h-8 w-8 place-items-center rounded-xl bg-primary/10 text-primary shrink-0">
-                          <Building2 className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-bold text-foreground truncate">{b.name}</p>
-                          {b.city && (
-                            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-                              <MapPin className="h-3 w-3 text-muted-foreground/70 shrink-0" />
-                              <span className="truncate">{b.city}</span>
-                            </p>
-                          )}
-                          {b.phone && (
-                            <p className="text-[11px] text-muted-foreground/80 mt-0.5">
-                              {b.phone}
-                            </p>
-                          )}
-                        </div>
+                  {/* Photo / Image section */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                      <Camera className="h-3.5 w-3.5 text-primary" />
+                      Profile Image
+                    </h4>
+                    <div className="flex items-center gap-4">
+                      <div className="relative h-20 w-20 shrink-0 rounded-2xl overflow-hidden ring-2 ring-primary/30 bg-muted flex items-center justify-center">
+                        {editAvatarPreview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={editAvatarPreview} alt="Preview" className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="text-xl font-black text-muted-foreground">
+                            {initials(editFirstName ? `${editFirstName} ${editLastName}` : current?.name || 'Employee')}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      <div className="space-y-2 flex-1">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/jpg,image/webp"
+                          className="hidden"
+                          onChange={handleImageChange}
+                        />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="flex items-center gap-1.5 rounded-xl border border-border bg-card hover:bg-muted px-3 py-1.5 text-xs font-semibold text-foreground transition cursor-pointer shadow-xs"
+                          >
+                            <Camera className="h-3.5 w-3.5 text-primary" />
+                            <span>Change Photo</span>
+                          </button>
+                          {editAvatarPreview && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditAvatarPreview(null);
+                                setEditAvatarData('');
+                                if (fileInputRef.current) fileInputRef.current.value = '';
+                              }}
+                              className="flex items-center gap-1.5 rounded-xl border border-border/60 hover:bg-destructive/10 text-destructive px-3 py-1.5 text-xs font-semibold transition cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              <span>Remove</span>
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Recommended: Square JPG, PNG, or WebP photo, up to 5MB.
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 text-center">
-                    <p className="text-xs font-semibold text-foreground">Assigned across all spa branches</p>
-                  </div>
-                )}
-              </div>
 
-              {/* Assigned Services / Skills */}
-              {current?.services && current.services.length > 0 && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2.5 flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-primary" />
-                    Services & Specializations ({current.services.length})
-                  </h4>
-                  <div className="flex flex-wrap gap-2">
-                    {current.services.map((svc, idx) => (
-                      <span
-                        key={svc.id || idx}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-card border border-border/60 px-3 py-1.5 text-xs font-semibold text-foreground"
-                      >
-                        <Sparkles className="h-3 w-3 text-primary" />
-                        {svc.name}
+                  {/* Name Fields */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5 text-primary" />
+                      Employee Name
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                          First Name <span className="text-destructive">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={editFirstName}
+                          onChange={(e) => setEditFirstName(e.target.value)}
+                          placeholder="First Name"
+                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                          Last Name
+                        </label>
+                        <input
+                          type="text"
+                          value={editLastName}
+                          onChange={(e) => setEditLastName(e.target.value)}
+                          placeholder="Last Name"
+                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Contact Information Fields */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <Phone className="h-3.5 w-3.5 text-primary" />
+                      Contact Information
+                    </h4>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                          Phone Number <span className="text-destructive">*</span>
+                        </label>
+                        <input
+                          type="tel"
+                          required
+                          value={editPhone}
+                          onChange={(e) => setEditPhone(e.target.value)}
+                          placeholder="e.g. +96512345678"
+                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                          Email Address
+                        </label>
+                        <input
+                          type="email"
+                          value={editEmail}
+                          onChange={(e) => setEditEmail(e.target.value)}
+                          placeholder="employee@ushspa.co"
+                          className="w-full rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Gender Field */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-2">
+                    <label className="text-[11px] font-bold text-muted-foreground uppercase block mb-1">
+                      Gender
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {(['male', 'female', 'other'] as const).map((g) => {
+                        const selected = editGender === g;
+                        return (
+                          <button
+                            key={g}
+                            type="button"
+                            onClick={() => setEditGender(g)}
+                            className={cn(
+                              'rounded-xl border px-3 py-2 text-xs font-bold capitalize transition cursor-pointer text-center',
+                              selected
+                                ? 'border-primary bg-primary/10 text-primary ring-1 ring-primary'
+                                : 'border-border bg-card hover:bg-muted text-muted-foreground'
+                            )}
+                          >
+                            {g}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Form Footer Actions */}
+                  <div className="flex items-center justify-end gap-2.5 pt-2">
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => setIsEditing(false)}
+                      className="rounded-xl border border-border px-4 py-2 text-xs font-bold hover:bg-muted transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="flex items-center gap-2 rounded-xl bg-primary text-primary-foreground px-5 py-2 text-xs font-extrabold shadow-md hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {saving ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>Saving changes…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="h-4 w-4" />
+                          <span>Save Changes</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  {/* Quick Metrics Grid */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground">Department</span>
+                      <span className="mt-1 text-sm font-bold text-foreground truncate">
+                        {current?.department_name || 'General'}
                       </span>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    </div>
 
-              {/* Personal Details */}
-              {(current?.gender || current?.nationality || current?.national_id || current?.dob) && (
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                    <FileText className="h-3.5 w-3.5 text-primary" />
-                    Personal Details
-                  </h4>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                    {current.gender && (
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">Gender</span>
-                        <span className="font-semibold capitalize text-foreground">{current.gender}</span>
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground">Hired On</span>
+                      <span className="mt-1 text-sm font-bold text-foreground">
+                        {formatDate(current?.hire_date) || '—'}
+                      </span>
+                    </div>
+
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground">Type</span>
+                      <span className="mt-1 text-sm font-bold text-foreground capitalize">
+                        {current?.employment_type || 'Full Time'}
+                      </span>
+                    </div>
+
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-3.5 flex flex-col">
+                      <span className="text-[10px] uppercase font-bold text-muted-foreground">Branches</span>
+                      <span className="mt-1 text-sm font-bold text-foreground">
+                        {current?.branches && current.branches.length > 0 ? `${current.branches.length} Assigned` : 'All'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Contact Information */}
+                  <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Phone className="h-3.5 w-3.5 text-primary" />
+                        Contact Information
+                      </h4>
+                      {canEditEmployee && (
+                        <button
+                          type="button"
+                          onClick={startEditing}
+                          className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Edit3 className="h-3 w-3" />
+                          Edit
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Phone */}
+                      <div className="flex items-center justify-between rounded-xl bg-card border border-border/50 p-3">
+                        <div className="min-w-0 flex items-center gap-2.5">
+                          <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary/10 text-primary shrink-0">
+                            <Phone className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground">Phone Number</p>
+                            {current?.phone ? (
+                              <a href={`tel:${current.phone}`} className="text-xs font-bold text-foreground hover:text-primary transition truncate block">
+                                {current.phone}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">Not provided</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {current?.phone && (
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(current.phone!, 'phone')}
+                            className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition"
+                            title="Copy phone"
+                          >
+                            {copiedField === 'phone' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
                       </div>
-                    )}
-                    {current.nationality && (
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">Nationality</span>
-                        <span className="font-semibold text-foreground">{current.nationality}</span>
+
+                      {/* Email */}
+                      <div className="flex items-center justify-between rounded-xl bg-card border border-border/50 p-3">
+                        <div className="min-w-0 flex items-center gap-2.5">
+                          <div className="grid h-8 w-8 place-items-center rounded-lg bg-sky-500/10 text-sky-500 shrink-0">
+                            <Mail className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase font-bold text-muted-foreground">Email Address</p>
+                            {current?.email ? (
+                              <a href={`mailto:${current.email}`} className="text-xs font-bold text-foreground hover:text-primary transition truncate block">
+                                {current.email}
+                              </a>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">Not provided</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {current?.email && (
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(current.email!, 'email')}
+                            className="grid h-7 w-7 place-items-center rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition"
+                            title="Copy email"
+                          >
+                            {copiedField === 'email' ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                        )}
                       </div>
-                    )}
-                    {current.dob && (
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">Date of Birth</span>
-                        <span className="font-semibold text-foreground">{formatDate(current.dob)}</span>
+                    </div>
+                  </div>
+
+                  {/* Assigned Branches */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Building2 className="h-3.5 w-3.5 text-primary" />
+                        Assigned Branches
+                      </h4>
+                      {current?.branches && current.branches.length > 0 && (
+                        <span className="text-xs text-muted-foreground font-medium">
+                          {current.branches.length} locations
+                        </span>
+                      )}
+                    </div>
+
+                    {current?.branches && current.branches.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        {current.branches.map((b, idx) => (
+                          <div
+                            key={b.id || idx}
+                            className="flex items-start gap-3 rounded-2xl border border-border/60 bg-muted/20 p-3.5 transition hover:border-primary/40 hover:bg-muted/40"
+                          >
+                            <div className="grid h-8 w-8 place-items-center rounded-xl bg-primary/10 text-primary shrink-0">
+                              <Building2 className="h-4 w-4" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-bold text-foreground truncate">{b.name}</p>
+                              {b.city && (
+                                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                                  <MapPin className="h-3 w-3 text-muted-foreground/70 shrink-0" />
+                                  <span className="truncate">{b.city}</span>
+                                </p>
+                              )}
+                              {b.phone && (
+                                <p className="text-[11px] text-muted-foreground/80 mt-0.5">
+                                  {b.phone}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    )}
-                    {current.national_id && (
-                      <div>
-                        <span className="text-[10px] uppercase font-bold text-muted-foreground block">National ID</span>
-                        <span className="font-mono text-foreground">{current.national_id}</span>
+                    ) : (
+                      <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 text-center">
+                        <p className="text-xs font-semibold text-foreground">Assigned across all spa branches</p>
                       </div>
                     )}
                   </div>
-                </div>
-              )}
 
-              {/* Emergency Contact */}
-              {(current?.emergency_contact_name || current?.emergency_contact_phone) && (
-                <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
-                    <HeartHandshake className="h-3.5 w-3.5 text-rose-500" />
-                    Emergency Contact
-                  </h4>
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-foreground">{current.emergency_contact_name || 'Contact'}</span>
-                    {current.emergency_contact_phone && (
-                      <a href={`tel:${current.emergency_contact_phone}`} className="font-mono font-bold text-primary hover:underline">
-                        {current.emergency_contact_phone}
-                      </a>
-                    )}
-                  </div>
-                </div>
-              )}
+                  {/* Assigned Services / Skills */}
+                  {current?.services && current.services.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2.5 flex items-center gap-1.5">
+                        <Sparkles className="h-3.5 w-3.5 text-primary" />
+                        Services & Specializations ({current.services.length})
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                        {current.services.map((svc, idx) => (
+                          <span
+                            key={svc.id || idx}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-card border border-border/60 px-3 py-1.5 text-xs font-semibold text-foreground"
+                          >
+                            <Sparkles className="h-3 w-3 text-primary" />
+                            {svc.name}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
-              {/* Notes */}
-              {current?.notes && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Notes</h4>
-                  <p className="text-xs text-muted-foreground rounded-2xl bg-muted/20 border border-border/50 p-3 leading-relaxed">
-                    {current.notes}
-                  </p>
-                </div>
+                  {/* Personal Details */}
+                  {(current?.gender || current?.nationality || current?.national_id || current?.dob) && (
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <FileText className="h-3.5 w-3.5 text-primary" />
+                          Personal Details
+                        </h4>
+                        {canEditEmployee && (
+                          <button
+                            type="button"
+                            onClick={startEditing}
+                            className="text-xs font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Edit3 className="h-3 w-3" />
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                        {current.gender && (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Gender</span>
+                            <span className="font-semibold capitalize text-foreground">{current.gender}</span>
+                          </div>
+                        )}
+                        {current.nationality && (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Nationality</span>
+                            <span className="font-semibold text-foreground">{current.nationality}</span>
+                          </div>
+                        )}
+                        {current.dob && (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">Date of Birth</span>
+                            <span className="font-semibold text-foreground">{formatDate(current.dob)}</span>
+                          </div>
+                        )}
+                        {current.national_id && (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-muted-foreground block">National ID</span>
+                            <span className="font-mono text-foreground">{current.national_id}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Emergency Contact */}
+                  {(current?.emergency_contact_name || current?.emergency_contact_phone) && (
+                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-1.5">
+                        <HeartHandshake className="h-3.5 w-3.5 text-rose-500" />
+                        Emergency Contact
+                      </h4>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-foreground">{current.emergency_contact_name || 'Contact'}</span>
+                        {current.emergency_contact_phone && (
+                          <a href={`tel:${current.emergency_contact_phone}`} className="font-mono font-bold text-primary hover:underline">
+                            {current.emergency_contact_phone}
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notes */}
+                  {current?.notes && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Notes</h4>
+                      <p className="text-xs text-muted-foreground rounded-2xl bg-muted/20 border border-border/50 p-3 leading-relaxed">
+                        {current.notes}
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}

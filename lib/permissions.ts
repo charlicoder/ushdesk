@@ -49,6 +49,7 @@ export const PERMISSIONS = {
   USHSPA_CUSTOMERS_DELETE:  'deskmenu.ushspa.customers.delete',
   USHSPA_CUSTOMERS_UPDATE_STATUS: 'deskmenu.ushspa.customers.update_status',
   USHSPA_EMPLOYEES:         'deskmenu.ushspa.employees',
+  USHSPA_EMPLOYEES_EDIT:    'deskmenu.ushspa.employees.edit',
   USHSPA_LEAVE_MANAGEMENT:  'deskmenu.ushspa.leave_management',
   USHSPA_WORKING_HOURS:     'deskmenu.ushspa.working_hours',
   USHSPA_PRODUCTS:          'deskmenu.ushspa.products',
@@ -445,6 +446,13 @@ export const CUSTOMER_EDIT_PERMISSIONS = [
   'customers.update',
 ] as const;
 
+export const EMPLOYEE_EDIT_PERMISSIONS = [
+  'deskmenu.ushspa.employees.edit',
+  'ushspa.employees.edit',
+  'employees.edit',
+  'employees.update',
+] as const;
+
 export const CUSTOMER_DELETE_PERMISSIONS = [
   'deskmenu.ushspa.customers.delete',
   'ushspa.customers.delete',
@@ -468,6 +476,18 @@ export function canEditCustomer(
   if (isAdministratorRole(roleInfo, user)) return true;
   if (roleInfo?.is_superuser === true) return true;
   return CUSTOMER_EDIT_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canEditEmployee(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return EMPLOYEE_EDIT_PERMISSIONS.some((p) => permissions.includes(p));
 }
 
 export function canDeleteCustomer(

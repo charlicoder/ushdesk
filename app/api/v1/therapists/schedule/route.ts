@@ -22,104 +22,153 @@ export async function GET(req: NextRequest) {
     });
     const data = await upstream.json().catch(() => ({}));
 
-    // If response contains bookings, enrich them with payment_status
+    // Enrich bookings with booknpay data and append any missing booknpay bookings
     if (upstream.ok && Array.isArray(data) && data.length > 0) {
-      const hasBookings = data.some((rec: any) => Array.isArray(rec?.bookings) && rec.bookings.length > 0);
-      if (hasBookings) {
-        const branchId = req.nextUrl.searchParams.get('branch_id') ?? '';
-        const date = req.nextUrl.searchParams.get('date') ?? '';
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId);
-        const branchParam = isUuid ? `&branch_id=${branchId}` : '';
+      const branchId = req.nextUrl.searchParams.get('branch_id') ?? '';
+      const date = req.nextUrl.searchParams.get('date') ?? '';
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId);
+      const branchParam = isUuid ? `&branch_id=${branchId}` : '';
 
-        const payMap = new Map<string, string>();
-        const statusMap = new Map<string, string>();
-        const sessionsMap = new Map<string, any[]>();
+      const payMap = new Map<string, string>();
+      const statusMap = new Map<string, string>();
+      const sessionsMap = new Map<string, any[]>();
+      const bpBookings: any[] = [];
 
-        try {
-          const fetchPromises: Promise<any>[] = [];
+      try {
+        const fetchPromises: Promise<any>[] = [];
 
-          // 1. Fetch booknpay bookings with page_size=100 (max allowed is 100)
-          const bpUrl = date
-            ? `${BASE_URL}/booknpay/api/v1/bookings/?date=${date}${branchParam}&page_size=100`
-            : `${BASE_URL}/booknpay/api/v1/bookings/?page_size=100`;
+        // 1. Fetch booknpay bookings with page_size=100 (max allowed is 100)
+        const bpUrl = date
+          ? `${BASE_URL}/booknpay/api/v1/bookings/?date=${date}${branchParam}&page_size=100`
+          : `${BASE_URL}/booknpay/api/v1/bookings/?page_size=100`;
 
+        fetchPromises.push(
+          fetch(bpUrl, { headers, cache: 'no-store' })
+            .then(res => (res.ok ? res.json() : null))
+            .then(json => {
+              if (!json) return;
+              const list = Array.isArray(json) ? json : (json?.data ?? json?.results ?? []);
+              for (const item of list) {
+                bpBookings.push(item);
+                const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
+                const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+                const ids = [item.id, item.booking_id, item.bookings_id, item.booking_number].filter(Boolean).map(String);
+                for (const id of ids) {
+                  if (ps) payMap.set(id, ps);
+                  if (st) statusMap.set(id, st);
+                  if (Array.isArray(item.sessions) && item.sessions.length > 0) {
+                    sessionsMap.set(id, item.sessions);
+                  }
+                }
+              }
+            })
+            .catch(() => null)
+        );
+
+        // 2. Fetch service-arrangements schedule if branch_id is valid UUID and date is present
+        if (isUuid && date) {
+          const saUrl = `${BASE_URL}${UAUTH}/api/v1/service-arrangements/schedule/?branch_id=${branchId}&date=${date}`;
           fetchPromises.push(
-            fetch(bpUrl, { headers, cache: 'no-store' })
+            fetch(saUrl, { headers, cache: 'no-store' })
               .then(res => (res.ok ? res.json() : null))
               .then(json => {
                 if (!json) return;
-                const list = Array.isArray(json) ? json : (json?.data ?? json?.results ?? []);
-                for (const item of list) {
-                  const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
-                  const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
-                  const ids = [item.id, item.booking_id, item.bookings_id].filter(Boolean).map(String);
-                  for (const id of ids) {
-                    if (ps) payMap.set(id, ps);
-                    if (st) statusMap.set(id, st);
-                    if (Array.isArray(item.sessions) && item.sessions.length > 0) {
-                      sessionsMap.set(id, item.sessions);
+                const records = Array.isArray(json) ? json : [json];
+                for (const rec of records) {
+                  const bks = Array.isArray(rec?.bookings) ? rec.bookings : [];
+                  for (const item of bks) {
+                    const ps = String(item?.payment_status ?? '').toLowerCase().trim();
+                    const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+                    const ids = [item.id, item.booking_id, item.bookings_id, item.booking_number].filter(Boolean).map(String);
+                    for (const id of ids) {
+                      if (ps) payMap.set(id, ps);
+                      if (st) statusMap.set(id, st);
                     }
                   }
                 }
               })
               .catch(() => null)
           );
+        }
 
-          // 2. Fetch service-arrangements schedule if branch_id is valid UUID and date is present
-          if (isUuid && date) {
-            const saUrl = `${BASE_URL}${UAUTH}/api/v1/service-arrangements/schedule/?branch_id=${branchId}&date=${date}`;
-            fetchPromises.push(
-              fetch(saUrl, { headers, cache: 'no-store' })
-                .then(res => (res.ok ? res.json() : null))
-                .then(json => {
-                  if (!json) return;
-                  const records = Array.isArray(json) ? json : [json];
-                  for (const rec of records) {
-                    const bks = Array.isArray(rec?.bookings) ? rec.bookings : [];
-                    for (const item of bks) {
-                      const ps = String(item?.payment_status ?? '').toLowerCase().trim();
-                      const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
-                      const ids = [item.id, item.booking_id, item.bookings_id].filter(Boolean).map(String);
-                      for (const id of ids) {
-                        if (ps) payMap.set(id, ps);
-                        if (st) statusMap.set(id, st);
-                      }
-                    }
-                  }
-                })
-                .catch(() => null)
-            );
+        await Promise.allSettled(fetchPromises);
+
+        for (const record of data) {
+          if (!record) continue;
+          if (!Array.isArray(record.bookings)) {
+            record.bookings = [];
           }
 
-          await Promise.allSettled(fetchPromises);
+          const existingIds = new Set<string>();
 
-          if (payMap.size > 0 || statusMap.size > 0 || sessionsMap.size > 0) {
-            for (const record of data) {
-              if (!Array.isArray(record?.bookings)) continue;
-              for (const bk of record.bookings) {
-                const matchId = [
-                  String(bk.booking_id ?? ''),
-                  String(bk.bookings_id ?? ''),
-                  String(bk.id ?? ''),
-                ].find(id => id && (payMap.has(id) || statusMap.has(id) || sessionsMap.has(id)));
+          // Enrich existing bookings
+          for (const bk of record.bookings) {
+            [bk.booking_id, bk.bookings_id, bk.id, bk.reference].filter(Boolean).forEach(id => {
+              existingIds.add(String(id).toLowerCase().trim());
+            });
 
-                if (matchId) {
-                  if (payMap.has(matchId)) {
-                    bk.payment_status = payMap.get(matchId);
-                  }
-                  if (statusMap.has(matchId)) {
-                    bk.status = statusMap.get(matchId);
-                  }
-                  if (sessionsMap.has(matchId)) {
-                    bk.sessions = sessionsMap.get(matchId);
-                  }
-                }
+            const matchId = [
+              String(bk.booking_id ?? ''),
+              String(bk.bookings_id ?? ''),
+              String(bk.id ?? ''),
+              String(bk.reference ?? ''),
+            ].find(id => id && (payMap.has(id) || statusMap.has(id) || sessionsMap.has(id)));
+
+            if (matchId) {
+              if (payMap.has(matchId)) {
+                bk.payment_status = payMap.get(matchId);
+              }
+              if (statusMap.has(matchId)) {
+                bk.status = statusMap.get(matchId);
+              }
+              if (sessionsMap.has(matchId)) {
+                bk.sessions = sessionsMap.get(matchId);
               }
             }
           }
-        } catch {
-          // Enrichment failure is non-fatal
+
+          // Append any bookings from booknpay not yet present in record.bookings
+          for (const item of bpBookings) {
+            const rawStatus = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+            if (rawStatus === 'cancelled' || rawStatus === 'refunded') continue;
+
+            const itemIds = [item.id, item.booking_id, item.bookings_id, item.booking_number]
+              .filter(Boolean)
+              .map(id => String(id).toLowerCase().trim());
+            const alreadyExists = itemIds.some(id => existingIds.has(id));
+
+            if (!alreadyExists) {
+              const rawCust = item.customer || item.customer_data;
+              const rawSvc = item.service || item.service_data;
+              const newBk: any = {
+                id: String(item.id || item.booking_id || item.bookings_id),
+                booking_id: String(item.id || item.booking_id || item.bookings_id),
+                therapist_id: String(item.therapist_id || (item.therapist_data as any)?.id || ''),
+                secondary_therapist_id: item.secondary_therapist_id ? String(item.secondary_therapist_id) : undefined,
+                start: item.appointment_start || item.start,
+                end: item.appointment_end || item.end,
+                duration_minutes: item.duration_minutes || item.total_duration,
+                status: rawStatus || 'scheduled',
+                payment_status: String(item.payment_status ?? item.payment_data?.status ?? '').toLowerCase().trim() || undefined,
+                booking_type: item.booking_type || item.type,
+                customer: rawCust ? {
+                  name: rawCust.name || rawCust.full_name || `${rawCust.first_name ?? ''} ${rawCust.last_name ?? ''}`.trim(),
+                  phone: rawCust.phone,
+                  first_name: rawCust.first_name,
+                  last_name: rawCust.last_name,
+                } : null,
+                service: rawSvc ? {
+                  name: rawSvc.name || rawSvc.service_name,
+                } : null,
+                sessions: Array.isArray(item.sessions) ? item.sessions : undefined,
+              };
+              record.bookings.push(newBk);
+              itemIds.forEach(id => existingIds.add(id));
+            }
+          }
         }
+      } catch {
+        // Enrichment failure is non-fatal
       }
     }
 

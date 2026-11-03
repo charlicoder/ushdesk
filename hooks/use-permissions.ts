@@ -16,6 +16,7 @@ import {
   canUpdateVoucherStatus,
   canGenerateVoucherReport,
   canEditCustomer,
+  canEditEmployee,
   canDeleteCustomer,
   canUpdateCustomerStatus,
   canRescheduleBooking,
@@ -72,6 +73,9 @@ export function usePermissions() {
 
     /** True if user has permission to edit customer profile details */
     canEditCustomer: adminAccess || canEditCustomer(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to edit employee profile details */
+    canEditEmployee: adminAccess || canEditEmployee(userType, permissions, roleInfo, user),
 
     /** True if user has permission to delete customers */
     canDeleteCustomer: adminAccess || canDeleteCustomer(userType, permissions, roleInfo, user),

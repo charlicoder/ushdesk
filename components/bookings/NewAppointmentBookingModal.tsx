@@ -32,7 +32,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
-import { buildAppointmentWindow, parseClockToMinutes } from '@/lib/datetime';
+import { buildAppointmentWindow, parseClockToMinutes, kuwaitWallClockDate } from '@/lib/datetime';
 import { MultiSelectDrop } from './MultiSelectDrop';
 import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal';
 import { MakePaymentModal } from './MakePaymentModal';
@@ -138,6 +138,8 @@ export interface NewAppointmentBookingModalProps {
   defaultTherapistPhoto?: string | null;
   defaultTimeSlot: string; // e.g. "10:00 AM" or "09:00 PM"
   maxDurationMinutes?: number;
+  schedule?: Record<string, Record<string, any>>;
+  scheduleData?: any;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -180,11 +182,16 @@ function therapistDisplayName(t: ApiTherapist | null | undefined): string {
 
 /** Convert "10:00 AM" or "10:00" → "10:00" (HH:MM 24h) */
 function toHHMM(label: string): string {
-  const parts = (label ?? '').trim().split(' ');
+  if (!label || typeof label !== 'string') return '00:00';
+  const clean = label.trim();
+  if (!clean) return '00:00';
+  const parts = clean.split(' ');
+  if (!parts[0] || !parts[0].includes(':')) return '00:00';
   const [hStr, mStr] = parts[0].split(':');
-  const ampm = parts[1] ?? '';
+  const ampm = (parts[1] ?? '').toUpperCase();
   let h = parseInt(hStr, 10);
   const m = parseInt(mStr || '0', 10);
+  if (isNaN(h) || isNaN(m)) return '00:00';
   if (ampm === 'AM' && h === 12) h = 0;
   if (ampm === 'PM' && h !== 12) h += 12;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -208,6 +215,169 @@ function formatSessionTimeRange(startTime: string, durationMinutes: number): str
   } catch {
     return `${startTime} (${durationMinutes} min)`;
   }
+}
+
+function minutesToSlotLabel(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hd = h % 12 === 0 ? 12 : h % 12;
+  return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function getTherapistScheduleSlots(
+  therapistId: string,
+  schedule?: Record<string, Record<string, any>>,
+): Record<string, any> | null {
+  if (!schedule || Object.keys(schedule).length === 0) return null;
+  if (schedule[therapistId]) return schedule[therapistId];
+  const target = String(therapistId).toLowerCase().trim();
+  for (const [k, v] of Object.entries(schedule)) {
+    if (String(k).toLowerCase().trim() === target) {
+      return v;
+    }
+  }
+  return null;
+}
+
+function parseTimeToMinutes(val: any): number | null {
+  if (val == null) return null;
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s) return null;
+  const ampm = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = parseInt(ampm[2], 10);
+    const p = ampm[3].toUpperCase();
+    if (p === 'AM' && h === 12) h = 0;
+    if (p === 'PM' && h !== 12) h += 12;
+    return h * 60 + m;
+  }
+  const clock = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (clock) {
+    return parseInt(clock[1], 10) * 60 + parseInt(clock[2], 10);
+  }
+  try {
+    const d = kuwaitWallClockDate(s);
+    if (!isNaN(d.getTime())) {
+      return d.getUTCHours() * 60 + d.getUTCMinutes();
+    }
+  } catch {}
+  return null;
+}
+
+function isTherapistAvailableForWindow(
+  therapistId: string,
+  startTime: string,
+  durationMinutes: number,
+  schedule?: Record<string, Record<string, any>>,
+  scheduleData?: any,
+  liveBookings?: any[],
+): boolean {
+  if (!therapistId || !startTime) return false;
+
+  const startMin = parseClockToMinutes(toHHMM(startTime));
+  const dur = durationMinutes > 0 ? durationMinutes : 30;
+  const endMin = startMin + dur;
+  const targetId = String(therapistId).toLowerCase().trim();
+
+  // 1. Check schedule grid (if loaded)
+  if (schedule && Object.keys(schedule).length > 0) {
+    const therapistSlots = getTherapistScheduleSlots(therapistId, schedule);
+    if (!therapistSlots) {
+      // If schedule is loaded and therapist is not in it, they are not scheduled at this branch/date
+      return false;
+    }
+
+    for (let m = startMin; m < endMin; m += 30) {
+      const slotLabel = minutesToSlotLabel(m);
+      let slot = therapistSlots[slotLabel];
+      if (!slot) {
+        const noPad = slotLabel.replace(/^0/, '');
+        slot = therapistSlots[noPad];
+      }
+      if (!slot || slot.status !== 'available') {
+        return false;
+      }
+    }
+  }
+
+  // 2. Check bookings (from both scheduleData and liveBookings)
+  const allBookings: any[] = [
+    ...(scheduleData?.bookings ?? []),
+    ...(liveBookings ?? []),
+  ];
+
+  for (const bk of allBookings) {
+    const rawStatus = String(bk.status ?? bk.booking_status ?? '').toLowerCase().trim();
+    if (rawStatus === 'cancelled' || rawStatus === 'refunded') continue;
+
+    const bkTherapistId = String(bk.therapist_id ?? (bk.therapist_data as any)?.id ?? '').toLowerCase().trim();
+    const bkSecondaryId = String(bk.secondary_therapist_id ?? '').toLowerCase().trim();
+
+    if (Array.isArray(bk.sessions) && bk.sessions.length > 0) {
+      for (const sess of bk.sessions) {
+        const sessTId = String(sess.therapist_id || sess.therapist_data?.id || bkTherapistId).toLowerCase().trim();
+        const sessSecId = String(sess.secondary_therapist_id ?? '').toLowerCase().trim();
+        if (sessTId === targetId || sessSecId === targetId) {
+          const ssm = parseTimeToMinutes(sess.appointment_start || sess.start || bk.appointment_start || bk.start);
+          const sem = parseTimeToMinutes(sess.appointment_end || sess.end || bk.appointment_end || bk.end);
+          if (ssm !== null && sem !== null) {
+            if (startMin < sem && endMin > ssm) {
+              return false;
+            }
+          }
+        }
+      }
+    } else if (bkTherapistId === targetId || bkSecondaryId === targetId) {
+      const bsm = parseTimeToMinutes(bk.appointment_start || bk.start);
+      const bem = parseTimeToMinutes(bk.appointment_end || bk.end);
+      if (bsm !== null && bem !== null) {
+        if (startMin < bem && endMin > bsm) {
+          return false;
+        }
+      }
+    }
+  }
+
+  // 3. Fallback: If schedule grid is not loaded, verify working hours and breaks from scheduleData
+  if ((!schedule || Object.keys(schedule).length === 0) && scheduleData) {
+    const rawTList: any[] = scheduleData.therapists ?? [];
+    const tMatch = rawTList.find(
+      (t: any) => String(t.id).toLowerCase().trim() === targetId,
+    );
+    if (!tMatch) {
+      return false;
+    }
+
+    const availList: any[] = scheduleData.availability ?? [];
+    const avMatch = availList.find(
+      (av: any) => String(av.therapist_id).toLowerCase().trim() === targetId,
+    );
+    if (avMatch && Array.isArray(avMatch.intervals)) {
+      const hasCoverage = avMatch.intervals.some((iv: any) => {
+        const ssm = parseTimeToMinutes(iv.start);
+        const sem = parseTimeToMinutes(iv.end);
+        return ssm !== null && sem !== null && ssm <= startMin && sem >= endMin;
+      });
+      if (!hasCoverage) return false;
+    }
+
+    const rawBreaks = [
+      ...(tMatch.break_intervals ?? tMatch.break_times ?? []),
+      ...(avMatch?.break_intervals ?? avMatch?.break_times ?? []),
+    ];
+    for (const brk of rawBreaks) {
+      const bsm = parseTimeToMinutes(brk.start || brk.start_time);
+      const bem = parseTimeToMinutes(brk.end || brk.end_time);
+      if (bsm !== null && bem !== null && startMin < bem && endMin > bsm) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }
 
 /** Generate 30-min time slots between 09:00 AM and 10:00 PM */
@@ -324,7 +494,7 @@ function SearchDrop<T>({
 
 // ── Sub-Popup: Add Session Modal (2-Step) ────────────────────────────────────
 
-interface AddSessionModalProps {
+export interface AddSessionModalProps {
   authHeader: string;
   branchId: string;
   date: string;
@@ -335,14 +505,17 @@ interface AddSessionModalProps {
   sessionIndex: number;
   minStartTimeMinutes?: number; // earliest allowed time in minutes from midnight for subsequent sessions
   minStartTimeDisplay?: string; // string representation e.g. "11:00 AM"
+  schedule?: Record<string, Record<string, any>>;
+  scheduleData?: any;
   onClose: () => void;
   onAddSession: (session: SavedSession) => void;
 }
 
-function AddSessionSubModal({
+export function AddSessionSubModal({
   authHeader, branchId, date,
   defaultTherapistId, defaultTherapistName, defaultTherapistPhoto,
   defaultTimeSlot, sessionIndex, minStartTimeMinutes, minStartTimeDisplay,
+  schedule, scheduleData,
   onClose, onAddSession,
 }: AddSessionModalProps) {
   const isFirstSession = sessionIndex === 0;
@@ -378,6 +551,7 @@ function AddSessionSubModal({
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(defaultTimeSlot);
 
   const [availableTherapists, setAvailableTherapists] = useState<ApiTherapist[]>([]);
+  const [liveBookings, setLiveBookings] = useState<any[]>([]);
   const [therapistsLoading, setTherapistsLoading] = useState(false);
 
   // ── 1. Fetch Services based on Session Index ──
@@ -550,28 +724,47 @@ function AddSessionSubModal({
     if (isFirstSession && !isDoubleOccupancy(arrangementType)) return;
 
     setTherapistsLoading(true);
+    const startSlot = isFirstSession ? defaultTimeSlot : selectedTimeSlot;
+    const dur = totalDuration > 0 ? totalDuration : (primaryService.duration_minutes ?? 60);
     const qs = new URLSearchParams({
       branch_id: branchId,
       no_service_list: 'true',
       check_for_availability: 'true',
       date,
-      appointment_start: toHHMM(selectedTimeSlot),
-      duration: String(totalDuration > 0 ? totalDuration : 60),
+      appointment_start: toHHMM(startSlot),
+      duration: String(dur),
     });
     const ids = serviceIds.length > 0 ? serviceIds : [primaryService.id];
-    Promise.all(ids.map(id =>
+
+    const fetchTherapists = Promise.all(ids.map(id =>
       authedFetch(`/api/v1/services/${id}/therapists?${qs}`, {
         headers: authHeader ? { Authorization: authHeader } : undefined,
       })
         .then(r => r.json())
         .then(d => (Array.isArray(d) ? d : (d.data ?? d.results ?? [])) as ApiTherapist[]),
-    ))
-      .then(lists => {
+    ));
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId);
+    const branchParam = isUuid ? `&branch_id=${branchId}` : '';
+    const fetchLiveBookings = authedFetch(`/booknpay/api/v1/bookings?date=${date}${branchParam}&page_size=100`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => (Array.isArray(d) ? d : (d?.data ?? d?.results ?? [])))
+      .catch(() => []);
+
+    Promise.all([fetchTherapists, fetchLiveBookings])
+      .then(([lists, bpBookings]) => {
+        setLiveBookings(bpBookings);
         let list: ApiTherapist[] = lists[0] ?? [];
         for (let i = 1; i < lists.length; i++) {
           const idsI = new Set(lists[i].map(t => t.id));
           list = list.filter(t => idsI.has(t.id));
         }
+
+        // Strictly filter qualified therapists by schedule availability for the full session window
+        list = list.filter(t => isTherapistAvailableForWindow(t.id, startSlot, dur, schedule, scheduleData, bpBookings));
+
         setAvailableTherapists(list);
         if (!isFirstSession && list.length > 0) {
           // If no therapist selected or currently selected isn't in available list, pick first
@@ -585,7 +778,20 @@ function AddSessionSubModal({
       })
       .catch(() => setAvailableTherapists([]))
       .finally(() => setTherapistsLoading(false));
-  }, [subStep, isFirstSession, arrangementType, primaryService, serviceIds, branchId, date, selectedTimeSlot, totalDuration, selectedTherapistId, authHeader]);
+  }, [subStep, isFirstSession, arrangementType, primaryService, serviceIds, branchId, date, defaultTimeSlot, selectedTimeSlot, totalDuration, authHeader, schedule, scheduleData]);
+
+  // Keep secondary therapist valid when availableTherapists change
+  useEffect(() => {
+    if (secondaryTherapistId && isDoubleOccupancy(arrangementType)) {
+      const primaryId = isFirstSession ? defaultTherapistId : selectedTherapistId;
+      const isStillAvailable = availableTherapists.some(t => t.id === secondaryTherapistId && t.id !== primaryId);
+      if (!isStillAvailable) {
+        setSecondaryTherapistId('');
+        setSecondaryTherapistName('');
+        setSecondaryTherapistPhoto(null);
+      }
+    }
+  }, [availableTherapists, secondaryTherapistId, arrangementType, isFirstSession, defaultTherapistId, selectedTherapistId]);
 
   const toggleService = (sv: ApiService) => {
     const ids = serviceIds.includes(sv.id)
@@ -599,7 +805,7 @@ function AddSessionSubModal({
     if (!selectedTherapistId) return;
 
     const newSession: SavedSession = {
-      id: Math.random().toString(36).slice(2),
+      id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).slice(2),
       serviceIds,
       services: selectedServices,
       arrangementId,
@@ -1083,57 +1289,75 @@ function AddSessionSubModal({
                         <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                           Second Therapist (Required for Couple/Double Room)
                         </p>
+                        {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                       </div>
-                      <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
-                        {availableTherapists
-                          .filter(t => t.id !== defaultTherapistId)
-                          .map(t => {
-                            const sel = secondaryTherapistId === t.id;
-                            const name = therapistDisplayName(t);
-                            const img = t.avatar ?? t.photo_url;
-                            return (
-                              <div
-                                key={t.id}
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => {
-                                  if (sel) {
-                                    setSecondaryTherapistId('');
-                                    setSecondaryTherapistName('');
-                                    setSecondaryTherapistPhoto(null);
-                                  } else {
-                                    setSecondaryTherapistId(t.id);
-                                    setSecondaryTherapistName(name);
-                                    setSecondaryTherapistPhoto(img ?? null);
-                                  }
-                                }}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
+                      {therapistsLoading ? (
+                        <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
+                          <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                          <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                        </div>
+                      ) : availableTherapists.filter(t => t.id !== defaultTherapistId && isTherapistAvailableForWindow(t.id, defaultTimeSlot, totalDuration, schedule, scheduleData, liveBookings)).length === 0 ? (
+                        <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            No other therapists available for this service on {date} at {defaultTimeSlot} ({totalDuration} min).
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
+                          {availableTherapists
+                            .filter(t => t.id !== defaultTherapistId && isTherapistAvailableForWindow(t.id, defaultTimeSlot, totalDuration, schedule, scheduleData, liveBookings))
+                            .map(t => {
+                              const sel = secondaryTherapistId === t.id;
+                              const name = therapistDisplayName(t);
+                              const img = t.avatar ?? t.photo_url;
+                              return (
+                                <div
+                                  key={t.id}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
                                     if (sel) {
                                       setSecondaryTherapistId('');
                                       setSecondaryTherapistName('');
+                                      setSecondaryTherapistPhoto(null);
                                     } else {
                                       setSecondaryTherapistId(t.id);
                                       setSecondaryTherapistName(name);
+                                      setSecondaryTherapistPhoto(img ?? null);
                                     }
-                                  }
-                                }}
-                                className={cn(
-                                  'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none',
-                                  sel
-                                    ? 'border-rose-400 bg-rose-500/10 text-rose-700 dark:text-rose-300'
-                                    : 'border-border bg-muted/20 hover:bg-muted/40',
-                                )}
-                              >
-                                <div className="h-8 w-8 shrink-0 rounded-full bg-rose-200 dark:bg-rose-900 grid place-items-center text-xs font-bold">
-                                  {name.slice(0, 2).toUpperCase()}
+                                  }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      if (sel) {
+                                        setSecondaryTherapistId('');
+                                        setSecondaryTherapistName('');
+                                      } else {
+                                        setSecondaryTherapistId(t.id);
+                                        setSecondaryTherapistName(name);
+                                      }
+                                    }
+                                  }}
+                                  className={cn(
+                                    'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none',
+                                    sel
+                                      ? 'border-rose-400 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                                      : 'border-border bg-muted/20 hover:bg-muted/40',
+                                  )}
+                                >
+                                  <div className="h-8 w-8 shrink-0 rounded-full bg-rose-200 dark:bg-rose-900 grid place-items-center text-xs font-bold overflow-hidden">
+                                    {img ? (
+                                      <img src={img} alt={name} className="h-full w-full object-cover" />
+                                    ) : (
+                                      name.slice(0, 2).toUpperCase()
+                                    )}
+                                  </div>
+                                  <span className="text-xs font-semibold truncate flex-1">{name}</span>
+                                  {sel && <CheckCircle2 className="h-4 w-4 text-rose-500 shrink-0" />}
                                 </div>
-                                <span className="text-xs font-semibold truncate flex-1">{name}</span>
-                                {sel && <CheckCircle2 className="h-4 w-4 text-rose-500 shrink-0" />}
-                              </div>
-                            );
-                          })}
-                      </div>
+                              );
+                            })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1222,57 +1446,75 @@ function AddSessionSubModal({
                         <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
                           Second Therapist (Required for Couple/Double Room)
                         </p>
+                        {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                       </div>
-                      <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
-                        {availableTherapists
-                          .filter(t => t.id !== selectedTherapistId)
-                          .map(t => {
-                            const sel = secondaryTherapistId === t.id;
-                            const name = therapistDisplayName(t);
-                            const img = t.avatar ?? t.photo_url;
-                            return (
-                              <div
-                                key={t.id}
-                                role="button"
-                                tabIndex={0}
-                                onClick={() => {
-                                  if (sel) {
-                                    setSecondaryTherapistId('');
-                                    setSecondaryTherapistName('');
-                                    setSecondaryTherapistPhoto(null);
-                                  } else {
-                                    setSecondaryTherapistId(t.id);
-                                    setSecondaryTherapistName(name);
-                                    setSecondaryTherapistPhoto(img ?? null);
-                                  }
-                                }}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter' || e.key === ' ') {
+                      {therapistsLoading ? (
+                        <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
+                          <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                          <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                        </div>
+                      ) : availableTherapists.filter(t => t.id !== selectedTherapistId && isTherapistAvailableForWindow(t.id, selectedTimeSlot, totalDuration, schedule, scheduleData, liveBookings)).length === 0 ? (
+                        <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
+                          <p className="text-xs font-medium text-muted-foreground">
+                            No other therapists available for this service on {date} at {selectedTimeSlot} ({totalDuration} min).
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
+                          {availableTherapists
+                            .filter(t => t.id !== selectedTherapistId && isTherapistAvailableForWindow(t.id, selectedTimeSlot, totalDuration, schedule, scheduleData, liveBookings))
+                            .map(t => {
+                              const sel = secondaryTherapistId === t.id;
+                              const name = therapistDisplayName(t);
+                              const img = t.avatar ?? t.photo_url;
+                              return (
+                                <div
+                                  key={t.id}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
                                     if (sel) {
                                       setSecondaryTherapistId('');
                                       setSecondaryTherapistName('');
+                                      setSecondaryTherapistPhoto(null);
                                     } else {
                                       setSecondaryTherapistId(t.id);
                                       setSecondaryTherapistName(name);
+                                      setSecondaryTherapistPhoto(img ?? null);
                                     }
-                                  }
-                                }}
-                                className={cn(
-                                  'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none',
-                                  sel
-                                    ? 'border-rose-400 bg-rose-500/10 text-rose-700 dark:text-rose-300'
-                                    : 'border-border bg-muted/20 hover:bg-muted/40',
-                                )}
-                              >
-                                <div className="h-8 w-8 shrink-0 rounded-full bg-rose-200 dark:bg-rose-900 grid place-items-center text-xs font-bold">
-                                  {name.slice(0, 2).toUpperCase()}
+                                  }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      if (sel) {
+                                        setSecondaryTherapistId('');
+                                        setSecondaryTherapistName('');
+                                      } else {
+                                        setSecondaryTherapistId(t.id);
+                                        setSecondaryTherapistName(name);
+                                      }
+                                    }
+                                  }}
+                                  className={cn(
+                                    'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none',
+                                    sel
+                                      ? 'border-rose-400 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                                      : 'border-border bg-muted/20 hover:bg-muted/40',
+                                  )}
+                                >
+                                  <div className="h-8 w-8 shrink-0 rounded-full bg-rose-200 dark:bg-rose-900 grid place-items-center text-xs font-bold overflow-hidden">
+                                    {img ? (
+                                      <img src={img} alt={name} className="h-full w-full object-cover" />
+                                    ) : (
+                                      name.slice(0, 2).toUpperCase()
+                                    )}
+                                  </div>
+                                  <span className="text-xs font-semibold truncate flex-1">{name}</span>
+                                  {sel && <CheckCircle2 className="h-4 w-4 text-rose-500 shrink-0" />}
                                 </div>
-                                <span className="text-xs font-semibold truncate flex-1">{name}</span>
-                                {sel && <CheckCircle2 className="h-4 w-4 text-rose-500 shrink-0" />}
-                              </div>
-                            );
-                          })}
-                      </div>
+                              );
+                            })}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1408,11 +1650,19 @@ function AddSessionSubModal({
                 </button>
                 <button
                   type="button"
-                  disabled={!selectedTherapistId || !selectedTimeSlot}
+                  disabled={
+                    !primaryService ||
+                    (isFirstSession ? false : !selectedTherapistId) ||
+                    !selectedTimeSlot ||
+                    (isDoubleOccupancy(arrangementType) && !secondaryTherapistId)
+                  }
                   onClick={handleFinishAdd}
                   className={cn(
                     'flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs font-extrabold text-white transition shadow-md cursor-pointer',
-                    !selectedTherapistId || !selectedTimeSlot
+                    !primaryService ||
+                    (isFirstSession ? false : !selectedTherapistId) ||
+                    !selectedTimeSlot ||
+                    (isDoubleOccupancy(arrangementType) && !secondaryTherapistId)
                       ? 'bg-muted-foreground/30 cursor-not-allowed text-muted-foreground'
                       : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20',
                   )}
@@ -1434,7 +1684,7 @@ function AddSessionSubModal({
 export function NewAppointmentBookingModal({
   token, date, branchId, branchName,
   defaultTherapistId, defaultTherapistName, defaultTherapistPhoto,
-  defaultTimeSlot, onClose, onSuccess,
+  defaultTimeSlot, schedule, scheduleData, onClose, onSuccess,
 }: NewAppointmentBookingModalProps) {
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
@@ -2421,6 +2671,8 @@ export function NewAppointmentBookingModal({
           sessionIndex={sessions.length}
           minStartTimeMinutes={nextSessionMinStartMinutes}
           minStartTimeDisplay={lastSession ? nextSessionDefaultTimeSlot : undefined}
+          schedule={schedule}
+          scheduleData={scheduleData}
           onClose={() => setShowAddSessionModal(false)}
           onAddSession={sess => {
             setSessions(prev => [...prev, sess]);

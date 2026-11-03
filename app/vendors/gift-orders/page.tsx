@@ -9,7 +9,7 @@ import {
   Package, MapPin, Copy, Check, Eye, RotateCcw,
   KeyRound, Edit3, Sparkles, Star,
   Building, MessageSquare, Pencil, Smartphone,
-  Calendar, Timer, QrCode, ExternalLink,
+  Calendar, Timer, QrCode, ExternalLink, Printer,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -17,6 +17,7 @@ import { PageHeader } from '@/components/dashboard/page-header';
 import { authedFetch } from '@/lib/authedFetch';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
+import { DeliveryAddressSlipModal } from '@/components/bookings/DeliveryAddressSlipModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface OrderedItem {
@@ -307,7 +308,17 @@ function formatAmount(amount: string | number | null | undefined, currency = 'KW
 }
 
 // ── Address Detail Modal ──────────────────────────────────────────────────────
-function DeliveryAddressModal({ order, isOpen, onClose }: { order: GiftOrder | null; isOpen: boolean; onClose: () => void }) {
+function DeliveryAddressModal({
+  order,
+  isOpen,
+  onClose,
+  onPrintSlip,
+}: {
+  order: GiftOrder | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onPrintSlip?: (order: GiftOrder, itemIndex?: number | null) => void;
+}) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -379,7 +390,18 @@ function DeliveryAddressModal({ order, isOpen, onClose }: { order: GiftOrder | n
             <div className="rounded-xl border border-border/80 bg-background p-3 text-xs leading-relaxed text-foreground">{formatted}</div>
           </div>
         </div>
-        <div className="flex items-center justify-end border-t border-border/50 bg-muted/20 px-6 py-3">
+        <div className="flex items-center justify-between border-t border-border/50 bg-muted/20 px-6 py-3">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onPrintSlip?.(order, null);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary px-3.5 py-2 text-xs font-bold transition cursor-pointer"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            <span>Print Delivery Slip</span>
+          </button>
           <button type="button" onClick={onClose} className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-sm hover:opacity-90 transition">Close</button>
         </div>
       </div>
@@ -388,7 +410,17 @@ function DeliveryAddressModal({ order, isOpen, onClose }: { order: GiftOrder | n
 }
 
 // ── Gift Details Modal ────────────────────────────────────────────────────────
-function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null; isOpen: boolean; onClose: () => void }) {
+function GiftDetailsModal({
+  order,
+  isOpen,
+  onClose,
+  onPrintSlip,
+}: {
+  order: GiftOrder | null;
+  isOpen: boolean;
+  onClose: () => void;
+  onPrintSlip?: (order: GiftOrder, itemIndex?: number | null) => void;
+}) {
   const [copiedVoucherCode, setCopiedVoucherCode] = useState(false);
   const [copiedTrackingUrl, setCopiedTrackingUrl] = useState(false);
 
@@ -482,11 +514,24 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
           {/* Ordered Items & Services */}
           {(Boolean(order.ordered_items?.length) || Boolean(order.service_data?.name) || Boolean(order.service_id) || Boolean(isDigital && order.digital_product_data) || Boolean(order.addons?.length)) && (
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
-                <Package className="h-3.5 w-3.5 text-primary" />
-                Ordered Items
-                {order.ordered_items && order.ordered_items.length > 0 ? ` (${order.ordered_items.length})` : ''}
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                  <Package className="h-3.5 w-3.5 text-primary" />
+                  Ordered Items
+                  {order.ordered_items && order.ordered_items.length > 0 ? ` (${order.ordered_items.length})` : ''}
+                </p>
+                {order.ordered_items && order.ordered_items.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onPrintSlip?.(order, null)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-border/80 bg-background hover:bg-muted text-primary px-2.5 py-1 text-[11px] font-bold transition shadow-xs cursor-pointer"
+                    title="Print delivery address slips for all items"
+                  >
+                    <Printer className="h-3 w-3" />
+                    <span>Print All Slips</span>
+                  </button>
+                )}
+              </div>
               <div className="space-y-3">
                 {/* Physical Products */}
                 {order.ordered_items && order.ordered_items.length > 0 && (
@@ -496,12 +541,21 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
                         {item.image && (
                           <img src={item.image} alt={item.name_en || item.name} className="h-12 w-12 rounded-lg object-cover shrink-0"
                             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                      )}
+                        )}
                         <div className="flex-1 min-w-0">
                           <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
                           <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || order.currency)}</p>
                         </div>
                         <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || order.currency)}</span>
+                        <button
+                          type="button"
+                          onClick={() => onPrintSlip?.(order, i)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary px-2.5 py-1.5 text-xs font-bold transition shrink-0 cursor-pointer shadow-xs"
+                          title="Print delivery address slip for this item"
+                        >
+                          <Printer className="h-3.5 w-3.5" />
+                          <span>Print Slip</span>
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -679,19 +733,29 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
                     <MapPin className="h-4 w-4 text-primary shrink-0" />
                     <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Delivery Address</span>
                   </div>
-                  {order.delivery_address && (
+                  <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => {
-                        const txt = formatAddressPreview(order.delivery_address);
-                        if (txt && txt !== '—') navigator.clipboard.writeText(txt);
-                      }}
-                      className="grid h-6 w-6 place-items-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
-                      title="Copy address"
+                      onClick={() => onPrintSlip?.(order, null)}
+                      className="grid h-6 w-6 place-items-center rounded-md hover:bg-muted text-primary transition cursor-pointer"
+                      title="Print Delivery Address Slip"
                     >
-                      <Copy className="h-3.5 w-3.5" />
+                      <Printer className="h-3.5 w-3.5" />
                     </button>
-                  )}
+                    {order.delivery_address && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const txt = formatAddressPreview(order.delivery_address);
+                          if (txt && txt !== '—') navigator.clipboard.writeText(txt);
+                        }}
+                        className="grid h-6 w-6 place-items-center rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition cursor-pointer"
+                        title="Copy address"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {order.delivery_address ? (
                   <p className="font-semibold text-foreground leading-snug line-clamp-3">
@@ -817,7 +881,17 @@ function GiftDetailsModal({ order, isOpen, onClose }: { order: GiftOrder | null;
           </div>
         </div>
 
-        <div className="flex items-center justify-end border-t border-border/50 bg-muted/20 px-6 py-3 shrink-0">
+        <div className="flex items-center justify-between border-t border-border/50 bg-muted/20 px-6 py-3 shrink-0">
+          {isPhysical ? (
+            <button
+              type="button"
+              onClick={() => onPrintSlip?.(order, null)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary px-3.5 py-2 text-xs font-bold transition shadow-xs cursor-pointer"
+            >
+              <Printer className="h-3.5 w-3.5" />
+              <span>Print Delivery Address Slip</span>
+            </button>
+          ) : <div />}
           <button type="button" onClick={onClose} className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground shadow-sm hover:opacity-90 transition">Close</button>
         </div>
       </div>
@@ -1150,6 +1224,13 @@ export default function GiftOrdersPage() {
   const [detailsModalOrder, setDetailsModalOrder]     = useState<GiftOrder | null>(null);
   const [statusModalOrder, setStatusModalOrder]       = useState<GiftOrder | null>(null);
   const [editAddrModalOrder, setEditAddrModalOrder]   = useState<GiftOrder | null>(null);
+  const [slipModalOrder, setSlipModalOrder]           = useState<GiftOrder | null>(null);
+  const [slipModalItemIndex, setSlipModalItemIndex]   = useState<number | null>(null);
+
+  const handleOpenSlipModal = (order: GiftOrder, itemIndex?: number | null) => {
+    setSlipModalOrder(order);
+    setSlipModalItemIndex(typeof itemIndex === 'number' ? itemIndex : null);
+  };
 
   useEffect(() => {
     if (!toast) return;
@@ -1501,12 +1582,24 @@ export default function GiftOrdersPage() {
                               <p className="text-xs text-muted-foreground line-clamp-2 leading-snug">
                                 {order.delivery_address ? formatAddressPreview(order.delivery_address) : <span className="italic">No address set</span>}
                               </p>
-                              <button
-                                onClick={() => setEditAddrModalOrder(order)}
-                                title="Edit delivery address"
-                                className="inline-flex items-center justify-center h-6 w-6 rounded-lg border border-border/80 bg-background text-primary hover:bg-primary/10 transition shrink-0">
-                                <Pencil className="h-3 w-3" />
-                              </button>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenSlipModal(order, null)}
+                                  title="Print delivery address slip"
+                                  className="inline-flex items-center justify-center h-6 w-6 rounded-lg border border-border/80 bg-background text-primary hover:bg-primary/10 transition shrink-0 cursor-pointer"
+                                >
+                                  <Printer className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditAddrModalOrder(order)}
+                                  title="Edit delivery address"
+                                  className="inline-flex items-center justify-center h-6 w-6 rounded-lg border border-border/80 bg-background text-primary hover:bg-primary/10 transition shrink-0 cursor-pointer"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                              </div>
                             </div>
                           ) : (
                             <span className="text-[11px] text-muted-foreground italic">{order.branch_data?.name || '—'}</span>
@@ -1676,10 +1769,24 @@ export default function GiftOrdersPage() {
                         <div className="rounded-xl border border-border/50 bg-background p-2.5">
                           <div className="flex items-center justify-between gap-1 mb-1">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><MapPin className="h-3 w-3 text-primary" />Delivery Address</span>
-                            <button onClick={() => setEditAddrModalOrder(order)} title="Edit delivery address"
-                              className="inline-flex items-center justify-center h-5 w-5 rounded-md border border-border/80 bg-background text-primary hover:bg-primary/10 transition">
-                              <Pencil className="h-2.5 w-2.5" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSlipModal(order, null)}
+                                title="Print delivery address slip"
+                                className="inline-flex items-center justify-center h-5 w-5 rounded-md border border-border/80 bg-background text-primary hover:bg-primary/10 transition cursor-pointer"
+                              >
+                                <Printer className="h-2.5 w-2.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditAddrModalOrder(order)}
+                                title="Edit delivery address"
+                                className="inline-flex items-center justify-center h-5 w-5 rounded-md border border-border/80 bg-background text-primary hover:bg-primary/10 transition cursor-pointer"
+                              >
+                                <Pencil className="h-2.5 w-2.5" />
+                              </button>
+                            </div>
                           </div>
                           <p className="text-xs text-foreground line-clamp-2 leading-relaxed">
                             {order.delivery_address ? formatAddressPreview(order.delivery_address) : <span className="italic text-muted-foreground">No address set</span>}
@@ -1733,6 +1840,15 @@ export default function GiftOrdersPage() {
                           <Check className="h-3.5 w-3.5 text-purple-600" />Received
                         </div>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenSlipModal(order, null)}
+                        disabled={updatingId === order.id}
+                        title="Print delivery address slip"
+                        className="inline-flex items-center justify-center gap-1 rounded-xl border border-border/80 bg-background px-2.5 py-2 text-xs font-semibold text-primary hover:bg-primary/10 disabled:opacity-50 transition shrink-0 cursor-pointer"
+                      >
+                        <Printer className="h-3.5 w-3.5" />
+                      </button>
                       <button onClick={() => setStatusModalOrder(order)} disabled={updatingId === order.id}
                         className="inline-flex items-center justify-center gap-1 rounded-xl border border-border/80 bg-background px-3 py-2 text-xs font-semibold text-foreground hover:bg-muted disabled:opacity-50 transition shrink-0">
                         <Edit3 className="h-3.5 w-3.5 text-muted-foreground" />Update
@@ -1746,10 +1862,29 @@ export default function GiftOrdersPage() {
         )}
 
         {/* Modals */}
-        <DeliveryAddressModal order={addressModalOrder} isOpen={Boolean(addressModalOrder)} onClose={() => setAddressModalOrder(null)} />
-        <GiftDetailsModal order={detailsModalOrder} isOpen={Boolean(detailsModalOrder)} onClose={() => setDetailsModalOrder(null)} />
+        <DeliveryAddressModal
+          order={addressModalOrder}
+          isOpen={Boolean(addressModalOrder)}
+          onClose={() => setAddressModalOrder(null)}
+          onPrintSlip={handleOpenSlipModal}
+        />
+        <GiftDetailsModal
+          order={detailsModalOrder}
+          isOpen={Boolean(detailsModalOrder)}
+          onClose={() => setDetailsModalOrder(null)}
+          onPrintSlip={handleOpenSlipModal}
+        />
         <UpdateDeliveryStatusModal order={statusModalOrder} isOpen={Boolean(statusModalOrder)} onClose={() => setStatusModalOrder(null)} onUpdated={handleStatusModalUpdated} />
         <EditDeliveryAddressModal order={editAddrModalOrder} isOpen={Boolean(editAddrModalOrder)} onClose={() => setEditAddrModalOrder(null)} onUpdated={handleAddressUpdated} />
+        <DeliveryAddressSlipModal
+          isOpen={Boolean(slipModalOrder)}
+          order={slipModalOrder}
+          initialItemIndex={slipModalItemIndex}
+          onClose={() => {
+            setSlipModalOrder(null);
+            setSlipModalItemIndex(null);
+          }}
+        />
       </div>
     </DashboardShell>
   );

@@ -780,6 +780,7 @@ export default function EmployeesPage() {
           employeeId={selectedEmployee.id}
           initialEmployee={selectedEmployee}
           onClose={() => setSelectedEmployee(null)}
+          onUpdated={() => refetch()}
         />
       )}
     </DashboardShell>

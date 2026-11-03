@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
   FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
-  Trash2,
+  Trash2, Pencil,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -20,6 +20,8 @@ import { checkBookingCancellationEligibility, getBookingAppointmentDateTime } fr
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
 import { usePermissions } from '@/hooks/use-permissions';
 import { ChangeTherapistModal } from '@/components/bookings/ChangeTherapistModal';
+import { EditSessionModal, type EditableServiceItem } from '@/components/bookings/EditSessionModal';
+import { AddSessionSubModal, type SavedSession } from '@/components/bookings/NewAppointmentBookingModal';
 import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
@@ -616,6 +618,58 @@ function PaymentProviderModal({
   );
 }
 
+function toHHMM(label: string): string {
+  if (!label || typeof label !== 'string') return '00:00';
+  const clean = label.trim();
+  if (!clean) return '00:00';
+  const parts = clean.split(' ');
+  if (!parts[0] || !parts[0].includes(':')) return '00:00';
+  const [hStr, mStr] = parts[0].split(':');
+  const ampm = (parts[1] ?? '').toUpperCase();
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr || '0', 10);
+  if (isNaN(h) || isNaN(m)) return '00:00';
+  if (ampm === 'AM' && h === 12) h = 0;
+  if (ampm === 'PM' && h !== 12) h += 12;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function minutesToSlotLabel(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hd = h % 12 === 0 ? 12 : h % 12;
+  return `${String(hd).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function parseTimeToMinutes(val: any): number | null {
+  if (val == null) return null;
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s) return null;
+  const ampm = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)$/i);
+  if (ampm) {
+    let h = parseInt(ampm[1], 10);
+    const m = parseInt(ampm[2], 10);
+    const p = ampm[3].toUpperCase();
+    if (p === 'AM' && h === 12) h = 0;
+    if (p === 'PM' && h !== 12) h += 12;
+    return h * 60 + m;
+  }
+  const clock = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (clock) {
+    return parseInt(clock[1], 10) * 60 + parseInt(clock[2], 10);
+  }
+  try {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      const kuwaitHours = (d.getUTCHours() + 3) % 24;
+      return kuwaitHours * 60 + d.getUTCMinutes();
+    }
+  } catch {}
+  return null;
+}
+
 // ── Booking Detail Modal ───────────────────────────────────────────────────────
 export function BookingDetailPopup({
   booking,
@@ -656,6 +710,13 @@ export function BookingDetailPopup({
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [showSessionTherapistModal, setShowSessionTherapistModal] = useState(false);
 
+  // Staged session modifications & edit session modal
+  const [editingSessionIndex, setEditingSessionIndex] = useState<number | null>(null);
+  const [showAddSessionModal, setShowAddSessionModal] = useState(false);
+  const [stagedSessions, setStagedSessions] = useState<Record<string, unknown>[] | null>(null);
+  const [isSavingSessions, setIsSavingSessions] = useState(false);
+  const [saveSessionsError, setSaveSessionsError] = useState<string | null>(null);
+
   const openChangeTherapist = (slot: 'primary' | 'secondary' = 'primary') => {
     setChangeTherapistTarget(slot);
     setShowChangeTherapistModal(true);
@@ -675,6 +736,9 @@ export function BookingDetailPopup({
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const authPermissions = useAppSelector((s) => s.auth.permissions);
+  const reduxToken = useAppSelector((s) => s.auth.token);
+  const cleanToken = (reduxToken || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '')).replace(/^(Bearer\s+)+/i, '').trim();
+  const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
   const {
     canRescheduleBooking: hasReschedulePermission,
@@ -1363,6 +1427,9 @@ export function BookingDetailPopup({
   // All other conditions removed.
   const canShowCancel = !isCancelled && hasCancelPermission;
 
+  // Unpaid booking: edit session icon only appears for unpaid bookings
+  const isUnpaidBooking = !isPaymentSuccess && !isCancelled && !isCompleted;
+
   // ── Compute durations & amounts adding service + addons + extra minutes ─────
   const addons = (detail?.addons && Array.isArray(detail.addons) && detail.addons.length > 0)
     ? (detail.addons as Array<Record<string, unknown>>)
@@ -1392,13 +1459,45 @@ export function BookingDetailPopup({
     : Number(detail?.duration_minutes ?? booking.duration_minutes ?? 0);
   const addonsDuration  = Number(detail?.addons_duration  ?? booking.addons_duration  ?? 0);
   const extraMinutes    = Number(detail?.extra_minutes    ?? booking.extra_minutes    ?? 0);
-  const totalDuration   = (serviceDuration + addonsDuration + extraMinutes) || Number(detail?.total_duration ?? booking.total_duration ?? serviceDuration);
+  // ── Session-wise breakdown (matches attached session card design) ───────────
+  const rawSessions = (
+    stagedSessions !== null
+      ? stagedSessions
+      : (Array.isArray(detail?.sessions) && (detail?.sessions as unknown[]).length > 0
+          ? detail?.sessions
+          : (Array.isArray(booking.sessions) && booking.sessions.length > 0
+            ? booking.sessions
+            : (Array.isArray(booking.raw?.sessions) ? booking.raw.sessions : [])))
+  ) as Array<Record<string, unknown>>;
+
+  const stagedPriceSum = stagedSessions !== null
+    ? stagedSessions.reduce((sum, s) => {
+        const sServices = (Array.isArray(s.services) ? s.services : []) as Array<Record<string, unknown>>;
+        const sSum = sServices.reduce((acc, sv) => acc + (parseFloat(String(sv.base_price ?? sv.price ?? 0)) || 0), 0);
+        return sum + (sSum > 0 ? sSum : (parseFloat(String(s.session_price ?? s.services_price ?? 0)) || 0));
+      }, 0)
+    : null;
+
+  const stagedDurationSum = stagedSessions !== null
+    ? stagedSessions.reduce((sum, s) => {
+        const sServices = (Array.isArray(s.services) ? s.services : []) as Array<Record<string, unknown>>;
+        const sSum = sServices.reduce((acc, sv) => acc + (Number(sv.duration_minutes ?? sv.duration ?? 0) || 0), 0);
+        return sum + (sSum > 0 ? sSum : (Number(s.total_session_duration ?? s.duration_minutes ?? 0) || 0));
+      }, 0)
+    : null;
 
   const pricingObj = (detail?.pricing ?? booking.pricing ?? booking.raw?.pricing_details) as Record<string, unknown> | undefined;
 
-  const servicePrice = isMultiService && multiPriceSum > 0
-    ? multiPriceSum
-    : parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0;
+  const servicePrice = stagedPriceSum !== null
+    ? stagedPriceSum
+    : (isMultiService && multiPriceSum > 0
+        ? multiPriceSum
+        : parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0);
+
+  const totalDuration = stagedDurationSum !== null
+    ? (stagedDurationSum + addonsDuration + extraMinutes)
+    : (serviceDuration + addonsDuration + extraMinutes) || Number(detail?.total_duration ?? booking.total_duration ?? serviceDuration);
+
   const serviceItems = isMultiService
     ? multiItems
     : [{ name: booking.service_name, category: booking.service_category, price: servicePrice, duration: serviceDuration }];
@@ -1409,20 +1508,11 @@ export function BookingDetailPopup({
   const extraPrice = parseFloat(String(pricingObj?.price_for_extra_minutes ?? pricingObj?.extra_price ?? detail?.price_for_extra_minutes ?? booking.price_for_extra_minutes ?? '0')) || 0;
 
   const rawDiscount = parseFloat(String(pricingObj?.discount ?? pricingObj?.discount_amount ?? detail?.discount ?? booking.discount ?? (booking as any)?.discount ?? (booking.raw as any)?.discount ?? '0')) || 0;
-  const rawTotal = parseFloat(String(pricingObj?.total_price ?? pricingObj?.total ?? detail?.total_amount ?? detail?.total_price ?? booking.total_amount ?? booking.total_price ?? '0')) || 0;
   const subtotalPrice = servicePrice + addonsPrice + extraPrice;
-  const discountAmount = rawDiscount > 0 ? rawDiscount : (rawTotal > 0 && subtotalPrice > rawTotal ? (subtotalPrice - rawTotal) : 0);
-  const computedTotal = rawTotal > 0 ? rawTotal : Math.max(0, subtotalPrice - discountAmount);
+  // Retain only genuine discount previously applied to the booking; do not synthesize or increase discount for new services
+  const discountAmount = rawDiscount > 0 ? rawDiscount : 0;
+  const computedTotal = Math.max(0, subtotalPrice - discountAmount);
   const currency = booking.currency || 'KWD';
-
-  // ── Session-wise breakdown (matches attached session card design) ───────────
-  const rawSessions = (
-    Array.isArray(detail?.sessions) && (detail?.sessions as unknown[]).length > 0
-      ? detail?.sessions
-      : (Array.isArray(booking.sessions) && booking.sessions.length > 0
-        ? booking.sessions
-        : (Array.isArray(booking.raw?.sessions) ? booking.raw.sessions : []))
-  ) as Array<Record<string, unknown>>;
 
   const displaySessions = (() => {
     if (rawSessions.length > 0) {
@@ -1495,10 +1585,16 @@ export function BookingDetailPopup({
         const timeRange = formatTimeRange(sStart, sEnd, sDur);
         const timeLabel = timeRange ? `${timeRange} (${sDur} min)` : `${sDur} min`;
 
+        const sServicesPriceSum = sServices.reduce(
+          (acc, sv) => acc + (parseFloat(String(sv.base_price ?? sv.price ?? 0)) || 0),
+          0
+        );
+
         const sPrice = parseFloat(
           String(
             s.session_price ??
             s.services_price ??
+            (sServicesPriceSum > 0 ? sServicesPriceSum : null) ??
             sServices[0]?.base_price ??
             sServices[0]?.arrangement_price ??
             sServices[0]?.price ??
@@ -1568,6 +1664,46 @@ export function BookingDetailPopup({
       rangeLabel: formatTimeRange(booking.appointment_start, booking.appointment_end, singleDur),
     }];
   })();
+
+  const canAddSession = !isCancelled && !isCompleted && displaySessions.length < 3;
+
+  const bookingDate = useMemo(() => {
+    const raw = detail?.appointment_date || (booking as any)?.appointment_date || (booking as any)?.date || booking.appointment_start;
+    if (raw) return String(raw).split('T')[0];
+    return kuwaitDateString();
+  }, [detail, booking]);
+
+  const lastSess = displaySessions.length > 0 ? displaySessions[displaySessions.length - 1] : null;
+  const defTherapistId = String(
+    lastSess?.raw?.therapist_id ||
+    (lastSess?.raw?.therapist_data as any)?.id ||
+    booking.therapist_id ||
+    detail?.therapist_id ||
+    ''
+  );
+  const defTherapistName = String(
+    lastSess?.therapistName ||
+    booking.therapist_name ||
+    detail?.therapist_name ||
+    'Therapist'
+  );
+
+  const nextSessionDefaultTimeSlot = useMemo(() => {
+    if (!lastSess) return '09:00 AM';
+    const sStart = String(lastSess.raw?.appointment_start ?? lastSess.raw?.appointment_time ?? (displaySessions.length === 1 ? booking.appointment_start : '') ?? '');
+    const sDur = Number(lastSess.raw?.total_session_duration ?? lastSess.raw?.duration_minutes ?? 60);
+    const sEnd = String(lastSess.raw?.appointment_end ?? '');
+    const endMin = parseTimeToMinutes(sEnd) ?? ((parseTimeToMinutes(sStart) ?? 600) + sDur);
+    return minutesToSlotLabel(endMin);
+  }, [lastSess, displaySessions.length, booking.appointment_start]);
+
+  const nextSessionMinStartMinutes = useMemo(() => {
+    if (!lastSess) return undefined;
+    const sStart = String(lastSess.raw?.appointment_start ?? lastSess.raw?.appointment_time ?? (displaySessions.length === 1 ? booking.appointment_start : '') ?? '');
+    const sDur = Number(lastSess.raw?.total_session_duration ?? lastSess.raw?.duration_minutes ?? 60);
+    const sEnd = String(lastSess.raw?.appointment_end ?? '');
+    return parseTimeToMinutes(sEnd) ?? ((parseTimeToMinutes(sStart) ?? 600) + sDur);
+  }, [lastSess, displaySessions.length, booking.appointment_start]);
 
   // ── History & Creator & Payment references ──────────────────────────
   const historyList = (detail?.status_history && Array.isArray(detail.status_history))
@@ -1869,6 +2005,222 @@ export function BookingDetailPopup({
       setNoShowError(err instanceof Error ? err.message : 'Failed to update status to No Show');
     } finally {
       setMarkingNoShow(false);
+    }
+  };
+
+  const handleUpdateSessionServices = useCallback((updatedServices: EditableServiceItem[], sessionIdx: number) => {
+    // Current base sessions list
+    const base = rawSessions.length > 0
+      ? rawSessions.map(s => ({ ...s }))
+      : [{ ...(detail || {}), ...booking }];
+    const targetSession: Record<string, any> = base[sessionIdx] ? { ...base[sessionIdx] } : { position: sessionIdx };
+
+    const newDur = updatedServices.reduce((sum, sv) => sum + (Number(sv.duration_minutes) || 0), 0);
+    const newPrice = updatedServices.reduce((sum, sv) => sum + (Number(sv.base_price) || 0), 0);
+    const newNames = updatedServices.map((sv) => sv.service_name || sv.name).filter(Boolean).join(' + ');
+
+    targetSession.services = updatedServices;
+    targetSession.total_session_duration = newDur;
+    targetSession.duration_minutes = newDur;
+    targetSession.services_duration = newDur;
+    targetSession.session_price = newPrice;
+    targetSession.services_price = newPrice;
+    targetSession.service_name = newNames;
+
+    base[sessionIdx] = targetSession;
+    setStagedSessions(base);
+    setSaveSessionsError(null);
+  }, [rawSessions, detail, booking]);
+
+  const handleAddSessionFromModal = useCallback((sess: SavedSession) => {
+    const base = rawSessions.length > 0
+      ? rawSessions.map(s => ({ ...s }))
+      : [{ ...(detail || {}), ...booking }];
+
+    const newPosition = base.length;
+    const sStartHHMM = toHHMM(sess.startTime);
+    const startIso = `${bookingDate}T${sStartHHMM}:00+03:00`;
+    const cleanSessionId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : undefined;
+
+    const newSessionRecord: Record<string, any> = {
+      session_id: cleanSessionId,
+      session_number: newPosition + 1,
+      position: newPosition,
+      therapist_id: sess.therapistId,
+      therapist_name: sess.therapistName,
+      secondary_therapist_id: sess.secondaryTherapistId || undefined,
+      secondary_therapist_name: sess.secondaryTherapistName || undefined,
+      service_arrangement_id: sess.arrangementId,
+      arrangement_name: sess.arrangementName,
+      arrangement_type: sess.arrangementType,
+      service_arrangement_data: {
+        id: sess.arrangementId,
+        name: sess.arrangementName,
+        arrangement_type: sess.arrangementType,
+        arrangement_price: sess.arrangementPrice,
+      },
+      therapist_data: {
+        id: sess.therapistId,
+        name: sess.therapistName,
+        avatar: sess.therapistPhoto,
+      },
+      secondary_therapist_data: sess.secondaryTherapistId ? {
+        id: sess.secondaryTherapistId,
+        name: sess.secondaryTherapistName,
+        avatar: sess.secondaryTherapistPhoto,
+      } : undefined,
+      services: sess.services.map((sv, sIdx) => ({
+        service_id: sv.id,
+        service_name: sv.name,
+        base_price: parseFloat(String(sv.base_price ?? '0')) || 0,
+        base_duration: Number(sv.duration_minutes ?? 60),
+        duration_minutes: Number(sv.duration_minutes ?? 60),
+        position: sIdx,
+      })),
+      appointment_time: sStartHHMM,
+      appointment_start: startIso,
+      total_session_duration: sess.totalDuration,
+      duration_minutes: sess.totalDuration,
+      services_duration: sess.totalDuration,
+      session_price: sess.sessionPrice,
+      services_price: sess.sessionPrice,
+      service_name: sess.services.map(s => s.name).join(' + '),
+    };
+
+    setStagedSessions([...base, newSessionRecord]);
+    setSaveSessionsError(null);
+    setShowAddSessionModal(false);
+  }, [rawSessions, detail, booking, bookingDate]);
+
+  const handleSaveStagedSessions = async () => {
+    if (!booking?.id || !stagedSessions) return;
+    setIsSavingSessions(true);
+    setSaveSessionsError(null);
+
+    const isUuid = (v: unknown): v is string =>
+      typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+
+    try {
+      const payloadSessions = stagedSessions.map((s, idx) => {
+        let sServices = (Array.isArray(s.services) ? s.services : [])
+          .map((sv: any, sIdx: number) => {
+            const sId = [sv.service_id, sv.id].find(isUuid) || undefined;
+            return {
+              service_id: sId,
+              service_name: sv.service_name || sv.name || undefined,
+              base_price: parseFloat(String(sv.base_price ?? sv.price ?? 0)) || 0,
+              base_duration: Number(sv.duration_minutes ?? sv.duration ?? 60),
+              duration_minutes: Number(sv.duration_minutes ?? sv.duration ?? 60),
+              position: sIdx,
+            };
+          })
+          .filter((sv: any) => Boolean(sv.service_id));
+
+        if (sServices.length === 0) {
+          const fallbackSvcId = [s.service_id, (booking as any)?.service_id, detail?.service_id].find(isUuid);
+          if (fallbackSvcId) {
+            sServices = [{
+              service_id: fallbackSvcId,
+              service_name: s.service_name || booking.service_name || 'Service',
+              base_price: parseFloat(String(s.service_price || (booking as any)?.base_price || 0)) || 0,
+              base_duration: Number(s.duration_minutes || booking.duration_minutes || 60),
+              duration_minutes: Number(s.duration_minutes || booking.duration_minutes || 60),
+              position: 0,
+            }];
+          }
+        }
+
+        const sid = [s.session_id, s.id].find(isUuid) || undefined;
+        const tid = [
+          s.therapist_id,
+          (s.therapist_data as any)?.id,
+          (s.therapist_data as any)?.therapist_id,
+          booking.therapist_id,
+          detail?.therapist_id,
+        ].find(isUuid);
+
+        const secTid = [
+          s.secondary_therapist_id,
+          (s.secondary_therapist_data as any)?.id,
+        ].find(isUuid) || undefined;
+
+        const arrId = [
+          s.service_arrangement_id,
+          (s.service_arrangement_data as any)?.id,
+          (s as any)?.arrangementId,
+          detail?.service_arrangement_id,
+          (booking as any)?.service_arrangement_id,
+        ].find(isUuid) || undefined;
+
+        let apptTime: string | undefined = undefined;
+        if (s.appointment_time && typeof s.appointment_time === 'string') {
+          apptTime = toHHMM(s.appointment_time);
+        } else if (s.appointment_start && typeof s.appointment_start === 'string') {
+          const m = s.appointment_start.match(/T(\d{2}:\d{2})/);
+          if (m) apptTime = m[1];
+        }
+
+        const apptStart = s.appointment_start || (apptTime ? `${bookingDate}T${apptTime}:00+03:00` : undefined);
+
+        return {
+          session_id: sid,
+          therapist_id: tid,
+          therapist_name: s.therapist_name || (s.therapist_data as any)?.name || booking.therapist_name,
+          secondary_therapist_id: secTid,
+          secondary_therapist_name: s.secondary_therapist_name || (s.secondary_therapist_data as any)?.name || undefined,
+          service_arrangement_id: arrId,
+          arrangement_name: s.arrangement_name || (s.service_arrangement_data as any)?.name || undefined,
+          arrangement_type: s.arrangement_type || (s.service_arrangement_data as any)?.type || undefined,
+          services: sServices,
+          appointment_date: bookingDate,
+          appointment_time: apptTime,
+          appointment_start: apptStart,
+        };
+      });
+
+      const res = await authedFetch(`/api/v1/booknpay/bookings/${booking.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          appointment_date: bookingDate,
+          sessions: payloadSessions,
+          total_amount: computedTotal,
+          total_price: computedTotal,
+          total_duration: totalDuration,
+          duration_minutes: Math.max(0, totalDuration - addonsDuration - extraMinutes),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        let errMsg = 'Failed to update booking sessions';
+        const errDetail = data?.error?.detail || data?.detail;
+        const errMsgField = data?.error?.message || data?.message;
+        if (typeof errDetail === 'string') {
+          errMsg = errDetail;
+        } else if (Array.isArray(errDetail) && errDetail.length > 0) {
+          errMsg = errDetail
+            .map((d: any) => d.msg || d.message || JSON.stringify(d))
+            .join(', ');
+        } else if (typeof errMsgField === 'string' && errMsgField.trim()) {
+          errMsg = errMsgField;
+        }
+        throw new Error(errMsg);
+      }
+
+      setStagedSessions(null);
+      await fetchDetail(true);
+      onSuccess?.();
+    } catch (err) {
+      console.error('[BookingDetailModal] Save staged sessions error:', err);
+      setSaveSessionsError(err instanceof Error ? err.message : 'Failed to save session changes');
+    } finally {
+      setIsSavingSessions(false);
     }
   };
 
@@ -2485,6 +2837,56 @@ export function BookingDetailPopup({
 
           {/* Scrollable Body */}
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+            {/* Unsaved Staged Sessions Banner */}
+            {stagedSessions !== null && (
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-2xl border-2 border-amber-400/80 bg-amber-500/10 p-4 shadow-sm animate-in slide-in-from-top-2">
+                <div className="flex items-center gap-3">
+                  <div className="grid h-10 w-10 place-items-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 shrink-0">
+                    <AlertCircle className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-extrabold text-foreground">
+                      You have unsaved session modifications
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      New Total: <span className="font-extrabold text-foreground font-mono">{computedTotal.toFixed(3)} {currency}</span> ({totalDuration} min). Click &quot;Save Changes&quot; to persist to database.
+                    </p>
+                    {saveSessionsError && (
+                      <p className="text-[11px] font-bold text-destructive mt-1">{saveSessionsError}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => { setStagedSessions(null); setSaveSessionsError(null); }}
+                    disabled={isSavingSessions}
+                    className="rounded-xl border border-border/80 bg-background px-3.5 py-2 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+                  >
+                    Discard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveStagedSessions}
+                    disabled={isSavingSessions}
+                    className="flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-extrabold shadow-md shadow-emerald-600/20 transition cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingSessions ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Saving…</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Save Changes</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'details' || isPaymentTabRestricted ? (
               <>
                 {/* Row 1: Booking Number and Booked On in one row */}
@@ -2504,6 +2906,17 @@ export function BookingDetailPopup({
                       <Scissors className="h-3.5 w-3.5 text-primary" />
                       {displaySessions.length > 1 ? `Sessions (${displaySessions.length})` : 'Session'}
                     </p>
+
+                    {canAddSession && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddSessionModal(true)}
+                        className="flex items-center gap-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 text-xs font-bold transition cursor-pointer"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Add Another Session
+                      </button>
+                    )}
                   </div>
 
                   <div className="space-y-3">
@@ -2551,16 +2964,42 @@ export function BookingDetailPopup({
                           </div>
                         </div>
 
-                        {/* Right: Price + Trash Action Button */}
-                        <div className="flex shrink-0 items-center gap-3">
+                        {/* Right: Price + Edit Action + Trash Action Button */}
+                        <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
                           <span className="font-mono text-sm sm:text-base font-extrabold text-[#b85d63]">
                             {sess.price.toFixed(3)} {currency}
                           </span>
+
+                          {/* Edit session icon: appears only for unpaid bookings */}
+                          {isUnpaidBooking && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingSessionIndex(sess.number - 1);
+                              }}
+                              title="Edit session services"
+                              className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 hover:scale-105 active:scale-95 transition cursor-pointer"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            onClick={(e) => { e.stopPropagation(); handleCancel(); }}
-                            disabled={!canShowCancel || isCancelled || isCompleted}
-                            title={canShowCancel && !isCancelled && !isCompleted ? 'Cancel / Remove' : undefined}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (displaySessions.length > 1 && !isCancelled && !isCompleted) {
+                                const base = rawSessions.length > 0 ? rawSessions.map(s => ({ ...s })) : [{ ...(detail || {}), ...booking }];
+                                const filtered = base.filter((_, i) => i !== sess.number - 1);
+                                setStagedSessions(filtered);
+                                setSaveSessionsError(null);
+                              } else {
+                                handleCancel();
+                              }
+                            }}
+                            disabled={displaySessions.length <= 1 && (!canShowCancel || isCancelled || isCompleted)}
+                            title={displaySessions.length > 1 ? 'Remove session' : (canShowCancel && !isCancelled && !isCompleted ? 'Cancel / Remove' : undefined)}
                             className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-[#fdeeee] text-[#d9534f] hover:bg-rose-100 hover:text-red-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -2568,6 +3007,17 @@ export function BookingDetailPopup({
                         </div>
                       </div>
                     ))}
+
+                    {canAddSession && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAddSessionModal(true)}
+                        className="w-full flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary/30 hover:border-primary/60 bg-primary/5 hover:bg-primary/10 py-3 text-xs font-bold text-primary transition cursor-pointer"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Another Session
+                      </button>
+                    )}
                   </div>
 
                   {/* Summary for add-ons, extra minutes, discount, and total */}
@@ -3266,6 +3716,37 @@ export function BookingDetailPopup({
 
               {/* Right side: Payment Done, Open Payment, Print Receipt, Close */}
               <div className="flex items-center gap-2">
+                {/* Save Staged Changes buttons */}
+                {stagedSessions !== null && (
+                  <div className="flex items-center gap-2 mr-1">
+                    <button
+                      type="button"
+                      onClick={() => { setStagedSessions(null); setSaveSessionsError(null); }}
+                      disabled={isSavingSessions}
+                      className="rounded-xl border border-border/80 bg-background px-3.5 py-2.5 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
+                    >
+                      Discard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveStagedSessions}
+                      disabled={isSavingSessions}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 text-xs font-extrabold shadow-md shadow-emerald-600/25 transition cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingSessions ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <span>Saving…</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Save Changes</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
                 {/* Make Payment */}
                 {hasPaymentPermission && !isCancelled && !isNoShow && !isPastApptEnd && isPaymentPending && !isPaid && !isRewarded && !effectivePaymentUrl && (
                   <button
@@ -3332,6 +3813,37 @@ export function BookingDetailPopup({
           </div>
         </div>
       </div>
+
+      {/* ── Edit Session Modal (services add/edit/delete) ── */}
+      {editingSessionIndex !== null && displaySessions[editingSessionIndex] && (
+        <EditSessionModal
+          isOpen={true}
+          sessionIndex={editingSessionIndex}
+          sessionNumber={editingSessionIndex + 1}
+          sessionData={displaySessions[editingSessionIndex]}
+          branchId={String(detail?.branch_id || (booking as any)?.branch_id || '')}
+          currency={currency}
+          onClose={() => setEditingSessionIndex(null)}
+          onUpdate={handleUpdateSessionServices}
+        />
+      )}
+
+      {/* ── Add Session Sub Modal ── */}
+      {showAddSessionModal && (
+        <AddSessionSubModal
+          authHeader={authHeader}
+          branchId={String(detail?.branch_id || (booking as any)?.branch_id || (booking as any)?.branch?.id || '')}
+          date={bookingDate}
+          defaultTherapistId={defTherapistId}
+          defaultTherapistName={defTherapistName}
+          defaultTimeSlot={nextSessionDefaultTimeSlot}
+          sessionIndex={displaySessions.length}
+          minStartTimeMinutes={nextSessionMinStartMinutes}
+          minStartTimeDisplay={nextSessionDefaultTimeSlot}
+          onClose={() => setShowAddSessionModal(false)}
+          onAddSession={handleAddSessionFromModal}
+        />
+      )}
 
       {/* Reschedule Booking Modal */}
       {showRescheduleModal && booking && (

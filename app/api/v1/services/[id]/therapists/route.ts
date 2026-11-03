@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getProxyHeaders } from '@/lib/proxy';
+import { getProxyHeaders, getDirectUauthUrl, getApiBaseUrl, getUauthPath } from '@/lib/proxy';
 
 export const dynamic = 'force-dynamic';
-
-const BASE_URL = process.env['API_BASE_URL'] ?? 'https://apidev.ushspa.co';
-const UAUTH    = process.env['API_UAUTH']    ?? '/uauth';
 
 export async function GET(
   req: NextRequest,
@@ -13,8 +10,13 @@ export async function GET(
 ) {
   const { id } = await params;
   const qs     = req.nextUrl.searchParams.toString();
-  // Forwards branch_id, no_service_list, etc.
-  const url    = `${BASE_URL}${UAUTH}/api/v1/services/${id}/therapists/${qs ? `?${qs}` : ''}`;
+  const directUrl = getDirectUauthUrl();
+  const baseUrl   = getApiBaseUrl();
+  const uauthPath = getUauthPath();
+
+  const url = directUrl
+    ? `${directUrl}/api/v1/services/${id}/therapists/${qs ? `?${qs}` : ''}`
+    : `${baseUrl}${uauthPath}/api/v1/services/${id}/therapists/${qs ? `?${qs}` : ''}`;
 
   try {
     const upstream = await fetch(url, {
