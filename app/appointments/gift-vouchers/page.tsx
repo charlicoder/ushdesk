@@ -1762,7 +1762,14 @@ function VoucherDetailModal({
               <Gift className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-foreground">Gift Voucher Details</h3>
+              <h3 className="font-extrabold text-base text-foreground">
+                Gift Voucher Details
+                {voucher.voucher_number && (
+                  <span className="ml-2 rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-bold text-primary">
+                    {voucher.voucher_number}
+                  </span>
+                )}
+              </h3>
               <p className="text-xs text-muted-foreground">
                 {formatDate(voucher.created_at)}
               </p>

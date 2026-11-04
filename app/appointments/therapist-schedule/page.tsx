@@ -977,13 +977,17 @@ function getBreakDurationMinutes(slot: Slot): number {
   return 60;
 }
 
+/** Minutes after a slot's start time during which it can still be booked. */
+const PAST_SLOT_GRACE_MINUTES = 60;
+
 function isSlotInPast(selectedDate: string, slotLabel: string): boolean {
   if (!selectedDate || !slotLabel) return false;
   const current = getCurrentKuwaitDateTime();
   if (selectedDate < current.dateStr) return true;
   if (selectedDate > current.dateStr) return false;
   const slotMin = slotToMinutes(slotLabel);
-  return slotMin <= current.minutes;
+  // A slot stays bookable for one hour after its start time
+  return slotMin <= current.minutes - PAST_SLOT_GRACE_MINUTES;
 }
 
 // ── Build schedule map from API data ──────────────────────────────────────────

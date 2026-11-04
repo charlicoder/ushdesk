@@ -472,7 +472,14 @@ function GiftDetailsModal({
               <Gift className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-base text-foreground">Gift Voucher Details</h3>
+              <h3 className="font-extrabold text-base text-foreground">
+                Gift Voucher Details
+                {(order.voucher_number || (order as any).voucher_no) && (
+                  <span className="ml-2 rounded-md bg-primary/10 px-2 py-0.5 font-mono text-xs font-bold text-primary">
+                    {(order.voucher_number || (order as any).voucher_no)}
+                  </span>
+                )}
+              </h3>
               <p className="text-xs text-muted-foreground">
                 {formatDate(order.created_at)}
               </p>
