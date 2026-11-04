@@ -92,7 +92,7 @@ export function Sidebar() {
       children: [
         { href: '/appointments/therapist-schedule', label: 'Therapist Schedule',  icon: Clock,      permission: PERMISSIONS.APPOINTMENTS_THERAPIST_SCHEDULE },
         { href: '/appointments/branch',             label: 'Room Schedule',       icon: LayoutGrid, permission: PERMISSIONS.APPOINTMENTS_BRANCH_APPOINTMENTS },
-        { href: '/appointments/home-service',       label: 'Home Service',        icon: HomeIcon,   permission: PERMISSIONS.APPOINTMENTS_HOME_SERVICE, disabled: true },
+        { href: '/appointments/home-service',       label: 'Home Service',        icon: HomeIcon,   permission: PERMISSIONS.APPOINTMENTS_HOME_SERVICE },
         { href: '/appointments/gift-vouchers',      label: 'Gift Vouchers',       icon: Gift,       permission: PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER },
       ],
     },
