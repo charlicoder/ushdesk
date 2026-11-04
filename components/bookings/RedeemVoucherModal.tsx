@@ -140,6 +140,8 @@ export interface VoucherSession {
   allAddons: ApiAddOn[];
   extraMinutes: number;
   extraMinutesPrice: number;
+  /** What of the voucher this session consumes (sent to the voucher as a partial redemption) */
+  redemptionServices?: Array<{ service_id: string; service_name: string; addon_ids: string[]; extra_time: number }>;
   startTime: string; // "10:00 AM" or "10:00"
   totalDuration: number;
   sessionPrice: number;
@@ -517,8 +519,17 @@ function VoucherCalendarPicker({
   );
 }
 
-function getVoucherAddons(voucher: AnyRecord): ApiAddOn[] {
-  return (Array.isArray(voucher?.addons) ? voucher.addons : []).map((a: AnyRecord, i: number) => ({
+interface GiftedService {
+  id: string;
+  name: string;
+  duration: number;
+  price: unknown;
+  addons: ApiAddOn[];
+  extra: { minutes: number; price: number };
+}
+
+function mapAddons(raw: unknown): ApiAddOn[] {
+  return (Array.isArray(raw) ? raw : []).map((a: AnyRecord, i: number) => ({
     id: String(a.id ?? a.addon_id ?? `addon-${i}`),
     name: String(a.name ?? a.addon_name ?? 'Add-on'),
     price: a.price ?? 0,
@@ -526,58 +537,90 @@ function getVoucherAddons(voucher: AnyRecord): ApiAddOn[] {
   }));
 }
 
-function getVoucherExtra(voucher: AnyRecord): { minutes: number; price: number } {
-  return {
-    minutes: Number(voucher?.extra_time) > 0 ? Number(voucher.extra_time) : 0,
-    price: parseFloat(String(voucher?.price_for_extra_time ?? 0)) || 0,
-  };
+/**
+ * Gifted services of a voucher, each with its own add-ons / extra time.
+ * Legacy single-service vouchers (no `services`) are returned as one entry.
+ */
+function getVoucherServices(voucher: AnyRecord): GiftedService[] {
+  // Services already used by earlier (partial) redemptions are no longer redeemable
+  const usedIds = new Set<string>(
+    (Array.isArray(voucher?.redemptions) ? voucher.redemptions : []).flatMap((r: AnyRecord) =>
+      (Array.isArray(r?.services) ? r.services : []).map((x: AnyRecord) => String(x?.service_id ?? ''))
+    )
+  );
+  const list: AnyRecord[] =
+    Array.isArray(voucher?.services) && voucher.services.length > 0
+      ? voucher.services
+      : [
+          {
+            service_id: voucher?.service_id,
+            service_data: voucher?.service_data,
+            addons: voucher?.addons,
+            extra_time: voucher?.extra_time,
+            price_for_extra_time: voucher?.price_for_extra_time,
+          },
+        ];
+  const single = list.length === 1;
+  return list
+    .filter((e) => !usedIds.has(String(e.service_id ?? e.service_data?.id ?? '')))
+    .map((e, i) => ({
+    id: String(e.service_id ?? e.service_data?.id ?? `svc-${i}`),
+    name: firstTruthy(e.service_data?.name, e.service_data?.service_name, 'Spa Service'),
+    duration: parseInt(String(e.service_data?.duration_minutes ?? 0), 10) || 0,
+    price: e.service_data?.base_price ?? (single ? voucher?.total_amount : undefined),
+    addons: mapAddons(e.addons),
+    extra: {
+      minutes: Number(e.extra_time) > 0 ? Number(e.extra_time) : 0,
+      price: parseFloat(String(e.price_for_extra_time ?? 0)) || 0,
+    },
+  }));
 }
 
-/** Read-only list of what the gift voucher already covers: service, add-ons, extra time. */
+/** Read-only list of what the gift voucher already covers: services, their add-ons and extra time. */
 function VoucherCoverageList({ voucher, currency }: { voucher: AnyRecord; currency: string }) {
-  const svcName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
-  const svcDur = parseInt(String(voucher.service_data?.duration_minutes ?? 0), 10) || 0;
-  const svcPrice = voucher.service_data?.base_price ?? voucher.total_amount;
-  const addons = getVoucherAddons(voucher);
-  const extra = getVoucherExtra(voucher);
+  const gifted = getVoucherServices(voucher);
   return (
     <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 divide-y divide-emerald-500/15 overflow-hidden">
-      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <Scissors className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-          <div className="min-w-0">
-            <p className="text-xs font-bold text-foreground truncate">{svcName}</p>
-            <p className="text-[11px] text-muted-foreground">Service{svcDur > 0 ? ` · ${svcDur} min` : ''}</p>
-          </div>
-        </div>
-        {svcPrice != null && (
-          <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 shrink-0">{fmt(svcPrice)} {currency}</span>
-        )}
-      </div>
-      {addons.map((a) => (
-        <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-2">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <Sparkles className="h-4 w-4 text-violet-500 shrink-0" />
-            <div className="min-w-0">
-              <p className="text-xs font-semibold text-foreground truncate">{a.name}</p>
-              <p className="text-[11px] text-muted-foreground">Add-on{a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}</p>
+      {gifted.map((g) => (
+        <React.Fragment key={g.id}>
+          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Scissors className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-foreground truncate">{g.name}</p>
+                <p className="text-[11px] text-muted-foreground">Service{g.duration > 0 ? ` · ${g.duration} min` : ''}</p>
+              </div>
             </div>
+            {g.price != null && (
+              <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 shrink-0">{fmt(g.price)} {currency}</span>
+            )}
           </div>
-          <span className="text-xs font-bold text-foreground shrink-0">{fmt(a.price)} {currency}</span>
-        </div>
+          {g.addons.map((a) => (
+            <div key={`${g.id}-${a.id}`} className="flex items-center justify-between gap-3 px-4 py-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Sparkles className="h-4 w-4 text-violet-500 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground truncate">{a.name}</p>
+                  <p className="text-[11px] text-muted-foreground">Add-on{a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}</p>
+                </div>
+              </div>
+              <span className="text-xs font-bold text-foreground shrink-0">{fmt(a.price)} {currency}</span>
+            </div>
+          ))}
+          {g.extra.minutes > 0 && (
+            <div className="flex items-center justify-between gap-3 px-4 py-2">
+              <div className="flex items-center gap-2.5">
+                <Timer className="h-4 w-4 text-amber-500 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-foreground">Extra Time</p>
+                  <p className="text-[11px] text-muted-foreground">+{g.extra.minutes} min</p>
+                </div>
+              </div>
+              {g.extra.price > 0 && <span className="text-xs font-bold text-foreground shrink-0">{fmt(g.extra.price)} {currency}</span>}
+            </div>
+          )}
+        </React.Fragment>
       ))}
-      {extra.minutes > 0 && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2">
-          <div className="flex items-center gap-2.5">
-            <Timer className="h-4 w-4 text-amber-500 shrink-0" />
-            <div>
-              <p className="text-xs font-semibold text-foreground">Extra Time</p>
-              <p className="text-[11px] text-muted-foreground">+{extra.minutes} min</p>
-            </div>
-          </div>
-          {extra.price > 0 && <span className="text-xs font-bold text-foreground shrink-0">{fmt(extra.price)} {currency}</span>}
-        </div>
-      )}
     </div>
   );
 }
@@ -611,6 +654,9 @@ function AddVoucherSessionModal({
   const [servicesLoading, setServicesLoading] = useState(false);
   const [serviceSearch, setServiceSearch] = useState('');
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  // Add-ons / extra time of the chosen services are optional: untick to leave them out of this redemption
+  const [excludedAddons, setExcludedAddons] = useState<Set<string>>(new Set());
+  const [skippedExtra, setSkippedExtra] = useState<Set<string>>(new Set());
 
   const [arrangements, setArrangements] = useState<ApiArrangement[]>([]);
   const [arrangementsLoading, setArrangementsLoading] = useState(false);
@@ -630,8 +676,18 @@ function AddVoucherSessionModal({
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const voucherServiceId = firstTruthy(voucher.service_id, voucher.service_data?.id);
-  const voucherServiceName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
+  // Gifted services of the voucher not yet assigned to another session
+  const giftedServices = useMemo(() => getVoucherServices(voucher), [voucher]);
+  const assignedElsewhere = useMemo(
+    () => new Set(existingSessions.flatMap((x) => x.serviceIds.map(String))),
+    [existingSessions]
+  );
+  const availableGifted = useMemo(
+    () => giftedServices.filter((g) => !assignedElsewhere.has(g.id)),
+    [giftedServices, assignedElsewhere]
+  );
+  const availableGiftedKey = availableGifted.map((g) => g.id).join(',');
+  const voucherServiceName = availableGifted.map((g) => g.name).join(' + ') || 'Spa Service';
   const requiredArrType = firstTruthy(
     voucher.service_arrangement_data?.arrangement_type,
     voucher.service_arrangement_data?.type,
@@ -647,13 +703,17 @@ function AddVoucherSessionModal({
       .then((r) => r.json())
       .then((d) => {
         const all: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
-        const list = voucherServiceId ? all.filter((s) => String(s.id) === String(voucherServiceId)) : all.slice(0, 1);
+        const wanted = availableGiftedKey ? availableGiftedKey.split(',') : [];
+        const list = wanted.length > 0
+          ? wanted.map((id) => all.find((s) => String(s.id) === id)).filter((s): s is ApiService => Boolean(s))
+          : all.slice(0, 1);
         setServices(list);
-        setSelectedServiceIds(list.length > 0 ? [String(list[0].id)] : []);
+        // default: all still-unassigned gifted services go into this session (user can untick to split)
+        setSelectedServiceIds(list.map((s) => String(s.id)));
       })
       .catch(() => setServices([]))
       .finally(() => setServicesLoading(false));
-  }, [branchId, authHeader, voucherServiceId]);
+  }, [branchId, authHeader, availableGiftedKey]);
 
   // Selected services objects
   const selectedServices = useMemo(() => {
@@ -667,40 +727,55 @@ function AddVoucherSessionModal({
   // Toggle service selection
   const toggleService = (sv: ApiService) => {
     const id = String(sv.id);
+    const order = services.map((x) => String(x.id));
     setSelectedServiceIds((prev) => {
       if (prev.includes(id)) {
-        return prev.filter((x) => x !== id);
+        return prev.length > 1 ? prev.filter((x) => x !== id) : prev; // keep at least one
       }
-      return [...prev, id];
+      return order.filter((x) => x === id || prev.includes(x)); // keep gifted order
     });
   };
 
-  // 2. Load arrangements for primary service
+  // 2. Load arrangements supported by EVERY service assigned to this session
+  const selectedServiceKey = selectedServiceIds.join(',');
   useEffect(() => {
-    if (!primaryService?.id || !branchId) {
+    const ids = selectedServiceKey ? selectedServiceKey.split(',') : [];
+    if (ids.length === 0 || !branchId) {
       setArrangements([]);
       return;
     }
+    let cancelled = false;
     setArrangementsLoading(true);
-    authedFetch(`/api/v1/services/${primaryService.id}/arrangements/?branch_id=${branchId}`, {
-      headers: authHeader ? { Authorization: authHeader } : undefined,
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? []))
-          .filter((a: ApiArrangement) => a.is_active !== false)
+    Promise.all(
+      ids.map((sid) =>
+        authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${branchId}`, {
+          headers: authHeader ? { Authorization: authHeader } : undefined,
+        })
+          .then((r) => r.json())
+          .then((d) =>
+            (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter((a: ApiArrangement) => a.is_active !== false) as ApiArrangement[]
+          )
+          .catch(() => [] as ApiArrangement[])
+      )
+    )
+      .then((lists) => {
+        if (cancelled) return;
+        const [first, ...rest] = lists;
+        const common = (first ?? [])
+          .filter((a) => rest.every((l) => l.some((x) => x.id === a.id)))
           .filter(
-            (a: ApiArrangement) =>
-              !requiredArrType || normalizeArrType(a.arrangement_type || a.type) === normalizeArrType(requiredArrType)
+            (a) => !requiredArrType || normalizeArrType(a.arrangement_type || a.type) === normalizeArrType(requiredArrType)
           );
-        setArrangements(list);
-        if (list.length > 0) {
-          setSelectedRoomId(list[0].id);
-        }
+        setArrangements(common);
+        setSelectedRoomId(common.length > 0 ? common[0].id : '');
       })
-      .catch(() => setArrangements([]))
-      .finally(() => setArrangementsLoading(false));
-  }, [primaryService?.id, branchId, authHeader, requiredArrType]);
+      .finally(() => {
+        if (!cancelled) setArrangementsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedServiceKey, branchId, authHeader, requiredArrType]);
 
   // Selected arrangement object
   const selectedArrangement = useMemo(
@@ -752,8 +827,11 @@ function AddVoucherSessionModal({
     return (mins / Number(extraMinutesUnit)) * extraPricePerUnit;
   };
   // Add-ons and extra time are already part of the gifted voucher (read-only)
-  const extraMinutes = getVoucherExtra(voucher).minutes;
-  const extraMinutesPrice = getVoucherExtra(voucher).price;
+  const selectedGifted = availableGifted.filter((g) => selectedServiceIds.includes(g.id));
+  const chosenAddonsOf = (g: GiftedService) => g.addons.filter((a) => !excludedAddons.has(`${g.id}:${a.id}`));
+  const useExtraOf = (g: GiftedService) => (skippedExtra.has(g.id) ? { minutes: 0, price: 0 } : g.extra);
+  const extraMinutes = selectedGifted.reduce((t, g) => t + useExtraOf(g).minutes, 0);
+  const extraMinutesPrice = selectedGifted.reduce((t, g) => t + useExtraOf(g).price, 0);
 
   // Price calculations
   const arrPrice = selectedArrangement?.arrangement_price != null ? parseFloat(String(selectedArrangement.arrangement_price)) || 0 : null;
@@ -765,7 +843,7 @@ function AddVoucherSessionModal({
   };
   const servicesPrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
 
-  const allAddons = getVoucherAddons(voucher);
+  const allAddons = selectedGifted.flatMap((g) => chosenAddonsOf(g));
   const addonsPrice = allAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonsDuration = allAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
 
@@ -773,14 +851,44 @@ function AddVoucherSessionModal({
   const totalDuration = baseDuration + addonsDuration + extraMinutes;
   const sessionPrice = servicesPrice + addonsPrice + extraMinutesPrice;
 
-  // 4. Therapists from availabilitiesData
+  // 4. Therapists: for multi-service vouchers re-load availability for exactly the services of this
+  // session (therapists / rooms must support all of them); single-service vouchers use the prop.
+  const [sessionAvail, setSessionAvail] = useState<any>(null);
+  useEffect(() => {
+    if (giftedServices.length <= 1 || !selectedServiceKey || !branchId) return;
+    const ids = selectedServiceKey.split(',');
+    let cancelled = false;
+    authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+      body: JSON.stringify({
+        service_id: ids[0],
+        service_ids: ids,
+        branch_id: branchId,
+        expire_date: toZonedIsoFromLocal(voucher.expire_date),
+      }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setSessionAvail(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [giftedServices.length, selectedServiceKey, branchId, authHeader, voucher.expire_date]);
+  const effectiveAvail = giftedServices.length > 1 ? sessionAvail : availabilitiesData;
+
   const therapists = useMemo<ApiTherapist[]>(() => {
-    return Array.isArray(availabilitiesData?.therapists)
-      ? availabilitiesData.therapists
-      : Array.isArray(availabilitiesData?.data?.therapists)
-      ? availabilitiesData.data.therapists
+    return Array.isArray(effectiveAvail?.therapists)
+      ? effectiveAvail.therapists
+      : Array.isArray(effectiveAvail?.data?.therapists)
+      ? effectiveAvail.data.therapists
       : [];
-  }, [availabilitiesData]);
+  }, [effectiveAvail]);
 
   // Compute Available Timeslots
   useEffect(() => {
@@ -795,25 +903,32 @@ function AddVoucherSessionModal({
       return;
     }
 
+    // A start time is only free when EVERY 30-min step of the session fits in the free slots
+    // (a booking cannot start at a free slot that is followed by an existing booking).
+    const fitsDuration = (free: Set<number>, start: number) => {
+      for (let k = 0; k < Math.max(1, Math.ceil(totalDuration / 30)); k++) {
+        if (!free.has(start + k * 30)) return false;
+      }
+      return true;
+    };
+
     const therapistSlotsForDay = new Set<number>();
     const therapistCountByMin = new Map<number, number>();
     for (const t of therapists) {
       const tSlots: string[] = t.availabilities?.[selectedDate] || [];
-      const seenForTherapist = new Set<number>();
-      for (const s of tSlots) {
-        const m = parseTimeToMinutes(s);
+      const free = new Set<number>(tSlots.map((x) => parseTimeToMinutes(x)));
+      free.forEach((m) => {
         therapistSlotsForDay.add(m);
-        if (!seenForTherapist.has(m)) {
-          seenForTherapist.add(m);
-          therapistCountByMin.set(m, (therapistCountByMin.get(m) ?? 0) + 1);
-        }
-      }
+        if (fitsDuration(free, m)) therapistCountByMin.set(m, (therapistCountByMin.get(m) ?? 0) + 1);
+      });
     }
 
-    const rawArrSlots: string[] = selArrangement.availabilities?.[selectedDate] || [];
+    const rawArrDay = selArrangement.availabilities?.[selectedDate];
+    const hasArrangementData = Array.isArray(rawArrDay);
+    const rawArrSlots: string[] = hasArrangementData ? (rawArrDay as string[]) : [];
     const arrangementSlotsForDay = new Set<number>(rawArrSlots.map((s) => parseTimeToMinutes(s)));
 
-    const branchInfo = availabilitiesData?.branch;
+    const branchInfo = effectiveAvail?.branch ?? availabilitiesData?.branch;
     const openTime = branchInfo?.opening_time || '09:00:00';
     const closeTime = branchInfo?.closing_time || '23:00:00';
     const step = 30;
@@ -841,25 +956,29 @@ function AddVoucherSessionModal({
       const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
 
       const isAvailableInTherapists = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists;
-      const isAvailableInArrangement = arrangementSlotsForDay.size === 0 || arrangementSlotsForDay.has(m);
+      // no availability data for the room/day = unknown (allow, the server re-checks); empty list = fully booked
+      const isAvailableInArrangement = !hasArrangementData || fitsDuration(arrangementSlotsForDay, m);
       const available = isAvailableInTherapists && isAvailableInArrangement;
 
       slots.push({ time: timeLabel, available });
     }
 
     setAvailableSlots(slots);
-  }, [selectedDate, selectedRoomId, arrangements, therapists, availabilitiesData, isCoupleRoom]);
+  }, [selectedDate, selectedRoomId, arrangements, therapists, effectiveAvail, availabilitiesData, isCoupleRoom, totalDuration]);
 
   // Available therapists for chosen time slot
   const availableTherapistsForSlot = useMemo<ApiTherapist[]>(() => {
     if (!selectedTimeSlot || !selectedDate || therapists.length === 0) return therapists;
     const slotMin = parseTimeToMinutes(selectedTimeSlot);
-    const filtered = therapists.filter((t) => {
-      const daySlots: string[] = t.availabilities?.[selectedDate] || [];
-      return daySlots.length === 0 || daySlots.some((s) => parseTimeToMinutes(s) === slotMin);
+    // Only therapists free for the WHOLE session (never fall back to busy / fully booked ones)
+    return therapists.filter((t) => {
+      const free = new Set<number>(((t.availabilities?.[selectedDate] || []) as string[]).map((x) => parseTimeToMinutes(x)));
+      for (let k = 0; k < Math.max(1, Math.ceil(totalDuration / 30)); k++) {
+        if (!free.has(slotMin + k * 30)) return false;
+      }
+      return true;
     });
-    return filtered.length > 0 ? filtered : therapists;
-  }, [selectedTimeSlot, selectedDate, therapists]);
+  }, [selectedTimeSlot, selectedDate, therapists, totalDuration]);
 
   // Auto-select therapist
   useEffect(() => {
@@ -876,6 +995,12 @@ function AddVoucherSessionModal({
           setSelectedSecondaryTherapist(second);
         }
       }
+    } else if (selectedTherapistId) {
+      // nobody is free for this slot: do not keep a stale (busy) therapist selected
+      setSelectedTherapistId('');
+      setSelectedTherapist(null);
+      setSelectedSecondaryTherapistId('');
+      setSelectedSecondaryTherapist(null);
     }
   }, [availableTherapistsForSlot, selectedTherapistId, isCoupleRoom]);
 
@@ -937,6 +1062,12 @@ function AddVoucherSessionModal({
       allAddons,
       extraMinutes,
       extraMinutesPrice,
+      redemptionServices: selectedGifted.map((g) => ({
+        service_id: g.id,
+        service_name: g.name,
+        addon_ids: chosenAddonsOf(g).map((a) => a.id),
+        extra_time: useExtraOf(g).minutes,
+      })),
       startTime: selectedTimeSlot,
       totalDuration,
       sessionPrice,
@@ -983,14 +1114,96 @@ function AddVoucherSessionModal({
             </div>
           )}
 
-          {/* 1. Voucher coverage (service, add-ons, extra time) – fixed */}
+          {/* 1. Gifted services for this session (fixed by the voucher; split across sessions if several) */}
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Gift className="h-4 w-4 text-emerald-600" />
-              <p className="text-sm font-extrabold text-foreground">Covered by Voucher (fixed)</p>
+              <p className="text-sm font-extrabold text-foreground">
+                {availableGifted.length > 1 ? 'Services in this session' : 'Covered by Voucher (fixed)'}
+              </p>
               {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
             </div>
-            <VoucherCoverageList voucher={voucher} currency={firstTruthy(voucher.currency, 'KWD')} />
+            <div className="space-y-2">
+              {availableGifted.map((g) => {
+                const checked = selectedServiceIds.includes(g.id);
+                const sv = services.find((x) => String(x.id) === g.id);
+                return (
+                  <div
+                    key={g.id}
+                    className={cn(
+                      'rounded-xl border px-3 py-2.5 transition',
+                      checked ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-border/70 bg-card'
+                    )}
+                  >
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={!sv || (availableGifted.length === 1)}
+                        onChange={() => sv && toggleService(sv)}
+                        className="mt-0.5 h-4 w-4 accent-emerald-600"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-bold text-foreground">{g.name}{g.duration > 0 ? ` · ${g.duration} min` : ''}</p>
+                        {!sv && !servicesLoading && (
+                          <p className="text-[11px] text-destructive italic">Not available in this branch</p>
+                        )}
+                      </div>
+                    </label>
+                    {checked && (g.addons.length > 0 || g.extra.minutes > 0) && (
+                      <div className="mt-2 ml-7 space-y-1.5">
+                        {g.addons.map((a) => {
+                          const key = `${g.id}:${a.id}`;
+                          return (
+                            <label key={key} className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!excludedAddons.has(key)}
+                                onChange={() =>
+                                  setExcludedAddons((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(key)) next.delete(key);
+                                    else next.add(key);
+                                    return next;
+                                  })
+                                }
+                                className="h-3.5 w-3.5 accent-violet-500"
+                              />
+                              <Sparkles className="h-3 w-3 text-violet-500" />
+                              <span>{a.name}{a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}</span>
+                            </label>
+                          );
+                        })}
+                        {g.extra.minutes > 0 && (
+                          <label className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!skippedExtra.has(g.id)}
+                              onChange={() =>
+                                setSkippedExtra((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(g.id)) next.delete(g.id);
+                                  else next.add(g.id);
+                                  return next;
+                                })
+                              }
+                              className="h-3.5 w-3.5 accent-amber-500"
+                            />
+                            <Timer className="h-3 w-3 text-amber-500" />
+                            <span>Extra time +{g.extra.minutes} min</span>
+                          </label>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-[11px] text-muted-foreground">
+                {availableGifted.length > 1
+                  ? 'Untick a service to leave it for another session or booking. Unticked add-ons / extra time are not used.'
+                  : 'Unticked add-ons / extra time are not used in this booking.'}
+              </p>
+            </div>
             {!servicesLoading && selectedServices.length === 0 && (
               <p className="mt-2 text-xs text-destructive italic">{voucherServiceName} is not available in this branch.</p>
             )}
@@ -1211,7 +1424,12 @@ export function RedeemVoucherModal({
   const recipientPhone = firstTruthy(voucher.recipient_phone, voucher.recipient_details?.phone_number, voucher.recipient_data?.phone_number);
   const recipientEmail = firstTruthy(voucher.recipient_details?.email, voucher.recipient_data?.email);
 
-  const serviceId = firstTruthy(voucher.service_id, voucher.service_data?.id);
+  const giftedList = useMemo(() => getVoucherServices(voucher), [voucher]);
+  const serviceId = giftedList[0]?.id || firstTruthy(voucher.service_id, voucher.service_data?.id);
+  const giftedServiceIds = useMemo(() => giftedList.map((g) => g.id), [giftedList]);
+  const assignedCount = new Set(sessions.flatMap((x) => x.serviceIds.map(String))).size;
+  const unassignedCount = Math.max(0, giftedList.length - assignedCount);
+  const maxSessions = Math.min(3, giftedList.length);
   const serviceName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
   const originalDuration = parseInt(String(voucher.total_duration ?? voucher.service_data?.duration_minutes ?? 60), 10) || 60;
   const voucherAmount = parseFloat(String(voucher.total_amount ?? voucher.service_data?.base_price ?? '0')) || 0;
@@ -1233,6 +1451,7 @@ export function RedeemVoucherModal({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [bookingSuccess, setBookingSuccess] = useState<AnyRecord | null>(null);
+  const [redeemOutcome, setRedeemOutcome] = useState<{ status: string; remaining: number; warning?: string } | null>(null);
 
   // Resolved payment ids
   const resolvedInvoiceNumber = firstTruthy(
@@ -1284,15 +1503,20 @@ export function RedeemVoucherModal({
         const bId = String(b.id ?? b.branch_id ?? '');
         if (!bId) return null;
         try {
-          const r = await authedFetch(`/api/v1/services/${serviceId}/arrangements/?branch_id=${bId}`, {
-            headers: authHeader ? { Authorization: authHeader } : undefined,
-          });
-          const d = await r.json();
-          const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
-            (a: ApiArrangement) => a.is_active !== false
-          );
-          const ok = list.some((a) => !requiredType || normalizeArrType(a.arrangement_type || a.type) === requiredType);
-          return ok ? bId : null;
+          // the branch must offer a matching room for EVERY gifted service
+          const ids = giftedServiceIds.length > 0 ? giftedServiceIds : [serviceId];
+          for (const sid of ids) {
+            const r = await authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${bId}`, {
+              headers: authHeader ? { Authorization: authHeader } : undefined,
+            });
+            const d = await r.json();
+            const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
+              (a: ApiArrangement) => a.is_active !== false
+            );
+            const ok = list.some((a) => !requiredType || normalizeArrType(a.arrangement_type || a.type) === requiredType);
+            if (!ok) return null;
+          }
+          return bId;
         } catch {
           return null;
         }
@@ -1306,7 +1530,7 @@ export function RedeemVoucherModal({
     return () => {
       cancelled = true;
     };
-  }, [branches, serviceId, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type]);
+  }, [branches, serviceId, giftedServiceIds, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type]);
 
   // Fetch voucher availabilities for branch
   useEffect(() => {
@@ -1314,6 +1538,8 @@ export function RedeemVoucherModal({
     setAvailabilitiesLoading(true);
     const payload = {
       service_id: serviceId,
+      // multi-service vouchers: only therapists / rooms supporting every gifted service
+      ...(giftedServiceIds.length > 1 ? { service_ids: giftedServiceIds } : {}),
       branch_id: selectedBranchId,
       expire_date: expireDateWithTz,
     };
@@ -1369,12 +1595,14 @@ export function RedeemVoucherModal({
     setSubmitting(true);
     setSubmitError(null);
 
-    const firstSess = sessions[0];
+    // Sessions are sent in chronological order
+    const orderedSessions = [...sessions].sort((x, y) => parseTimeToMinutes(x.startTime) - parseTimeToMinutes(y.startTime));
+    const firstSess = orderedSessions[0];
     const firstApptWindow = buildAppointmentWindow(selectedDate, firstSess.startTime, firstSess.totalDuration);
-    const lastSess = sessions[sessions.length - 1];
+    const lastSess = orderedSessions[orderedSessions.length - 1];
     const lastApptWindow = buildAppointmentWindow(selectedDate, lastSess.startTime, lastSess.totalDuration);
 
-    const sessionsPayload = sessions.map((sess) => {
+    const sessionsPayload = orderedSessions.map((sess) => {
       const apptWindow = buildAppointmentWindow(selectedDate, sess.startTime, sess.totalDuration);
       return {
         appointment_start: apptWindow.appointment_start,
@@ -1517,18 +1745,34 @@ export function RedeemVoucherModal({
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.detail || errJson.message || `Booking failed (${res.status})`);
+        // The API wraps errors as { error: { message, detail } } (or FastAPI's { detail })
+        const pick = (v: unknown): string =>
+          typeof v === 'string'
+            ? v
+            : Array.isArray(v)
+            ? v.map((d: any) => d?.msg || d?.message || JSON.stringify(d)).join('; ')
+            : '';
+        throw new Error(
+          pick(errJson?.error?.detail) ||
+            pick(errJson?.error?.message) ||
+            pick(errJson?.detail) ||
+            pick(errJson?.message) ||
+            `Booking failed (${res.status})`
+        );
       }
 
       const bookingRes = await res.json();
       const newBooking = bookingRes?.data || bookingRes;
       const newBookingId = newBooking?.id || newBooking?.booking_id;
 
-      // Update Voucher status to redeemed
+      // Record the redemption on the voucher. The backend derives the status:
+      // partially_redeemed while gifted services remain, redeemed once all are used.
       const voucherUpdatePayload = {
-        status: 'redeemed',
+        redemption: {
+          booking_number: newBooking?.booking_number || newBooking?.booking_no,
+          services: sessions.flatMap((x) => x.redemptionServices ?? []),
+        },
         booking_id: newBookingId,
-        redeemed_booking_id: newBookingId,
         booking_data: {
           ...(newBooking && typeof newBooking === 'object' ? newBooking : {}),
           id: newBookingId,
@@ -1546,14 +1790,28 @@ export function RedeemVoucherModal({
         redeemed_by: currentUser?.id,
       };
 
-      await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/`, {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(authHeader ? { Authorization: authHeader } : {}),
-        },
-        body: JSON.stringify(voucherUpdatePayload),
-      }).catch(() => {});
+      try {
+        const vRes = await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+          body: JSON.stringify(voucherUpdatePayload),
+        });
+        const vJson = await vRes.json().catch(() => ({}));
+        if (vRes.ok) {
+          const vd = (vJson?.data ?? vJson) as AnyRecord;
+          setRedeemOutcome({
+            status: String(vd?.status ?? ''),
+            remaining: Array.isArray(vd?.remaining_service_ids) ? vd.remaining_service_ids.length : 0,
+          });
+        } else {
+          setRedeemOutcome({ status: '', remaining: 0, warning: String(vJson?.detail ?? 'Voucher could not be updated.') });
+        }
+      } catch {
+        setRedeemOutcome({ status: '', remaining: 0, warning: 'Voucher could not be updated.' });
+      }
 
       setBookingSuccess(newBooking);
       onSuccess?.();
@@ -1671,10 +1929,19 @@ export function RedeemVoucherModal({
                 <CheckCircle2 className="h-8 w-8" />
               </div>
               <div>
-                <h3 className="text-lg font-extrabold text-foreground">Voucher Successfully Redeemed!</h3>
+                <h3 className="text-lg font-extrabold text-foreground">
+                  {redeemOutcome?.status === 'partially_redeemed' ? 'Voucher Partially Redeemed' : 'Voucher Successfully Redeemed!'}
+                </h3>
                 <p className="text-xs text-muted-foreground mt-1 max-w-sm">
                   The appointment has been confirmed with {sessions.length} session{sessions.length > 1 ? 's' : ''}.
+                  {redeemOutcome?.status === 'partially_redeemed' &&
+                    ` ${redeemOutcome.remaining} service${redeemOutcome.remaining === 1 ? '' : 's'} can still be redeemed from this voucher.`}
                 </p>
+                {redeemOutcome?.warning && (
+                  <p className="text-xs text-destructive mt-2 max-w-sm">
+                    Booking created, but the voucher record was not updated: {redeemOutcome.warning}
+                  </p>
+                )}
               </div>
 
               <div className="w-full max-w-md rounded-2xl border border-border/60 bg-muted/30 p-4 space-y-2 text-left text-xs">
@@ -1728,9 +1995,9 @@ export function RedeemVoucherModal({
                   <div className="flex items-center justify-between pt-1">
                     <div>
                       <h4 className="text-sm font-extrabold text-foreground">Booking Sessions</h4>
-                      <p className="text-xs text-muted-foreground">Choose therapist, room and start time for {selectedDate} — service and room type are fixed by the voucher</p>
+                      <p className="text-xs text-muted-foreground">{giftedList.length > 1 ? 'Choose the services to redeem now (the rest stay on the voucher), then therapist, room and start time' : 'Choose therapist, room and start time'} for {selectedDate} — services and room type are fixed by the voucher</p>
                     </div>
-                    {sessions.length < 1 && (
+                    {sessions.length < maxSessions && unassignedCount > 0 && (
                       <button
                         type="button"
                         onClick={() => setShowAddSessionModal(true)}

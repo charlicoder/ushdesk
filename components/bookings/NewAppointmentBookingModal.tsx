@@ -606,7 +606,8 @@ export function AddSessionSubModal({
 
   // ── Load arrangement services ──
   useEffect(() => {
-    if (!arrangementId) { setArrangementServices(null); return; }
+    setArrangementServices(null); // avoid using the previous room's services while loading
+    if (!arrangementId) return;
     let cancelled = false;
     authedFetch(`/api/v1/service-arrangements/${arrangementId}/services`, {
       headers: authHeader ? { Authorization: authHeader } : undefined,
@@ -793,7 +794,28 @@ export function AddSessionSubModal({
     }
   }, [availableTherapists, secondaryTherapistId, arrangementType, isFirstSession, defaultTherapistId, selectedTherapistId]);
 
+  // Services offered by the selected room (arrangement) of this session
+  const arrangementServiceIdSet = useMemo(
+    () => new Set((arrangementServices ?? []).map(s => String(s.id))),
+    [arrangementServices],
+  );
+  /** Reason an unselected service can't be added: it is not offered in the room chosen for the first service */
+  const serviceDisabledReason = (svc: ApiService): string | null => {
+    if (serviceIds.length === 0) return null;
+    if (!arrangementId || arrangementServices === null) return 'Loading room services\u2026';
+    if (!arrangementServiceIdSet.has(String(svc.id))) return 'Unavailable for this room and session';
+    return null;
+  };
+
+  // Drop additional services that are not offered in the (changed) room
+  useEffect(() => {
+    if (arrangementServices === null || serviceIds.length < 2) return;
+    const keep = serviceIds.filter((id, i) => i === 0 || arrangementServiceIdSet.has(String(id)));
+    if (keep.length !== serviceIds.length) setServiceIds(keep);
+  }, [arrangementServices, arrangementServiceIdSet, serviceIds]);
+
   const toggleService = (sv: ApiService) => {
+    if (!serviceIds.includes(sv.id) && serviceDisabledReason(sv)) return;
     const ids = serviceIds.includes(sv.id)
       ? serviceIds.filter(x => x !== sv.id)
       : [...serviceIds, sv.id];
@@ -909,6 +931,7 @@ export function AddSessionSubModal({
                   icon={Scissors}
                   onSearch={setServiceSearch}
                   onToggle={toggleService}
+                  getDisabledReason={serviceDisabledReason}
                   renderItem={(sv, checked) => (
                     <div className="flex items-start gap-3 py-3 pr-4">
                       <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">

@@ -27,6 +27,7 @@ import { authedFetch } from '@/lib/authedFetch';
 import { usePermissions } from '@/hooks/use-permissions';
 import { CreateCustomerModal, COUNTRY_CODES, type CreatedCustomer } from './CreateCustomerModal';
 import { MakePaymentModal } from './MakePaymentModal';
+import { MultiSelectDrop } from './MultiSelectDrop';
 import { sanitizeLocalPhone, isValidLocalPhone, phoneErrorMessage, toKuwaitLocal, KUWAIT_CODE } from '@/lib/phone';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
@@ -996,6 +997,15 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [selectedAddons, setSelectedAddons] = useState<AddonItem[]>([]);
   const [extraTime, setExtraTime] = useState<number>(0);
 
+  // ── Additional gifted services (multi-service vouchers) ──
+  // `selectedService` stays the primary (first) service; these are the services after it,
+  // each with its own add-ons and extra time.
+  const [extraServices, setExtraServices] = useState<SlimService[]>([]);
+  const [extraDetails, setExtraDetails] = useState<Record<string, ServiceFullDetail>>({});
+  const [extraSel, setExtraSel] = useState<Record<string, { addons: AddonItem[]; extraTime: number }>>({});
+  const [extraLoading, setExtraLoading] = useState<Record<string, boolean>>({});
+  const [serviceSearch, setServiceSearch] = useState('');
+
   // ── Recipient & Sender State ──
   const [recipientName, setRecipientName] = useState('');
   const [recipientCountryCode, setRecipientCountryCode] = useState('+965');
@@ -1198,6 +1208,69 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     [fetchFullDetail]
   );
 
+  const fetchExtraDetail = useCallback(
+    async (svc: SlimService) => {
+      setExtraLoading((m) => ({ ...m, [svc.id]: true }));
+      try {
+        const res = await authedFetch(`/api/v1/services/${svc.id}/full-detail/`, {
+          headers: { Authorization: authHeader, Accept: 'application/json' },
+        });
+        if (!res.ok) throw new Error(`Error ${res.status}`);
+        const data = await res.json().catch(() => ({}));
+        setExtraDetails((m) => ({ ...m, [svc.id]: (data.data ?? data) as ServiceFullDetail }));
+      } catch {
+        setExtraDetails((m) => ({ ...m, [svc.id]: { id: svc.id, name: svc.name } as ServiceFullDetail }));
+      } finally {
+        setExtraLoading((m) => ({ ...m, [svc.id]: false }));
+      }
+    },
+    [authHeader]
+  );
+
+  const removeExtra = (id: string) => {
+    setExtraServices((prev) => prev.filter((x) => x.id !== id));
+    setExtraDetails((m) => {
+      const { [id]: _drop, ...rest } = m;
+      return rest;
+    });
+    setExtraSel((m) => {
+      const { [id]: _drop, ...rest } = m;
+      return rest;
+    });
+  };
+
+  // Multi-select toggle: the first selected service is the primary one
+  const handleServiceToggle = (svc: SlimService) => {
+    if (selectedService?.id === svc.id) {
+      const [next, ...rest] = extraServices;
+      if (next) {
+        // promote the next service to primary (re-loads branches / rooms for it)
+        removeExtra(next.id);
+        setExtraServices(rest);
+        handleServiceSelect(next);
+      } else {
+        setSelectedService(null);
+        setFullDetail(null);
+        setSelectedBranch(null);
+        setSelectedArrangt(null);
+        setSelectedAddons([]);
+        setExtraTime(0);
+      }
+      return;
+    }
+    if (extraServices.some((x) => x.id === svc.id)) {
+      removeExtra(svc.id);
+      return;
+    }
+    if (!selectedService) {
+      handleServiceSelect(svc);
+      return;
+    }
+    setExtraServices((prev) => [...prev, svc]);
+    setExtraSel((m) => ({ ...m, [svc.id]: { addons: [], extraTime: 0 } }));
+    fetchExtraDetail(svc);
+  };
+
   // Sync recipient picker to text inputs
   const handleSelectRecipient = (c: Customer) => {
     setRecipient(c);
@@ -1274,24 +1347,98 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   }, [hasExtraTime, extraTime]);
 
   const extraTimePrice = calcExtraPrice(extraTime);
-  const subtotalPrice = productPrice + (arrangPrice || basePrice) + addonPrice + extraTimePrice;
+  // Additional services: arrangement price (falls back to base price), add-ons, extra time
+  const isPackagedOf = (svc: SlimService, d?: ServiceFullDetail) =>
+    Boolean(
+      svc.is_packaged_services === true ||
+        String(svc.is_packaged_services).toLowerCase() === 'true' ||
+        (d as any)?.is_packaged_services === true ||
+        String((d as any)?.is_packaged_services).toLowerCase() === 'true'
+    );
+  const extraArrangementPrice = (svc: SlimService): number => {
+    const d = extraDetails[svc.id];
+    const branchId = selectedBranch?.id ?? selectedBranch?.branch_id;
+    const dBranch = d?.branches?.find((b) => (b.id ?? b.branch_id) === branchId);
+    const arrs = dBranch?.service_arrangements ?? d?.service_arrangements ?? [];
+    const match = arrs.find((a) => a.id === selectedArrangt?.id);
+    const base = parseFloat(String(d?.base_price ?? d?.price ?? svc.base_price ?? svc.price ?? '0')) || 0;
+    return parseFloat(String(match?.arrangement_price ?? match?.price ?? '')) || base;
+  };
+  const extraRates = (svc: SlimService) => {
+    const d = extraDetails[svc.id];
+    const mins = Number(d?.extra_minutes ?? svc.extra_minutes ?? 0) || 0;
+    const price = Number(d?.price_for_extra_minutes ?? svc.price_for_extra_minutes ?? 0) || 0;
+    return { mins, price, has: mins > 0 && price > 0 };
+  };
+  const extraBreakdown = extraServices.map((svc) => {
+    const d = extraDetails[svc.id];
+    const sel = extraSel[svc.id] ?? { addons: [], extraTime: 0 };
+    const packaged = isPackagedOf(svc, d);
+    const rates = extraRates(svc);
+    const addonsList = packaged ? [] : sel.addons;
+    const price = extraArrangementPrice(svc);
+    const addonsPrice = addonsList.reduce((t, a) => t + (parseFloat(a.price) || 0), 0);
+    const addonsDur = addonsList.reduce((t, a) => t + (a.duration_minutes || 0), 0);
+    const extraMins = rates.has ? sel.extraTime : 0;
+    const extraPrice = rates.has && extraMins > 0 ? parseFloat(((extraMins / rates.mins) * rates.price).toFixed(3)) : 0;
+    const dur = Number(d?.duration_minutes ?? svc.duration_minutes ?? 60) || 60;
+    return {
+      svc,
+      detail: d,
+      packaged,
+      rates,
+      addonsList,
+      price,
+      addonsPrice,
+      extraMins,
+      extraPrice,
+      duration: dur + addonsDur + extraMins,
+      total: price + addonsPrice + extraPrice,
+      baseDuration: dur,
+    };
+  });
+  const extrasTotalPrice = extraBreakdown.reduce((t, e) => t + e.total, 0);
+  const extrasTotalDuration = extraBreakdown.reduce((t, e) => t + e.duration, 0);
+  const subtotalPrice = productPrice + (arrangPrice || basePrice) + addonPrice + extraTimePrice + extrasTotalPrice;
   const discountAmount = allowDiscount
     ? Math.min(subtotalPrice, Math.max(0, parseFloat(discount) || 0))
     : 0;
   const totalPrice = Math.max(0, subtotalPrice - discountAmount);
-  const totalDuration = (baseDuration || 60) + addonDur + extraTime;
+  const totalDuration = (baseDuration || 60) + addonDur + extraTime + extrasTotalDuration;
 
   // Branches & Arrangements lists
-  const branches: Branch[] = fullDetail?.branches ?? [];
+  // With several services, only offer branches / rooms that EVERY selected service supports
+  const branches: Branch[] = useMemo(() => {
+    const all = fullDetail?.branches ?? [];
+    const details = extraServices.map((e) => extraDetails[e.id]).filter((d): d is ServiceFullDetail => Boolean(d?.branches?.length));
+    if (details.length === 0) return all;
+    return all.filter((b) => {
+      const bid = b.id ?? b.branch_id;
+      return details.every((d) => d.branches!.some((x) => (x.id ?? x.branch_id) === bid));
+    });
+  }, [fullDetail, extraServices, extraDetails]);
   const arrangements: Arrangement[] = useMemo(() => {
     if (!selectedBranch) return [];
     const nested = selectedBranch.service_arrangements;
-    if (nested?.length) return nested;
-    return (fullDetail?.service_arrangements ?? []).filter((a: Arrangement) => {
-      const raw = a as unknown as Record<string, unknown>;
-      return !raw.branch_id || raw.branch_id === (selectedBranch.id ?? selectedBranch.branch_id);
-    });
-  }, [selectedBranch, fullDetail]);
+    const own: Arrangement[] = nested?.length
+      ? nested
+      : (fullDetail?.service_arrangements ?? []).filter((a: Arrangement) => {
+          const raw = a as unknown as Record<string, unknown>;
+          return !raw.branch_id || raw.branch_id === (selectedBranch.id ?? selectedBranch.branch_id);
+        });
+    const bid = selectedBranch.id ?? selectedBranch.branch_id;
+    let result = own;
+    for (const e of extraServices) {
+      const d = extraDetails[e.id];
+      if (!d) continue;
+      const dBranch = d.branches?.find((x) => (x.id ?? x.branch_id) === bid);
+      const dArrs = dBranch?.service_arrangements ?? d.service_arrangements;
+      if (!dArrs?.length) continue;
+      const ids = new Set(dArrs.map((a) => a.id));
+      result = result.filter((a) => ids.has(a.id));
+    }
+    return result;
+  }, [selectedBranch, fullDetail, extraServices, extraDetails]);
 
   const addons: AddonItem[] = isPackagedService ? [] : (selectedArrangt?.addons ?? []);
 
@@ -1309,7 +1456,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   // Validation
   const stepCategoryValid = !!selectedCategory;
   const stepProductValid = !isPhysical || !!selectedProduct;
-  const stepServiceValid = !!selectedService && !!selectedBranch && !!selectedArrangt && !detailLoading;
+  // Add-ons belong to the chosen room: clear the extra services' add-ons when the room changes
+  useEffect(() => {
+    setExtraSel((m) => {
+      const next: typeof m = {};
+      for (const [id, v] of Object.entries(m)) next[id] = { ...v, addons: [] };
+      return next;
+    });
+  }, [selectedArrangt?.id]);
+
+  const extraStillLoading = extraServices.some((e) => extraLoading[e.id] || !extraDetails[e.id]);
+  const stepServiceValid = !!selectedService && !!selectedBranch && !!selectedArrangt && !detailLoading && !extraStillLoading;
   const effectiveRecipientPhone = recipientPhone.trim() || (recipient ? (customerPhone(recipient) || '').trim() : '');
   const recipientLocalPhone = sanitizeLocalPhone(effectiveRecipientPhone, recipientCountryCode);
   const recipientPhoneValid = isValidLocalPhone(recipientLocalPhone, recipientCountryCode);
@@ -1440,6 +1597,52 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         base_price: basePrice,
         duration_minutes: baseDuration,
       },
+      // Multi-service: every gifted service with its own add-ons / extra time.
+      // (Legacy single-service fields above/below mirror the first service / aggregates.)
+      services: [
+        {
+          service_id: selectedService?.id ?? '',
+          service_data: {
+            id: selectedService?.id ?? '',
+            name: selectedService?.name ?? '',
+            category: svcCategory,
+            base_price: arrangPrice || basePrice,
+            duration_minutes: baseDuration,
+          },
+          addons: isPackagedService
+            ? []
+            : selectedAddons.map((a) => ({
+                addon_id: a.id,
+                id: a.id,
+                name: a.name,
+                price: a.price,
+                duration_minutes: a.duration_minutes,
+                duration: a.duration_minutes,
+              })),
+          extra_time: extraTime,
+          price_for_extra_time: extraTimePrice,
+        },
+        ...extraBreakdown.map((e) => ({
+          service_id: e.svc.id,
+          service_data: {
+            id: e.svc.id,
+            name: e.svc.name,
+            category: e.detail?.category ?? e.svc.category ?? '',
+            base_price: e.price,
+            duration_minutes: e.baseDuration,
+          },
+          addons: e.addonsList.map((a) => ({
+            addon_id: a.id,
+            id: a.id,
+            name: a.name,
+            price: a.price,
+            duration_minutes: a.duration_minutes,
+            duration: a.duration_minutes,
+          })),
+          extra_time: e.extraMins,
+          price_for_extra_time: e.extraPrice,
+        })),
+      ],
       branch_id: selectedBranch?.id ?? selectedBranch?.branch_id ?? '',
       branch_data: {
         name: selectedBranch?.name ?? selectedBranch?.branch_name ?? '',
@@ -1452,16 +1655,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         arrangement_type: selectedArrangt?.arrangement_type ?? 'room',
         image: selectedArrangt?.image ?? '',
       },
-      addons: isPackagedService
-        ? []
-        : selectedAddons.map((a) => ({
-            addon_id: a.id,
-            id: a.id,
-            name: a.name,
-            price: a.price,
-            duration: a.duration_minutes,
-          })),
-      extra_time: extraTime,
+      addons: [
+        ...(isPackagedService ? [] : selectedAddons),
+        ...extraBreakdown.flatMap((e) => e.addonsList),
+      ].map((a) => ({
+        addon_id: a.id,
+        id: a.id,
+        name: a.name,
+        price: a.price,
+        duration: a.duration_minutes,
+      })),
+      extra_time: extraTime + extraBreakdown.reduce((t, e) => t + e.extraMins, 0),
       price_for_extra_time: extraTimePrice,
       total_duration: totalDuration,
       total_amount: totalPrice,
@@ -1821,22 +2025,54 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               <div className="space-y-6">
                 {/* Service Selection */}
                 <div>
-                  <SectionLabel icon={Scissors} label="Service" />
-                  <SearchableDropdown
-                    items={services}
-                    value={selectedService}
-                    onSelect={handleServiceSelect}
-                    labelFn={(s) => s.name}
-                    sublabelFn={(s) => {
-                      const parts: string[] = [];
-                      if (s.duration_minutes) parts.push(`${s.duration_minutes} min`);
-                      if (s.base_price || s.price) parts.push(`${s.base_price || s.price} ${s.currency || 'KWD'}`);
-                      return parts.length > 0 ? parts.join(' • ') : undefined;
-                    }}
-                    imageFn={(s) => s.image || s.image1 || null}
-                    placeholder="Search and select a spa service…"
+                  <SectionLabel icon={Scissors} label="Services" />
+                  <MultiSelectDrop<SlimService>
+                    items={
+                      serviceSearch.trim()
+                        ? services.filter((x) => x.name.toLowerCase().includes(serviceSearch.trim().toLowerCase()))
+                        : services
+                    }
+                    selectedIds={[...(selectedService ? [selectedService.id] : []), ...extraServices.map((x) => x.id)]}
+                    getId={(x) => String(x.id)}
+                    search={serviceSearch}
+                    onSearch={setServiceSearch}
+                    onToggle={handleServiceToggle}
+                    placeholder="Search and select one or more spa services…"
                     loading={servicesLoading}
+                    icon={Scissors}
+                    renderItem={(x, checked) => (
+                      <div className="flex items-center gap-3 px-3 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold truncate">{x.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {[
+                              x.duration_minutes ? `${x.duration_minutes} min` : '',
+                              x.base_price || x.price ? `${x.base_price || x.price} ${x.currency || 'KWD'}` : '',
+                            ]
+                              .filter(Boolean)
+                              .join(' • ')}
+                          </p>
+                        </div>
+                        {checked && <Check className="h-4 w-4 shrink-0 text-emerald-600" />}
+                      </div>
+                    )}
                   />
+                  {selectedService && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {[selectedService, ...extraServices].map((x, i) => (
+                        <span
+                          key={x.id}
+                          className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold"
+                          style={{ background: B.pillBg, color: B.espresso }}
+                        >
+                          {i + 1}. {x.name}
+                          <button type="button" onClick={() => handleServiceToggle(x)} aria-label={`Remove ${x.name}`}>
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {detailLoading && (
@@ -2009,6 +2245,99 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                         );
                       })}
                     </div>
+                  </div>
+                )}
+
+                {/* Additional services: each with its own add-ons and extra time */}
+                {selectedArrangt && extraBreakdown.length > 0 && (
+                  <div className="space-y-4">
+                    {extraBreakdown.map((e, idx) => {
+                      const sel = extraSel[e.svc.id] ?? { addons: [], extraTime: 0 };
+                      const arrAddons: AddonItem[] = e.packaged ? [] : (selectedArrangt.addons ?? []);
+                      return (
+                        <div
+                          key={e.svc.id}
+                          className="rounded-2xl border p-4 space-y-3"
+                          style={{ borderColor: B.linen, background: B.cardBg }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-extrabold" style={{ color: B.textMain }}>
+                              {idx + 2}. {e.svc.name}
+                            </p>
+                            <span className="text-xs font-bold" style={{ color: B.espresso }}>
+                              {fmtPrice(e.total, currency)} • {e.duration} min
+                            </span>
+                          </div>
+                          {arrAddons.length > 0 && (
+                            <div>
+                              <SectionLabel icon={Package} label="Add-ons (optional)" />
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {arrAddons.map((addon) => (
+                                  <AddonCheckbox
+                                    key={addon.id}
+                                    addon={addon}
+                                    checked={sel.addons.some((a) => a.id === addon.id)}
+                                    onChange={(checked) =>
+                                      setExtraSel((m) => {
+                                        const cur = m[e.svc.id] ?? { addons: [], extraTime: 0 };
+                                        return {
+                                          ...m,
+                                          [e.svc.id]: {
+                                            ...cur,
+                                            addons: checked
+                                              ? [...cur.addons, addon]
+                                              : cur.addons.filter((a) => a.id !== addon.id),
+                                          },
+                                        };
+                                      })
+                                    }
+                                    currency={currency}
+                                  />
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {e.rates.has && (
+                            <div>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                                  Extra time
+                                </span>
+                                <span className="text-[11px] text-muted-foreground/75">
+                                  ({e.rates.price.toFixed(3)} {currency} / {e.rates.mins} min)
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-3">
+                                {[0, 30, 60].map((mins) => {
+                                  const active = sel.extraTime === mins;
+                                  return (
+                                    <button
+                                      key={mins}
+                                      type="button"
+                                      onClick={() =>
+                                        setExtraSel((m) => ({
+                                          ...m,
+                                          [e.svc.id]: { ...(m[e.svc.id] ?? { addons: [], extraTime: 0 }), extraTime: mins },
+                                        }))
+                                      }
+                                      className={cn(
+                                        'rounded-2xl border py-2.5 px-3 text-center text-sm font-extrabold transition cursor-pointer',
+                                        active
+                                          ? 'border-[#7C3AED] bg-[#F5F3FF] text-[#7C3AED] ring-1 ring-[#7C3AED]/25'
+                                          : 'border-border/80 bg-card hover:bg-muted/30 text-foreground'
+                                      )}
+                                    >
+                                      {mins === 0 ? 'None' : `+${mins} min`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2247,9 +2576,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                         <span className="font-bold">{selectedProduct.name} ({fmtPrice(selectedProduct.price, currency)})</span>
                       </div>
                     )}
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Spa Service:</span>
-                      <span className="font-bold">{selectedService?.name}</span>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">
+                        {extraServices.length > 0 ? 'Spa Services:' : 'Spa Service:'}
+                      </span>
+                      <span className="font-bold text-right">
+                        {[selectedService?.name, ...extraServices.map((x) => x.name)].filter(Boolean).join(' + ')}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Branch & Room:</span>

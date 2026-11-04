@@ -193,6 +193,15 @@ interface DeliveryAddress {
   formatted?: string;
 }
 
+/** One gifted service of a (multi-service) voucher. Legacy vouchers expose a single entry. */
+interface VoucherServiceEntry {
+  service_id?: string | null;
+  service_data?: ServiceData;
+  addons?: Addon[];
+  extra_time?: number | string | null;
+  price_for_extra_time?: string | number | null;
+}
+
 interface Voucher {
   id: string;
   voucher_number?: string | null;
@@ -200,6 +209,15 @@ interface Voucher {
   invoice_id?: string | null;
   service_id: string;
   service_data: ServiceData;
+  services?: VoucherServiceEntry[];
+  /** One record per booking created from this voucher (partial redemption history) */
+  redemptions?: Array<{
+    booking_id?: string | null;
+    booking_number?: string | null;
+    redeemed_at?: string | null;
+    services?: Array<{ service_id?: string; service_name?: string | null; addon_ids?: string[]; extra_time?: number }>;
+  }>;
+  remaining_service_ids?: string[];
   branch_id: string;
   branch_data: BranchData;
   service_arrangement_id: string;
@@ -429,6 +447,11 @@ const ORDER_STATUS_CONFIG: Record<
     badgeClass: 'bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-300',
     dotClass: 'bg-sky-500 animate-pulse',
   },
+  partially_redeemed: {
+    label: 'Partially Redeemed',
+    badgeClass: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-300',
+    dotClass: 'bg-indigo-500',
+  },
   redeemed: {
     label: 'Redeemed',
     badgeClass: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
@@ -467,6 +490,7 @@ function getOrderStatusConfig(status?: string | null) {
 const STATUS_CFG: Record<string, { label: string; pill: string; dot: string; icon: React.ElementType }> = {
   active:   { label: 'Active',    pill: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300', dot: 'bg-emerald-500',            icon: CheckCircle2 },
   scheduled:{ label: 'Scheduled', pill: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',              dot: 'bg-sky-500 animate-pulse',   icon: Calendar },
+  partially_redeemed: { label: 'Partially Redeemed', pill: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300', dot: 'bg-indigo-500', icon: Star },
   redeemed: { label: 'Redeemed',  pill: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',     dot: 'bg-violet-500',             icon: Star },
   expired:  { label: 'Expired',   pill: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',             dot: 'bg-rose-500',               icon: XCircle },
   pending:  { label: 'Pending',   pill: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',         dot: 'bg-amber-500 animate-pulse', icon: Clock },
@@ -1153,8 +1177,9 @@ function VoucherDetailModal({
   const ordStatusCfg = getOrderStatusConfig(voucher.status);
 
   const isExpired = voucher.expire_date && new Date(voucher.expire_date) < new Date();
-  const canRedeem = !isExpired && voucher.status?.toLowerCase() === 'active';
-  const isRedeemed = voucher.status?.toLowerCase() === 'redeemed' || !!voucher.redeemed_at;
+  const isPartiallyRedeemed = voucher.status?.toLowerCase() === 'partially_redeemed';
+  const canRedeem = !isExpired && (voucher.status?.toLowerCase() === 'active' || isPartiallyRedeemed);
+  const isRedeemed = !isPartiallyRedeemed && (voucher.status?.toLowerCase() === 'redeemed' || !!voucher.redeemed_at);
   const isDeliveryScheduled = voucher.status?.toLowerCase() === 'scheduled';
   const bookingId =
     voucher.redeemed_booking_id ||
@@ -1175,6 +1200,13 @@ function VoucherDetailModal({
     const branchId = voucher.branch_id || voucher.branch_data?.branch_id;
     const arrangementId = voucher.service_arrangement_id || (voucher.service_arrangement_data as any)?.id;
     const expireDateWithTz = toZonedIsoFromLocal(voucher.expire_date);
+    // Only services not yet redeemed (partial redemption) take part in availability
+    const usedServiceIds = new Set<string>(
+      (voucher.redemptions ?? []).flatMap((r) => (r.services ?? []).map((x) => String(x.service_id ?? '')))
+    );
+    const remainingServiceIds: string[] = (voucher.services ?? [])
+      .map((sv) => String(sv.service_id || (sv.service_data as any)?.id || ''))
+      .filter((id) => id && !usedServiceIds.has(id));
 
     const promise = authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
       method: 'POST',
@@ -1183,7 +1215,9 @@ function VoucherDetailModal({
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
-        service_id: serviceId,
+        service_id: remainingServiceIds[0] || serviceId,
+        // multi-service vouchers: only therapists / rooms that support every still-redeemable service
+        ...(remainingServiceIds.length > 1 ? { service_ids: remainingServiceIds } : {}),
         branch_id: branchId,
         service_arrangement_id: arrangementId || null,
         expire_date: expireDateWithTz,
@@ -1940,7 +1974,62 @@ function VoucherDetailModal({
                     )}
 
                     {/* Service Details (including addons & extratime) */}
-                    {(voucher.service_data?.name || voucher.service_id) && (
+                    {/* Multi-service voucher: every gifted service with its own add-ons / extra time */}
+                    {(voucher.services?.length ?? 0) > 1 && (
+                      <div className="space-y-2.5">
+                        {voucher.services!.map((sv, i) => (
+                          <div key={`${sv.service_id ?? 'svc'}-${i}`} className="rounded-xl border border-border/60 bg-card p-3.5 space-y-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">
+                                  <Sparkles className="h-3 w-3" />Spa Service {i + 1}
+                                </div>
+                                <p className="font-bold text-sm text-foreground">{sv.service_data?.name || 'Service'}</p>
+                              </div>
+                              {sv.service_data?.base_price ? (
+                                <span className="text-xs font-bold text-foreground shrink-0">
+                                  {formatAmount(sv.service_data.base_price, sv.service_data?.currency || voucher.currency)}
+                                </span>
+                              ) : null}
+                            </div>
+                            {Number((sv.service_data as any)?.duration_minutes) > 0 && (
+                              <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                                <Clock className="h-3 w-3 text-primary" />{(sv.service_data as any).duration_minutes} min
+                              </span>
+                            )}
+                            {(sv.addons?.length ?? 0) > 0 && (
+                              <div className="space-y-1.5 pt-2 border-t border-border/50">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                                  <Sparkles className="h-3 w-3 text-violet-500" />Add-ons ({sv.addons!.length})
+                                </p>
+                                {sv.addons!.map((addon, idx) => (
+                                  <div key={addon.id || `a-${idx}`} className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs">
+                                    <span className="font-medium text-foreground">{addon.name}</span>
+                                    <span className="font-semibold text-foreground shrink-0 ml-2">
+                                      {formatAmount(addon.price, addon.currency || voucher.currency)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {Number(sv.extra_time) > 0 && (
+                              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                                <span className="flex items-center gap-1.5 text-muted-foreground">
+                                  <Timer className="h-3.5 w-3.5 text-amber-500" />
+                                  <span className="font-medium text-foreground">Extra Time:</span>
+                                  <span className="font-semibold text-foreground">+{sv.extra_time} min</span>
+                                </span>
+                                {Number(sv.price_for_extra_time) > 0 && (
+                                  <span className="font-semibold text-foreground">{formatAmount(sv.price_for_extra_time as any, voucher.currency)}</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {(voucher.service_data?.name || voucher.service_id) && !((voucher.services?.length ?? 0) > 1) && (
                       <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
                         {voucher.service_data?.image && (
                           <img src={voucher.service_data.image} alt={voucher.service_data.name} className="w-full h-28 object-cover"
@@ -2051,6 +2140,29 @@ function VoucherDetailModal({
                       </div>
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* Partial redemption history: bookings already created from this voucher */}
+              {(voucher.redemptions?.length ?? 0) > 0 && (
+                <div className="rounded-2xl border border-indigo-300/50 bg-indigo-50/60 dark:bg-indigo-950/20 px-4 py-3 space-y-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">
+                    Redemptions ({voucher.redemptions!.length})
+                  </p>
+                  {voucher.redemptions!.map((r, i) => (
+                    <div key={`${r.booking_id ?? 'r'}-${i}`} className="text-xs text-foreground">
+                      <span className="font-semibold">{r.booking_number || (r.booking_id ? String(r.booking_id).slice(0, 8) : `Booking ${i + 1}`)}</span>
+                      <span className="text-muted-foreground">
+                        {' — '}
+                        {(r.services ?? []).map((sv) => sv.service_name || 'Service').join(' + ')}
+                      </span>
+                    </div>
+                  ))}
+                  {isPartiallyRedeemed && (
+                    <p className="text-[11px] text-indigo-700 dark:text-indigo-300">
+                      {voucher.remaining_service_ids?.length ?? 0} service(s) still available to redeem.
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -2575,19 +2687,42 @@ function VoucherDetailModal({
                     <span>Description</span>
                     <span>Amount</span>
                   </div>
+                  {(voucher.services?.length ?? 0) > 1 ? (
+                    voucher.services!.map((sv, si) => (
+                      <React.Fragment key={`inv-${si}`}>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-foreground">{sv.service_data?.name || `Service ${si + 1}`}</span>
+                          <span className="font-semibold">{formatAmount(sv.service_data?.base_price || 0, voucher.currency)}</span>
+                        </div>
+                        {(sv.addons ?? []).map((a, i) => (
+                          <div key={`inv-${si}-a${i}`} className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>+ Add-on: {a.name}</span>
+                            <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
+                          </div>
+                        ))}
+                        {Number(sv.extra_time) > 0 && (
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>+ Extra Minutes (+{sv.extra_time}m)</span>
+                            <span>+{formatAmount(sv.price_for_extra_time || 0, voucher.currency)}</span>
+                          </div>
+                        )}
+                      </React.Fragment>
+                    ))
+                  ) : (
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-medium text-foreground">
                       {voucher.service_data?.name || (isDigital ? (voucher.digital_product_data?.title || 'Digital Gift Item') : (isPhysical ? 'Gift Voucher / Physical Products' : 'Gift Voucher'))}
                     </span>
                     <span className="font-semibold">{formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.currency)}</span>
                   </div>
-                  {voucher.addons && voucher.addons.map((a, i) => (
+                  )}
+                  {!((voucher.services?.length ?? 0) > 1) && voucher.addons && voucher.addons.map((a, i) => (
                     <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>+ Add-on: {a.name}</span>
                       <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
                     </div>
                   ))}
-                  {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                  {!((voucher.services?.length ?? 0) > 1) && Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>+ Extra Minutes (+{voucher.extra_time}m)</span>
                       <span>+{formatAmount(voucher.price_for_extra_time || 0, voucher.currency)}</span>
@@ -3239,6 +3374,7 @@ function VoucherFilterPopover({
     { id: 'active', label: 'Active' },
     { id: 'scheduled', label: 'Scheduled' },
     { id: 'pending', label: 'Pending' },
+    { id: 'partially_redeemed', label: 'Partially Redeemed' },
     { id: 'redeemed', label: 'Redeemed' },
     { id: 'expired', label: 'Expired' },
     { id: 'cancelled', label: 'Cancelled' },
@@ -4898,12 +5034,13 @@ export default function GiftVouchersPage() {
           s === 'payment_pending' ||
           s === 'created' ||
           s.includes('pending');
-        const isRedeemed = s === 'redeemed' || Boolean(v.redeemed_at);
+        const isRedeemed = s !== 'partially_redeemed' && (s === 'redeemed' || Boolean(v.redeemed_at));
 
         const matchesAny = statusFilters.some((target) => {
           if (target === 'scheduled') return s === 'scheduled';
           if (target === 'pending') return isPending;
           if (target === 'redeemed') return isRedeemed;
+          if (target === 'partially_redeemed') return s === 'partially_redeemed';
           if (target === 'active') return s === 'active' && !isRedeemed;
           if (target === 'expired') return s === 'expired';
           if (target === 'cancelled') return s === 'cancelled';
@@ -5155,7 +5292,7 @@ export default function GiftVouchersPage() {
     return {
       total:          target.length,
       active:         target.filter(v => v.status?.toLowerCase() === 'active').length,
-      redeemed:       target.filter(v => v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at)).length,
+      redeemed:       target.filter(v => v.status?.toLowerCase() !== 'partially_redeemed' && (v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at))).length,
       expired:        target.filter(v => v.status?.toLowerCase() === 'expired').length,
       revenue:        target
                         .filter(v => v.status?.toLowerCase() === 'active' || v.status?.toLowerCase() === 'redeemed')
@@ -5439,7 +5576,7 @@ export default function GiftVouchersPage() {
                   const senderName = v.sender_data?.name || v.sender_details?.name;
                   const recipientName = v.recipient_data?.name || v.recipient_details?.name;
                   const recipientPhone = v.recipient_phone || v.recipient_data?.phone_number || v.recipient_details?.phone_number;
-                  const isRedeemed = v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at);
+                  const isRedeemed = v.status?.toLowerCase() !== 'partially_redeemed' && (v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at));
                   const isPending =
                     v.status?.toLowerCase() === 'pending' ||
                     v.status?.toLowerCase() === 'payment_pending' ||
@@ -5517,7 +5654,11 @@ export default function GiftVouchersPage() {
 
                       {/* Service */}
                       <td className="px-4 py-3 align-top min-w-[150px]">
-                        <p className="font-semibold text-[13px] line-clamp-2 leading-snug">{v.service_data?.name ?? '—'}</p>
+                        <p className="font-semibold text-[13px] line-clamp-2 leading-snug">
+                          {(v.services?.length ?? 0) > 1
+                            ? v.services!.map((sv) => sv.service_data?.name).filter(Boolean).join(' + ')
+                            : (v.service_data?.name ?? '—')}
+                        </p>
                         {v.service_data?.service_types?.[0]?.name && (
                           <p className="text-[10px] text-muted-foreground mt-0.5">{v.service_data.service_types[0].name}</p>
                         )}
