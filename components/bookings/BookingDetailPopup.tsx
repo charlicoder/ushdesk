@@ -3834,6 +3834,13 @@ function BookingDetailPopupContent({
           sessionNumber={editingSessionIndex + 1}
           sessionData={displaySessions[editingSessionIndex]}
           branchId={String(detail?.branch_id || (booking as any)?.branch_id || '')}
+          serviceArrangementId={String(
+            (displaySessions[editingSessionIndex]?.raw as any)?.service_arrangement_id ||
+            (displaySessions[editingSessionIndex]?.raw as any)?.service_arrangement_data?.id ||
+            detail?.service_arrangement_id ||
+            (booking as any)?.service_arrangement_id ||
+            ''
+          )}
           currency={currency}
           onClose={() => setEditingSessionIndex(null)}
           onUpdate={handleUpdateSessionServices}

@@ -37,6 +37,7 @@ export interface EditSessionModalProps {
     [key: string]: any;
   };
   branchId?: string;
+  serviceArrangementId?: string;
   currency?: string;
   authHeader?: string;
   onClose: () => void;
@@ -59,6 +60,7 @@ export function EditSessionModal({
   sessionNumber,
   sessionData,
   branchId,
+  serviceArrangementId,
   currency = 'KWD',
   authHeader,
   onClose,
@@ -123,12 +125,54 @@ export function EditSessionModal({
       });
   }, [isOpen, branchId, authHeader]);
 
-  // Filter branch services
+  // Services offered by this session's arrangement (room); null = unknown / not loaded
+  const arrangementId = String(
+    serviceArrangementId ||
+      sessionData.raw?.service_arrangement_id ||
+      sessionData.service_arrangement_id ||
+      sessionData.raw?.service_arrangement_data?.id ||
+      ''
+  );
+  const [arrangementServiceIds, setArrangementServiceIds] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !arrangementId) {
+      setArrangementServiceIds(null);
+      return;
+    }
+    let cancelled = false;
+    authedFetch(`/api/v1/service-arrangements/${arrangementId}/services`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (cancelled) return;
+        const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        const ids = new Set<string>(
+          (list as any[])
+            .filter((x) => x?.is_active !== false)
+            .map((x) => String(x?.service_id ?? x?.id))
+            .filter(Boolean)
+        );
+        setArrangementServiceIds(ids.size > 0 ? ids : null);
+      })
+      .catch(() => {
+        if (!cancelled) setArrangementServiceIds(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, arrangementId, authHeader]);
+
+  // Filter branch services (only those the session's room offers)
   const filteredAvailableServices = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return branchServices;
-    return branchServices.filter((s) => s.name?.toLowerCase().includes(q));
-  }, [branchServices, searchQuery]);
+    const inRoom = arrangementServiceIds
+      ? branchServices.filter((s) => arrangementServiceIds.has(String(s.id)))
+      : branchServices;
+    if (!q) return inRoom;
+    return inRoom.filter((s) => s.name?.toLowerCase().includes(q));
+  }, [branchServices, searchQuery, arrangementServiceIds]);
 
   // Compute live session totals
   const totalDuration = useMemo(
