@@ -7,6 +7,7 @@ import {
   loadUser,
 } from '@/lib/api';
 import { isCustomerType, ALLOWED_USER_TYPES } from '@/lib/permissions';
+import { persistAssignedBranch } from '@/lib/branchScope';
 
 /** Proxy URL — Next.js API route avoids browser CORS issues */
 const PROXY_LOGIN = '/api/v1/auth/login';
@@ -275,6 +276,9 @@ export const initAuthFromStorage = createAsyncThunk(
         // ignore
       }
     }
+
+    // Ensure the assigned branch is in localStorage for branch-scoped requests
+    if (token && user) persistAssignedBranch(user.branch_id ?? null, user.branch_name ?? null);
 
     return { token, user, permissions, roleInfo };
   },

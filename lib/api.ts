@@ -3,6 +3,8 @@
  * All paths are read from NEXT_PUBLIC_* environment variables.
  */
 
+import { persistAssignedBranch, clearAssignedBranch } from '@/lib/branchScope';
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'https://apidev.ushspa.co';
 const UAUTH    = process.env.NEXT_PUBLIC_UAUTH    ?? '/uauth';
 const BOOKNPAY = process.env.NEXT_PUBLIC_BOOKNPAY ?? '/booknpay';
@@ -140,13 +142,20 @@ export function clearToken(): void {
     localStorage.removeItem(USER_KEY);
     localStorage.removeItem(LOGINAT_KEY);
     localStorage.removeItem('ush_refresh_token');
+    clearAssignedBranch();
     document.cookie = `${TOKEN_KEY}=; path=/; max-age=0; SameSite=Lax`;
   }
 }
 
 export function saveUser(user: Record<string, unknown>): void {
-  if (typeof window !== 'undefined')
+  if (typeof window !== 'undefined') {
     localStorage.setItem(USER_KEY, JSON.stringify(user));
+    // Keep the employee's assigned branch in its own key for branch-scoped API requests
+    persistAssignedBranch(
+      (user.branch_id as string | null | undefined) ?? null,
+      (user.branch_name as string | null | undefined) ?? null,
+    );
+  }
 }
 
 export function loadUser(): Record<string, unknown> | null {

@@ -299,18 +299,17 @@ export function isReceptionistRole(roleInfo?: RoleInfoLike | null, user?: UserLi
  * - Customer Support Manager
  * - Customer Support Agent (or Customer Suport Agent)
  *
- * System administrators and superusers have global access and are NOT restricted.
+ * Any employee assigned to a branch is restricted to that branch on Therapist
+ * Schedule and Room Schedule (callers also require an assigned branch id).
+ * Employees with no assigned branch are never restricted and see all branches.
  */
 export function isBranchRestrictedScheduleRole(
   roleInfo?: RoleInfoLike | null,
   user?: UserLike | null,
 ): boolean {
-  if (isAdministratorRole(roleInfo, user)) return false;
-  return (
-    isBranchManagerRole(roleInfo, user) ||
-    isCustomerSupportManagerRole(roleInfo, user) ||
-    isCustomerSupportAgentRole(roleInfo, user)
-  );
+  void roleInfo;
+  void user;
+  return true;
 }
 
 

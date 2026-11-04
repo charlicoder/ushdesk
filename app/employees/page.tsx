@@ -151,12 +151,14 @@ function SelectFilter({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   icon?: React.ElementType;
   label: string;
   value: string;
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="relative flex items-center">
@@ -165,9 +167,11 @@ function SelectFilter({
       )}
       <select
         value={value}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
         className={cn(
           'h-10 appearance-none rounded-xl border border-border bg-card pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer text-foreground',
+          disabled && 'opacity-80 cursor-not-allowed',
           Icon ? 'pl-9' : 'pl-3',
         )}
       >
@@ -201,7 +205,11 @@ export default function EmployeesPage() {
   // UI state
   const [search,           setSearch]           = useState('');
   const [roleFilter,       setRoleFilter]       = useState('');
-  const [branchFilter,     setBranchFilter]     = useState('');
+  const assignedBranchId   = useAppSelector((s) => (s.auth.user?.branch_id ? String(s.auth.user.branch_id) : ''));
+  const assignedBranchName = useAppSelector((s) => s.auth.user?.branch_name ?? '');
+  const [branchFilterState, setBranchFilter] = useState('');
+  // Employees assigned to a branch are locked to it; others may pick any branch
+  const branchFilter = assignedBranchId || branchFilterState;
   const [viewMode,         setViewMode]         = useState<'grid' | 'list'>('grid');
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
 
@@ -361,9 +369,13 @@ export default function EmployeesPage() {
     return m;
   }, [allBranches]);
 
-  const branchOptions = useMemo(() =>
-    allBranches.map((b) => ({ value: b.id, label: b.name })),
-  [allBranches]);
+  const branchOptions = useMemo(() => {
+    if (assignedBranchId) {
+      const match = allBranches.find((b) => b.id === assignedBranchId);
+      return [{ value: assignedBranchId, label: match?.name || assignedBranchName || 'My Branch' }];
+    }
+    return allBranches.map((b) => ({ value: b.id, label: b.name }));
+  }, [allBranches, assignedBranchId, assignedBranchName]);
 
   // Roles fetched from /uauth/api/v1/rbac/roles/ with fallback to distinct employee roles
   const roleOptions = useMemo(() => {
@@ -413,7 +425,7 @@ export default function EmployeesPage() {
   }, [employees, search, roleFilter, branchFilter, branchMap]);
 
   const active   = employees.filter((e) => e.status === 'active').length;
-  const hasFilter = Boolean(search || roleFilter || branchFilter);
+  const hasFilter = Boolean(search || roleFilter || (!assignedBranchId && branchFilter));
 
   const clearFilters = () => {
     setSearch('');
@@ -468,6 +480,7 @@ export default function EmployeesPage() {
           value={branchFilter}
           options={branchOptions}
           onChange={setBranchFilter}
+          disabled={Boolean(assignedBranchId)}
         />
 
         {/* Role filter */}

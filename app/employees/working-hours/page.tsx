@@ -1153,7 +1153,11 @@ export default function WorkingHoursPage() {
 
   // Filter states
   const [search,           setSearch]           = useState('');
-  const [branchFilter,     setBranchFilter]     = useState('');
+  const assignedBranchId   = useAppSelector((s) => (s.auth.user?.branch_id ? String(s.auth.user.branch_id) : ''));
+  const assignedBranchName = useAppSelector((s) => s.auth.user?.branch_name ?? '');
+  const [branchFilterState, setBranchFilter] = useState('');
+  // Employees assigned to a branch are locked to it; others may pick any branch
+  const branchFilter = assignedBranchId || branchFilterState;
   const [dayFilter,        setDayFilter]        = useState('');
   const [statusFilter,     setStatusFilter]     = useState('active');
   const [weekendOffFilter, setWeekendOffFilter] = useState('');
@@ -1270,8 +1274,11 @@ export default function WorkingHoursPage() {
       }
     });
 
+    if (assignedBranchId) {
+      return [{ id: assignedBranchId, name: map.get(assignedBranchId) || assignedBranchName || 'My Branch' }];
+    }
     return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [apiBranches, schedules]);
+  }, [apiBranches, schedules, assignedBranchId, assignedBranchName]);
 
   // Client-side filtering & search (supplements backend filtering)
   const filteredSchedules = useMemo(() => {
@@ -1373,7 +1380,7 @@ export default function WorkingHoursPage() {
     };
   }, [filteredSchedules]);
 
-  const hasFilters = Boolean(search || branchFilter || dayFilter !== '' || weekendOffFilter !== '' || statusFilter !== 'active');
+  const hasFilters = Boolean(search || (!assignedBranchId && branchFilter) || dayFilter !== '' || weekendOffFilter !== '' || statusFilter !== 'active');
 
   const clearFilters = () => {
     setSearch('');
@@ -1477,10 +1484,11 @@ export default function WorkingHoursPage() {
           <Building2 className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground z-10" />
           <select
             value={branchFilter}
+            disabled={Boolean(assignedBranchId)}
             onChange={(e) => setBranchFilter(e.target.value)}
-            className="h-10 appearance-none rounded-xl border border-border bg-card pl-9 pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer text-foreground"
+            className="h-10 appearance-none rounded-xl border border-border bg-card pl-9 pr-8 text-sm font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer text-foreground disabled:opacity-80 disabled:cursor-not-allowed"
           >
-            <option value="">All Branches</option>
+            {!assignedBranchId && <option value="">All Branches</option>}
             {allBranches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}

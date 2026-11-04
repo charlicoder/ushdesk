@@ -7,6 +7,7 @@ import { useAppSelector, useAppDispatch } from '@/store/hooks';
 import { store } from '@/store';
 import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice';
 import { getSessionRemainingMs, clearToken } from '@/lib/api';
+import { applyBranchScope } from '@/lib/branchScope';
 import {
   hasAnyPermission,
   isAdmin,
@@ -16,9 +17,9 @@ import {
 
 // ── Ensure all client-side fetch requests send Accept-Language header ────────
 if (typeof window !== 'undefined') {
-  const win = window as unknown as { __ush_fetch_patched?: boolean };
-  if (!win.__ush_fetch_patched) {
-    win.__ush_fetch_patched = true;
+  const win = window as unknown as { __ush_fetch_patched_v2?: boolean };
+  if (!win.__ush_fetch_patched_v2) {
+    win.__ush_fetch_patched_v2 = true;
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const stored = localStorage.getItem('ush_locale');
@@ -27,7 +28,7 @@ if (typeof window !== 'undefined') {
       if (!headers.has('Accept-Language') || !headers.get('Accept-Language')) {
         headers.set('Accept-Language', currentLocale);
       }
-      return nativeFetch(input, { ...init, headers });
+      return nativeFetch(applyBranchScope(input, init), { ...init, headers });
     };
   }
 }

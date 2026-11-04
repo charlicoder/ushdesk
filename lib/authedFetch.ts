@@ -17,6 +17,8 @@
  * Use `authedFetch` as a drop-in replacement for `fetch` in client components.
  */
 
+import { applyBranchScope } from '@/lib/branchScope';
+
 const TOKEN_KEY   = 'ush_access_token';
 const REFRESH_KEY = 'ush_refresh_token';
 const LOGINAT_KEY = 'ush_login_at';
@@ -155,6 +157,7 @@ export async function authedFetch(
     if (!headers.has('USHSPA-TOKEN')) headers.set('USHSPA-TOKEN', appToken);
   }
 
+  input = applyBranchScope(input, init);
   const res = await fetch(input, { ...init, headers });
 
   // 2. Not a 401 — return as-is
