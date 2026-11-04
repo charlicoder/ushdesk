@@ -75,6 +75,7 @@ const STATUS_STYLES: Record<string, { bar: string; pill: string; dot: string }> 
   completed:   { bar: 'from-slate-400 to-slate-500',   pill: 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300',    dot: 'bg-slate-400' },
   cancelled:   { bar: 'from-rose-500 to-red-500',      pill: 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300',       dot: 'bg-rose-500' },
   no_show:     { bar: 'from-orange-500 to-amber-500',  pill: 'bg-orange-100 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300', dot: 'bg-orange-500' },
+  parked:      { bar: 'from-violet-500 to-purple-500', pill: 'bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300', dot: 'bg-violet-500' },
 };
 
 function statusStyle(s: string) {
@@ -325,7 +326,10 @@ export function RescheduleBookingModal({
 
   // Appointment date
   const isoStart = bk?.appointment_start ?? bk?.appointment_datetime ?? '';
+  const isParkedBooking = String(bk?.status ?? (bk as any)?.raw?.status ?? '').toLowerCase().replace(/[\s-]/g, '_') === 'parked';
   const appointmentDate = useMemo(() => {
+    // Parked bookings have no live slot: availability starts from today
+    if (isParkedBooking) return todayStr;
     return firstTruthy(
       initialRescheduleParams?.appointmentDate,
       bk?.date,
@@ -334,7 +338,7 @@ export function RescheduleBookingModal({
       isoStart ? (isoStart.includes('T') ? isoStart.split('T')[0] : isoStart.split(' ')[0]) : '',
       todayStr
     );
-  }, [initialRescheduleParams?.appointmentDate, bk, isoStart, todayStr]);
+  }, [initialRescheduleParams?.appointmentDate, bk, isoStart, todayStr, isParkedBooking]);
 
   const daysCount = initialRescheduleParams?.daysCount ?? 30;
 
@@ -352,12 +356,12 @@ export function RescheduleBookingModal({
     setSelectedBranchId((prev) => prev || initialBranchId);
 
     const dateRaw = firstTruthy(bk?.date, bk?.booking_date, bk?.appointment_date, isoStart ? isoStart.split('T')[0] : '');
-    if (dateRaw && dateRaw >= todayStr) {
+    if (!isParkedBooking && dateRaw && dateRaw >= todayStr) {
       setSelectedDate(dateRaw);
     } else {
       setSelectedDate(todayStr);
     }
-  }, [bk, todayStr, initialRescheduleParams?.branchId, isoStart]);
+  }, [bk, todayStr, initialRescheduleParams?.branchId, isoStart, isParkedBooking]);
 
   // ── Handle initial availabilities promise ───────────────────────────
   useEffect(() => {

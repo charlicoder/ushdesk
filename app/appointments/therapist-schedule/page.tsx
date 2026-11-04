@@ -1036,7 +1036,7 @@ function buildScheduleFromApi(
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
     const rawStatus = String(bk.status ?? (bk as any).booking_status ?? '').toLowerCase().trim();
-    if (rawStatus === 'cancelled' || rawStatus === 'refunded') {
+    if (rawStatus === 'cancelled' || rawStatus === 'refunded' || rawStatus === 'parked') {
       continue;
     }
     const primaryId = String(bk.therapist_id ?? '').toLowerCase().trim();
@@ -1731,7 +1731,7 @@ export default function TherapistSchedulePage() {
             // Append missing bookings from booknpay
             for (const item of bpBookings) {
               const rawSt = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
-              if (rawSt === 'cancelled' || rawSt === 'refunded') continue;
+              if (rawSt === 'cancelled' || rawSt === 'refunded' || rawSt === 'parked') continue;
 
               const itemIds = [item.id, item.booking_id, item.bookings_id, item.booking_number]
                 .filter(Boolean)
@@ -1775,7 +1775,7 @@ export default function TherapistSchedulePage() {
         if (record?.bookings?.length) {
           record.bookings = record.bookings.filter(bk => {
             const st = String(bk.status ?? (bk as any)?.booking_status ?? '').toLowerCase().trim();
-            return st !== 'cancelled' && st !== 'refunded';
+            return st !== 'cancelled' && st !== 'refunded' && st !== 'parked';
           });
         }
 

@@ -38,10 +38,14 @@ export interface EditSessionModalProps {
   };
   branchId?: string;
   serviceArrangementId?: string;
+  /** Paid bookings: services can only be swapped for ones with the same price (no add/remove/price edits). */
+  restrictToSamePrice?: boolean;
   currency?: string;
   authHeader?: string;
   onClose: () => void;
-  onUpdate: (updatedServices: EditableServiceItem[], sessionIndex: number) => void;
+  /** Add-ons currently on the session (already gifted/selected) */
+  addons?: any[];
+  onUpdate: (updatedServices: EditableServiceItem[], sessionIndex: number, updatedAddons: any[]) => void;
 }
 
 interface ApiBranchService {
@@ -61,6 +65,8 @@ export function EditSessionModal({
   sessionData,
   branchId,
   serviceArrangementId,
+  restrictToSamePrice = false,
+  addons: addonsProp,
   currency = 'KWD',
   authHeader,
   onClose,
@@ -90,6 +96,13 @@ export function EditSessionModal({
       };
     });
   }, [sessionData]);
+
+  const initialAddons: any[] = Array.isArray(addonsProp)
+    ? addonsProp
+    : (Array.isArray(sessionData.raw?.addons) ? sessionData.raw.addons : []);
+  // Number of add-ons is capped by how many the session already has (gifted)
+  const [sessionAddons, setSessionAddons] = useState<any[]>(initialAddons);
+  const [arrangementAddons, setArrangementAddons] = useState<any[]>([]);
 
   const [services, setServices] = useState<EditableServiceItem[]>(initialServices);
   const [branchServices, setBranchServices] = useState<ApiBranchService[]>([]);
@@ -164,6 +177,80 @@ export function EditSessionModal({
     };
   }, [isOpen, arrangementId, authHeader]);
 
+  useEffect(() => {
+    if (!isOpen || !arrangementId) {
+      setArrangementAddons([]);
+      return;
+    }
+    let cancelled = false;
+    authedFetch(`/api/v1/service-arrangements/${arrangementId}/addons/`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setArrangementAddons(Array.isArray(d) ? d : (d.data ?? d.results ?? []));
+      })
+      .catch(() => {
+        if (!cancelled) setArrangementAddons([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, arrangementId, authHeader]);
+
+  const addonKey = (a: any) => String(a?.addon_id ?? a?.id ?? '');
+  const addonPrice = (a: any) => parseFloat(String(a?.price ?? a?.base_price ?? 0)) || 0;
+
+  // Pool: arrangement add-ons + add-ons of the services in this session
+  const addonPool = useMemo(() => {
+    const map = new Map<string, any>();
+    arrangementAddons.forEach((a) => map.set(addonKey(a), a));
+    services.forEach((sv) => {
+      const full = branchServices.find((b: any) => String(b.id) === String(sv.service_id)) as any;
+      ((full?.add_ons as any[]) ?? []).forEach((a) => map.set(addonKey(a), a));
+    });
+    return Array.from(map.values()).filter((a) => addonKey(a));
+  }, [arrangementAddons, services, branchServices]);
+
+  // Gifted limits per price: you may pick as many add-ons of a price as were originally gifted at that price
+  const priceKey = (a: any) => addonPrice(a).toFixed(3);
+  const giftedLimits = useMemo(() => {
+    const m = new Map<string, number>();
+    initialAddons.forEach((a) => m.set(priceKey(a), (m.get(priceKey(a)) ?? 0) + 1));
+    return m;
+  }, [initialAddons]);
+
+  const selectableAddons = useMemo(() => {
+    const map = new Map<string, any>();
+    initialAddons.forEach((a) => map.set(addonKey(a), a));
+    addonPool.forEach((a) => {
+      if (giftedLimits.has(priceKey(a)) && !map.has(addonKey(a))) map.set(addonKey(a), a);
+    });
+    return Array.from(map.values());
+  }, [initialAddons, addonPool, giftedLimits]);
+
+  const selectedCountForPrice = (a: any) => sessionAddons.filter((x) => priceKey(x) === priceKey(a)).length;
+
+  const handleToggleAddon = (a: any) => {
+    const key = addonKey(a);
+    const isOn = sessionAddons.some((x) => addonKey(x) === key);
+    if (isOn) {
+      setSessionAddons((prev) => prev.filter((x) => addonKey(x) !== key));
+      return;
+    }
+    if (selectedCountForPrice(a) >= (giftedLimits.get(priceKey(a)) ?? 0)) return;
+    setSessionAddons((prev) => [
+      ...prev,
+      {
+        id: a.id ?? a.addon_id,
+        addon_id: a.addon_id ?? a.id,
+        name: a.name ?? a.addon_name,
+        price: a.price ?? a.base_price ?? 0,
+        duration_minutes: a.duration_minutes ?? a.duration ?? 0,
+      },
+    ]);
+  };
+
   // Filter branch services (only those the session's room offers)
   const filteredAvailableServices = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
@@ -216,6 +303,36 @@ export function EditSessionModal({
     setServices((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const samePriceOptions = (svc: EditableServiceItem): ApiBranchService[] =>
+    branchServices.filter((b) => {
+      if (arrangementServiceIds && !arrangementServiceIds.has(String(b.id))) return false;
+      if (String(b.id) === String(svc.service_id)) return false;
+      if (services.some((x) => String(x.service_id) === String(b.id))) return false;
+      const price = parseFloat(String(b.base_price ?? b.price ?? 0)) || 0;
+      return Math.abs(price - (Number(svc.base_price) || 0)) < 0.0005;
+    });
+
+  const handleReplaceService = (index: number, newId: string) => {
+    const item = branchServices.find((b) => String(b.id) === newId);
+    if (!item) return;
+    setError(null);
+    const dur = Number(item.duration_minutes) || 60;
+    const pr = parseFloat(String(item.base_price ?? item.price ?? 0)) || 0;
+    setServices((prev) => {
+      const copy = [...prev];
+      copy[index] = {
+        service_id: item.id,
+        service_name: item.name,
+        name: item.name,
+        duration_minutes: dur,
+        base_price: pr,
+        price: pr,
+        service_data: { id: item.id, name: item.name, duration_minutes: dur, base_price: pr },
+      };
+      return copy;
+    });
+  };
+
   const handleAddService = (item: ApiBranchService) => {
     setError(null);
     const dur = Number(item.duration_minutes) || 60;
@@ -244,7 +361,7 @@ export function EditSessionModal({
       setError('Please add at least one service to this session.');
       return;
     }
-    onUpdate(services, sessionIndex);
+    onUpdate(services, sessionIndex, sessionAddons);
     onClose();
   };
 
@@ -307,12 +424,6 @@ export function EditSessionModal({
                 <Scissors className="h-3.5 w-3.5 text-primary" />
                 Services in Session ({services.length})
               </span>
-              <span className="text-xs font-semibold text-muted-foreground">
-                Total: <span className="font-extrabold text-foreground">{totalDuration} min</span> ·{' '}
-                <span className="font-mono font-extrabold text-[#b85d63]">
-                  {totalPrice.toFixed(3)} {currency}
-                </span>
-              </span>
             </div>
 
             <div className="space-y-2.5">
@@ -330,6 +441,7 @@ export function EditSessionModal({
                         {svc.service_name || svc.name}
                       </p>
                     </div>
+                    {restrictToSamePrice ? null : (
                     <button
                       type="button"
                       onClick={() => handleRemoveService(idx)}
@@ -339,48 +451,78 @@ export function EditSessionModal({
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
+                    )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 pt-1 border-t border-border/40">
-                    <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
-                        Duration (Minutes)
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          min="5"
-                          step="5"
-                          value={svc.duration_minutes}
-                          onChange={(e) => handleUpdateDuration(idx, parseInt(e.target.value, 10) || 0)}
-                          className="w-full rounded-xl border border-border/80 bg-muted/20 px-3 py-1.5 pl-8 text-xs font-bold text-foreground focus:border-primary focus:outline-none"
-                        />
-                        <Clock className="h-3.5 w-3.5 text-muted-foreground absolute left-2.5 top-2.5 pointer-events-none" />
-                      </div>
+                  {restrictToSamePrice && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {[
+                        { id: svc.service_id, name: String(svc.service_name || svc.name || ''), current: true },
+                        ...samePriceOptions(svc).map((o) => ({ id: String(o.id), name: o.name, current: false })),
+                      ]
+                        .sort((x, y) => x.name.localeCompare(y.name))
+                        .map((opt) => (
+                          <label
+                            key={opt.id}
+                            className={cn(
+                              'flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold cursor-pointer transition',
+                              opt.current ? 'border-primary/50 bg-primary/10' : 'border-border/70 bg-muted/20 hover:bg-muted/40'
+                            )}
+                          >
+                            <input
+                              type="radio"
+                              name={`svc-slot-${idx}`}
+                              checked={opt.current}
+                              onChange={() => !opt.current && handleReplaceService(idx, opt.id)}
+                              className="h-3.5 w-3.5 accent-primary shrink-0"
+                            />
+                            <span className="truncate">{opt.name}</span>
+                          </label>
+                        ))}
                     </div>
-                    <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
-                        Price ({currency})
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.5"
-                          value={svc.base_price}
-                          onChange={(e) => handleUpdatePrice(idx, parseFloat(e.target.value) || 0)}
-                          className="w-full rounded-xl border border-border/80 bg-muted/20 px-3 py-1.5 pl-8 text-xs font-mono font-bold text-foreground focus:border-primary focus:outline-none"
-                        />
-                        <DollarSign className="h-3.5 w-3.5 text-muted-foreground absolute left-2.5 top-2.5 pointer-events-none" />
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               ))}
             </div>
           </div>
 
+          {/* Add-ons: choose among same-price add-ons, limited to the gifted count */}
+          {selectableAddons.length > 0 && (
+            <div className="space-y-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                Add-ons ({sessionAddons.length}/{initialAddons.length} selected)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {selectableAddons.map((a) => {
+                  const checked = sessionAddons.some((x) => addonKey(x) === addonKey(a));
+                  const full = !checked && selectedCountForPrice(a) >= (giftedLimits.get(priceKey(a)) ?? 0);
+                  return (
+                    <label
+                      key={addonKey(a)}
+                      className={cn(
+                        'flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition',
+                        checked ? 'border-violet-500/50 bg-violet-500/10 text-foreground' : 'border-border/70 bg-muted/20 text-foreground',
+                        full ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        disabled={full}
+                        onChange={() => handleToggleAddon(a)}
+                        className="h-3.5 w-3.5 accent-violet-500 shrink-0"
+                      />
+                      <span className="truncate">{String(a.name ?? a.addon_name ?? 'Add-on')}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Add service button / dropdown */}
+          {!restrictToSamePrice && (
           <div className="pt-2">
             {!showAddDropdown ? (
               <button
@@ -439,12 +581,6 @@ export function EditSessionModal({
                       >
                         <span className="font-bold text-foreground truncate">{bs.name}</span>
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[11px] text-muted-foreground">
-                            {bs.duration_minutes ?? 60}m
-                          </span>
-                          <span className="font-mono font-bold text-[#b85d63]">
-                            {parseFloat(String(bs.base_price ?? bs.price ?? 0)).toFixed(3)} {currency}
-                          </span>
                           <Plus className="h-3.5 w-3.5 text-primary opacity-0 group-hover:opacity-100 transition" />
                         </div>
                       </div>
@@ -454,19 +590,12 @@ export function EditSessionModal({
               </div>
             )}
           </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border/50 bg-muted/20 px-6 py-4">
-          <div className="flex flex-col">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              Updated Session Summary
-            </span>
-            <span className="text-xs font-extrabold text-foreground">
-              {totalDuration} min ·{' '}
-              <span className="font-mono text-[#b85d63]">{totalPrice.toFixed(3)} {currency}</span>
-            </span>
-          </div>
+          <div />
           <div className="flex items-center gap-2.5">
             <button
               type="button"

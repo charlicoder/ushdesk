@@ -154,6 +154,10 @@ function firstTruthy(...args: unknown[]): string {
   return '';
 }
 
+function normalizeArrType(t: unknown): string {
+  return String(t ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
 function fmt(val: unknown): string {
   if (val === undefined || val === null || val === '') return '0.000';
   const n = parseFloat(String(val));
@@ -513,6 +517,71 @@ function VoucherCalendarPicker({
   );
 }
 
+function getVoucherAddons(voucher: AnyRecord): ApiAddOn[] {
+  return (Array.isArray(voucher?.addons) ? voucher.addons : []).map((a: AnyRecord, i: number) => ({
+    id: String(a.id ?? a.addon_id ?? `addon-${i}`),
+    name: String(a.name ?? a.addon_name ?? 'Add-on'),
+    price: a.price ?? 0,
+    duration_minutes: Number(a.duration_minutes ?? a.duration ?? 0) || 0,
+  }));
+}
+
+function getVoucherExtra(voucher: AnyRecord): { minutes: number; price: number } {
+  return {
+    minutes: Number(voucher?.extra_time) > 0 ? Number(voucher.extra_time) : 0,
+    price: parseFloat(String(voucher?.price_for_extra_time ?? 0)) || 0,
+  };
+}
+
+/** Read-only list of what the gift voucher already covers: service, add-ons, extra time. */
+function VoucherCoverageList({ voucher, currency }: { voucher: AnyRecord; currency: string }) {
+  const svcName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
+  const svcDur = parseInt(String(voucher.service_data?.duration_minutes ?? 0), 10) || 0;
+  const svcPrice = voucher.service_data?.base_price ?? voucher.total_amount;
+  const addons = getVoucherAddons(voucher);
+  const extra = getVoucherExtra(voucher);
+  return (
+    <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 divide-y divide-emerald-500/15 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Scissors className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-xs font-bold text-foreground truncate">{svcName}</p>
+            <p className="text-[11px] text-muted-foreground">Service{svcDur > 0 ? ` · ${svcDur} min` : ''}</p>
+          </div>
+        </div>
+        {svcPrice != null && (
+          <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 shrink-0">{fmt(svcPrice)} {currency}</span>
+        )}
+      </div>
+      {addons.map((a) => (
+        <div key={a.id} className="flex items-center justify-between gap-3 px-4 py-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Sparkles className="h-4 w-4 text-violet-500 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-foreground truncate">{a.name}</p>
+              <p className="text-[11px] text-muted-foreground">Add-on{a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}</p>
+            </div>
+          </div>
+          <span className="text-xs font-bold text-foreground shrink-0">{fmt(a.price)} {currency}</span>
+        </div>
+      ))}
+      {extra.minutes > 0 && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2">
+          <div className="flex items-center gap-2.5">
+            <Timer className="h-4 w-4 text-amber-500 shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-foreground">Extra Time</p>
+              <p className="text-[11px] text-muted-foreground">+{extra.minutes} min</p>
+            </div>
+          </div>
+          {extra.price > 0 && <span className="text-xs font-bold text-foreground shrink-0">{fmt(extra.price)} {currency}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Add Session Sub-Popup Window ─────────────────────────────────────────────
 
 interface AddVoucherSessionModalProps {
@@ -550,7 +619,6 @@ function AddVoucherSessionModal({
   const [arrangementAddons, setArrangementAddons] = useState<ApiAddOn[]>([]);
   const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
   const [selectedArrAddonIds, setSelectedArrAddonIds] = useState<string[]>([]);
-  const [extraMinutes, setExtraMinutes] = useState<number>(0);
 
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
   const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
@@ -564,9 +632,13 @@ function AddVoucherSessionModal({
 
   const voucherServiceId = firstTruthy(voucher.service_id, voucher.service_data?.id);
   const voucherServiceName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
-  const requiredArrType = firstTruthy(voucher.service_arrangement_data?.arrangement_type, 'room');
+  const requiredArrType = firstTruthy(
+    voucher.service_arrangement_data?.arrangement_type,
+    voucher.service_arrangement_data?.type,
+    voucher.arrangement_type
+  );
 
-  // 1. Load services for this branch
+  // 1. Load the (fixed) voucher service for this branch
   useEffect(() => {
     setServicesLoading(true);
     authedFetch(`/api/v1/services/?branch_id=${branchId}&is_active=true`, {
@@ -574,14 +646,10 @@ function AddVoucherSessionModal({
     })
       .then((r) => r.json())
       .then((d) => {
-        const list: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        const all: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        const list = voucherServiceId ? all.filter((s) => String(s.id) === String(voucherServiceId)) : all.slice(0, 1);
         setServices(list);
-        // Pre-select voucher service if matching
-        if (voucherServiceId && list.some((s) => String(s.id) === String(voucherServiceId))) {
-          setSelectedServiceIds([String(voucherServiceId)]);
-        } else if (list.length > 0) {
-          setSelectedServiceIds([String(list[0].id)]);
-        }
+        setSelectedServiceIds(list.length > 0 ? [String(list[0].id)] : []);
       })
       .catch(() => setServices([]))
       .finally(() => setServicesLoading(false));
@@ -619,7 +687,12 @@ function AddVoucherSessionModal({
     })
       .then((r) => r.json())
       .then((d) => {
-        const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter((a: ApiArrangement) => a.is_active !== false);
+        const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? []))
+          .filter((a: ApiArrangement) => a.is_active !== false)
+          .filter(
+            (a: ApiArrangement) =>
+              !requiredArrType || normalizeArrType(a.arrangement_type || a.type) === normalizeArrType(requiredArrType)
+          );
         setArrangements(list);
         if (list.length > 0) {
           setSelectedRoomId(list[0].id);
@@ -627,7 +700,7 @@ function AddVoucherSessionModal({
       })
       .catch(() => setArrangements([]))
       .finally(() => setArrangementsLoading(false));
-  }, [primaryService?.id, branchId, authHeader]);
+  }, [primaryService?.id, branchId, authHeader, requiredArrType]);
 
   // Selected arrangement object
   const selectedArrangement = useMemo(
@@ -678,7 +751,9 @@ function AddVoucherSessionModal({
     if (mins <= 0 || !hasExtraTime) return 0;
     return (mins / Number(extraMinutesUnit)) * extraPricePerUnit;
   };
-  const extraMinutesPrice = calcExtraPrice(extraMinutes);
+  // Add-ons and extra time are already part of the gifted voucher (read-only)
+  const extraMinutes = getVoucherExtra(voucher).minutes;
+  const extraMinutesPrice = getVoucherExtra(voucher).price;
 
   // Price calculations
   const arrPrice = selectedArrangement?.arrangement_price != null ? parseFloat(String(selectedArrangement.arrangement_price)) || 0 : null;
@@ -690,9 +765,7 @@ function AddVoucherSessionModal({
   };
   const servicesPrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
 
-  const selAddons = serviceAddons.filter((a) => selectedAddonIds.includes(a.id));
-  const selArrAddons = arrangementAddons.filter((a) => selectedArrAddonIds.includes(a.id));
-  const allAddons = [...selAddons, ...selArrAddons];
+  const allAddons = getVoucherAddons(voucher);
   const addonsPrice = allAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonsDuration = allAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
 
@@ -910,97 +983,18 @@ function AddVoucherSessionModal({
             </div>
           )}
 
-          {/* 1. Services Selection */}
+          {/* 1. Voucher coverage (service, add-ons, extra time) – fixed */}
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <Scissors className="h-4 w-4 text-primary" />
-              <p className="text-sm font-extrabold text-foreground">Select Service(s) *</p>
+              <Gift className="h-4 w-4 text-emerald-600" />
+              <p className="text-sm font-extrabold text-foreground">Covered by Voucher (fixed)</p>
               {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
             </div>
-            <MultiSelectDrop<ApiService>
-              items={filteredServices}
-              selectedIds={selectedServiceIds}
-              getId={(sv) => String(sv.id)}
-              search={serviceSearch}
-              placeholder={servicesLoading ? 'Loading services…' : 'Search & select one or more services…'}
-              loading={servicesLoading}
-              icon={Scissors}
-              onSearch={setServiceSearch}
-              onToggle={toggleService}
-              renderItem={(sv, checked) => (
-                <div className="flex items-start gap-3 py-2.5 px-3">
-                  <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                    <Scissors className="h-3.5 w-3.5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm font-semibold truncate">{sv.name}</p>
-                      {String(sv.id) === String(voucherServiceId) && (
-                        <span className="rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 text-[9px] font-extrabold uppercase">
-                          Covered by Voucher
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      {sv.category && <span className="mr-2">{sv.category}</span>}
-                      {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
-                    </p>
-                  </div>
-                  <p className="shrink-0 text-sm font-bold text-primary">{fmt(sv.arrangement_price ?? sv.base_price)} KWD</p>
-                  {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
-                </div>
-              )}
-            />
-            {selectedServices.map((sv, idx) => (
-              <div key={sv.id} className="mt-2 flex items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2">
-                <CheckCircle2 className="h-3.5 w-3.5 text-primary shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-bold text-primary truncate">#{idx + 1} {sv.name}</p>
-                  <p className="text-[10px] text-muted-foreground">{sv.duration_minutes} min</p>
-                </div>
-                <p className="shrink-0 text-xs font-extrabold text-primary">{fmt(priceOfService(sv, idx))} KWD</p>
-                <button
-                  type="button"
-                  onClick={() => toggleService(sv)}
-                  className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground hover:bg-muted/80 transition"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
+            <VoucherCoverageList voucher={voucher} currency={firstTruthy(voucher.currency, 'KWD')} />
+            {!servicesLoading && selectedServices.length === 0 && (
+              <p className="mt-2 text-xs text-destructive italic">{voucherServiceName} is not available in this branch.</p>
+            )}
           </div>
-
-          {/* 2. Extra Time */}
-          {hasExtraTime && (
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Timer className="h-3.5 w-3.5 text-muted-foreground" />
-                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Extra Time</p>
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                {[0, 15, 30, 45, 60].map((mins) => {
-                  const active = extraMinutes === mins;
-                  const price = calcExtraPrice(mins);
-                  return (
-                    <button
-                      key={mins}
-                      type="button"
-                      onClick={() => setExtraMinutes(mins)}
-                      className={cn(
-                        'flex flex-col items-center justify-center rounded-xl border py-2 px-2 text-center transition cursor-pointer',
-                        active
-                          ? 'border-primary/50 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/30'
-                          : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40'
-                      )}
-                    >
-                      <p className="text-xs font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
-                      <p className="text-[10px] font-semibold mt-0.5 opacity-80">{mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}</p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* 3. Room / Arrangement Selection */}
           <div>
@@ -1052,39 +1046,6 @@ function AddVoucherSessionModal({
               <p className="text-xs text-muted-foreground italic">No arrangement available for this branch</p>
             )}
 
-            {/* Room Add-ons */}
-            {arrangementAddons.length > 0 && (
-              <div className="mt-3">
-                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5">Room Add-ons</p>
-                <div className="grid grid-cols-2 gap-2">
-                  {arrangementAddons.map((addon) => {
-                    const checked = selectedArrAddonIds.includes(addon.id);
-                    return (
-                      <label
-                        key={addon.id}
-                        className={cn(
-                          'flex cursor-pointer items-start gap-2 rounded-xl border p-2 text-xs transition',
-                          checked ? 'border-amber-500/40 bg-amber-500/5 text-amber-700 dark:text-amber-300' : 'border-border/60 bg-card hover:bg-muted/40'
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => {
-                            setSelectedArrAddonIds((prev) => (prev.includes(addon.id) ? prev.filter((x) => x !== addon.id) : [...prev, addon.id]));
-                          }}
-                          className="mt-0.5 h-3.5 w-3.5 accent-amber-500 shrink-0"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <p className="font-semibold truncate">{addon.name}</p>
-                          <p className="text-[10px] text-muted-foreground">+{fmt(addon.price)} KWD · +{addon.duration_minutes ?? 0}m</p>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* 4. Timeslots */}
@@ -1306,6 +1267,47 @@ export function RedeemVoucherModal({
       .catch(() => setBranches([]));
   }, [authHeader]);
 
+  // Only offer branches where the voucher service has an arrangement of the voucher's room type
+  const [eligibleBranchIds, setEligibleBranchIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!serviceId || branches.length === 0) return;
+    let cancelled = false;
+    const requiredType = normalizeArrType(
+      firstTruthy(
+        voucher.service_arrangement_data?.arrangement_type,
+        voucher.service_arrangement_data?.type,
+        voucher.arrangement_type
+      )
+    );
+    Promise.all(
+      branches.map(async (b) => {
+        const bId = String(b.id ?? b.branch_id ?? '');
+        if (!bId) return null;
+        try {
+          const r = await authedFetch(`/api/v1/services/${serviceId}/arrangements/?branch_id=${bId}`, {
+            headers: authHeader ? { Authorization: authHeader } : undefined,
+          });
+          const d = await r.json();
+          const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
+            (a: ApiArrangement) => a.is_active !== false
+          );
+          const ok = list.some((a) => !requiredType || normalizeArrType(a.arrangement_type || a.type) === requiredType);
+          return ok ? bId : null;
+        } catch {
+          return null;
+        }
+      })
+    ).then((ids) => {
+      if (cancelled) return;
+      const set = new Set(ids.filter((x): x is string => Boolean(x)));
+      if (originalBranchId) set.add(originalBranchId);
+      setEligibleBranchIds(set);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [branches, serviceId, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type]);
+
   // Fetch voucher availabilities for branch
   useEffect(() => {
     if (!selectedBranchId) return;
@@ -1329,19 +1331,6 @@ export function RedeemVoucherModal({
       .finally(() => setAvailabilitiesLoading(false));
   }, [selectedBranchId, serviceId, expireDateWithTz, authHeader]);
 
-  // Load customers for search
-  useEffect(() => {
-    setCustomersLoading(true);
-    const qs = customerQuery ? `?search=${encodeURIComponent(customerQuery)}` : '';
-    authedFetch(`/api/v1/customers/${qs}`, { headers: authHeader ? { Authorization: authHeader } : undefined })
-      .then((r) => r.json())
-      .then((d) => {
-        const list: ApiCustomer[] = Array.isArray(d) ? d : (d.results ?? d.data ?? []);
-        setCustomers(list);
-      })
-      .catch(() => setCustomers([]))
-      .finally(() => setCustomersLoading(false));
-  }, [customerQuery, authHeader]);
 
   // Totals across all sessions
   const totalBookingPrice = useMemo(() => sessions.reduce((s, sess) => s + sess.sessionPrice, 0), [sessions]);
@@ -1484,7 +1473,7 @@ export function RedeemVoucherModal({
       payment_type: 'gift_voucher',
       status: 'confirmed',
       payment_status: 'paid',
-      payment_method: paymentOption === 'pay_on_branch' ? 'on_branch' : 'voucher',
+      payment_method: 'voucher',
       payment_gateway: resolvedPaymentGateway,
       payment_provider: resolvedPaymentProvider,
       payment_through: resolvedPaymentThrough,
@@ -1598,7 +1587,7 @@ export function RedeemVoucherModal({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">Gift Voucher Redemption · Multi-Session Booking</p>
+              <p className="text-xs text-muted-foreground">Gift Voucher Redemption · Already paid</p>
             </div>
           </div>
           <button
@@ -1625,7 +1614,9 @@ export function RedeemVoucherModal({
                 onChange={(e) => setSelectedBranchId(e.target.value)}
                 className="bg-transparent text-xs font-extrabold text-foreground cursor-pointer focus:outline-none"
               >
-                {branches.map((b) => {
+                {branches
+                  .filter((b) => !eligibleBranchIds || eligibleBranchIds.has(String(b.id ?? b.branch_id ?? '')))
+                  .map((b) => {
                   const bId = b.id ?? b.branch_id ?? '';
                   return (
                     <option key={bId} value={bId} className="bg-card text-foreground">
@@ -1670,52 +1661,6 @@ export function RedeemVoucherModal({
           </div>
         </div>
 
-        {/* ── Stepper Navigation ── */}
-        {!bookingSuccess && (
-          <div className="shrink-0 flex items-center justify-center border-b border-border/40 bg-card px-6 py-2.5">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setStep(1)}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition',
-                  step === 1 ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground hover:bg-muted'
-                )}
-              >
-                <span className="h-4 w-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">1</span>
-                <span>Sessions ({sessions.length})</span>
-              </button>
-              <span className="text-muted-foreground/30">/</span>
-              <button
-                type="button"
-                disabled={sessions.length === 0}
-                onClick={() => setStep(2)}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition',
-                  step === 2 ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground hover:bg-muted',
-                  sessions.length === 0 && 'opacity-40 cursor-not-allowed'
-                )}
-              >
-                <span className="h-4 w-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">2</span>
-                <span>Customer & Notes</span>
-              </button>
-              <span className="text-muted-foreground/30">/</span>
-              <button
-                type="button"
-                disabled={sessions.length === 0}
-                onClick={() => setStep(3)}
-                className={cn(
-                  'flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition',
-                  step === 3 ? 'bg-primary text-white shadow-sm' : 'text-muted-foreground hover:bg-muted',
-                  sessions.length === 0 && 'opacity-40 cursor-not-allowed'
-                )}
-              >
-                <span className="h-4 w-4 rounded-full bg-white/20 flex items-center justify-center text-[10px]">3</span>
-                <span>Confirmation</span>
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* ── Scrollable Body ── */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4" style={{ scrollbarWidth: 'none' }}>
@@ -1770,27 +1715,22 @@ export function RedeemVoucherModal({
               {/* ── STEP 1: SESSIONS ── */}
               {step === 1 && (
                 <div className="space-y-4">
-                  {/* Voucher Coverage Pill */}
-                  <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-2.5">
-                      <Gift className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-foreground">Covered Voucher Service</p>
-                        <p className="text-[11px] text-muted-foreground">{serviceName} · {originalDuration} min</p>
-                      </div>
+                  {/* Voucher Coverage: service, add-ons, extra time */}
+                  <div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Gift className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                      <p className="text-xs font-bold text-foreground">Covered by Voucher</p>
                     </div>
-                    <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400">
-                      {fmt(voucherAmount)} {currency}
-                    </span>
+                    <VoucherCoverageList voucher={voucher} currency={currency} />
                   </div>
 
                   {/* Sessions Header */}
                   <div className="flex items-center justify-between pt-1">
                     <div>
                       <h4 className="text-sm font-extrabold text-foreground">Booking Sessions</h4>
-                      <p className="text-xs text-muted-foreground">Add up to 3 non-overlapping sessions for {selectedDate}</p>
+                      <p className="text-xs text-muted-foreground">Choose therapist, room and start time for {selectedDate} — service and room type are fixed by the voucher</p>
                     </div>
-                    {sessions.length < 3 && (
+                    {sessions.length < 1 && (
                       <button
                         type="button"
                         onClick={() => setShowAddSessionModal(true)}
@@ -1863,239 +1803,6 @@ export function RedeemVoucherModal({
                 </div>
               )}
 
-              {/* ── STEP 2: CUSTOMER & NOTES ── */}
-              {step === 2 && (
-                <div className="space-y-5">
-                  {/* Customer search & select */}
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <User className="h-4 w-4 text-primary" />
-                        <p className="text-sm font-extrabold text-foreground">Customer *</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setShowCreateCustomer(true)}
-                        className="flex items-center gap-1 rounded-lg bg-primary/10 hover:bg-primary/20 border border-primary/20 px-2 py-1 text-[11px] font-bold text-primary transition cursor-pointer"
-                      >
-                        <UserPlus className="h-3 w-3" />
-                        <span>New Customer</span>
-                      </button>
-                    </div>
-
-                    <SearchDrop<ApiCustomer>
-                      value={customerSearch}
-                      placeholder="Search customer by name or phone…"
-                      loading={customersLoading}
-                      items={customers}
-                      getKey={(c, idx) => String(c.id ?? idx)}
-                      isSelected={(c) => String(c.id) === customerId}
-                      selectedItem={selectedCustomer}
-                      icon={User}
-                      onSearch={(q) => {
-                        setCustomerQuery(q);
-                        setCustomerSearch(q);
-                        setCustomerId('');
-                      }}
-                      onSelect={(c) => {
-                        const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.full_name || 'Customer';
-                        setCustomerId(String(c.id));
-                        setCustomerSearch(name);
-                        setSelectedCustomer(c);
-                      }}
-                      onClear={() => {
-                        setCustomerId('');
-                        setCustomerSearch('');
-                        setSelectedCustomer(null);
-                        setCustomerQuery('');
-                      }}
-                      renderItem={(c) => {
-                        const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.full_name || 'Customer';
-                        return (
-                          <div className="flex items-center gap-3 px-4 py-2.5">
-                            <div className="h-8 w-8 rounded-full bg-primary/10 text-primary text-xs font-bold grid place-items-center shrink-0">
-                              {getInitials(name)}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <p className="text-sm font-semibold truncate">{name}</p>
-                              {c.phone_number && <p className="text-xs text-muted-foreground">{c.phone_number}</p>}
-                            </div>
-                          </div>
-                        );
-                      }}
-                    />
-                  </div>
-
-                  {/* Notes */}
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <FileText className="h-4 w-4 text-muted-foreground" />
-                      <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Notes (Optional)</p>
-                    </div>
-                    <textarea
-                      value={notes}
-                      onChange={(e) => setNotes(e.target.value)}
-                      placeholder="Any special requests or notes…"
-                      rows={3}
-                      className="w-full rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50 resize-none"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* ── STEP 3: CONFIRMATION & PAYMENT ── */}
-              {step === 3 && (
-                <div className="space-y-4">
-                  {/* Select Payment Option */}
-                  <div>
-                    <h4 className="text-sm font-extrabold text-foreground mb-1">Select Payment Option</h4>
-                    <p className="text-xs text-muted-foreground">Choose settlement method for this booking</p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <label
-                      className={cn(
-                        'relative flex flex-col justify-between rounded-2xl border-2 p-3.5 cursor-pointer transition select-none',
-                        paymentOption === 'pay_on_branch'
-                          ? 'border-amber-500 bg-amber-50/50 dark:bg-amber-950/20 shadow-sm'
-                          : 'border-border bg-muted/20 hover:bg-muted/40'
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="voucher-payment-option"
-                        value="pay_on_branch"
-                        checked={paymentOption === 'pay_on_branch'}
-                        onChange={() => setPaymentOption('pay_on_branch')}
-                        className="sr-only"
-                      />
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className="grid h-7 w-7 place-items-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                            <Store className="h-4 w-4" />
-                          </div>
-                          <div>
-                            <p className="text-xs font-extrabold text-foreground">Pay on Branch</p>
-                            <span className="text-[10px] text-amber-700 dark:text-amber-300 font-semibold">In-branch counter</span>
-                          </div>
-                        </div>
-                        <div className={cn('h-4 w-4 rounded-full border-2 flex items-center justify-center', paymentOption === 'pay_on_branch' ? 'border-amber-500' : 'border-muted-foreground/30')}>
-                          {paymentOption === 'pay_on_branch' && <div className="h-2 w-2 rounded-full bg-amber-500" />}
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">Confirm booking and settle counter charges if needed</p>
-                    </label>
-
-                    <label
-                      className={cn(
-                        'relative flex flex-col justify-between rounded-2xl border-2 p-3.5 cursor-pointer transition select-none',
-                        paymentOption === 'pay_now'
-                          ? 'border-primary bg-primary/5 dark:bg-primary/10 shadow-sm'
-                          : 'border-border bg-muted/20 hover:bg-muted/40'
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="voucher-payment-option"
-                        value="pay_now"
-                        checked={paymentOption === 'pay_now'}
-                        onChange={() => setPaymentOption('pay_now')}
-                        className="sr-only"
-                      />
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className="grid h-7 w-7 place-items-center rounded-xl bg-primary/10 text-primary">
-                            <CreditCard className="h-4 w-4" />
-                          </div>
-                          <div>
-                            <p className="text-xs font-extrabold text-foreground">Pay Now</p>
-                            <span className="text-[10px] text-primary font-semibold">Online Payment</span>
-                          </div>
-                        </div>
-                        <div className={cn('h-4 w-4 rounded-full border-2 flex items-center justify-center', paymentOption === 'pay_now' ? 'border-primary' : 'border-muted-foreground/30')}>
-                          {paymentOption === 'pay_now' && <div className="h-2 w-2 rounded-full bg-primary" />}
-                        </div>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">Generate link for immediate online checkout</p>
-                    </label>
-                  </div>
-
-                  {/* Summary Card */}
-                  <div className="rounded-2xl border border-border/70 bg-card shadow-xs overflow-hidden divide-y divide-border/40">
-                    <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40">
-                      <div className="flex items-center gap-2">
-                        <Receipt className="h-4 w-4 text-primary" />
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-foreground">Sessions Summary</span>
-                      </div>
-                      <span className="text-[11px] font-bold text-muted-foreground">{sessions.length} Session{sessions.length > 1 ? 's' : ''} · {totalBookingDuration} min</span>
-                    </div>
-
-                    {/* Sessions List */}
-                    <div className="divide-y divide-border/30">
-                      {sessions.map((sess, idx) => (
-                        <div key={sess.id} className="flex items-center justify-between px-4 py-2.5">
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-foreground truncate">
-                              Session #{idx + 1}: {sess.startTime} ({sess.totalDuration} min)
-                            </p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {sess.arrangementName} · {sess.therapistName}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2 shrink-0 ml-3">
-                            <span className="text-xs font-bold text-foreground">{fmt(sess.sessionPrice)} KWD</span>
-                            <button
-                              type="button"
-                              onClick={() => removeSession(idx)}
-                              className="text-muted-foreground hover:text-destructive p-1 rounded-lg transition cursor-pointer"
-                              title="Remove session"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Pricing Breakdown */}
-                    <div className="px-4 py-3 bg-muted/20 space-y-2">
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Subtotal:</span>
-                        <span className="font-semibold text-foreground">{fmt(totalBookingPrice)} KWD</span>
-                      </div>
-
-                      {allowDiscount && (
-                        <div className="flex items-center justify-between gap-3 text-xs">
-                          <label className="font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                            <DollarSign className="h-3 w-3 text-emerald-500" />
-                            <span>Discount Amount</span>
-                          </label>
-                          <div className="relative w-32">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.001"
-                              placeholder="0.000"
-                              value={discount}
-                              onChange={(e) => setDiscount(e.target.value)}
-                              className="w-full h-8 rounded-lg border border-border bg-background px-2.5 pr-8 text-right text-xs font-bold text-foreground outline-none transition focus:border-primary"
-                            />
-                            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">KWD</span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between pt-2 border-t border-border/40">
-                        <span className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground">Total Payable</span>
-                        <div className="text-right">
-                          <span className="text-base font-black text-primary">{fmt(netPayablePrice)}</span>
-                          <span className="text-xs font-bold text-primary ml-1">KWD</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Submit Error */}
               {submitError && (
@@ -2112,24 +1819,13 @@ export function RedeemVoucherModal({
         {!bookingSuccess && (
           <div className="shrink-0 flex items-center justify-between border-t border-border/60 bg-card px-6 py-3.5">
             <div>
-              {step > 1 ? (
-                <button
-                  type="button"
-                  onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-border px-4 py-2 text-xs font-bold text-foreground hover:bg-muted transition cursor-pointer"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                  <span>Back</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer"
+              >
+                Cancel
+              </button>
             </div>
 
             <div className="flex items-center gap-4">
@@ -2141,17 +1837,7 @@ export function RedeemVoucherModal({
                 <span className="text-xs text-muted-foreground ml-1.5">({totalBookingDuration} min)</span>
               </div>
 
-              {step < 3 ? (
-                <button
-                  type="button"
-                  disabled={step === 1 && sessions.length === 0}
-                  onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2.5 text-xs font-bold text-white shadow-md hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
-                >
-                  <span>Next Step</span>
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              ) : (
+              {(
                 <button
                   type="button"
                   disabled={submitting || sessions.length === 0}
@@ -2191,29 +1877,6 @@ export function RedeemVoucherModal({
         />
       )}
 
-      {/* ── Customer Create Modal ── */}
-      {showCreateCustomer && (
-        <CreateCustomerModal
-          authHeader={authHeader}
-          onClose={() => setShowCreateCustomer(false)}
-          onCreated={(newCust: CreatedCustomer) => {
-            const apiCust: ApiCustomer = {
-              id: String(newCust.id),
-              first_name: newCust.first_name,
-              last_name: newCust.last_name,
-              full_name: newCust.full_name || [newCust.first_name, newCust.last_name].filter(Boolean).join(' '),
-              phone_number: newCust.phone_number,
-              email: newCust.email,
-              avatar: newCust.avatar,
-            };
-            setCustomers((prev) => [apiCust, ...prev]);
-            setSelectedCustomer(apiCust);
-            setCustomerId(String(newCust.id));
-            setCustomerSearch(apiCust.full_name || 'Customer');
-            setShowCreateCustomer(false);
-          }}
-        />
-      )}
     </div>
   );
 }

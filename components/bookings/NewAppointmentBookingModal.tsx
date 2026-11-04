@@ -311,7 +311,7 @@ function isTherapistAvailableForWindow(
 
   for (const bk of allBookings) {
     const rawStatus = String(bk.status ?? bk.booking_status ?? '').toLowerCase().trim();
-    if (rawStatus === 'cancelled' || rawStatus === 'refunded') continue;
+    if (rawStatus === 'cancelled' || rawStatus === 'refunded' || rawStatus === 'parked') continue;
 
     const bkTherapistId = String(bk.therapist_id ?? (bk.therapist_data as any)?.id ?? '').toLowerCase().trim();
     const bkSecondaryId = String(bk.secondary_therapist_id ?? '').toLowerCase().trim();

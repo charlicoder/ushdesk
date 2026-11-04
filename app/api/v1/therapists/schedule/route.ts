@@ -130,7 +130,7 @@ export async function GET(req: NextRequest) {
           // Append any bookings from booknpay not yet present in record.bookings
           for (const item of bpBookings) {
             const rawStatus = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
-            if (rawStatus === 'cancelled' || rawStatus === 'refunded') continue;
+            if (rawStatus === 'cancelled' || rawStatus === 'refunded' || rawStatus === 'parked') continue;
 
             const itemIds = [item.id, item.booking_id, item.bookings_id, item.booking_number]
               .filter(Boolean)

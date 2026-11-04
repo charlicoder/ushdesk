@@ -396,6 +396,7 @@ export const STATUS_STYLES: Record<string, string> = {
   refunded:    'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
   pending:     'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   no_show:     'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  parked:      'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
 };
 export const PAYMENT_STYLES: Record<string, string> = {
   success:  'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
@@ -414,6 +415,7 @@ export const STATUS_BAR: Record<string, string> = {
   refunded:    'bg-purple-400',
   pending:     'bg-amber-400',
   no_show:     'bg-slate-400',
+  parked:      'bg-violet-400',
 };
 export const statusStyle  = (s: string) => STATUS_STYLES[s]  ?? 'bg-muted text-muted-foreground';
 export const paymentStyle = (s: string) => PAYMENT_STYLES[s] ?? 'bg-muted text-muted-foreground';
@@ -745,6 +747,8 @@ function BookingDetailPopupContent({
   const [advanceError, setAdvanceError] = useState<string | null>(null);
   const [markingNoShow, setMarkingNoShow] = useState(false);
   const [noShowError, setNoShowError] = useState<string | null>(null);
+  const [parking, setParking] = useState(false);
+  const [parkError, setParkError] = useState<string | null>(null);
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
@@ -1037,9 +1041,13 @@ function BookingDetailPopupContent({
     );
 
     const apptStart = (detail?.appointment_start || booking?.appointment_start || rawBk.appointment_start || '') as string;
-    const appointmentDate = apptStart
-      ? (apptStart.includes('T') ? apptStart.split('T')[0] : apptStart.split(' ')[0])
-      : String(rawBk.date || rawBk.booking_date || rawBk.appointment_date || kuwaitDateString());
+    // A parked booking has no live slot: availability must start from today, not from its old date
+    const isParkedBooking = String(detail?.status ?? booking?.status ?? '').toLowerCase().replace(/[\s-]/g, '_') === 'parked';
+    const appointmentDate = isParkedBooking
+      ? kuwaitDateString()
+      : apptStart
+        ? (apptStart.includes('T') ? apptStart.split('T')[0] : apptStart.split(' ')[0])
+        : String(rawBk.date || rawBk.booking_date || rawBk.appointment_date || kuwaitDateString());
 
     const daysCount = 30;
 
@@ -1328,12 +1336,15 @@ function BookingDetailPopupContent({
     normStatus === 'no_show' ||
     String(booking.status ?? '').toLowerCase().replace(/[\s-]/g, '_') === 'no_show';
   const isCompleted = curStatus === 'completed';
+  // Parked: paid booking whose appointment slot has been released
+  const isParked = normStatus === 'parked';
   const isCancelled =
     curStatus === 'cancelled' ||
     curStatus === 'refunded' ||
     String(booking.status ?? '').toLowerCase() === 'cancelled' ||
     String(booking.status ?? '').toLowerCase() === 'refunded';
   const canChangeTherapist =
+    !isParked &&
     !isPastApptEnd &&
     !isNoShow &&
     curStatus !== 'completed' &&
@@ -1437,10 +1448,17 @@ function BookingDetailPopupContent({
   // Cancel button rules:
   // Visible only if booking is not cancelled and user has permission.
   // All other conditions removed.
-  const canShowCancel = !isCancelled && hasCancelPermission;
+  // Bookings created by redeeming a gift voucher are already paid/gifted and cannot be cancelled here
+  const isGiftVoucherBooking =
+    String(detail?.payment_type ?? (booking.raw as any)?.payment_type ?? (booking as any)?.payment_type ?? '').toLowerCase() === 'gift_voucher' ||
+    String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase() === 'gift_voucher' ||
+    Boolean(detail?.voucher_id ?? (booking.raw as any)?.voucher_id ?? (booking as any)?.voucher_id);
+  const canShowCancel = !isCancelled && hasCancelPermission && !isGiftVoucherBooking;
 
   // Unpaid booking: edit session icon only appears for unpaid bookings
   const isUnpaidBooking = !isPaymentSuccess && !isCancelled && !isCompleted;
+  // Paid bookings: services may only be swapped for ones of the same price
+  const isPaidEditableBooking = isPaymentSuccess && !isCancelled && !isCompleted;
 
   // ── Compute durations & amounts adding service + addons + extra minutes ─────
   const addons = (detail?.addons && Array.isArray(detail.addons) && detail.addons.length > 0)
@@ -1506,18 +1524,31 @@ function BookingDetailPopupContent({
         ? multiPriceSum
         : parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0);
 
+  // Aggregate add-ons / extra time across all sessions (fall back to booking-level data)
+  const sessionsForTotals = rawSessions as Array<Record<string, any>>;
+  const sessionAddonsAll = sessionsForTotals.flatMap((s) => (Array.isArray(s.addons) ? s.addons : [])) as Array<Record<string, any>>;
+  const effAddons = (sessionAddonsAll.length > 0 ? sessionAddonsAll : addons) as Array<Record<string, any>>;
+  const effAddonsDuration = addonsDuration > 0 && sessionAddonsAll.length === 0
+    ? addonsDuration
+    : effAddons.reduce((sum, a) => sum + (Number(a.duration_minutes ?? a.duration ?? 0) || 0), 0);
+  const sessExtraMinutes = sessionsForTotals.reduce((sum, s) => sum + (Number(s.extra_minutes ?? 0) || 0), 0);
+  const effExtraMinutes = sessExtraMinutes > 0 ? sessExtraMinutes : extraMinutes;
+  const sessExtraPrice = sessionsForTotals.reduce((sum, s) => sum + (parseFloat(String(s.price_for_extra_minutes ?? s.extra_price ?? 0)) || 0), 0);
+
   const totalDuration = stagedDurationSum !== null
-    ? (stagedDurationSum + addonsDuration + extraMinutes)
-    : (serviceDuration + addonsDuration + extraMinutes) || Number(detail?.total_duration ?? booking.total_duration ?? serviceDuration);
+    ? (stagedDurationSum + effAddonsDuration + effExtraMinutes)
+    : (serviceDuration + effAddonsDuration + effExtraMinutes) || Number(detail?.total_duration ?? booking.total_duration ?? serviceDuration);
 
   const serviceItems = isMultiService
     ? multiItems
     : [{ name: booking.service_name, category: booking.service_category, price: servicePrice, duration: serviceDuration }];
 
-  const addonsPriceFromList = addons.reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? '0')) || 0), 0);
+  const addonsPriceFromList = effAddons.reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? '0')) || 0), 0);
   const addonsPrice = parseFloat(String(pricingObj?.addon_price ?? pricingObj?.addons_price ?? detail?.addons_price ?? (addonsPriceFromList > 0 ? addonsPriceFromList : '0'))) || 0;
 
-  const extraPrice = parseFloat(String(pricingObj?.price_for_extra_minutes ?? pricingObj?.extra_price ?? detail?.price_for_extra_minutes ?? booking.price_for_extra_minutes ?? '0')) || 0;
+  const extraPrice = sessExtraPrice > 0
+    ? sessExtraPrice
+    : (parseFloat(String(pricingObj?.price_for_extra_minutes ?? pricingObj?.extra_price ?? detail?.price_for_extra_minutes ?? booking.price_for_extra_minutes ?? '0')) || 0);
 
   const rawDiscount = parseFloat(String(pricingObj?.discount ?? pricingObj?.discount_amount ?? detail?.discount ?? booking.discount ?? (booking as any)?.discount ?? (booking.raw as any)?.discount ?? '0')) || 0;
   const subtotalPrice = servicePrice + addonsPrice + extraPrice;
@@ -1677,7 +1708,18 @@ function BookingDetailPopupContent({
     }];
   })();
 
-  const canAddSession = !isCancelled && !isCompleted && displaySessions.length < 3;
+  // Add-ons / extra time per session (fall back to booking-level data for single-session bookings)
+  const getSessionAddons = (raw: Record<string, any> | null | undefined): Array<Record<string, any>> => {
+    if (Array.isArray(raw?.addons) && raw!.addons.length > 0) return raw!.addons;
+    return displaySessions.length === 1 ? (addons as Array<Record<string, any>>) : [];
+  };
+  const getSessionExtraMinutes = (raw: Record<string, any> | null | undefined): number => {
+    const v = Number(raw?.extra_minutes ?? 0);
+    if (v > 0) return v;
+    return displaySessions.length === 1 ? Number(extraMinutes) || 0 : 0;
+  };
+
+  const canAddSession = !isCancelled && !isCompleted && !isPaymentSuccess && displaySessions.length < 3;
 
   const bookingDate = useMemo(() => {
     const raw = detail?.appointment_date || (booking as any)?.appointment_date || (booking as any)?.date || booking.appointment_start;
@@ -1934,6 +1976,62 @@ function BookingDetailPopupContent({
     }
   };
 
+  // Park a paid booking: releases its appointment date/time so others can book it
+  const canParkBooking =
+    isPaymentSuccess && !isRewarded && normStatus === 'confirmed' && !isCancelled && !isCompleted && !isNoShow && hasReschedulePermission;
+
+  const handleParkBooking = async () => {
+    if (!booking || parking || !canParkBooking) return;
+    const ok = typeof window === 'undefined' || window.confirm(
+      'Park this booking? Its appointment date and time will be released for other customers. You can reschedule it later to assign a new date and time.'
+    );
+    if (!ok) return;
+    setParking(true);
+    setParkError(null);
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          status: 'parked',
+          reason: 'Booking parked - appointment slot released',
+          source: 'ushdesk',
+          changed_by: user?.name || user?.id || 'Staff',
+          change_by_user: user?.name || user?.id || 'Staff',
+          change_by_user_data: user
+            ? {
+                id: user.id,
+                name: user.name,
+                full_name: user.name,
+                first_name: user.name.split(' ')[0] || user.name,
+                last_name: user.name.split(' ').slice(1).join(' ') || '',
+                email: user.email,
+                phone_number: user.phone_number,
+                role: user.user_type,
+              }
+            : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const d = err?.detail ?? err?.message;
+        throw new Error(typeof d === 'string' ? d : `Failed to park booking (${res.status})`);
+      }
+      const json = await res.json().catch(() => ({}));
+      if (json?.data) {
+        setDetail(json.data);
+      } else {
+        setDetail((prev) => (prev ? { ...prev, status: 'parked' } : { ...booking, status: 'parked' }));
+      }
+      onSuccess?.();
+    } catch (err: unknown) {
+      console.error('[BookingDetailModal] Error parking booking:', err);
+      setParkError(err instanceof Error ? err.message : 'Failed to park booking');
+    } finally {
+      setParking(false);
+    }
+  };
+
   const handleMarkNoShow = async () => {
     if (!booking || markingNoShow || !isPaymentSuccess) return;
     setMarkingNoShow(true);
@@ -2020,7 +2118,7 @@ function BookingDetailPopupContent({
     }
   };
 
-  const handleUpdateSessionServices = useCallback((updatedServices: EditableServiceItem[], sessionIdx: number) => {
+  const handleUpdateSessionServices = useCallback((updatedServices: EditableServiceItem[], sessionIdx: number, updatedAddons: Array<Record<string, any>> = []) => {
     // Current base sessions list
     const base = rawSessions.length > 0
       ? rawSessions.map(s => ({ ...s }))
@@ -2032,6 +2130,7 @@ function BookingDetailPopupContent({
     const newNames = updatedServices.map((sv) => sv.service_name || sv.name).filter(Boolean).join(' + ');
 
     targetSession.services = updatedServices;
+    targetSession.addons = updatedAddons;
     targetSession.total_session_duration = newDur;
     targetSession.duration_minutes = newDur;
     targetSession.services_duration = newDur;
@@ -2186,6 +2285,17 @@ function BookingDetailPopupContent({
           arrangement_name: s.arrangement_name || (s.service_arrangement_data as any)?.name || undefined,
           arrangement_type: s.arrangement_type || (s.service_arrangement_data as any)?.type || undefined,
           services: sServices,
+          addons: (Array.isArray(s.addons) && s.addons.length > 0
+            ? s.addons
+            : (stagedSessions.length === 1 ? (addons as Array<Record<string, any>>) : [])
+          ).map((a: any) => ({
+            addon_id: a.addon_id ?? a.id,
+            id: a.addon_id ?? a.id,
+            name: a.name ?? a.addon_name,
+            price: a.price ?? a.base_price ?? 0,
+            duration_minutes: Number(a.duration_minutes ?? a.duration ?? 0) || 0,
+          })),
+          extra_minutes: Number(s.extra_minutes ?? (stagedSessions.length === 1 ? extraMinutes : 0)) || 0,
           appointment_date: bookingDate,
           appointment_time: apptTime,
           appointment_start: apptStart,
@@ -2954,9 +3064,19 @@ function BookingDetailPopupContent({
                           <div className="min-w-0">
                             {/* Service Name (bold uppercase) + Room Pill */}
                             <div className="flex flex-wrap items-center gap-2">
-                              <h4 className="text-sm sm:text-base font-extrabold tracking-wide text-foreground">
-                                {sess.serviceName}
-                              </h4>
+                              {Array.isArray(sess.raw?.services) && (sess.raw?.services as any[]).length > 0 ? (
+                                <div className="flex flex-col">
+                                  {(sess.raw?.services as any[]).map((sv: any, k: number) => (
+                                    <h4 key={sv.id ?? sv.service_id ?? k} className="text-sm sm:text-base font-extrabold tracking-wide text-foreground uppercase">
+                                      {String(sv.service_name ?? sv.name ?? sv.service_data?.name ?? 'Service')}
+                                    </h4>
+                                  ))}
+                                </div>
+                              ) : (
+                                <h4 className="text-sm sm:text-base font-extrabold tracking-wide text-foreground">
+                                  {sess.serviceName}
+                                </h4>
+                              )}
                               <span className="inline-flex items-center rounded-full bg-[#faebea] px-2.5 py-0.5 text-xs font-semibold text-[#b85d63]">
                                 {sess.roomName}
                               </span>
@@ -2973,6 +3093,27 @@ function BookingDetailPopupContent({
                               <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                               <span className="font-medium text-foreground/80">{sess.timeLabel}</span>
                             </div>
+                            {(() => {
+                              const sAddons = getSessionAddons(sess.raw as any);
+                              const sExtra = getSessionExtraMinutes(sess.raw as any);
+                              if (sAddons.length === 0 && sExtra <= 0) return null;
+                              return (
+                                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                  {sAddons.map((a, k) => (
+                                    <span key={k} className="inline-flex items-center gap-1 rounded-full bg-violet-100 dark:bg-violet-950/40 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:text-violet-300">
+                                      <Plus className="h-3 w-3" />
+                                      {String(a.name ?? a.addon_name ?? 'Add-on')}
+                                    </span>
+                                  ))}
+                                  {sExtra > 0 && (
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-950/40 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                                      <Clock className="h-3 w-3" />
+                                      Extra time +{sExtra} min
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
 
@@ -2983,14 +3124,14 @@ function BookingDetailPopupContent({
                           </span>
 
                           {/* Edit session icon: appears only for unpaid bookings */}
-                          {isUnpaidBooking && (
+                          {(isUnpaidBooking || isPaidEditableBooking) && (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setEditingSessionIndex(sess.number - 1);
                               }}
-                              title="Edit session services"
+                              title={isPaidEditableBooking ? 'Change service (same price only)' : 'Edit session services'}
                               className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 hover:scale-105 active:scale-95 transition cursor-pointer"
                             >
                               <Pencil className="h-4 w-4" />
@@ -3035,37 +3176,6 @@ function BookingDetailPopupContent({
                   {/* Summary for add-ons, extra minutes, discount, and total */}
                   {(addons.length > 0 || extraMinutes > 0 || discountAmount > 0) && (
                     <div className="rounded-2xl border border-border/60 bg-card overflow-hidden shadow-xs divide-y divide-border/40">
-                      {addons.length > 0 && (
-                        <div className="bg-muted/20 px-4 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                          <Plus className="h-3 w-3 text-primary" /> Add-ons ({addons.length})
-                        </div>
-                      )}
-                      {addons.map((addon, idx) => {
-                        const aName = String(addon.name ?? addon.addon_name ?? `Addon #${idx + 1}`);
-                        const aPrice = parseFloat(String(addon.price ?? addon.base_price ?? '0')) || 0;
-                        const aDur = Number(addon.duration_minutes ?? addon.duration ?? 0) || 0;
-                        return (
-                          <div key={`a${idx}`} className="flex items-center justify-between gap-2 px-4 py-2">
-                            <p className="min-w-0 truncate pl-8 text-xs font-medium text-foreground">{aName}</p>
-                            <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
-                              <span className="text-muted-foreground">{aDur > 0 ? `+${aDur} min` : '—'}</span>
-                              <span className="font-mono font-semibold text-primary">+{aPrice.toFixed(3)} {currency}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {extraMinutes > 0 && (
-                        <div className="flex items-center justify-between gap-2 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-2.5">
-                          <div className="flex min-w-0 items-center gap-2.5">
-                            <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400"><Clock className="h-3.5 w-3.5" /></span>
-                            <p className="text-xs font-bold text-foreground">Extra Time ({extraMinutes} min)</p>
-                          </div>
-                          <div className="grid shrink-0 grid-cols-[64px_96px] items-center gap-2 text-right text-xs">
-                            <span className="text-muted-foreground">+{extraMinutes} min</span>
-                            <span className="font-mono font-bold text-amber-700 dark:text-amber-300">+{extraPrice.toFixed(3)} {currency}</span>
-                          </div>
-                        </div>
-                      )}
                       {discountAmount > 0 && (
                         <div className="flex items-center justify-between gap-2 bg-rose-50/50 dark:bg-rose-950/20 px-4 py-2.5">
                           <div className="flex min-w-0 items-center gap-2.5">
@@ -3089,6 +3199,15 @@ function BookingDetailPopupContent({
                   )}
                 </div>
 
+                {isParked && (
+                  <div className="rounded-2xl border border-violet-300/60 bg-violet-50 dark:bg-violet-950/30 px-4 py-3 text-xs text-violet-800 dark:text-violet-200">
+                    <p className="font-bold">Parked booking</p>
+                    <p className="mt-0.5">
+                      This paid booking has no appointment slot reserved. Use <strong>Reschedule</strong> to assign a new date and time.
+                    </p>
+                  </div>
+                )}
+
                 {/* Date & Time + Duration Breakdown (Service + Addons + Extra) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <DRow icon={Calendar} label="Date">{formatDate(booking.appointment_start)}</DRow>
@@ -3099,7 +3218,7 @@ function BookingDetailPopupContent({
                         Total: {totalDuration} min
                       </span>
                       <span className="text-[10px] text-muted-foreground">
-                        ({serviceDuration}m{addonsDuration > 0 ? ` + ${addonsDuration}m addons` : ''}{extraMinutes > 0 ? ` + ${extraMinutes}m extra` : ''})
+                        ({serviceDuration}m{effAddonsDuration > 0 ? ` + ${effAddonsDuration}m addons` : ''}{effExtraMinutes > 0 ? ` + ${effExtraMinutes}m extra` : ''})
                       </span>
                     </div>
                   </DRow>
@@ -3132,15 +3251,15 @@ function BookingDetailPopupContent({
                         <span className="font-mono font-semibold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
                       </div>
                     )}
-                    {addonsPrice > 0 && (
+                    {(effAddons.length > 0 || addonsPrice > 0) && (
                       <div className="flex justify-between text-muted-foreground">
-                        <span>Addons ({addons.length}):</span>
+                        <span>Addons ({effAddons.length}):</span>
                         <span className="font-mono font-semibold text-foreground">+{addonsPrice.toFixed(3)} {currency}</span>
                       </div>
                     )}
-                    {extraMinutes > 0 && (
+                    {effExtraMinutes > 0 && (
                       <div className="flex justify-between text-muted-foreground">
-                        <span>Extra Minutes (+{extraMinutes} min):</span>
+                        <span>Extra Time (+{effExtraMinutes} min):</span>
                         <span className="font-mono font-semibold text-foreground">+{extraPrice.toFixed(3)} {currency}</span>
                       </div>
                     )}
@@ -3670,9 +3789,9 @@ function BookingDetailPopupContent({
               </>
             )}
 
-            {(cancelError || completeError || noShowError) && (
+            {(cancelError || completeError || noShowError || parkError) && (
               <div className="rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 p-3 text-xs text-rose-600 dark:text-rose-400">
-                {cancelError || completeError || noShowError}
+                {cancelError || completeError || noShowError || parkError}
               </div>
             )}
           </div>
@@ -3708,7 +3827,25 @@ function BookingDetailPopupContent({
                 )}
 
                 {/* Mark No Show: shown when expired, paid, not cancelled, not completed, not already no_show, and user has permission */}
-                {isPastApptEnd && !isCancelled && !isCompleted && !isNoShow && isPaymentSuccess && hasNoShowPermission && (
+                {/* Park Booking: paid + confirmed bookings only; releases the appointment slot */}
+                {canParkBooking && (
+                  <button
+                    type="button"
+                    onClick={handleParkBooking}
+                    disabled={parking}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap cursor-pointer active:scale-[0.98]',
+                      parking
+                        ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                        : 'border-violet-300 dark:border-violet-800/60 bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/60'
+                    )}
+                  >
+                    {parking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Clock className="h-3.5 w-3.5" />}
+                    {parking ? 'Parking…' : 'Park Booking'}
+                  </button>
+                )}
+
+                {isPastApptEnd && !isCancelled && !isCompleted && !isNoShow && !isParked && isPaymentSuccess && hasNoShowPermission && (
                   <button
                     type="button"
                     onClick={handleMarkNoShow}
@@ -3830,6 +3967,8 @@ function BookingDetailPopupContent({
       {editingSessionIndex !== null && displaySessions[editingSessionIndex] && (
         <EditSessionModal
           isOpen={true}
+          restrictToSamePrice={isPaidEditableBooking}
+          addons={getSessionAddons(displaySessions[editingSessionIndex]?.raw as any)}
           sessionIndex={editingSessionIndex}
           sessionNumber={editingSessionIndex + 1}
           sessionData={displaySessions[editingSessionIndex]}
