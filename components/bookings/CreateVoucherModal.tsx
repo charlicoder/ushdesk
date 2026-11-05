@@ -2259,12 +2259,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   </div>
                 )}
 
-                {/* Additional services: each with its own add-ons and extra time */}
+                {/* Additional services: each with its own extra time (no add-ons) */}
                 {selectedArrangt && extraBreakdown.length > 0 && (
                   <div className="space-y-4">
                     {extraBreakdown.map((e, idx) => {
                       const sel = extraSel[e.svc.id] ?? { addons: [], extraTime: 0 };
-                      const arrAddons: AddonItem[] = e.packaged ? [] : (selectedArrangt.addons ?? []);
                       return (
                         <div
                           key={e.svc.id}
@@ -2279,35 +2278,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                               {fmtPrice(e.total, currency)} • {e.duration} min
                             </span>
                           </div>
-                          {arrAddons.length > 0 && (
-                            <div>
-                              <SectionLabel icon={Package} label="Add-ons (optional)" />
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                {arrAddons.map((addon) => (
-                                  <AddonCheckbox
-                                    key={addon.id}
-                                    addon={addon}
-                                    checked={sel.addons.some((a) => a.id === addon.id)}
-                                    onChange={(checked) =>
-                                      setExtraSel((m) => {
-                                        const cur = m[e.svc.id] ?? { addons: [], extraTime: 0 };
-                                        return {
-                                          ...m,
-                                          [e.svc.id]: {
-                                            ...cur,
-                                            addons: checked
-                                              ? [...cur.addons, addon]
-                                              : cur.addons.filter((a) => a.id !== addon.id),
-                                          },
-                                        };
-                                      })
-                                    }
-                                    currency={currency}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          )}
                           {e.rates.has && (
                             <div>
                               <div className="flex items-center gap-2 mb-2">

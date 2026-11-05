@@ -446,7 +446,7 @@ function SlotCell({ slot, onClick, onOpenBooking }: {
       <div className="flex flex-col gap-1 h-full min-h-[82px] overflow-hidden">
         {slot.groupBookings.map((bk, idx) => (
           <MiniBookingCard
-            key={bk.reference ?? String(idx)}
+            key={bk.reference ? bk.reference + "-" + idx : String(idx)}
             slot={bk}
             onClick={() => onOpenBooking?.(bk)}
           />
@@ -664,7 +664,7 @@ function MiniBookingCard({ slot, onClick }: { slot: Slot; onClick?: () => void }
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
       style={isCompleted ? { backgroundColor: '#D3C0B2', borderColor: '#B8A394', color: '#2D241E' } : undefined}
       className={cn(
-        'group relative flex flex-1 rounded-lg overflow-hidden cursor-pointer select-none min-h-[60px]',
+        'group relative flex flex-1 shrink-0 rounded-lg overflow-hidden cursor-pointer select-none min-h-[52px]',
         'border transition-all duration-200 active:scale-[0.98]',
         cardCls,
       )}
@@ -724,11 +724,11 @@ function CapacitySlotCell({
   const hasRoom      = bookedCount < capacity && Boolean(onAddBooking);
 
   return (
-    <div className="flex flex-col gap-1 h-full min-h-[82px] overflow-hidden">
+    <div className="flex flex-col gap-1 h-full min-h-[82px] overflow-y-auto">
       {/* Booked mini-cards */}
       {bookings.map((bk, idx) => (
         <MiniBookingCard
-          key={bk.reference ?? String(idx)}
+          key={bk.reference ? bk.reference + "-" + idx : String(idx)}
           slot={bk}
           onClick={() => onOpenBooking?.(bk)}
         />
@@ -741,7 +741,7 @@ function CapacitySlotCell({
           tabIndex={0}
           onClick={onAddBooking}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onAddBooking?.(); }}
-          className="flex flex-1 min-h-[28px] items-center justify-center rounded-lg border border-dashed border-border/80 dark:border-white/15 bg-card/60 transition hover:border-primary hover:bg-primary/5 cursor-pointer group"
+          className="flex flex-1 min-h-[28px] shrink-0 items-center justify-center rounded-lg border border-dashed border-border/80 dark:border-white/15 bg-card/60 transition hover:border-primary hover:bg-primary/5 cursor-pointer group"
         >
           <span className="flex items-center gap-1 text-[9px] font-bold text-muted-foreground/70 group-hover:text-primary transition">
             <Plus className="h-2.5 w-2.5 shrink-0" />
@@ -936,6 +936,18 @@ function buildScheduleFromApi(
   };
 
   const bookingMap: Record<string, BkEntry[]> = {};
+  // The same booking session can arrive more than once (e.g. one API row per session in
+  // record.bookings, each carrying the full sessions list with a distinct cache row bk.id
+  // but the same bk.bookings_id). Deduplicate by arrangement + booking identity + time window.
+  const seenEntries = new Set<string>();
+  const processedSessionBookings = new Set<string>();
+  const pushEntry = (arrId: string, entry: BkEntry) => {
+    const bookingIdentity = String(entry.bookingsId || entry.reference || '');
+    const key = `${arrId}|${bookingIdentity}|${entry.startMin}|${entry.endMin}`;
+    if (seenEntries.has(key)) return;
+    seenEntries.add(key);
+    (bookingMap[arrId] ??= []).push(entry);
+  };
   for (const bk of bookings) {
     const rawStatus = String(bk.status ?? (bk as any).booking_status ?? '').toLowerCase().trim();
     if (rawStatus === 'cancelled' || rawStatus === 'refunded' || rawStatus === 'parked') {
@@ -953,11 +965,24 @@ function buildScheduleFromApi(
     };
     const durationMin = bk.duration_minutes ?? (em - sm);
     const paymentStatus = (bk.payment_status ?? (bk as any).paymentStatus ?? '').toString().toLowerCase().trim();
+    const canonicalBookingId = String((bk as any).booking_id ?? bk.bookings_id ?? bk.id ?? '');
 
     // Multi-session support: if booking contains sessions, block per session and per arrangement!
     if (Array.isArray((bk as any).sessions) && (bk as any).sessions.length > 0) {
-      for (const sess of (bk as any).sessions) {
-        const arrId = String(sess.service_arrangement_id || (sess.service_arrangement_data as any)?.id || bk.arrangement_id);
+      if (canonicalBookingId && processedSessionBookings.has(canonicalBookingId)) {
+        continue;
+      }
+      if (canonicalBookingId) {
+        processedSessionBookings.add(canonicalBookingId);
+      }
+      const sessionsList = (bk as any).sessions as any[];
+      for (const sess of sessionsList) {
+        const arrId = String(
+          sess.service_arrangement_id ||
+          (sess.service_arrangement_data as any)?.id ||
+          (sess as any).arrangement_id ||
+          (sessionsList.length === 1 ? bk.arrangement_id : '')
+        );
         if (!arrId) continue;
         if (!bookingMap[arrId]) bookingMap[arrId] = [];
         const sessStart = sess.appointment_start || sess.start || bk.start;
@@ -973,14 +998,14 @@ function buildScheduleFromApi(
           bk.service_name ||
           '';
 
-        bookingMap[arrId].push({
+        pushEntry(arrId, {
           startMin:    ssm,
           endMin:      sem,
           startLabel:  fmt(ss.getUTCHours(), ss.getUTCMinutes()),
           endLabel:    fmt(se.getUTCHours(), se.getUTCMinutes()),
           duration:    `${sessDurMin}m`,
-          reference:   bk.id,
-          bookingsId:  bk.bookings_id,
+          reference:   String(sess.session_id || sess.id || canonicalBookingId || bk.id),
+          bookingsId:  canonicalBookingId || bk.bookings_id,
           status:      bk.status ?? (bk as any).booking_status ?? 'confirmed',
           serviceName: sessServiceName,
           payment_status: paymentStatus || undefined,
@@ -989,14 +1014,14 @@ function buildScheduleFromApi(
       continue;
     }
 
-    bookingMap[bk.arrangement_id].push({
+    pushEntry(bk.arrangement_id, {
       startMin:    sm,
       endMin:      em,
       startLabel:  fmt(s.getUTCHours(), s.getUTCMinutes()),
       endLabel:    fmt(e.getUTCHours(), e.getUTCMinutes()),
       duration:    `${durationMin}m`,
       reference:   bk.id,
-      bookingsId:  bk.bookings_id,
+      bookingsId:  canonicalBookingId || bk.bookings_id,
       status:      bk.status ?? (bk as any).booking_status ?? 'confirmed',
       serviceName: bk.service_name ?? '',
       payment_status: paymentStatus || undefined,
@@ -1448,15 +1473,82 @@ export default function BranchAppointmentsPage() {
       setScheduleData(null);
       setLoading(true);
     }
-    const url = `/api/v1/service-arrangements/schedule?branch_id=${selectedBranchId}&date=${selectedDate}`;
-    fetch(url, { headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } })
-      .then(r => r.json())
-      .then((data: ApiScheduleRecord[]) => setScheduleData(data?.[0] ?? null))
-      .catch(() => {})
-      .finally(() => {
+    (async () => {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Accept-Language': locale,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        };
+        const url = `/api/v1/service-arrangements/schedule?branch_id=${selectedBranchId}&date=${selectedDate}`;
+        const r = await fetch(url, { headers });
+        if (!r.ok) return;
+        const data: ApiScheduleRecord[] = await r.json();
+        const record = data?.[0] ?? null;
+
+        if (record?.bookings?.length) {
+          try {
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(selectedBranchId);
+            const branchParam = isUuid ? `&branch_id=${selectedBranchId}` : '';
+            const bpUrl = selectedDate
+              ? `/booknpay/api/v1/bookings?date=${selectedDate}${branchParam}&page_size=100`
+              : `/booknpay/api/v1/bookings?page_size=100`;
+            const bpRes = await fetch(bpUrl, { headers }).catch(() => null);
+            if (bpRes && bpRes.ok) {
+              const bpJson = await bpRes.json().catch(() => null);
+              if (bpJson) {
+                const list = Array.isArray(bpJson) ? bpJson : (bpJson?.data ?? bpJson?.results ?? []);
+                const payMap: Record<string, string> = {};
+                const statusMap: Record<string, string> = {};
+                const sessionsMap: Record<string, any[]> = {};
+                for (const item of list) {
+                  const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
+                  const st = String(item?.status ?? (item as any)?.booking_status ?? '').toLowerCase().trim();
+                  const ids = [item.id, item.booking_id, item.bookings_id].filter(Boolean).map(String);
+                  for (const id of ids) {
+                    if (ps) payMap[id] = ps;
+                    if (st) statusMap[id] = st;
+                    if (Array.isArray(item.sessions) && item.sessions.length > 0) {
+                      sessionsMap[id] = item.sessions as any[];
+                    }
+                  }
+                }
+                if (Object.keys(payMap).length > 0 || Object.keys(statusMap).length > 0 || Object.keys(sessionsMap).length > 0) {
+                  record.bookings = record.bookings.map(bk => {
+                    const matchId = [
+                      String((bk as any).booking_id ?? bk.bookings_id ?? ''),
+                      String(bk.bookings_id ?? ''),
+                      String(bk.id ?? ''),
+                    ].find(id => id && (payMap[id] || statusMap[id] || sessionsMap[id]));
+                    if (!matchId) return bk;
+                    return {
+                      ...bk,
+                      ...(payMap[matchId] ? { payment_status: payMap[matchId] } : {}),
+                      ...(statusMap[matchId] ? { status: statusMap[matchId] } : {}),
+                      ...(sessionsMap[matchId] ? { sessions: sessionsMap[matchId] } : {}),
+                    };
+                  });
+                }
+              }
+            }
+          } catch {
+            // Secondary fetch failure is non-fatal
+          }
+          record.bookings = record.bookings.filter(bk => {
+            const st = String(bk.status ?? (bk as any)?.booking_status ?? '').toLowerCase().trim();
+            return st !== 'cancelled' && st !== 'refunded' && st !== 'parked';
+          });
+        }
+
+        setScheduleData(record);
+      } catch {
+        // ignore
+      } finally {
         if (showSpinner) setLoading(false);
-      });
-  }, [selectedBranchId, selectedDate, token]);
+      }
+    })();
+  }, [selectedBranchId, selectedDate, token, locale]);
 
   return (
     <DashboardShell>

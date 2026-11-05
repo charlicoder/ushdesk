@@ -3163,6 +3163,7 @@ function BookingDetailPopupContent({
                             </button>
                           )}
 
+                          {!isPaymentSuccess && !isPaid && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -3182,6 +3183,7 @@ function BookingDetailPopupContent({
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -3462,15 +3464,15 @@ function BookingDetailPopupContent({
                         <span className="font-semibold">{it.price.toFixed(3)} {currency}</span>
                       </div>
                     ))}
-                    {addons.map((a, i) => (
+                    {effAddons.map((a, i) => (
                       <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>+ Add-on: {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}</span>
                         <span>+{parseFloat(String(a.price ?? a.base_price ?? '0')).toFixed(3)} {currency}</span>
                       </div>
                     ))}
-                    {extraPrice > 0 && (
+                    {(extraPrice > 0 || effExtraMinutes > 0) && (
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>+ Extra Minutes (+{extraMinutes}m)</span>
+                        <span>+ Extra Minutes (+{effExtraMinutes}m)</span>
                         <span>+{extraPrice.toFixed(3)} {currency}</span>
                       </div>
                     )}
@@ -3830,24 +3832,13 @@ function BookingDetailPopupContent({
               {/* Left side: Cancel, Reschedule, No Show */}
               <div className="flex items-center gap-2 flex-wrap">
                 {/* Cancel Booking: visible if paid, not cancelled, and user has permission */}
-                {canShowCancel && (
+                {canShowCancel && !isCompleted && (
                   <button
                     type="button"
                     onClick={handleCancel}
                     className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
                   >
                     Cancel Booking
-                  </button>
-                )}
-
-                {/* Reschedule Button: visible if has permission (no status, date window, or role restrictions) */}
-                {hasReschedulePermission && (
-                  <button
-                    type="button"
-                    onClick={handleOpenReschedule}
-                    className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer"
-                  >
-                    Reschedule
                   </button>
                 )}
 
@@ -4203,10 +4194,10 @@ function BookingDetailPopupContent({
             timeSlot: `${formatTime(booking.appointment_start)} – ${formatTime(booking.appointment_end)}`,
             totalDuration: totalDuration,
             serviceDuration: serviceDuration,
-            addonsDuration: addonsDuration,
-            extraMinutes: extraMinutes,
+            addonsDuration: effAddonsDuration,
+            extraMinutes: effExtraMinutes,
             extraPrice: extraPrice,
-            addons: addons.map((a, idx) => ({
+            addons: effAddons.map((a, idx) => ({
               name: String(a.name ?? a.addon_name ?? `Addon #${idx + 1}`),
               price: parseFloat(String(a.price ?? a.base_price ?? '0')) || 0,
               duration: Number(a.duration_minutes ?? a.duration ?? 0),
@@ -4281,8 +4272,8 @@ function BookingDetailPopupContent({
             serviceName: booking.service_name,
             serviceCategory: booking.service_category,
             servicePrice: servicePrice,
-            addons: addons as any,
-            extraMinutes: extraMinutes,
+            addons: effAddons as any,
+            extraMinutes: effExtraMinutes,
             extraPrice: extraPrice,
             totalPrice: computedTotal,
             currency: currency,
