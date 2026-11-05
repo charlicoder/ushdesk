@@ -181,6 +181,8 @@ export interface NewAppointmentBookingModalProps {
   maxDurationMinutes?: number;
   schedule?: Record<string, Record<string, any>>;
   scheduleData?: any;
+  /** Home-service mode: same flow, but no branch / room; booking_type = home_service */
+  homeService?: boolean;
   onClose: () => void;
   onSuccess: () => void;
 }
@@ -214,6 +216,13 @@ function fmt(v: string | number | undefined | null): string {
   if (v === undefined || v === null || v === '') return '0.000';
   const n = parseFloat(String(v));
   return isNaN(n) ? '0.000' : n.toFixed(3);
+}
+
+/** Price of a service when booked as a home service (falls back to the regular price) */
+function homePriceOf(sv: ApiService): number {
+  const hp = parseFloat(String((sv as Record<string, unknown>).home_service_price ?? ''));
+  if (!isNaN(hp) && hp > 0) return hp;
+  return parseFloat(String(sv.base_price ?? '0')) || 0;
 }
 
 function therapistDisplayName(t: ApiTherapist | null | undefined): string {
@@ -554,6 +563,8 @@ export interface AddSessionModalProps {
   pendingPackage?: PendingPackage | null;
   /** The booking already has non-package services: a package cannot be added */
   blockPackages?: boolean;
+  /** Home-service mode: no rooms, home-service prices, home-service therapists */
+  homeService?: boolean;
   onClose: () => void;
   onAddSession: (session: SavedSession) => void;
 }
@@ -562,7 +573,7 @@ export function AddSessionSubModal({
   authHeader, branchId, date,
   defaultTherapistId, defaultTherapistName, defaultTherapistPhoto,
   defaultTimeSlot, sessionIndex, minStartTimeMinutes, minStartTimeDisplay,
-  schedule, scheduleData, usedPackageComponents, pendingPackage, blockPackages,
+  schedule, scheduleData, usedPackageComponents, pendingPackage, blockPackages, homeService,
   onClose, onAddSession,
 }: AddSessionModalProps) {
   const isFirstSession = sessionIndex === 0;
@@ -617,22 +628,25 @@ export function AddSessionSubModal({
     setServicesLoading(true);
     const endpoint = isFirstSession
       ? `/api/v1/therapists/${defaultTherapistId}/services/`
-      : `/api/v1/services/?branch_id=${branchId}&is_active=true`;
+      : homeService
+        ? `/api/v1/services/?is_active=true&is_home_service_eligible=true`
+        : `/api/v1/services/?branch_id=${branchId}&is_active=true`;
 
     authedFetch(endpoint, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => {
-        const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        let list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        if (homeService) list = list.filter((sv: ApiService) => (sv as Record<string, unknown>).is_home_service_eligible !== false);
         setServices(list);
       })
       .catch(() => setServices([]))
       .finally(() => setServicesLoading(false));
-  }, [isFirstSession, defaultTherapistId, branchId, authHeader]);
+  }, [isFirstSession, defaultTherapistId, branchId, authHeader, homeService]);
 
   // ── Load arrangements when primary service changes ──
   useEffect(() => {
     const primaryId = serviceIds[0];
-    if (!primaryId || !branchId) {
+    if (homeService || !primaryId || !branchId) {
       setArrangements([]);
       setArrangementId('');
       setArrangementName('');
@@ -738,6 +752,7 @@ export function AddSessionSubModal({
         ? parseFloat(String(sv.package_price ?? '0')) || 0
         : 0;
     }
+    if (homeService) return homePriceOf(sv);
     if (idx === 0) {
       return arrPrice !== null
         ? arrPrice
@@ -800,7 +815,7 @@ export function AddSessionSubModal({
     const startSlot = isFirstSession ? defaultTimeSlot : selectedTimeSlot;
     const dur = totalDuration > 0 ? totalDuration : (primaryService.duration_minutes ?? 60);
     const qs = new URLSearchParams({
-      branch_id: branchId,
+      ...(homeService ? { available_for_home_service: 'true' } : { branch_id: branchId }),
       no_service_list: 'true',
       check_for_availability: 'true',
       date,
@@ -851,7 +866,7 @@ export function AddSessionSubModal({
       })
       .catch(() => setAvailableTherapists([]))
       .finally(() => setTherapistsLoading(false));
-  }, [subStep, isFirstSession, arrangementType, primaryService, serviceIds, branchId, date, defaultTimeSlot, selectedTimeSlot, totalDuration, authHeader, schedule, scheduleData]);
+  }, [subStep, isFirstSession, arrangementType, primaryService, serviceIds, branchId, date, defaultTimeSlot, selectedTimeSlot, totalDuration, authHeader, schedule, scheduleData, homeService]);
 
   // Keep secondary therapist valid when availableTherapists change
   useEffect(() => {
@@ -885,6 +900,7 @@ export function AddSessionSubModal({
     }
     if (selectedServices.some(isPkg)) return null;
     if (serviceIds.length === 0) return null;
+    if (homeService) return null;
     if (!arrangementId || arrangementServices === null) return 'Loading room services\u2026';
     if (!arrangementServiceIdSet.has(String(svc.id))) return 'Unavailable for this room and session';
     return null;
@@ -1373,7 +1389,7 @@ export function AddSessionSubModal({
               )}
 
               {/* Select Room Carousel Matching Image 2 */}
-              {primaryService && !packageGate && (
+              {primaryService && !packageGate && !homeService && (
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -1998,11 +2014,11 @@ export function AddSessionSubModal({
                 </button>
                 <button
                   type="button"
-                  disabled={selectedServices.length === 0 || packageGate || (!arrangementId && !groupRoomless)}
+                  disabled={selectedServices.length === 0 || packageGate || (!arrangementId && !groupRoomless && !homeService)}
                   onClick={() => setSubStep(2)}
                   className={cn(
                     'flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs font-extrabold text-white transition shadow-md cursor-pointer',
-                    selectedServices.length === 0 || packageGate || (!arrangementId && !groupRoomless)
+                    selectedServices.length === 0 || packageGate || (!arrangementId && !groupRoomless && !homeService)
                       ? 'bg-muted-foreground/30 cursor-not-allowed text-muted-foreground'
                       : 'bg-primary hover:bg-primary/90 shadow-primary/20',
                   )}
@@ -2056,7 +2072,7 @@ export function AddSessionSubModal({
 export function NewAppointmentBookingModal({
   token, date, branchId, branchName,
   defaultTherapistId, defaultTherapistName, defaultTherapistPhoto,
-  defaultTimeSlot, schedule, scheduleData, onClose, onSuccess,
+  defaultTimeSlot, schedule, scheduleData, homeService, onClose, onSuccess,
 }: NewAppointmentBookingModalProps) {
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
@@ -2287,14 +2303,16 @@ export function NewAppointmentBookingModal({
     const sessionsPayload = sessions.map(sess => {
       const apptWindow = buildAppointmentWindow(date, toHHMM(sess.startTime), sess.totalDuration);
       const svcDataList = sess.services.map((sv, i) => {
-        const p = i === 0
+        const p = homeService
+          ? homePriceOf(sv)
+          : i === 0
           ? (sess.arrangementPrice != null ? sess.arrangementPrice : parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0)
           : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
         return {
           service_id: sv.id,
           service_name: sv.name,
           service_category: sv.category ?? '',
-          base_price: fmt(sv.base_price),
+          base_price: homeService ? fmt(p) : fmt(sv.base_price),
           arrangement_price: fmt(p),
           duration_minutes: sv.duration_minutes ?? 60,
           ...(sv.package_id ? { package_id: sv.package_id } : {}),
@@ -2312,8 +2330,8 @@ export function NewAppointmentBookingModal({
           secondary_therapist_id: sess.secondaryTherapistId,
           secondary_therapist_name: sess.secondaryTherapistName,
         } : {}),
-        service_arrangement_id: sess.arrangementId,
-        service_arrangement_data: {
+        service_arrangement_id: homeService ? null : sess.arrangementId,
+        service_arrangement_data: homeService ? null : {
           arrangement_id: sess.arrangementId,
           arrangement_name: sess.arrangementName,
           arrangement_type: sess.arrangementType,
@@ -2357,10 +2375,12 @@ export function NewAppointmentBookingModal({
         arrangement_price: fmt(firstSess.arrangementPrice ?? firstSvc?.base_price),
         duration_minutes: firstSvc?.duration_minutes ?? 60,
       },
-      branch_id: branchId,
-      branch_data: { branch_id: branchId, branch_name: branchName, branch_address: branchName },
-      service_arrangement_id: firstSess.arrangementId,
-      service_arrangement_data: {
+      branch_id: homeService ? null : branchId,
+      branch_data: homeService
+        ? { branch_name: 'Home Service', branch_address: 'Home Service' }
+        : { branch_id: branchId, branch_name: branchName, branch_address: branchName },
+      service_arrangement_id: homeService ? null : firstSess.arrangementId,
+      service_arrangement_data: homeService ? null : {
         arrangement_id: firstSess.arrangementId,
         arrangement_name: firstSess.arrangementName,
         arrangement_type: firstSess.arrangementType,
@@ -2402,7 +2422,7 @@ export function NewAppointmentBookingModal({
       } : null,
       customer_notes: notes,
       customerMessage: '',
-      booking_type: 'branch_service',
+      booking_type: homeService ? 'home_service' : 'branch_service',
       pricing_details: {
         base: fmt(firstSess.sessionPrice),
         base_price: fmt(firstSess.sessionPrice),
@@ -2634,7 +2654,7 @@ export function NewAppointmentBookingModal({
                 </div>
                 <div className="text-center">
                   <p className="text-xs font-extrabold text-foreground leading-tight truncate max-w-[100px]">
-                    {branchName || 'Branch'}
+                    {homeService ? 'Home Service' : (branchName || 'Branch')}
                   </p>
                   <span className="mt-1 inline-flex items-center gap-0.5 rounded-full bg-sky-100 dark:bg-sky-950/40 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-sky-500 inline-block mr-0.5" />
@@ -3128,6 +3148,7 @@ export function NewAppointmentBookingModal({
           scheduleData={scheduleData}
           usedPackageComponents={usedPackageComponents}
           blockPackages={hasPlainService}
+          homeService={homeService}
           pendingPackage={pendingPackageInfo ? { id: pendingPackageInfo.id, name: pendingPackageInfo.name, price: pendingPackageInfo.price } : null}
           onClose={() => setShowAddSessionModal(false)}
           onAddSession={sess => {

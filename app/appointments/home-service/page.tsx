@@ -6,8 +6,10 @@ import {
   Search, Plus, ChevronDown, CalendarDays,
   CheckCircle2, Clock, AlertCircle, X, User, Scissors,
   Timer, Hash, MapPin, ChevronLeft, ChevronRight, Loader2, Home,
-  Phone, Mail, FileText, Package, Star, DollarSign, Link as LinkIcon, UserPlus,
+  Phone, Mail, FileText, Package, Star, DollarSign, Link as LinkIcon, UserPlus, Car,
 } from 'lucide-react';
+import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
+import { HomeServiceBookingModal } from '@/components/bookings/HomeServiceBookingModal';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
@@ -67,7 +69,7 @@ interface ApiScheduleRecord {
 
 // ── Slot model ─────────────────────────────────────────────────────────────────
 
-type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress';
+type SlotStatus = 'unavailable' | 'available' | 'booking' | 'scheduled' | 'in_progress' | 'travel';
 
 interface Slot {
   status: SlotStatus;
@@ -654,7 +656,7 @@ function BookingFormModal({
         home_service_price: fmtPrice(baseP),
         baseDuration:       svc.duration_minutes ?? 0,
         branch_data: {
-          branch_name:    therapist.branchName || 'Home Service',
+          branch_name:    'Home Service',
           branch_address: 'Home Service',
         },
         service_arrangement_data: null,
@@ -684,7 +686,7 @@ function BookingFormModal({
           city:           form.city,
           area:           form.area,
         },
-        booking_type: 'home',
+        booking_type: 'home_service',
         timezone:          apptWindow.timezone,
         appointment_date:  apptWindow.appointment_date,
         appointment_start: apptWindow.appointment_start,
@@ -1350,9 +1352,7 @@ function BookingFormModal({
 function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   if (slot.status === 'unavailable') {
     return (
-      <div className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-border/80 dark:border-white/10 bg-muted/40 transition hover:bg-muted/60">
-        <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">Unavailable</span>
-      </div>
+      <div className="flex h-full min-h-[82px] flex-col items-center justify-center rounded-xl border border-border/60 dark:border-white/10 bg-[#707070]/25 dark:bg-white/5 p-1 text-center select-none" />
     );
   }
 
@@ -1360,11 +1360,22 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
     return (
       <div role="button" tabIndex={0} onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
-        className="flex h-full min-h-[82px] flex-col items-center justify-center rounded-xl border border-dashed border-sky-300/70 dark:border-sky-700/40 bg-card/70 transition hover:border-sky-500 hover:bg-sky-50/50 dark:hover:bg-sky-950/20 hover:shadow-sm cursor-pointer group">
-        <span className="flex items-center gap-1.5 text-[11px] font-bold text-muted-foreground/70 group-hover:text-sky-600 dark:group-hover:text-sky-400 transition">
-          <Plus className="h-3.5 w-3.5" /> Book Slot
+        className="flex h-full min-h-[82px] items-center justify-center rounded-xl border border-dashed border-border/90 dark:border-white/15 bg-card/70 transition hover:border-primary hover:bg-primary/5 hover:shadow-sm cursor-pointer group px-1 text-center">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold text-muted-foreground/70 group-hover:text-primary transition rotate-90 whitespace-nowrap select-none">
+          <Plus className="h-3 w-3 shrink-0" /> Available
         </span>
-        <span className="mt-0.5 text-[10px] text-muted-foreground/50 group-hover:text-sky-500/70 transition">Home Service</span>
+      </div>
+    );
+  }
+
+  if (slot.status === 'travel') {
+    return (
+      <div className="flex h-full min-h-[82px] flex-col items-center justify-center gap-1 rounded-xl border border-teal-300 dark:border-teal-700/60 bg-teal-100/90 dark:bg-teal-950/50 p-1 text-center select-none cursor-not-allowed">
+        <Car className="h-4 w-4 text-teal-700 dark:text-teal-300 shrink-0" />
+        <span className="text-[10px] font-extrabold uppercase tracking-wider text-teal-900 dark:text-teal-100 leading-tight text-center">Travel Hour</span>
+        {slot.start && slot.end && (
+          <span className="text-[8px] font-semibold text-teal-800/80 dark:text-teal-200/80 tabular-nums leading-tight">{slot.start}<br />{slot.end}</span>
+        )}
       </div>
     );
   }
@@ -1375,19 +1386,25 @@ function SlotCell({ slot, onClick }: { slot: Slot; onClick?: () => void }) {
   return (
     <div role="button" tabIndex={0} onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
-      className={cn('relative h-full min-h-[82px] w-full rounded-xl p-3 transition-all duration-200 cursor-pointer select-none active:scale-[0.98]', cfg.cardCls)}>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className={cn('text-[10px] uppercase tracking-wider', cfg.badgeCls)}>{cfg.badge}</span>
-        <div className="flex items-center gap-1">
-          <Icon className={cn('h-3.5 w-3.5', cfg.iconCls)} />
-          <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
+      className={cn('group relative h-full min-h-[82px] w-full flex rounded-xl overflow-hidden cursor-pointer select-none transition-all duration-200 active:scale-[0.98]', cfg.cardCls)}>
+      <div className={cn('w-[3px] shrink-0', cfg.dot.split(' ')[0])} />
+      <div className="flex flex-1 min-w-0 flex-col justify-between p-2 gap-1">
+        <div className="flex items-center justify-between gap-1">
+          <span className={cn('inline-flex items-center gap-1 rounded-md px-1.5 py-[2px] text-[8px] font-extrabold uppercase tracking-wider leading-none truncate max-w-[65px]', cfg.pillCls)}>
+            <span className={cn('h-[4px] w-[4px] rounded-full shrink-0', cfg.dot)} />
+            <span className="truncate">{cfg.label}</span>
+          </span>
+          <Icon className={cn('h-3 w-3 shrink-0', cfg.iconCls)} />
         </div>
-      </div>
-      <p className="text-sm font-bold leading-tight text-foreground truncate">{slot.client}</p>
-      {slot.service && <p className="mt-0.5 text-[11px] text-muted-foreground leading-tight line-clamp-1">{slot.service}</p>}
-      <div className="mt-2 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 rounded-full bg-black/10 dark:bg-white/10 px-2 py-0.5 text-[10px] font-bold text-foreground">{slot.duration}</span>
-        {slot.start && slot.end && <span className="text-[10px] font-medium text-muted-foreground">{slot.start} – {slot.end}</span>}
+        <div className="flex flex-col gap-0.5 min-w-0">
+          {slot.client && <p className="text-xs font-bold leading-tight truncate text-foreground" title={slot.client}>{slot.client}</p>}
+          {slot.service && <p className="text-[10px] font-semibold leading-tight truncate text-muted-foreground" title={slot.service}>{slot.service}</p>}
+          {!slot.client && !slot.service && <p className="text-xs font-bold leading-tight text-foreground">Booked</p>}
+        </div>
+        <div className="flex items-center justify-between gap-1 pt-1 border-t border-border/20 text-[10px]">
+          {slot.duration && <span className="inline-flex items-center rounded-md px-1 py-[2px] text-[9px] font-bold leading-none shrink-0 bg-black/10 dark:bg-white/10">{slot.duration}</span>}
+          {slot.start && slot.end && <span className="text-[9px] font-semibold leading-none tabular-nums truncate text-muted-foreground">{slot.start}–{slot.end}</span>}
+        </div>
       </div>
     </div>
   );
@@ -1465,11 +1482,11 @@ function buildScheduleFromApi(
   const availMap: Record<string, { startMin: number; endMin: number }[]> = {};
   for (const av of availability) {
     availMap[av.therapist_id] = av.intervals.map(iv => {
-      const s = new Date(iv.start); const e = new Date(iv.end);
-      return { startMin: s.getHours() * 60 + s.getMinutes(), endMin: e.getHours() * 60 + e.getMinutes() };
+      const s = kuwaitWallClockDate(iv.start); const e = kuwaitWallClockDate(iv.end);
+      return { startMin: s.getUTCHours() * 60 + s.getUTCMinutes(), endMin: e.getUTCHours() * 60 + e.getUTCMinutes() };
     });
   }
-  type BkEntry = { startMin: number; endMin: number; client?: string; service?: string; startLabel: string; endLabel: string; duration: string; reference?: string; status: string };
+  type BkEntry = { isHome?: boolean; startMin: number; endMin: number; client?: string; service?: string; startLabel: string; endLabel: string; duration: string; reference?: string; status: string };
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
     if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
@@ -1477,12 +1494,19 @@ function buildScheduleFromApi(
     const sm = s.getUTCHours() * 60 + s.getUTCMinutes(); const em = e.getUTCHours() * 60 + e.getUTCMinutes();
     const fmt = (h: number, m: number) => { const ap = h >= 12 ? 'PM' : 'AM'; const hd = h % 12 === 0 ? 12 : h % 12; return `${String(hd).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`; };
     const dur = bk.duration_minutes ?? (em - sm);
-    bookingMap[bk.therapist_id].push({ startMin: sm, endMin: em, client: bk.customer?.name, service: bk.service?.name, startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()), endLabel: fmt(e.getUTCHours(), e.getUTCMinutes()), duration: `${dur}m`, reference: bk.booking_id ?? bk.id, status: bk.status ?? 'scheduled' });
+    bookingMap[bk.therapist_id].push({ isHome: String(bk.booking_type ?? '').toLowerCase().startsWith('home'), startMin: sm, endMin: em, client: bk.customer?.name, service: bk.service?.name, startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()), endLabel: fmt(e.getUTCHours(), e.getUTCMinutes()), duration: `${dur}m`, reference: bk.booking_id ?? bk.id, status: bk.status ?? 'scheduled' });
   }
+  const fmtLabel = (min: number) => { const h = Math.floor(min / 60); const m = min % 60; const ap = h >= 12 ? 'PM' : 'AM'; const hd = h % 12 === 0 ? 12 : h % 12; return `${String(hd).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`; };
+  const TRAVEL_MINUTES = 60;
   for (const therapist of therapists) {
     sched[therapist.id] = {};
     const avIntervals = availMap[therapist.id] ?? [];
     const bkSlots = bookingMap[therapist.id] ?? [];
+    // Home-service bookings are followed by a one-hour travel block (not after the end of the duty)
+    const dutyEnd = Math.max(0, ...avIntervals.map(a => a.endMin), ...bkSlots.map(b => b.endMin));
+    const travelBlocks = bkSlots
+      .filter(b => b.isHome && b.endMin < dutyEnd)
+      .map(b => ({ startMin: b.endMin, endMin: Math.min(b.endMin + TRAVEL_MINUTES, dutyEnd) }));
     for (const slotLabel of timeSlots) {
       const slotStart = slotToMin(slotLabel); const slotEnd = slotStart + slotDurationMinutes;
       const bk = bkSlots.find(b => b.startMin < slotEnd && b.endMin > slotStart);
@@ -1493,10 +1517,19 @@ function buildScheduleFromApi(
         sched[therapist.id][slotLabel] = { status: st, client: bk.client, service: bk.service, start: bk.startLabel, end: bk.endLabel, duration: bk.duration, reference: bk.reference };
         continue;
       }
+      const tb = travelBlocks.find(t => t.startMin < slotEnd && t.endMin > slotStart);
+      if (tb) {
+        sched[therapist.id][slotLabel] = { status: 'travel', start: fmtLabel(tb.startMin), end: fmtLabel(tb.endMin), duration: `${tb.endMin - tb.startMin}m` };
+        continue;
+      }
       sched[therapist.id][slotLabel] = { status: avIntervals.some(av => av.startMin <= slotStart && av.endMin >= slotEnd) ? 'available' : 'unavailable' };
     }
   }
   return sched;
+}
+
+function formatHeaderDate(isoDate: string): string {
+  return new Date(isoDate + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
 }
 
 function formatDateDisplay(isoDate: string): string {
@@ -1556,13 +1589,15 @@ export default function HomeServiceSchedulePage() {
   const filteredTherapists = search ? therapists.filter(t => t.name.toLowerCase().includes(search.toLowerCase())) : therapists;
 
   const allSlots    = therapists.flatMap(t => Object.values(schedule[t.id] ?? {}));
-  const bookedCount = allSlots.filter(s => s.status !== 'unavailable' && s.status !== 'available').length;
+  const bookedCount = allSlots.filter(s => s.status !== 'unavailable' && s.status !== 'available' && s.status !== 'travel').length;
   const availCount  = allSlots.filter(s => s.status === 'available').length;
   const occupancy   = Math.round((bookedCount / (bookedCount + availCount)) * 100) || 0;
   const dateDisplay = formatDateDisplay(selectedDate);
 
+  const [bookingDetailId, setBookingDetailId] = useState<string | null>(null);
   const openModal = useCallback((slot: Slot, therapist: Therapist, timeSlot: string) => {
-    setModal({ slot, therapist, timeSlot, date: dateDisplay });
+    if (slot.reference) setBookingDetailId(slot.reference);
+    else setModal({ slot, therapist, timeSlot, date: dateDisplay });
   }, [dateDisplay]);
 
   const openBookingForm = useCallback((therapist: Therapist, timeSlot: string) => {
@@ -1643,6 +1678,7 @@ export default function HomeServiceSchedulePage() {
               { label: 'In Progress', color: 'bg-emerald-500' },
               { label: 'Booking',     color: 'bg-blue-500' },
               { label: 'Scheduled',   color: 'bg-violet-500' },
+              { label: 'Travel Hour', color: 'bg-teal-400' },
               { label: 'Available',   color: 'bg-sky-400 border border-dashed border-sky-300' },
               { label: 'Unavailable', color: 'bg-muted/80' },
             ].map((l) => (
@@ -1661,23 +1697,26 @@ export default function HomeServiceSchedulePage() {
             </div>
           ) : (
             <>
-              <div className="sticky top-16 z-20 flex border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
-                <div className="w-28 shrink-0 flex items-center pl-4 py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95">Time</div>
-                <div ref={headerScrollRef} className="flex-1 overflow-x-hidden">
-                  <div style={{ width: `${filteredTherapists.length * 175}px`, minWidth: '100%' }} className="flex">
+              <div className="sticky top-16 z-20 flex items-stretch border-b-2 border-border/60 bg-card/95 backdrop-blur-md shadow-sm">
+                <div className="shrink-0 flex flex-col justify-center items-center py-3 font-bold text-xs text-muted-foreground uppercase tracking-wider border-r border-border/30 bg-card/95" style={{ width: 80, minWidth: 80, maxWidth: 80 }}>
+                  <span>Time</span>
+                  <span className="text-[10px] text-muted-foreground/60 normal-case font-medium mt-0.5">Slots</span>
+                </div>
+                <div ref={headerScrollRef} className="flex-1 overflow-hidden" style={{ scrollbarGutter: 'stable' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredTherapists.length}, 80px)`, width: `${filteredTherapists.length * 80}px` }}>
                     {filteredTherapists.map((t, tIdx) => (
-                      <div key={t.id} style={{ width: 175, minWidth: 175 }} className={cn('flex flex-col items-center py-4 border-l border-border/30 first:border-l-0 px-2', COL_TINTS[tIdx % COL_TINTS.length])}>
-                        <div className="relative flex items-center justify-center p-1 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-[0_4px_14px_rgba(0,0,0,0.08)] dark:shadow-[0_4px_14px_rgba(0,0,0,0.4)] ring-1 ring-border/50">
-                          <div className="relative h-10 w-10 rounded-full overflow-hidden ring-2 ring-background shrink-0">
+                      <div key={t.id} className={cn('flex flex-col items-center justify-center gap-1 py-2 px-1 border-l border-border/30 first:border-l-0 min-w-0 h-[108px]', COL_TINTS[tIdx % COL_TINTS.length])}>
+                        <p className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums text-center leading-none">{formatHeaderDate(selectedDate)}</p>
+                        <div className="relative flex items-center justify-center p-0.5 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-sm ring-1 ring-border/50 shrink-0">
+                          <div className="relative h-9 w-9 rounded-full overflow-hidden ring-2 ring-background shrink-0">
                             {t.photoUrl && (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={t.photoUrl} alt={t.name} className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
                             )}
-                            <div className={cn('absolute inset-0 grid place-items-center text-white text-xs font-bold bg-gradient-to-br -z-10', t.color)}>{t.initials}</div>
+                            <div className={cn('absolute inset-0 grid place-items-center text-white text-[10px] font-bold bg-gradient-to-br -z-10', t.color)}>{t.initials}</div>
                           </div>
                         </div>
-                        <p className="mt-2 text-sm font-bold text-foreground text-center truncate max-w-[130px]">{t.name}</p>
-                        <p className="text-[11px] font-semibold text-sky-600 dark:text-sky-400 mt-0.5">{dateDisplay}</p>
+                        <p className="text-[10px] font-bold text-foreground select-none text-center leading-tight truncate w-full px-0.5" title={t.name}>{t.name.split(' ')[0]}</p>
                       </div>
                     ))}
                   </div>
@@ -1685,16 +1724,16 @@ export default function HomeServiceSchedulePage() {
               </div>
 
               <div className="flex rounded-b-2xl">
-                <div className="w-28 shrink-0 flex flex-col border-r border-border/30 bg-muted/10">
+                <div className="shrink-0 flex flex-col border-r border-border/30 bg-muted/10" style={{ width: 80, minWidth: 80, maxWidth: 80 }}>
                   {timeSlots.map((time) => (
-                    <div key={`tcol-${time}`} className="flex flex-col justify-center pl-4 py-2.5 border-t border-border/30" style={{ height: 98 }}>
-                      <p className="text-xs font-bold text-foreground">{time}</p>
-                      <p className="text-[10px] font-medium text-muted-foreground mt-0.5">{grid.slot_duration_minutes} min slots</p>
+                    <div key={`tcol-${time}`} className="flex flex-col justify-center items-center text-center px-1 py-2.5 border-t border-border/30" style={{ height: 98 }}>
+                      <p className="text-xs font-bold text-foreground tabular-nums">{time}</p>
+                      <p className="text-[10px] font-medium text-muted-foreground mt-0.5 whitespace-nowrap">{grid.slot_duration_minutes} min slots</p>
                     </div>
                   ))}
                 </div>
-                <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto">
-                  <div style={{ width: `${filteredTherapists.length * 175}px`, minWidth: '100%', display: 'grid', gridTemplateColumns: `repeat(${filteredTherapists.length}, 175px)`, gridTemplateRows: `repeat(${timeSlots.length}, 98px)` }}>
+                <div ref={bodyScrollRef} onScroll={onBodyScroll} className="flex-1 overflow-x-auto" style={{ scrollbarGutter: 'stable' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredTherapists.length}, 80px)`, gridTemplateRows: `repeat(${timeSlots.length}, 98px)`, width: `${filteredTherapists.length * 80}px` }}>
                     {filteredTherapists.map((t, tIdx) => {
                       const cells: React.ReactNode[] = [];
                       let rowIdx = 0;
@@ -1712,6 +1751,12 @@ export default function HomeServiceSchedulePage() {
                           while (rowIdx + span < timeSlots.length) {
                             const ns = schedule[t.id]?.[timeSlots[rowIdx + span]];
                             if (ns && (ns.status === 'booking' || ns.status === 'scheduled' || ns.status === 'in_progress') && ns.start === slot.start && ns.end === slot.end) { span++; } else break;
+                          }
+                        }
+                        if (slot.status === 'travel' && slot.start && slot.end) {
+                          while (rowIdx + span < timeSlots.length) {
+                            const ns = schedule[t.id]?.[timeSlots[rowIdx + span]];
+                            if (ns && ns.status === 'travel' && ns.start === slot.start && ns.end === slot.end) { span++; } else break;
                           }
                         }
                         const capturedTime = time;
@@ -1735,13 +1780,29 @@ export default function HomeServiceSchedulePage() {
         </div>
       )}
 
-      {modal && <SlotDetailModal payload={modal} onClose={() => setModal(null)} />}
-      {bookingForm && (
-        <BookingFormModal
-          payload={bookingForm}
+      {bookingDetailId && token && (
+        <BookingDetailModal
+          bookingId={bookingDetailId}
           token={token}
-          onClose={() => setBookingForm(null)}
+          onClose={() => setBookingDetailId(null)}
           onSuccess={() => setRefreshKey(k => k + 1)}
+        />
+      )}
+      {modal && <SlotDetailModal payload={modal} onClose={() => setModal(null)} />}
+      {bookingForm && token && (
+        <HomeServiceBookingModal
+          token={token}
+          defaultTimeSlot={bookingForm.timeSlot}
+          date={selectedDate}
+          branchId="home"
+          branchName="Home Service"
+          defaultTherapistId={bookingForm.therapist.id}
+          defaultTherapistName={bookingForm.therapist.name}
+          defaultTherapistPhoto={bookingForm.therapist.photoUrl ?? null}
+          schedule={schedule}
+          scheduleData={scheduleData}
+          onClose={() => { setBookingForm(null); setRefreshKey(k => k + 1); }}
+          onSuccess={() => { setBookingForm(null); setRefreshKey(k => k + 1); }}
         />
       )}
     </DashboardShell>

@@ -3913,7 +3913,7 @@ function BookingDetailPopupContent({
                   </div>
                 )}
                 {/* Make Payment */}
-                {hasPaymentPermission && !isCancelled && !isNoShow && !isPastApptEnd && isPaymentPending && !isPaid && !isRewarded && !effectivePaymentUrl && (
+                {hasPaymentPermission && !isCancelled && !isNoShow && (!isPastApptEnd || String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase().startsWith('home')) && isPaymentPending && !isPaid && !isRewarded && (!effectivePaymentUrl || String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase().startsWith('home')) && (
                   <button
                     type="button"
                     onClick={() => {
