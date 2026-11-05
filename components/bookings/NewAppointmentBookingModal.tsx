@@ -41,6 +41,8 @@ import { usePermissions } from '@/hooks/use-permissions';
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const MAX_SESSIONS = 3;
+/** A booking that includes a package booked by its parts may use more sessions */
+const PACKAGE_MAX_SESSIONS = 5;
 const CURRENCY = 'KWD';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -60,7 +62,46 @@ interface ApiService {
   image1?: string | null;
   thumbnail?: string | null;
   photo_url?: string | null;
+  /** Components of a packaged service (returned by the services API) */
+  included_services?: IncludedService[];
+  /** Set on a component service that is booked as part of a package */
+  package_id?: string;
+  /** Ids of every component of that package (used to verify full coverage) */
+  package_component_ids?: string[];
+  package_components?: { id: string; name: string }[];
+  package_name?: string;
+  package_price?: string | number;
   [key: string]: unknown;
+}
+
+interface PackagePlanGroup {
+  service_ids: string[];
+  room_required: boolean;
+  arrangements: { id: string; name: string; arrangement_type?: string }[];
+  total_duration?: number;
+}
+
+interface PackagePlan {
+  package_has_rooms: boolean;
+  session_count: number;
+  groups: PackagePlanGroup[];
+  rooms_by_service: Record<string, string[]>;
+}
+
+interface PendingPackage {
+  id: string;
+  name: string;
+  price: string | number;
+}
+
+interface IncludedService {
+  id: string;
+  name: string;
+  duration_minutes?: number;
+  base_price?: string | number;
+  extra_minutes?: number;
+  price_for_extra_minutes?: string | number | null;
+  position?: number;
 }
 
 interface ApiAddOn {
@@ -507,6 +548,12 @@ export interface AddSessionModalProps {
   minStartTimeDisplay?: string; // string representation e.g. "11:00 AM"
   schedule?: Record<string, Record<string, any>>;
   scheduleData?: any;
+  /** package id -> component service ids already booked in earlier sessions */
+  usedPackageComponents?: Record<string, string[]>;
+  /** A package with services not yet in any session: this session pre-fills its next group */
+  pendingPackage?: PendingPackage | null;
+  /** The booking already has non-package services: a package cannot be added */
+  blockPackages?: boolean;
   onClose: () => void;
   onAddSession: (session: SavedSession) => void;
 }
@@ -515,7 +562,7 @@ export function AddSessionSubModal({
   authHeader, branchId, date,
   defaultTherapistId, defaultTherapistName, defaultTherapistPhoto,
   defaultTimeSlot, sessionIndex, minStartTimeMinutes, minStartTimeDisplay,
-  schedule, scheduleData,
+  schedule, scheduleData, usedPackageComponents, pendingPackage, blockPackages,
   onClose, onAddSession,
 }: AddSessionModalProps) {
   const isFirstSession = sessionIndex === 0;
@@ -525,6 +572,15 @@ export function AddSessionSubModal({
   const [serviceIds, setServiceIds] = useState<string[]>([]);
   const [serviceSearch, setServiceSearch] = useState('');
   const [services, setServices] = useState<ApiService[]>([]);
+  // Package support: component lists of selected packages, and "split package" state
+  const [packageDetails, setPackageDetails] = useState<Record<string, ApiService>>({});
+  const [extraServices, setExtraServices] = useState<Record<string, ApiService>>({});
+  const [splitPkg, setSplitPkg] = useState<ApiService | null>(null);
+  const [pkgPlan, setPkgPlan] = useState<PackagePlan | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  /** Rooms common to the services of the group being built (restricts the room list) */
+  const groupRoomIdsRef = useRef<Set<string> | null>(null);
+  const [groupRoomless, setGroupRoomless] = useState(false);
   const [servicesLoading, setServicesLoading] = useState(false);
 
   const [arrangementId, setArrangementId] = useState('');
@@ -590,8 +646,13 @@ export function AddSessionSubModal({
     })
       .then(r => r.json())
       .then(d => {
-        const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? []))
+        let list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? []))
           .filter((a: ApiArrangement) => a.is_active !== false);
+        // Package group: only rooms that every service of the group shares
+        if (groupRoomIdsRef.current && groupRoomIdsRef.current.size > 0) {
+          const allowed = groupRoomIdsRef.current;
+          list = list.filter(a => allowed.has(String(a.id)));
+        }
         setArrangements(list);
         if (list.length > 0) {
           const first = list[0];
@@ -632,8 +693,10 @@ export function AddSessionSubModal({
 
   // ── Derived Selected Services & Add-ons ──
   const selectedServices = useMemo(
-    () => serviceIds.map(id => services.find(s => s.id === id)).filter((s): s is ApiService => Boolean(s)),
-    [services, serviceIds],
+    () => serviceIds
+      .map(id => extraServices[id] ?? services.find(s => s.id === id))
+      .filter((s): s is ApiService => Boolean(s)),
+    [services, serviceIds, extraServices],
   );
   const primaryService = selectedServices[0] ?? null;
 
@@ -667,6 +730,14 @@ export function AddSessionSubModal({
     : null;
 
   const priceOfService = (sv: ApiService, idx: number): number => {
+    if (sv.package_id) {
+      // A package is charged once: its price rides on the first component booked overall
+      const alreadyBooked = (usedPackageComponents?.[sv.package_id] ?? []).length > 0;
+      const firstHere = selectedServices.find(x => x.package_id === sv.package_id);
+      return !alreadyBooked && firstHere?.id === sv.id
+        ? parseFloat(String(sv.package_price ?? '0')) || 0
+        : 0;
+    }
     if (idx === 0) {
       return arrPrice !== null
         ? arrPrice
@@ -678,8 +749,9 @@ export function AddSessionSubModal({
 
   const servicePrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
 
-  const selectedSvcAddons = isPackagedService ? [] : serviceAddons.filter(a => addonIds.includes(a.id));
-  const selectedArrAddons = isPackagedService ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
+  const noAddons = isPackagedService || Boolean(splitPkg);
+  const selectedSvcAddons = noAddons ? [] : serviceAddons.filter(a => addonIds.includes(a.id));
+  const selectedArrAddons = noAddons ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
   const allSelectedAddons = [...selectedSvcAddons, ...selectedArrAddons];
   const addonTotal = allSelectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonDuration = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
@@ -801,6 +873,17 @@ export function AddSessionSubModal({
   );
   /** Reason an unselected service can't be added: it is not offered in the room chosen for the first service */
   const serviceDisabledReason = (svc: ApiService): string | null => {
+    // A package must be booked on its own: never combined with other services or packages
+    const isPkg = (x: ApiService) => x.is_packaged_services === true || String(x.is_packaged_services).toLowerCase() === 'true';
+    if (!serviceIds.includes(svc.id)) {
+      if (isPkg(svc)) {
+        if (blockPackages) return 'Packages cannot be combined with other services';
+        if (serviceIds.length > 0) return 'A package must be booked on its own';
+      } else if (selectedServices.some(isPkg)) {
+        return 'Not available while a package is selected';
+      }
+    }
+    if (selectedServices.some(isPkg)) return null;
     if (serviceIds.length === 0) return null;
     if (!arrangementId || arrangementServices === null) return 'Loading room services\u2026';
     if (!arrangementServiceIdSet.has(String(svc.id))) return 'Unavailable for this room and session';
@@ -821,6 +904,164 @@ export function AddSessionSubModal({
       : [...serviceIds, sv.id];
     setServiceIds(ids);
   };
+
+  // ── Packages: show included services; book whole, or split across sessions ──
+  const isPackage = (sv: ApiService) =>
+    sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true';
+  const componentsOf = (sv: ApiService): IncludedService[] =>
+    sv.included_services ?? packageDetails[sv.id]?.included_services ?? [];
+
+  // Load the component list of any selected package that does not carry it yet
+  useEffect(() => {
+    selectedServices.filter(sv => isPackage(sv) && !sv.included_services && !packageDetails[sv.id]).forEach(sv => {
+      authedFetch(`/api/v1/services/${sv.id}/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
+        .then(r => r.json())
+        .then(d => {
+          const detail = (d?.data ?? d) as ApiService;
+          setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: detail?.included_services ?? [] } }));
+        })
+        .catch(() => setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: [] } })));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedServices]);
+
+  const makeComponent = (pkg: ApiService, c: IncludedService, all: IncludedService[]): ApiService => ({
+    id: c.id,
+    name: c.name,
+    duration_minutes: c.duration_minutes,
+    base_price: c.base_price ?? 0,
+    extra_minutes: c.extra_minutes ?? 0,
+    price_for_extra_minutes: c.price_for_extra_minutes ?? 0,
+    package_id: pkg.id,
+    package_name: pkg.name,
+    package_price: pkg.base_price ?? 0,
+    package_component_ids: all.map(x => x.id),
+    package_components: all.map(x => ({ id: x.id, name: x.name })),
+  });
+
+  const usedIds = (pkgId: string) => new Set(usedPackageComponents?.[pkgId] ?? []);
+  const therapistOffers = (id: string) => !isFirstSession || services.some(sv => String(sv.id) === String(id));
+
+  /** Why a package service cannot be ticked in this session (null = selectable) */
+  const componentDisabledReason = (c: IncludedService): string | null => {
+    if (!splitPkg) return null;
+    if (usedIds(splitPkg.id).has(c.id)) return 'Already in another session';
+    if (!therapistOffers(c.id)) return `Not offered by ${defaultTherapistName}`;
+    const others = serviceIds.filter(id => id !== c.id);
+    if (others.length === 0) return null;
+    const rooms = pkgPlan?.rooms_by_service ?? null;
+    if (rooms) {
+      const mine = rooms[c.id] ?? [];
+      if (arrangementId) {
+        return mine.includes(arrangementId) ? null : 'Not available in the selected room';
+      }
+      const common = others.map(id => rooms[id] ?? []).reduce<string[] | null>(
+        (acc, r) => (acc === null ? r : acc.filter(x => r.includes(x))),
+        null,
+      ) ?? [];
+      if (mine.length === 0 || common.length === 0 || !mine.some(x => common.includes(x))) {
+        return 'Not available in the same room';
+      }
+      return null;
+    }
+    if (arrangementServices !== null && arrangementId && !arrangementServiceIdSet.has(String(c.id))) {
+      return 'Not available in the selected room';
+    }
+    return null;
+  };
+
+  const loadPackagePlan = async (pkgId: string): Promise<PackagePlan | null> => {
+    setPlanLoading(true);
+    try {
+      const r = await authedFetch(`/api/v1/services/${pkgId}/package-plan/?branch_id=${encodeURIComponent(branchId)}`, {
+        headers: authHeader ? { Authorization: authHeader } : undefined,
+      });
+      if (!r.ok) return null;
+      const plan = (await r.json()) as PackagePlan;
+      setPkgPlan(plan);
+      return plan;
+    } catch {
+      return null;
+    } finally {
+      setPlanLoading(false);
+    }
+  };
+
+  /**
+   * Switch to "services of this package, grouped by session". Picks the first suggested group that still
+   * has unbooked services (and that this session's therapist can perform) and restricts rooms to the
+   * ones that group shares.
+   */
+  const startSplit = async (pkg: ApiService, preloaded?: IncludedService[], auto = false) => {
+    const all = preloaded ?? componentsOf(pkg);
+    const used = usedIds(pkg.id);
+    const remaining = all.filter(c => !used.has(c.id));
+    if (remaining.length === 0) return;
+    const plan = pkgPlan ?? (await loadPackagePlan(pkg.id));
+    const remainingIds = new Set(remaining.filter(c => therapistOffers(c.id)).map(c => c.id));
+    const group = plan?.groups.find(g => g.service_ids.some(id => remainingIds.has(id)));
+    const pickIds = group
+      ? group.service_ids.filter(id => remainingIds.has(id))
+      : [remaining.find(c => therapistOffers(c.id))?.id ?? remaining[0].id];
+    groupRoomIdsRef.current = auto && group && group.room_required ? new Set(group.arrangements.map(a => String(a.id))) : null;
+    setGroupRoomless(auto && Boolean(group && !group.room_required));
+    const comps = Object.fromEntries(
+      remaining.map(c => [c.id, makeComponent(pkg, c, all)]),
+    );
+    setExtraServices(prev => ({ ...prev, ...comps }));
+    setSplitPkg({ ...pkg, included_services: all });
+    setArrangementId('');
+    setServiceIds(prev => [...prev.filter(id => id !== pkg.id), ...(auto ? pickIds : [])]);
+  };
+
+  const toggleComponent = (c: IncludedService) => {
+    if (!splitPkg) return;
+    const reason = componentDisabledReason(c);
+    if (reason && !serviceIds.includes(c.id)) return;
+    const all = splitPkg.included_services ?? [];
+    setExtraServices(prev => ({ ...prev, [c.id]: prev[c.id] ?? makeComponent(splitPkg, c, all) }));
+    setServiceIds(prev => {
+      return prev.includes(c.id) ? prev.filter(x => x !== c.id) : [...prev, c.id];
+    });
+  };
+
+  /** Leave "package mode" and go back to choosing a service */
+  const leavePackageMode = () => {
+    const pkgId = splitPkg?.id;
+    setServiceIds(prev => prev.filter(id => !splitPkg?.included_services?.some(c => c.id === id) && id !== pkgId));
+    setSplitPkg(null);
+    setExtraServices({});
+    groupRoomIdsRef.current = null;
+    setGroupRoomless(false);
+    setArrangementId('');
+  };
+
+  // While a package (with included services) is chosen, room / extra time / add-ons wait for "Add session"
+  const selectedPackage = !splitPkg ? selectedServices.find(isPackage) : undefined;
+  const packageGate = Boolean(
+    selectedPackage &&
+      (componentsOf(selectedPackage).length > 0 || (!selectedPackage.included_services && !packageDetails[selectedPackage.id])),
+  );
+
+  // A package still has unbooked services: open this session already split with its next group
+  const pendingStartedRef = useRef(false);
+  useEffect(() => {
+    if (!pendingPackage || pendingStartedRef.current) return;
+    pendingStartedRef.current = true;
+    (async () => {
+      let comps: IncludedService[] = [];
+      try {
+        const r = await authedFetch(`/api/v1/services/${pendingPackage.id}/`, {
+          headers: authHeader ? { Authorization: authHeader } : undefined,
+        });
+        const d = await r.json();
+        comps = ((d?.data ?? d) as ApiService)?.included_services ?? [];
+      } catch { /* handled below */ }
+      if (comps.length === 0) return;
+      await startSplit({ id: pendingPackage.id, name: pendingPackage.name, base_price: pendingPackage.price } as ApiService, comps);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPackage]);
 
   const handleFinishAdd = () => {
     if (!primaryService) return;
@@ -912,6 +1153,7 @@ export function AddSessionSubModal({
                   )}
                 </div>
 
+                {!splitPkg && (<>
                 <FLabel required>Search & Select</FLabel>
                 <MultiSelectDrop<ApiService>
                   items={services.filter(s =>
@@ -985,10 +1227,117 @@ export function AddSessionSubModal({
                     </div>
                   </div>
                 ))}
+                </>)}
+
+                {/* Package details: included services + guided session builder */}
+                {(() => {
+                  const pkg = splitPkg ?? selectedServices.find(sv => isPackage(sv) && componentsOf(sv).length > 0) ?? null;
+                  if (!pkg) return null;
+                  const comps = splitPkg ? (splitPkg.included_services ?? []) : componentsOf(pkg);
+                  if (comps.length === 0) return null;
+                  const used = usedIds(pkg.id);
+                  const inThisSession = new Set(serviceIds);
+                  const doneCount = comps.filter(c => used.has(c.id)).length;
+                  const hereCount = splitPkg ? comps.filter(c => inThisSession.has(c.id) && !used.has(c.id)).length : 0;
+                  const leftCount = comps.length - doneCount - hereCount;
+                  return (
+                    <div className="mt-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                          {pkg.name} — included services
+                        </p>
+                        <span className="text-[10px] font-bold text-muted-foreground">
+                          {doneCount + hereCount}/{comps.length} scheduled
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-amber-500/15">
+                        <div
+                          className="h-full rounded-full bg-amber-500 transition-all"
+                          style={{ width: `${Math.round(((doneCount + hereCount) / comps.length) * 100)}%` }}
+                        />
+                      </div>
+
+                      <ul className="mt-3 space-y-1.5">
+                        {comps.filter(c => !splitPkg || !used.has(c.id)).map(c => {
+                          const takenElsewhere = used.has(c.id);
+                          const reason = splitPkg ? componentDisabledReason(c) : null;
+                          const checked = splitPkg ? inThisSession.has(c.id) : false;
+                          const disabled = Boolean(reason) && !checked;
+                          return (
+                            <li key={c.id} className={cn('flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs', checked && 'bg-amber-500/10', disabled && 'opacity-60')}>
+                              {splitPkg ? (
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 accent-primary cursor-pointer disabled:cursor-not-allowed"
+                                  checked={checked}
+                                  disabled={disabled}
+                                  onChange={() => toggleComponent(c)}
+                                />
+                              ) : (
+                                <CheckCircle2 className="h-4 w-4 text-amber-600" />
+                              )}
+                              <span className="min-w-0 flex-1">
+                                <span className={cn('block font-semibold', takenElsewhere && 'line-through text-muted-foreground')}>{c.name}</span>
+                                {disabled && <span className="block text-[10px] text-muted-foreground">{reason}</span>}
+                                {takenElsewhere && !disabled && <span className="block text-[10px] text-emerald-600">Scheduled in another session</span>}
+                              </span>
+                              {c.duration_minutes ? <span className="shrink-0 text-muted-foreground">{c.duration_minutes} min</span> : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        {!splitPkg ? (
+                          <button
+                            type="button"
+                            disabled={planLoading}
+                            onClick={() => startSplit(pkg)}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-4 py-2 text-xs font-bold text-white hover:bg-amber-600 transition cursor-pointer disabled:opacity-60"
+                          >
+                            {planLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                            Add session
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={planLoading}
+                              onClick={() => startSplit(splitPkg, splitPkg.included_services, true)}
+                              className="rounded-xl border border-amber-500/40 px-3 py-1.5 text-[11px] font-bold text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition cursor-pointer disabled:opacity-60"
+                            >
+                              Suggest grouping
+                            </button>
+                            {!pendingPackage && (
+                              <button
+                                type="button"
+                                onClick={leavePackageMode}
+                                className="rounded-xl border border-border px-3 py-1.5 text-[11px] font-bold text-muted-foreground hover:bg-muted transition cursor-pointer"
+                              >
+                                Choose another service
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {splitPkg && (
+                        <p className="mt-2 text-[11px] text-muted-foreground">
+                          {groupRoomless
+                            ? 'These services need no room. '
+                            : 'Tick the services for this session — services that cannot share a room with your selection are disabled. '}
+                          {leftCount > 0
+                            ? `${leftCount} service${leftCount > 1 ? 's' : ''} will remain — you’ll be guided to schedule them next.`
+                            : 'Every service of the package is covered.'}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Extra Time Buttons Matching Image 2 */}
-              {hasExtraTime && (
+              {hasExtraTime && !packageGate && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Timer className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1024,7 +1373,7 @@ export function AddSessionSubModal({
               )}
 
               {/* Select Room Carousel Matching Image 2 */}
-              {primaryService && (
+              {primaryService && !packageGate && (
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -1128,7 +1477,7 @@ export function AddSessionSubModal({
               )}
 
               {/* Room Add-ons (Optional) Matching Image 2 */}
-              {arrangementId && !isPackagedService && arrangementAddons.length > 0 && (
+              {arrangementId && !isPackagedService && !splitPkg && !packageGate && arrangementAddons.length > 0 && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Package className="h-3.5 w-3.5 text-amber-500" />
@@ -1649,11 +1998,11 @@ export function AddSessionSubModal({
                 </button>
                 <button
                   type="button"
-                  disabled={selectedServices.length === 0 || !arrangementId}
+                  disabled={selectedServices.length === 0 || packageGate || (!arrangementId && !groupRoomless)}
                   onClick={() => setSubStep(2)}
                   className={cn(
                     'flex items-center gap-2 rounded-xl px-6 py-2.5 text-xs font-extrabold text-white transition shadow-md cursor-pointer',
-                    selectedServices.length === 0 || !arrangementId
+                    selectedServices.length === 0 || packageGate || (!arrangementId && !groupRoomless)
                       ? 'bg-muted-foreground/30 cursor-not-allowed text-muted-foreground'
                       : 'bg-primary hover:bg-primary/90 shadow-primary/20',
                   )}
@@ -1856,12 +2205,66 @@ export function NewAppointmentBookingModal({
     ? addMinutesToTime(lastSession.startTime, lastSession.totalDuration)
     : defaultTimeSlot;
 
+  // Package coverage: every included service of a package booked by its parts must be in a session
+  const packageCoverage = useMemo(() => {
+    const byPkg: Record<string, { id: string; name: string; price: string | number; all: { id: string; name: string }[]; booked: Set<string> }> = {};
+    sessions.forEach(sess => sess.services.forEach(sv => {
+      if (!sv.package_id) return;
+      const e = (byPkg[sv.package_id] ??= {
+        id: sv.package_id,
+        name: sv.package_name ?? 'Package',
+        price: sv.package_price ?? 0,
+        all: sv.package_components ?? (sv.package_component_ids ?? []).map(id => ({ id, name: id })),
+        booked: new Set<string>(),
+      });
+      e.booked.add(String(sv.id));
+    }));
+    return Object.values(byPkg).map(e => ({
+      ...e,
+      missing: e.all.filter(c => !e.booked.has(c.id)),
+    }));
+  }, [sessions]);
+  const pendingPackageInfo = packageCoverage.find(c => c.missing.length > 0) ?? null;
+  const hasPackageSession = packageCoverage.length > 0;
+  const sessionLimit = hasPackageSession ? PACKAGE_MAX_SESSIONS : MAX_SESSIONS;
+  const svcIsPackage = (sv: ApiService) =>
+    sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true';
+  // A package booked as one service (no included services configured) must stand alone
+  const hasWholePackage = sessions.some(sess => sess.services.some(sv => svcIsPackage(sv) && !sv.package_id));
+  const hasPlainService = sessions.some(sess => sess.services.some(sv => !svcIsPackage(sv) && !sv.package_id));
+  // No "Add session" once every service of the package is scheduled (or a whole package fills the booking)
+  const canAddSession =
+    sessions.length < sessionLimit &&
+    !hasWholePackage &&
+    (!hasPackageSession || Boolean(pendingPackageInfo));
+
+  // Package components already booked in the sessions added so far
+  const usedPackageComponents = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    sessions.forEach(sess => sess.services.forEach(sv => {
+      if (sv.package_id) (m[sv.package_id] ??= []).push(String(sv.id));
+    }));
+    return m;
+  }, [sessions]);
+
   // ── Booking Submission ──
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (sessions.length === 0) {
       setSubmitError('Please add at least one session.');
       return;
+    }
+    // Every package booked by its parts must include all of its services exactly once
+    for (const sess of sessions) {
+      for (const sv of sess.services) {
+        if (!sv.package_id) continue;
+        const expected = [...(sv.package_component_ids ?? [])].sort();
+        const booked = [...(usedPackageComponents[sv.package_id] ?? [])].sort();
+        if (expected.length > 0 && JSON.stringify(expected) !== JSON.stringify(booked)) {
+          setSubmitError('Each package must be booked with all of its included services. Add the remaining services in another session.');
+          return;
+        }
+      }
     }
     if (!customerId) {
       setSubmitError('Please select a customer.');
@@ -1894,6 +2297,7 @@ export function NewAppointmentBookingModal({
           base_price: fmt(sv.base_price),
           arrangement_price: fmt(p),
           duration_minutes: sv.duration_minutes ?? 60,
+          ...(sv.package_id ? { package_id: sv.package_id } : {}),
         };
       });
 
@@ -2308,9 +2712,9 @@ export function NewAppointmentBookingModal({
                   <div className="space-y-3">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                        Booked Sessions ({sessions.length}/{MAX_SESSIONS})
+                        Booked Sessions ({sessions.length}/{sessionLimit})
                       </p>
-                      {sessions.length < MAX_SESSIONS && (
+                      {canAddSession && (
                         <button
                           type="button"
                           onClick={() => setShowAddSessionModal(true)}
@@ -2386,6 +2790,32 @@ export function NewAppointmentBookingModal({
                         </div>
                       </div>
                     ))}
+
+                    {pendingPackageInfo && (
+                      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4">
+                        <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">
+                          {pendingPackageInfo.name}: {pendingPackageInfo.missing.length} service{pendingPackageInfo.missing.length > 1 ? 's' : ''} still need a session
+                        </p>
+                        <ul className="mt-1.5 list-disc pl-5 text-[11px] text-amber-900/80 dark:text-amber-100/80">
+                          {pendingPackageInfo.missing.map(m => <li key={m.id}>{m.name}</li>)}
+                        </ul>
+                        <p className="mt-1.5 text-[11px] text-muted-foreground">Every package service must be scheduled before you can continue.</p>
+                        {sessions.length < sessionLimit ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowAddSessionModal(true)}
+                            className="mt-2.5 inline-flex items-center gap-1.5 rounded-xl bg-amber-500 px-3 py-1.5 text-[11px] font-bold text-white hover:bg-amber-600 transition cursor-pointer"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Schedule remaining services
+                          </button>
+                        ) : (
+                          <p className="mt-2 text-[11px] font-semibold text-destructive">
+                            Session limit reached — remove a session and regroup the services.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2620,11 +3050,11 @@ export function NewAppointmentBookingModal({
               {step === 1 && (
                 <button
                   type="button"
-                  disabled={sessions.length === 0}
+                  disabled={sessions.length === 0 || Boolean(pendingPackageInfo)}
                   onClick={() => setStep(2)}
                   className={cn(
                     'flex items-center gap-2 rounded-xl px-7 py-2.5 text-xs font-extrabold text-white transition shadow-md cursor-pointer',
-                    sessions.length === 0
+                    sessions.length === 0 || pendingPackageInfo
                       ? 'bg-muted-foreground/30 text-muted-foreground cursor-not-allowed'
                       : 'bg-primary hover:bg-primary/90 shadow-primary/20',
                   )}
@@ -2654,7 +3084,7 @@ export function NewAppointmentBookingModal({
               {step === 3 && (
                 <button
                   type="button"
-                  disabled={submitting}
+                  disabled={submitting || Boolean(pendingPackageInfo)}
                   onClick={handleSubmit}
                   className={cn(
                     'flex items-center gap-2 rounded-xl px-7 py-2.5 text-xs font-extrabold text-white transition shadow-md cursor-pointer',
@@ -2696,6 +3126,9 @@ export function NewAppointmentBookingModal({
           minStartTimeDisplay={lastSession ? nextSessionDefaultTimeSlot : undefined}
           schedule={schedule}
           scheduleData={scheduleData}
+          usedPackageComponents={usedPackageComponents}
+          blockPackages={hasPlainService}
+          pendingPackage={pendingPackageInfo ? { id: pendingPackageInfo.id, name: pendingPackageInfo.name, price: pendingPackageInfo.price } : null}
           onClose={() => setShowAddSessionModal(false)}
           onAddSession={sess => {
             setSessions(prev => [...prev, sess]);

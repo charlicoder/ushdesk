@@ -676,6 +676,20 @@ function AddVoucherSessionModal({
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Package voucher: services are the package's included services (nothing preselected, no add-ons)
+  const isPkg = Boolean(voucher.__package);
+  const [pkgRooms, setPkgRooms] = useState<Record<string, string[]> | null>(null);
+  useEffect(() => {
+    if (!isPkg || !branchId) return;
+    authedFetch(`/api/v1/services/${voucher.__package.id}/package-plan/?branch_id=${encodeURIComponent(branchId)}`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setPkgRooms(d?.rooms_by_service ?? null))
+      .catch(() => setPkgRooms(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPkg, branchId, authHeader]);
+
   // Gifted services of the voucher not yet assigned to another session
   const giftedServices = useMemo(() => getVoucherServices(voucher), [voucher]);
   const assignedElsewhere = useMemo(
@@ -709,7 +723,7 @@ function AddVoucherSessionModal({
           : all.slice(0, 1);
         setServices(list);
         // default: all still-unassigned gifted services go into this session (user can untick to split)
-        setSelectedServiceIds(list.map((s) => String(s.id)));
+        setSelectedServiceIds(isPkg ? [] : list.map((s) => String(s.id)));
       })
       .catch(() => setServices([]))
       .finally(() => setServicesLoading(false));
@@ -724,13 +738,26 @@ function AddVoucherSessionModal({
 
   const primaryService = selectedServices[0] ?? null;
 
+  // Package: a service that shares no room with the ticked ones cannot join this session
+  const pkgDisabledReason = (gid: string): string | null => {
+    if (!isPkg || !pkgRooms || selectedServiceIds.includes(gid) || selectedServiceIds.length === 0) return null;
+    const mine = pkgRooms[gid] ?? [];
+    const common = selectedServiceIds
+      .map((x) => pkgRooms[x] ?? [])
+      .reduce<string[] | null>((acc, r) => (acc === null ? r : acc.filter((i) => r.includes(i))), null) ?? [];
+    return mine.length > 0 && common.length > 0 && mine.some((i) => common.includes(i))
+      ? null
+      : 'Not available in the same room';
+  };
+
   // Toggle service selection
   const toggleService = (sv: ApiService) => {
     const id = String(sv.id);
+    if (!selectedServiceIds.includes(id) && pkgDisabledReason(id)) return;
     const order = services.map((x) => String(x.id));
     setSelectedServiceIds((prev) => {
       if (prev.includes(id)) {
-        return prev.length > 1 ? prev.filter((x) => x !== id) : prev; // keep at least one
+        return prev.length > 1 || isPkg ? prev.filter((x) => x !== id) : prev; // keep at least one (not for packages)
       }
       return order.filter((x) => x === id || prev.includes(x)); // keep gifted order
     });
@@ -1119,7 +1146,7 @@ function AddVoucherSessionModal({
             <div className="flex items-center gap-2 mb-2">
               <Gift className="h-4 w-4 text-emerald-600" />
               <p className="text-sm font-extrabold text-foreground">
-                {availableGifted.length > 1 ? 'Services in this session' : 'Covered by Voucher (fixed)'}
+                {isPkg ? 'Choose the package services for this session' : availableGifted.length > 1 ? 'Services in this session' : 'Covered by Voucher (fixed)'}
               </p>
               {servicesLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
             </div>
@@ -1139,7 +1166,7 @@ function AddVoucherSessionModal({
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!sv || (availableGifted.length === 1)}
+                        disabled={!sv || (availableGifted.length === 1 && !isPkg) || Boolean(pkgDisabledReason(g.id))}
                         onChange={() => sv && toggleService(sv)}
                         className="mt-0.5 h-4 w-4 accent-emerald-600"
                       />
@@ -1147,6 +1174,9 @@ function AddVoucherSessionModal({
                         <p className="text-xs font-bold text-foreground">{g.name}{g.duration > 0 ? ` · ${g.duration} min` : ''}</p>
                         {!sv && !servicesLoading && (
                           <p className="text-[11px] text-destructive italic">Not available in this branch</p>
+                        )}
+                        {pkgDisabledReason(g.id) && (
+                          <p className="text-[11px] text-muted-foreground">{pkgDisabledReason(g.id)}</p>
                         )}
                       </div>
                     </label>
@@ -1209,6 +1239,12 @@ function AddVoucherSessionModal({
             )}
           </div>
 
+          {isPkg && selectedServiceIds.length === 0 && (
+            <p className="rounded-xl border border-dashed border-border/80 bg-muted/10 px-4 py-3 text-xs text-muted-foreground">
+              Tick one or more services above to choose a room, time slot and therapist.
+            </p>
+          )}
+          {(!isPkg || selectedServiceIds.length > 0) && (<>
           {/* 3. Room / Arrangement Selection */}
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -1355,6 +1391,7 @@ function AddVoucherSessionModal({
               </div>
             </div>
           )}
+          </>)}
         </div>
 
         {/* Footer */}
@@ -1374,7 +1411,8 @@ function AddVoucherSessionModal({
             <button
               type="button"
               onClick={handleSaveSession}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-primary/90 transition"
+              disabled={isPkg && selectedServiceIds.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-primary/90 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Check className="h-4 w-4" />
               <span>Add Session</span>
@@ -1389,7 +1427,7 @@ function AddVoucherSessionModal({
 // ── Main Redeem Voucher Modal ────────────────────────────────────────────────
 
 export function RedeemVoucherModal({
-  voucher,
+  voucher: voucherProp,
   invoiceNumber: propsInvoiceNumber,
   paymentNumber: propsPaymentNumber,
   token,
@@ -1402,6 +1440,61 @@ export function RedeemVoucherModal({
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
   const currentUser = useAppSelector((s) => s.auth.user);
   const { canApplyDiscount: allowDiscount } = usePermissions();
+
+  // ── Package vouchers: the gifted package is redeemed through its included services ──
+  const [pkgInfo, setPkgInfo] = useState<{
+    id: string;
+    name: string;
+    components: { id: string; name: string; duration_minutes: number; base_price: string }[];
+  } | null>(null);
+  useEffect(() => {
+    const list = getVoucherServices(voucherProp);
+    if (list.length !== 1) return;
+    let cancelled = false;
+    authedFetch(`/api/v1/services/${list[0].id}/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
+      .then((r) => r.json())
+      .then((d) => {
+        const svc = (d?.data ?? d) as AnyRecord;
+        const inc: AnyRecord[] = Array.isArray(svc?.included_services) ? svc.included_services : [];
+        if (cancelled || !svc?.is_packaged_services || inc.length === 0) return;
+        setPkgInfo({
+          id: String(svc.id ?? list[0].id),
+          name: String(svc.name ?? list[0].name),
+          components: inc.map((c) => ({
+            id: String(c.id),
+            name: String(c.name),
+            duration_minutes: Number(c.duration_minutes) || 60,
+            base_price: String(c.base_price ?? '0'),
+          })),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voucherProp.id, authHeader]);
+  const voucher: AnyRecord = useMemo(
+    () =>
+      !pkgInfo
+        ? voucherProp
+        : {
+            ...voucherProp,
+            services: pkgInfo.components.map((c) => ({
+              service_id: c.id,
+              service_data: { id: c.id, name: c.name, duration_minutes: c.duration_minutes, base_price: c.base_price },
+              addons: [],
+              extra_time: 0,
+              price_for_extra_time: 0,
+            })),
+            redemptions: [],
+            service_arrangement_data: null,
+            arrangement_type: '',
+            __package: pkgInfo,
+          },
+    [voucherProp, pkgInfo],
+  );
+  const isPackageVoucher = Boolean(pkgInfo);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sessions, setSessions] = useState<VoucherSession[]>([]);
@@ -1429,7 +1522,7 @@ export function RedeemVoucherModal({
   const giftedServiceIds = useMemo(() => giftedList.map((g) => g.id), [giftedList]);
   const assignedCount = new Set(sessions.flatMap((x) => x.serviceIds.map(String))).size;
   const unassignedCount = Math.max(0, giftedList.length - assignedCount);
-  const maxSessions = Math.min(3, giftedList.length);
+  const maxSessions = isPackageVoucher ? Math.min(5, giftedList.length) : Math.min(3, giftedList.length);
   const serviceName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
   const originalDuration = parseInt(String(voucher.total_duration ?? voucher.service_data?.duration_minutes ?? 60), 10) || 60;
   const voucherAmount = parseFloat(String(voucher.total_amount ?? voucher.service_data?.base_price ?? '0')) || 0;
@@ -1630,6 +1723,7 @@ export function RedeemVoucherModal({
           service_category: sv.category ?? '',
           base_price: fmt(sv.base_price),
           duration_minutes: sv.duration_minutes ?? 60,
+          ...(pkgInfo ? { package_id: pkgInfo.id } : {}),
         })),
         service_ids: sess.serviceIds,
         addons: sess.allAddons.map((a) => ({
@@ -1665,6 +1759,7 @@ export function RedeemVoucherModal({
         service_category: sv.category ?? '',
         base_price: fmt(sv.base_price),
         base_duration: sv.duration_minutes ?? 60,
+        ...(pkgInfo ? { package_id: pkgInfo.id } : {}),
       })),
       branch_id: selectedBranchId,
       branch_name: selectedBranchName,
@@ -1770,7 +1865,9 @@ export function RedeemVoucherModal({
       const voucherUpdatePayload = {
         redemption: {
           booking_number: newBooking?.booking_number || newBooking?.booking_no,
-          services: sessions.flatMap((x) => x.redemptionServices ?? []),
+          services: pkgInfo
+            ? [{ service_id: pkgInfo.id, service_name: pkgInfo.name, addon_ids: [], extra_time: 0 }]
+            : sessions.flatMap((x) => x.redemptionServices ?? []),
         },
         booking_id: newBookingId,
         booking_data: {
@@ -1988,6 +2085,15 @@ export function RedeemVoucherModal({
                       <Gift className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
                       <p className="text-xs font-bold text-foreground">Covered by Voucher</p>
                     </div>
+                    {pkgInfo && (
+                      <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3.5">
+                        <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">{pkgInfo.name} · package</p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">
+                          {assignedCount}/{giftedList.length} included services scheduled. Add a session, choose the services
+                          for it, then its room, time and therapist. Every service must be scheduled before you can confirm.
+                        </p>
+                      </div>
+                    )}
                     <VoucherCoverageList voucher={voucher} currency={currency} />
                   </div>
 
@@ -2107,7 +2213,7 @@ export function RedeemVoucherModal({
               {(
                 <button
                   type="button"
-                  disabled={submitting || sessions.length === 0}
+                  disabled={submitting || sessions.length === 0 || (isPackageVoucher && unassignedCount > 0)}
                   onClick={handleConfirmRedeem}
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition disabled:opacity-50 cursor-pointer"
                 >

@@ -26,6 +26,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 export interface ApiService {
   id: string;
   name: string;
+  is_packaged_services?: boolean | string | number;
   duration_minutes?: number;
   base_price?: string | number;
   arrangement_price?: string | number;
@@ -445,6 +446,12 @@ export function NewBranchBookingModal({
   const durationMsg      = typeof maxDuration === 'number' ? maxDurationMessage(maxDuration) : '';
   /** Reason an unselected service can't be added (would overflow the free time) */
   const serviceDisabledReason = (svc: ApiService): string | null => {
+    // A package must be booked on its own: never combined with other services or packages
+    const _isPkg = (x: ApiService) => x.is_packaged_services === true || String(x.is_packaged_services).toLowerCase() === 'true';
+    if (!selectedServices.some(x => x.id === svc.id)) {
+      if (_isPkg(svc) && selectedServices.length > 0) return 'A package must be booked on its own';
+      if (!_isPkg(svc) && selectedServices.some(_isPkg)) return 'Not available while a package is selected';
+    }
     if (typeof maxDuration !== 'number') return null;
     const added = svc.duration_minutes ?? 60;
     const base  = selectedServices.length === 0 ? 0 : totalDuration;

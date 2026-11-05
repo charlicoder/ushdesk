@@ -2138,10 +2138,35 @@ function BookingDetailPopupContent({
     targetSession.services_price = newPrice;
     targetSession.service_name = newNames;
 
+    delete targetSession.appointment_end; // stale once the duration changed
     base[sessionIdx] = targetSession;
+
+    // Keep the sessions sequential: when this session grew, push the following ones forward
+    // so they no longer overlap it (otherwise the server rejects the save with 422).
+    const clockMin = (v: unknown): number | null => {
+      const m = String(v ?? '').match(/(\d{2}):(\d{2})/);
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    };
+    let prevEnd: number | null = null;
+    for (let i = 0; i < base.length; i++) {
+      const sess: Record<string, any> = base[i];
+      let start = clockMin(sess.appointment_start ?? sess.appointment_time);
+      if (start === null) { prevEnd = null; continue; }
+      if (i > sessionIdx && prevEnd !== null && start < prevEnd) {
+        start = prevEnd;
+        const hh = String(Math.floor(start / 60)).padStart(2, '0');
+        const mm = String(start % 60).padStart(2, '0');
+        sess.appointment_start = `${bookingDate}T${hh}:${mm}:00+03:00`;
+        sess.appointment_time = `${hh}:${mm}`;
+        delete sess.appointment_end;
+      }
+      const dur = Number(sess.total_session_duration ?? sess.duration_minutes ?? 60) || 60;
+      prevEnd = start + dur;
+    }
+
     setStagedSessions(base);
     setSaveSessionsError(null);
-  }, [rawSessions, detail, booking]);
+  }, [rawSessions, detail, booking, bookingDate]);
 
   const handleAddSessionFromModal = useCallback((sess: SavedSession) => {
     const base = rawSessions.length > 0

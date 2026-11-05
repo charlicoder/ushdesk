@@ -2037,6 +2037,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     search={serviceSearch}
                     onSearch={setServiceSearch}
                     onToggle={handleServiceToggle}
+                    getDisabledReason={(x) => {
+                      // A package must stand alone: never combined with other services or packages
+                      const isPkg = (v: SlimService) =>
+                        v.is_packaged_services === true || String(v.is_packaged_services).toLowerCase() === 'true';
+                      const selIds = new Set([...(selectedService ? [String(selectedService.id)] : []), ...extraServices.map((e) => String(e.id))]);
+                      if (selIds.has(String(x.id)) || selIds.size === 0) return null;
+                      const sel = services.filter((v) => selIds.has(String(v.id)));
+                      if (isPkg(x)) return 'A package must be booked on its own';
+                      if (sel.some(isPkg)) return 'Not available while a package is selected';
+                      return null;
+                    }}
                     placeholder="Search and select one or more spa services…"
                     loading={servicesLoading}
                     icon={Scissors}
