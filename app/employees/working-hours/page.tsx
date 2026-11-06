@@ -262,6 +262,7 @@ function DaySlotDetailModal({
 
   // Loading & status alerts
   const [savingShift, setSavingShift] = useState(false);
+  const [savingDayOff, setSavingDayOff] = useState(false);
   const [savingBreak, setSavingBreak] = useState(false);
   const [savingExtra, setSavingExtra] = useState(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
@@ -330,6 +331,55 @@ function DaySlotDetailModal({
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
   }, [onClose]);
+
+  // Toggle therapist week day off (ON = Week Day Off / is_weekend_off=true, OFF = On Duty / is_weekend_off=false)
+  const handleToggleModalDayOff = async (nextIsDayOff: boolean) => {
+    setSavingDayOff(true);
+    setActionError(null);
+    setActionSuccess(null);
+    try {
+      const startBase = shiftStart || (currentRecord.start_time ? currentRecord.start_time.slice(0, 5) : '10:00');
+      const endBase = shiftEnd || (currentRecord.end_time ? currentRecord.end_time.slice(0, 5) : '22:00');
+      const formattedStart = startBase.length === 5 ? `${startBase}:00` : startBase;
+      const formattedEnd = endBase.length === 5 ? `${endBase}:00` : endBase;
+      const payload: Record<string, unknown> = {
+        therapist_id: currentRecord.therapist_id || undefined,
+        employee_id: currentRecord.employee_id || undefined,
+        day_of_week: currentRecord.day_of_week,
+        start_time: formattedStart,
+        end_time: formattedEnd,
+        is_weekend_off: nextIsDayOff,
+      };
+      const res = await authedFetch('/uauth/api/v1/therapists/duty-time/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || 'Failed to update week day off status');
+      }
+      setCurrentRecord((prev) => ({
+        ...prev,
+        is_weekend_off: nextIsDayOff,
+        start_time: prev.start_time || formattedStart,
+        end_time: prev.end_time || formattedEnd,
+      }));
+      setActionSuccess(
+        nextIsDayOff
+          ? `${DAY_INDEX_MAP[currentRecord.day_of_week]?.label ?? 'Day'} set as Week Day Off.`
+          : `${DAY_INDEX_MAP[currentRecord.day_of_week]?.label ?? 'Day'} set as Active Working Day.`
+      );
+      onRecordUpdated();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Error updating week day off');
+    } finally {
+      setSavingDayOff(false);
+    }
+  };
 
   // Save shift / duty time
   const handleSaveShift = async (e?: React.FormEvent) => {
@@ -630,8 +680,8 @@ function DaySlotDetailModal({
 
           {/* ── SECTION 1: WORKING HOURS & SHIFT DETAILS ── */}
           <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-            <div className="flex items-center justify-between pb-3 border-b border-border/40">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-border/40">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Duty Status</span>
                 {currentRecord.is_weekend_off ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-xs px-2.5 py-0.5">
@@ -645,20 +695,49 @@ function DaySlotDetailModal({
                 )}
               </div>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowShiftForm((prev) => !prev);
-                  setShowBreakForm(false);
-                  setShowExtraForm(false);
-                  setActionError(null);
-                  setActionSuccess(null);
-                }}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-primary/15 border border-primary/30 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/25 transition cursor-pointer"
-              >
-                <Edit2 className="h-3 w-3" />
-                {showShiftForm ? 'Cancel' : 'Update Duty Time'}
-              </button>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {/* Week Day Off Switch: ON = Week Day Off */}
+                <div className="inline-flex items-center gap-2 rounded-xl border border-border/60 bg-card px-3 py-1.5">
+                  <span className="text-xs font-semibold text-foreground select-none">
+                    Week Day Off
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={currentRecord.is_weekend_off}
+                    disabled={savingDayOff}
+                    onClick={() => handleToggleModalDayOff(!currentRecord.is_weekend_off)}
+                    title={currentRecord.is_weekend_off ? 'Switch OFF to set as working day' : 'Switch ON to set as week day off'}
+                    className={cn(
+                      'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed',
+                      currentRecord.is_weekend_off ? 'bg-amber-500' : 'bg-muted-foreground/30'
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow-xs transition-transform',
+                        currentRecord.is_weekend_off ? 'translate-x-4.5' : 'translate-x-0.5'
+                      )}
+                    />
+                  </button>
+                  {savingDayOff && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowShiftForm((prev) => !prev);
+                    setShowBreakForm(false);
+                    setShowExtraForm(false);
+                    setActionError(null);
+                    setActionSuccess(null);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-primary/15 border border-primary/30 px-3 py-1.5 text-xs font-bold text-primary hover:bg-primary/25 transition cursor-pointer"
+                >
+                  <Edit2 className="h-3 w-3" />
+                  {showShiftForm ? 'Cancel' : 'Update Duty Time'}
+                </button>
+              </div>
             </div>
 
             {showShiftForm ? (
@@ -1165,6 +1244,7 @@ export default function WorkingHoursPage() {
 
   // Selected schedule for detail popup
   const [selectedRecord,   setSelectedRecord]   = useState<WorkingHoursRecord | null>(null);
+  const [togglingDayOffKey, setTogglingDayOffKey] = useState<string | null>(null);
 
   // Pagination states
   const [therapistPage, setTherapistPage] = useState(1);
@@ -1173,6 +1253,87 @@ export default function WorkingHoursPage() {
   const [listPageSize, setListPageSize] = useState<number | 'all'>(20);
 
   const refetch = useCallback(() => setTick((t) => t + 1), []);
+
+  // Toggle therapist weekday off (Switch ON = Week Day Off / is_weekend_off: true, Switch OFF = Working Day / is_weekend_off: false)
+  const handleToggleDayOff = useCallback(
+    async (record: WorkingHoursRecord, nextIsDayOff: boolean, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+
+      const key = `${record.therapist_id || record.employee_id}_${record.day_of_week}`;
+      if (togglingDayOffKey === key) return;
+
+      setTogglingDayOffKey(key);
+      const startTime = record.start_time || '10:00:00';
+      const endTime = record.end_time || '22:00:00';
+
+      // Optimistic state update
+      setSchedules((prev) => {
+        const exists = prev.some(
+          (item) =>
+            (item.therapist_id === record.therapist_id ||
+              (record.employee_id && item.employee_id === record.employee_id)) &&
+            item.day_of_week === record.day_of_week
+        );
+        if (exists) {
+          return prev.map((item) =>
+            (item.therapist_id === record.therapist_id ||
+              (record.employee_id && item.employee_id === record.employee_id)) &&
+            item.day_of_week === record.day_of_week
+              ? {
+                  ...item,
+                  is_weekend_off: nextIsDayOff,
+                  start_time: item.start_time || startTime,
+                  end_time: item.end_time || endTime,
+                }
+              : item
+          );
+        }
+        return [
+          ...prev,
+          {
+            ...record,
+            is_weekend_off: nextIsDayOff,
+            start_time: startTime,
+            end_time: endTime,
+          },
+        ];
+      });
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      try {
+        const res = await authedFetch('/uauth/api/v1/therapists/duty-time/', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            therapist_id: record.therapist_id,
+            employee_id: record.employee_id,
+            day_of_week: record.day_of_week,
+            start_time: startTime,
+            end_time: endTime,
+            is_weekend_off: nextIsDayOff,
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            (json as Record<string, string>)?.detail ??
+              (json as Record<string, string>)?.message ??
+              (json as Record<string, string>)?.error ??
+              `Failed to update day off (${res.status})`
+          );
+        }
+      } catch (err) {
+        setError((err as Error).message || 'Failed to update day off.');
+        refetch();
+      } finally {
+        setTogglingDayOffKey(null);
+      }
+    },
+    [token, togglingDayOffKey, refetch]
+  );
 
   // Fetch from /uauth/api/v1/therapists/working-hours/
   // Passing no_pagination=true & page_size=1000 so that ALL working hours across all days are returned
@@ -1303,10 +1464,13 @@ export default function WorkingHoursPage() {
   const groupedByTherapist = useMemo(() => {
     const map = new Map<string, {
       therapist_id: string;
+      employee_id: string;
       therapist_name: string;
       employee_code: string;
       branch_name: string;
       branch_id: string;
+      default_start_time: string;
+      default_end_time: string;
       shifts: Record<number, WorkingHoursRecord>;
       totalHours: number;
       workingDays: number;
@@ -1316,18 +1480,24 @@ export default function WorkingHoursPage() {
       const key = item.therapist_id || item.employee_id || item.therapist_name;
       if (!map.has(key)) {
         map.set(key, {
-          therapist_id:   item.therapist_id,
-          therapist_name: item.therapist_name || `${item.first_name} ${item.last_name}`.trim(),
-          employee_code:  item.employee_code,
-          branch_name:    item.branch_name,
-          branch_id:      item.branch_id,
-          shifts:         {},
-          totalHours:     0,
-          workingDays:    0,
+          therapist_id:       item.therapist_id,
+          employee_id:        item.employee_id,
+          therapist_name:     item.therapist_name || `${item.first_name} ${item.last_name}`.trim(),
+          employee_code:      item.employee_code,
+          branch_name:        item.branch_name,
+          branch_id:          item.branch_id,
+          default_start_time: item.start_time || '10:00:00',
+          default_end_time:   item.end_time || '22:00:00',
+          shifts:             {},
+          totalHours:         0,
+          workingDays:        0,
         });
       }
 
       const group = map.get(key)!;
+      if (!group.employee_id && item.employee_id) group.employee_id = item.employee_id;
+      if (item.start_time) group.default_start_time = item.start_time;
+      if (item.end_time) group.default_end_time = item.end_time;
       group.shifts[item.day_of_week] = item;
 
       if (!item.is_weekend_off && item.start_time && item.end_time) {
@@ -1670,34 +1840,34 @@ export default function WorkingHoursPage() {
                   const shift = tGroup.shifts[dayNum];
                   const dayMeta = DAY_INDEX_MAP[dayNum];
                   const isOff = !shift || shift.is_weekend_off;
+                  const rec: WorkingHoursRecord = shift || {
+                    id: '',
+                    therapist_id: tGroup.therapist_id,
+                    employee_id: tGroup.employee_id,
+                    employee_code: tGroup.employee_code,
+                    first_name: '',
+                    last_name: '',
+                    therapist_name: tGroup.therapist_name,
+                    branch_id: tGroup.branch_id,
+                    branch_name: tGroup.branch_name,
+                    day_of_week: dayNum,
+                    day_name: dayMeta.label,
+                    is_weekend_off: true,
+                    start_time: tGroup.default_start_time,
+                    end_time: tGroup.default_end_time,
+                    break_duration: 0,
+                    break_start_time: null,
+                    break_end_time: null,
+                    effective_from: '',
+                    effective_to: '',
+                  };
+                  const toggleKey = `${rec.therapist_id || rec.employee_id}_${dayNum}`;
+                  const isToggling = togglingDayOffKey === toggleKey;
 
                   return (
                     <div
                       key={dayNum}
-                      onClick={() => {
-                        const rec: WorkingHoursRecord = shift || {
-                          id: '',
-                          therapist_id: tGroup.therapist_id,
-                          employee_id: '',
-                          employee_code: tGroup.employee_code,
-                          first_name: '',
-                          last_name: '',
-                          therapist_name: tGroup.therapist_name,
-                          branch_id: tGroup.branch_id,
-                          branch_name: tGroup.branch_name,
-                          day_of_week: dayNum,
-                          day_name: dayMeta.label,
-                          is_weekend_off: true,
-                          start_time: '',
-                          end_time: '',
-                          break_duration: 0,
-                          break_start_time: null,
-                          break_end_time: null,
-                          effective_from: '',
-                          effective_to: '',
-                        };
-                        setSelectedRecord(rec);
-                      }}
+                      onClick={() => setSelectedRecord(rec)}
                       className={cn(
                         'flex flex-col rounded-2xl p-3 border transition text-xs select-none',
                         isOff
@@ -1710,11 +1880,33 @@ export default function WorkingHoursPage() {
                         <span className={cn(isOff ? 'text-muted-foreground' : 'text-foreground')}>
                           {dayMeta.short}
                         </span>
-                        {isOff ? (
-                          <span className="text-[10px] uppercase font-bold text-muted-foreground">Off</span>
-                        ) : (
-                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                        )}
+                        <div
+                          className="flex items-center gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <span className="text-[9px] uppercase font-bold text-muted-foreground">
+                            Day Off
+                          </span>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={isOff}
+                            disabled={isToggling}
+                            onClick={(e) => handleToggleDayOff(rec, !isOff, e)}
+                            title={isOff ? 'Day Off is ON — click to switch OFF (On Duty)' : 'Day Off is OFF — click to switch ON (Week Day Off)'}
+                            className={cn(
+                              'relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50',
+                              isOff ? 'bg-amber-500' : 'bg-muted-foreground/30'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
+                                isOff ? 'translate-x-3' : 'translate-x-0'
+                              )}
+                            />
+                          </button>
+                        </div>
                       </div>
 
                       {isOff ? (
@@ -1848,18 +2040,42 @@ export default function WorkingHoursPage() {
                         </span>
                       </td>
 
-                      {/* Status */}
-                      <td className="px-4 py-3 text-center">
-                        {item.is_weekend_off ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
-                            Day Off
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                            On Duty
-                          </span>
-                        )}
+                      {/* Status / Day Off Toggle */}
+                      <td
+                        className="px-4 py-3 text-center"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="inline-flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={item.is_weekend_off}
+                            disabled={togglingDayOffKey === `${item.therapist_id || item.employee_id}_${item.day_of_week}`}
+                            onClick={(e) => handleToggleDayOff(item, !item.is_weekend_off, e)}
+                            title={item.is_weekend_off ? 'Day Off is ON — click to switch OFF (On Duty)' : 'Day Off is OFF — click to switch ON (Week Day Off)'}
+                            className={cn(
+                              'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:opacity-50',
+                              item.is_weekend_off ? 'bg-amber-500' : 'bg-muted-foreground/30'
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                'pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
+                                item.is_weekend_off ? 'translate-x-4' : 'translate-x-0'
+                              )}
+                            />
+                          </button>
+                          {item.is_weekend_off ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-300">
+                              Day Off
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              On Duty
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Action */}

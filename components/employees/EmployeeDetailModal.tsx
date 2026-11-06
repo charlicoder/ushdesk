@@ -8,7 +8,7 @@ import {
   MapPin, Clock, Copy, Check, Sparkles, HeartHandshake,
   FileText, TrendingUp, BarChart3, DollarSign, Users,
   Award, Activity, CheckCircle2, XCircle, ArrowUpRight,
-  PieChart, Calendar, ChevronRight, Edit3, Camera, Save, Loader2, Trash2,
+  PieChart, Calendar, ChevronRight, Edit3, Camera, Save, Loader2, Trash2, ZoomIn,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -238,6 +238,7 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose, onUp
   const [error, setError]     = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [avatarErr, setAvatarErr] = useState(false);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   // Edit employee state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -262,11 +263,17 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose, onUp
   // Close on Escape key
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (previewImageUrl) {
+          setPreviewImageUrl(null);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, previewImageUrl]);
 
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard?.writeText(text);
@@ -640,13 +647,23 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose, onUp
           <div className="mt-4 flex items-center gap-4 sm:gap-5">
             <div className="relative shrink-0">
               {current?.avatar && !avatarErr ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={current.avatar}
-                  alt={current.name}
-                  onError={() => setAvatarErr(true)}
-                  className="h-16 w-16 sm:h-20 sm:w-20 rounded-2xl object-cover ring-4 ring-white/15 shadow-xl"
-                />
+                <button
+                  type="button"
+                  onClick={() => setPreviewImageUrl(current.avatar!)}
+                  title="Click to view full image"
+                  className="group relative block h-16 w-16 sm:h-20 sm:w-20 rounded-2xl overflow-hidden ring-4 ring-white/15 shadow-xl cursor-pointer focus:outline-none focus:ring-primary"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={current.avatar}
+                    alt={current.name}
+                    onError={() => setAvatarErr(true)}
+                    className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105"
+                  />
+                  <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <ZoomIn className="h-5 w-5 text-white drop-shadow" />
+                  </span>
+                </button>
               ) : (
                 <div className="grid h-16 w-16 sm:h-20 sm:w-20 place-items-center rounded-2xl bg-gradient-to-br from-primary to-accent text-xl sm:text-2xl font-black text-white ring-4 ring-white/15 shadow-xl">
                   {initials(current?.name ?? 'Employee')}
@@ -911,8 +928,18 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose, onUp
                     <div className="flex items-center gap-4">
                       <div className="relative h-20 w-20 shrink-0 rounded-2xl overflow-hidden ring-2 ring-primary/30 bg-muted flex items-center justify-center">
                         {editAvatarPreview ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={editAvatarPreview} alt="Preview" className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setPreviewImageUrl(editAvatarPreview)}
+                            title="Click to view full image"
+                            className="group relative h-full w-full cursor-pointer focus:outline-none"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={editAvatarPreview} alt="Preview" className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-105" />
+                            <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                              <ZoomIn className="h-5 w-5 text-white drop-shadow" />
+                            </span>
+                          </button>
                         ) : (
                           <div className="text-xl font-black text-muted-foreground">
                             {initials(editFirstName ? `${editFirstName} ${editLastName}` : current?.name || 'Employee')}
@@ -1889,6 +1916,52 @@ export function EmployeeDetailModal({ employeeId, initialEmployee, onClose, onUp
           </button>
         </div>
       </div>
+
+      {/* ── Full-Size Employee Image Popup Modal ── */}
+      {previewImageUrl && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (e.target === e.currentTarget) setPreviewImageUrl(null);
+          }}
+        >
+          <div className="relative flex flex-col max-w-lg w-full rounded-3xl border border-white/15 bg-slate-950/95 shadow-2xl overflow-hidden animate-fade-in-up">
+            {/* Popup Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+              <div className="min-w-0">
+                <h3 className="text-sm font-bold text-white truncate">
+                  {current?.name ?? 'Employee Photo'}
+                </h3>
+                {current?.role_name && (
+                  <p className="text-[11px] text-white/60 truncate">
+                    {current.role_name}
+                    {current.employee_code ? ` • ${current.employee_code}` : ''}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewImageUrl(null)}
+                className="grid h-8 w-8 place-items-center rounded-full bg-white/10 hover:bg-white/20 text-white transition cursor-pointer shrink-0"
+                aria-label="Close image preview"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Full Image Display */}
+            <div className="flex items-center justify-center bg-black/50 p-4 max-h-[75vh]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={previewImageUrl}
+                alt={current?.name ?? 'Employee photo'}
+                className="max-h-[68vh] w-auto max-w-full rounded-2xl object-contain shadow-xl"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
