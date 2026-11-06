@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { authedFetch } from '@/lib/fetcher';
+import { authedFetch } from '@/lib/authedFetch';
 import {
   X,
   Calendar,
@@ -612,3 +612,4 @@ export function RedeemCourseModal({ subscription, onClose, onSuccess }: RedeemCo
     </div>
   );
 }
+

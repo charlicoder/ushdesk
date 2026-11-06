@@ -18,7 +18,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const suffix = `/api/v1/courses/${id}/`;
     const targetUrl = `${getApiBaseUrl()}${getUauthPath()}${suffix}`;
-    const fallbackUrl = `${getDirectUauthUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectUauthUrl() || 'http://127.0.0.1:8002'}${suffix}`;
 
     const res = await proxyToUauth(
       targetUrl,
@@ -39,7 +39,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const body = await req.json();
     const suffix = `/api/v1/courses/${id}/`;
     const targetUrl = `${getApiBaseUrl()}${getUauthPath()}${suffix}`;
-    const fallbackUrl = `${getDirectUauthUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectUauthUrl() || 'http://127.0.0.1:8002'}${suffix}`;
 
     const res = await proxyToUauth(
       targetUrl,
@@ -60,7 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const body = await req.json();
     const suffix = `/api/v1/courses/${id}/`;
     const targetUrl = `${getApiBaseUrl()}${getUauthPath()}${suffix}`;
-    const fallbackUrl = `${getDirectUauthUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectUauthUrl() || 'http://127.0.0.1:8002'}${suffix}`;
 
     const res = await proxyToUauth(
       targetUrl,
@@ -80,7 +80,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     const { id } = await params;
     const suffix = `/api/v1/courses/${id}/`;
     const targetUrl = `${getApiBaseUrl()}${getUauthPath()}${suffix}`;
-    const fallbackUrl = `${getDirectUauthUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectUauthUrl() || 'http://127.0.0.1:8002'}${suffix}`;
 
     const res = await proxyToUauth(
       targetUrl,
@@ -95,3 +95,4 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     return NextResponse.json({ message: msg }, { status: 500 });
   }
 }
+

@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { DashboardShell } from '@/components/dashboard/shell';
-import { authedFetch } from '@/lib/fetcher';
+import { authedFetch } from '@/lib/authedFetch';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/permissions';
 import {
@@ -949,3 +949,4 @@ export default function CoursesPage() {
     </DashboardShell>
   );
 }
+

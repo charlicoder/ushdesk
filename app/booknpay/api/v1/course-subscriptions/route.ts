@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     const qs = new URL(req.url).searchParams.toString();
     const suffix = `/api/v1/course-subscriptions/${qs ? `?${qs}` : ''}`;
     const targetUrl = `${getApiBaseUrl()}${getBooknpayPath()}${suffix}`;
-    const fallbackUrl = `${getDirectBooknpayUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectBooknpayUrl() || 'http://127.0.0.1:8003'}${suffix}`;
 
     const res = await proxyToBooknpay(
       targetUrl,
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const suffix = '/api/v1/course-subscriptions/';
     const targetUrl = `${getApiBaseUrl()}${getBooknpayPath()}${suffix}`;
-    const fallbackUrl = `${getDirectBooknpayUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectBooknpayUrl() || 'http://127.0.0.1:8003'}${suffix}`;
 
     const res = await proxyToBooknpay(
       targetUrl,
@@ -52,3 +52,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: msg }, { status: 500 });
   }
 }
+

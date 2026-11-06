@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     const qs = sp.toString();
     const suffix = `/api/v1/courses/${qs ? `?${qs}` : ''}`;
     const targetUrl = `${getApiBaseUrl()}${getUauthPath()}${suffix}`;
-    const fallbackUrl = `${getDirectUauthUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectUauthUrl() || 'http://127.0.0.1:8002'}${suffix}`;
 
     const res = await proxyToUauth(
       targetUrl,
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const suffix = '/api/v1/courses/';
     const targetUrl = `${getApiBaseUrl()}${getUauthPath()}${suffix}`;
-    const fallbackUrl = `${getDirectUauthUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectUauthUrl() || 'http://127.0.0.1:8002'}${suffix}`;
 
     const res = await proxyToUauth(
       targetUrl,
@@ -56,3 +56,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: msg }, { status: 500 });
   }
 }
+

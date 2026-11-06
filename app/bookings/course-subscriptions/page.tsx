@@ -4,9 +4,9 @@ import React, { Suspense, useCallback, useEffect, useMemo, useState } from 'reac
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { DashboardShell } from '@/components/dashboard/shell';
-import { authedFetch } from '@/lib/fetcher';
+import { authedFetch } from '@/lib/authedFetch';
 import { RedeemCourseModal } from '@/components/bookings/RedeemCourseModal';
-import { CreateCustomerModal } from '@/components/customers/CreateCustomerModal';
+import { CreateCustomerModal, type CreatedCustomer } from '@/components/bookings/CreateCustomerModal';
 import {
   BookMarked,
   Plus,
@@ -1608,11 +1608,16 @@ function CourseSubscriptionsContent() {
       {/* CREATE CUSTOMER MODAL */}
       {createCustomerOpen && (
         <CreateCustomerModal
+          authHeader={
+            typeof window !== 'undefined' && localStorage.getItem('ush_access_token')
+              ? `Bearer ${localStorage.getItem('ush_access_token')}`
+              : ''
+          }
           onClose={() => setCreateCustomerOpen(false)}
-          onSuccess={(newCustomer: Record<string, any>) => {
+          onCreated={(newCustomer: CreatedCustomer) => {
             setCreateCustomerOpen(false);
             if (newCustomer?.id) {
-              setCustomers((prev) => [newCustomer, ...prev]);
+              setCustomers((prev) => [newCustomer as Record<string, any>, ...prev]);
               setSellForm((prev) => ({ ...prev, customer_id: String(newCustomer.id) }));
             } else {
               loadCatalogAndCustomers();
@@ -1640,3 +1645,4 @@ export default function CourseSubscriptionsPage() {
     </DashboardShell>
   );
 }
+

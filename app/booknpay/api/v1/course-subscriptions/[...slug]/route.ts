@@ -24,7 +24,7 @@ async function handleRequest(
     const qs = new URL(req.url).searchParams.toString();
     const suffix = `/api/v1/course-subscriptions/${slugPath}/${qs ? `?${qs}` : ''}`;
     const targetUrl = `${getApiBaseUrl()}${getBooknpayPath()}${suffix}`;
-    const fallbackUrl = `${getDirectBooknpayUrl()}${suffix}`;
+    const fallbackUrl = `${getDirectBooknpayUrl() || 'http://127.0.0.1:8003'}${suffix}`;
 
     const init: RequestInit = {
       method,
@@ -69,3 +69,4 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ sl
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
   return handleRequest(req, params, 'DELETE');
 }
+
