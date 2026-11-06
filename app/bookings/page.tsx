@@ -8,7 +8,7 @@ import {
   CreditCard, CheckCircle2, XCircle, BookOpen,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
-  FileText, Receipt, Eye, ShieldCheck, Filter,
+  FileText, Receipt, Eye, ShieldCheck, Filter, TrendingUp,
 } from 'lucide-react';
 
 function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
@@ -41,6 +41,9 @@ import {
   STATUS_STYLES, PAYMENT_STYLES, STATUS_BAR, statusStyle, paymentStyle,
   CustomerAvatar, DRow, BookingDetailPopup,
 } from "@/components/bookings/BookingDetailPopup";
+import { SalesReportModal, type SalesReportPeriod } from '@/components/payments/SalesReportModal';
+import { normalise as normalisePayment, type RawPayment } from '@/app/bookings/payments/page';
+import { getAssignedBranchId, getAssignedBranchName } from '@/lib/branchScope';
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BookingListPage() {
@@ -58,6 +61,72 @@ export default function BookingListPage() {
   // Date filters
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
+  const [salesMenuOpen, setSalesMenuOpen] = useState(false);
+  const [salesPeriod, setSalesPeriod] = useState<SalesReportPeriod | null>(null);
+
+  const { user } = useAppSelector((state) => state.auth);
+  const [assignedBranch, setAssignedBranch] = useState<{ id: string | null; name: string | null }>(() => ({
+    id: getAssignedBranchId(),
+    name: getAssignedBranchName(),
+  }));
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await authedFetch('/api/v1/employees/me');
+        if (!res.ok) return;
+        const json = await res.json().catch(() => ({}));
+        const emp = (json?.data ?? json?.employee ?? json) as Record<string, any>;
+        if (active && emp) {
+          const bId = emp.branch_id ?? emp.branch?.id ?? emp.branch?.branch_id ?? (Array.isArray(emp.branches) && emp.branches[0]?.id ? emp.branches[0].id : null);
+          const bName = emp.branch_name ?? emp.branch?.name ?? emp.branch?.branch_name ?? (Array.isArray(emp.branches) && emp.branches[0]?.name ? emp.branches[0].name : null);
+          if (bId || bName) {
+            setAssignedBranch({
+              id: bId ? String(bId).trim() : null,
+              name: bName ? String(bName).trim() : null,
+            });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  const [apiBranches, setApiBranches] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    authedFetch('/api/v1/branches?page_size=200')
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data?.data ?? data?.results ?? []);
+        if (Array.isArray(list)) {
+          const items = list
+            .map((b: any) => ({
+              id: String(b.id || b.branch_id || '').trim(),
+              name: String(b.name || b.branch_name || '').trim(),
+            }))
+            .filter((b) => b.name);
+          setApiBranches(items);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const branchMap = useMemo(() => {
+    const map = new Map<string, string>();
+    apiBranches.forEach((b) => {
+      if (b.id) map.set(b.id.toLowerCase(), b.name);
+    });
+    return map;
+  }, [apiBranches]);
+
+  const restrictedBranchId = assignedBranch.id || (user?.branch_id ? String(user.branch_id).trim() : null);
+  const restrictedBranchName =
+    assignedBranch.name ||
+    (user?.branch_name ? String(user.branch_name).trim() : null) ||
+    (restrictedBranchId ? branchMap.get(restrictedBranchId.toLowerCase()) ?? null : null);
 
   const proxyUrl = useMemo(() => {
     let url = `/api/v1/bookings?page=${page}&page_size=${pageSize}`;
@@ -210,6 +279,37 @@ export default function BookingListPage() {
         >
           <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
         </button>
+
+        {/* Sales Reports dropdown */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setSalesMenuOpen((o) => !o)}
+            className="flex h-10 items-center gap-2 rounded-xl border border-border/60 bg-card px-4 text-sm font-bold text-foreground hover:bg-muted/60 transition cursor-pointer"
+            title="Sales Reports"
+          >
+            <TrendingUp className="h-4 w-4 text-primary" />
+            <span>Sales Report</span>
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+          {salesMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setSalesMenuOpen(false)} />
+              <div className="absolute right-0 top-full mt-2 z-50 w-48 overflow-hidden rounded-2xl border border-border bg-card py-1.5 shadow-2xl">
+                {([['daily', 'Daily Report'], ['weekly', 'Weekly Report'], ['monthly', 'Monthly Report']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => { setSalesPeriod(key); setSalesMenuOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-semibold text-foreground hover:bg-muted/60 transition cursor-pointer"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" /> {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Clear */}
         {hasFilter && (
@@ -722,6 +822,17 @@ export default function BookingListPage() {
           booking={selectedBooking}
           onClose={() => setSelectedBooking(null)}
           onSuccess={refetch}
+        />
+      )}
+
+      {/* ── Sales Report Modal ── */}
+      {salesPeriod && (
+        <SalesReportModal
+          period={salesPeriod}
+          normalisePayment={(r) => normalisePayment(r as RawPayment, branchMap)}
+          restrictedBranchId={restrictedBranchId}
+          restrictedBranchName={restrictedBranchName}
+          onClose={() => setSalesPeriod(null)}
         />
       )}
     </DashboardShell>

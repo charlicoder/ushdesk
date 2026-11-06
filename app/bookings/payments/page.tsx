@@ -20,6 +20,8 @@ function getPageNumbers(current: number, total: number): (number | 'ellipsis')[]
   return [1, 'ellipsis', current - 1, current, current + 1, 'ellipsis', total];
 }
 import { PaymentReportModal } from '@/components/payments/PaymentReportModal';
+import { PaymentReportOptionsModal, type ReportOptionsResult } from '@/components/payments/PaymentReportOptionsModal';
+import { SalesReportModal, type SalesReportPeriod } from '@/components/payments/SalesReportModal';
 import { useBookings } from '@/hooks/use-bookings';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
@@ -49,7 +51,7 @@ interface CustomerData {
   [key: string]: unknown;
 }
 
-interface RawPayment {
+export interface RawPayment {
   id?: unknown;
   payment_number?: unknown;
   payment_no?: unknown;
@@ -149,7 +151,7 @@ export interface Payment {
 }
 
 // ── Normalise raw API response → Payment ──────────────────────────────────────
-function normalise(raw: RawPayment, branchMap?: Map<string, string>): Payment {
+export function normalise(raw: RawPayment, branchMap?: Map<string, string>): Payment {
   const cd = (raw.customer_data ?? {}) as CustomerData;
 
   // Resolve customer name: prefer customer_data fields, fall back to flat fields
@@ -732,6 +734,10 @@ export default function PaymentsPage() {
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
   const [showReportModal, setShowReportModal] = useState(false);
+  const [showReportOptions, setShowReportOptions] = useState(false);
+  const [reportData, setReportData] = useState<ReportOptionsResult | null>(null);
+  const [salesMenuOpen, setSalesMenuOpen] = useState(false);
+  const [salesPeriod, setSalesPeriod] = useState<SalesReportPeriod | null>(null);
 
   // ── Derived filter options ─────────────────────────────────────────────────
   const [apiBranches, setApiBranches] = useState<{ id: string; name: string }[]>([]);
@@ -783,8 +789,11 @@ export default function PaymentsPage() {
     if (filters.status) url += `&status=${encodeURIComponent(filters.status)}`;
     if (filters.payment_through) url += `&payment_through=${encodeURIComponent(filters.payment_through)}`;
     if (resolvedFilterBranchId) url += `&branch_id=${encodeURIComponent(resolvedFilterBranchId)}`;
+    if (filters.branch && !/^[0-9a-f-]{36}$/i.test(filters.branch)) {
+      url += `&branch_name=${encodeURIComponent(filters.branch.trim())}`;
+    }
     return url;
-  }, [page, pageSize, dateRange, filters.search, filters.status, filters.payment_through, resolvedFilterBranchId]);
+  }, [page, pageSize, dateRange, filters.search, filters.status, filters.payment_through, filters.branch, resolvedFilterBranchId]);
 
   const { data: raw, loading, error, refetch, pagination, analytics } = useBookings<Record<string, unknown>>(proxyUrl);
 
@@ -1001,9 +1010,40 @@ export default function PaymentsPage() {
           <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
         </button>
 
+        {/* Sales Reports dropdown */}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setSalesMenuOpen((o) => !o)}
+            className="flex h-10 items-center gap-2 rounded-xl border border-border/60 bg-card px-4 text-sm font-bold text-foreground hover:bg-muted/60 transition cursor-pointer"
+            title="Sales Reports"
+          >
+            <TrendingUp className="h-4 w-4 text-primary" />
+            <span>Sales Report</span>
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+          {salesMenuOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setSalesMenuOpen(false)} />
+              <div className="absolute right-0 top-full mt-2 z-50 w-48 overflow-hidden rounded-2xl border border-border bg-card py-1.5 shadow-2xl">
+                {([['daily', 'Daily Report'], ['weekly', 'Weekly Report'], ['monthly', 'Monthly Report']] as const).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => { setSalesPeriod(key); setSalesMenuOpen(false); }}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-semibold text-foreground hover:bg-muted/60 transition cursor-pointer"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-muted-foreground" /> {label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Generate Report */}
         <button
-          onClick={() => setShowReportModal(true)}
+          onClick={() => setShowReportOptions(true)}
           className="flex h-10 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-bold text-white shadow-xs hover:bg-primary/90 transition active:scale-95 cursor-pointer ml-auto sm:ml-0"
           title="Generate Financial Report"
         >
@@ -1249,22 +1289,29 @@ export default function PaymentsPage() {
 
       {/* ── Modal ── */}
       {selected && <PaymentModal payment={selected} onClose={() => setSelected(null)} />}
-      {showReportModal && (
+      {salesPeriod && (
+        <SalesReportModal
+          period={salesPeriod}
+          normalisePayment={(r) => normalise(r as RawPayment, branchMap)}
+          onClose={() => setSalesPeriod(null)}
+        />
+      )}
+      {showReportOptions && (
+        <PaymentReportOptionsModal
+          branches={branches}
+          methodOptions={Array.from(new Set([
+            'KNET', 'Cash', 'MyFatoorah', 'Deema', 'Boubyan Link',
+            ...payments.map((p) => p.payment_provider || p.payment_method).filter(Boolean),
+          ].map((m) => String(m).trim()).filter(Boolean)))}
+          normalisePayment={(r) => normalise(r as RawPayment, branchMap)}
+          onGenerate={(result) => { setReportData(result); setShowReportOptions(false); setShowReportModal(true); }}
+          onClose={() => setShowReportOptions(false)}
+        />
+      )}
+      {showReportModal && reportData && (
         <PaymentReportModal
-          payments={filtered}
-          activeFilters={{
-            branch: filters.branch,
-            status: filters.status,
-            payment_through: filters.payment_through,
-            search: filters.search,
-            dateLabel:
-              dateFilter !== 'all'
-                ? dateRange.from && dateRange.to
-                  ? `${dateRange.from} to ${dateRange.to}`
-                  : dateFilter
-                : 'All Time',
-            dateRange,
-          }}
+          payments={reportData.payments}
+          activeFilters={reportData.activeFilters}
           onClose={() => setShowReportModal(false)}
         />
       )}
