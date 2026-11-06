@@ -234,6 +234,13 @@ function fmtPrice(val: string | number | null | undefined, currency = 'KWD'): st
   return `${isNaN(n) ? '0.000' : n.toFixed(3)} ${currency}`;
 }
 
+function isHomeServiceBranch(b: { id?: string; branch_id?: string; name?: string; branch_name?: string } | null | undefined): boolean {
+  if (!b) return false;
+  const rawName = String(b.name ?? b.branch_name ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  const rawId = String(b.id ?? b.branch_id ?? '').trim().toLowerCase();
+  return rawName === 'home service' || rawName === 'home' || rawId === 'home_service' || rawId === 'home';
+}
+
 const GIFT_TEMPLATES = ['Classic Gold', 'Elegant Rose', 'Midnight Blue', 'Floral Bliss', 'Luxury Black', 'Spring Breeze'];
 
 const ARR_FALLBACKS = [
@@ -1167,17 +1174,22 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               : (bJson?.results ?? bJson?.data?.results ?? bJson?.data ?? bJson?.branches ?? []);
             const activeIds = new Set(
               (Array.isArray(rawList) ? rawList : [])
+                .filter((b) => !isHomeServiceBranch(b))
                 .map((b) => String(b?.id ?? b?.branch_id ?? ''))
                 .filter(Boolean),
             );
             if (activeIds.size > 0 && Array.isArray(detail.branches)) {
               detail.branches = detail.branches.filter((b) =>
-                activeIds.has(String(b.id ?? b.branch_id ?? '')),
+                !isHomeServiceBranch(b) && activeIds.has(String(b.id ?? b.branch_id ?? '')),
               );
             }
           }
         } catch {
           /* keep unfiltered branches */
+        }
+
+        if (Array.isArray(detail.branches)) {
+          detail.branches = detail.branches.filter((b) => !isHomeServiceBranch(b));
         }
 
         setFullDetail(detail);
@@ -1409,12 +1421,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   // Branches & Arrangements lists
   // With several services, only offer branches / rooms that EVERY selected service supports
   const branches: Branch[] = useMemo(() => {
-    const all = fullDetail?.branches ?? [];
+    const all = (fullDetail?.branches ?? []).filter((b) => !isHomeServiceBranch(b));
     const details = extraServices.map((e) => extraDetails[e.id]).filter((d): d is ServiceFullDetail => Boolean(d?.branches?.length));
     if (details.length === 0) return all;
     return all.filter((b) => {
       const bid = b.id ?? b.branch_id;
-      return details.every((d) => d.branches!.some((x) => (x.id ?? x.branch_id) === bid));
+      return details.every((d) => d.branches!.some((x) => !isHomeServiceBranch(x) && (x.id ?? x.branch_id) === bid));
     });
   }, [fullDetail, extraServices, extraDetails]);
   const arrangements: Arrangement[] = useMemo(() => {

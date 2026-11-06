@@ -1595,8 +1595,20 @@ export default function HomeServiceSchedulePage() {
   const dateDisplay = formatDateDisplay(selectedDate);
 
   const [bookingDetailId, setBookingDetailId] = useState<string | null>(null);
+  const [bookingDetailLock, setBookingDetailLock] = useState<{
+    therapistId?: string | null;
+    therapistName?: string | null;
+    startTime?: string | null;
+  } | null>(null);
   const openModal = useCallback((slot: Slot, therapist: Therapist, timeSlot: string) => {
-    if (slot.reference) setBookingDetailId(slot.reference);
+    if (slot.reference) {
+      setBookingDetailLock({
+        therapistId: therapist.id,
+        therapistName: therapist.name,
+        startTime: slot.start || timeSlot,
+      });
+      setBookingDetailId(slot.reference);
+    }
     else setModal({ slot, therapist, timeSlot, date: dateDisplay });
   }, [dateDisplay]);
 
@@ -1784,7 +1796,8 @@ export default function HomeServiceSchedulePage() {
         <BookingDetailModal
           bookingId={bookingDetailId}
           token={token}
-          onClose={() => setBookingDetailId(null)}
+          lockContext={bookingDetailLock}
+          onClose={() => { setBookingDetailId(null); setBookingDetailLock(null); }}
           onSuccess={() => setRefreshKey(k => k + 1)}
         />
       )}

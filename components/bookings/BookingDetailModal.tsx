@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, AlertCircle, X } from 'lucide-react';
 import { authedFetch } from '@/lib/authedFetch';
-import { BookingDetailPopup, Booking, normalise } from '@/components/bookings/BookingDetailPopup';
+import { BookingDetailPopup, Booking, normalise, type SessionLockContext } from '@/components/bookings/BookingDetailPopup';
 
 export interface BookingDetailModalProps {
   /** The booking_id / id to fetch */
@@ -20,9 +20,11 @@ export interface BookingDetailModalProps {
   token: string;
   onClose: () => void;
   onSuccess?: () => void;
+  /** Optional schedule slot context to lock non-matching sessions in multi-session bookings */
+  lockContext?: SessionLockContext | null;
 }
 
-export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: BookingDetailModalProps) {
+export function BookingDetailModal({ bookingId, token, onClose, onSuccess, lockContext }: BookingDetailModalProps) {
   const [booking, setBooking] = useState<Booking | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +61,7 @@ export function BookingDetailModal({ bookingId, token, onClose, onSuccess }: Boo
     return (
       <BookingDetailPopup
         booking={booking}
+        lockContext={lockContext}
         onClose={onClose}
         onSuccess={() => { onSuccess?.(); load(); }}
       />

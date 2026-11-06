@@ -1190,6 +1190,11 @@ export default function BranchAppointmentsPage() {
 
   // BookingDetailModal — opens when a slot has a booknpay bookings_id
   const [bookingDetailId,  setBookingDetailId]  = useState<string | null>(null);
+  const [bookingDetailLock, setBookingDetailLock] = useState<{
+    sessionId?: string | null;
+    arrangementId?: string | null;
+    startTime?: string | null;
+  } | null>(null);
 
   const [scheduleData, setScheduleData] = useState<ApiScheduleRecord | null>(null);
   const [loading,      setLoading]      = useState(true);
@@ -1453,6 +1458,11 @@ export default function BranchAppointmentsPage() {
   const openDetailModal = useCallback((slot: Slot, arrangement: Arrangement, timeSlot: string) => {
     if (slot.bookingsId) {
       // Prefer the rich BookingDetailModal that fetches from booknpay API
+      setBookingDetailLock({
+        sessionId: slot.reference && slot.reference !== slot.bookingsId ? slot.reference : null,
+        arrangementId: arrangement.id,
+        startTime: slot.start || timeSlot,
+      });
       setBookingDetailId(slot.bookingsId);
     } else {
       // Fall back to the local SlotDetailModal
@@ -1800,7 +1810,8 @@ export default function BranchAppointmentsPage() {
         <BookingDetailModal
           bookingId={bookingDetailId}
           token={token}
-          onClose={() => setBookingDetailId(null)}
+          lockContext={bookingDetailLock}
+          onClose={() => { setBookingDetailId(null); setBookingDetailLock(null); }}
           onSuccess={handleBookingSuccess}
         />
       )}

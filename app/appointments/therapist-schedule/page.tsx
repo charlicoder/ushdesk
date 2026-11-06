@@ -1473,6 +1473,13 @@ export default function TherapistSchedulePage() {
   const [search,           setSearch]            = useState('');
   const [modal,            setModal]             = useState<ModalPayload | null>(null);
   const [detailBookingId,  setDetailBookingId]   = useState<string | null>(null);
+  const [detailLockContext, setDetailLockContext] = useState<{
+    sessionId?: string | null;
+    sessionIndex?: number | null;
+    therapistId?: string | null;
+    therapistName?: string | null;
+    startTime?: string | null;
+  } | null>(null);
   const [bookingModal,     setBookingModal]      = useState<{ therapist: Therapist; timeSlot: string; maxDurationMinutes?: number } | null>(null);
   const [selectedBreakTherapist, setSelectedBreakTherapist] = useState<{ therapist: Therapist; slot: Slot; date: string } | null>(null);
 
@@ -1900,6 +1907,13 @@ export default function TherapistSchedulePage() {
   const openModal = useCallback((slot: Slot, therapist: Therapist, timeSlot: string) => {
     // Prefer full API fetch when we have a booking reference ID
     if (slot.reference && slot.reference.length > 10) {
+      setDetailLockContext({
+        sessionId: slot.sessionId ?? null,
+        sessionIndex: typeof slot.sessionIndex === 'number' ? slot.sessionIndex : null,
+        therapistId: therapist.id,
+        therapistName: therapist.name,
+        startTime: slot.start || timeSlot,
+      });
       setDetailBookingId(slot.reference);
     } else {
       setModal({ slot, therapist, timeSlot, branch: branchLabel, date: dateDisplay });
@@ -2731,7 +2745,7 @@ export default function TherapistSchedulePage() {
                         if (isBooked && slot.reference) {
                           while (rowIdx + span < timeSlots.length) {
                             const nextSlot = schedule[t.id]?.[timeSlots[rowIdx + span]];
-                            if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress' || nextSlot.status === 'completed') && nextSlot.reference === slot.reference) { span++; } else { break; }
+                            if (nextSlot && (nextSlot.status === 'booking' || nextSlot.status === 'scheduled' || nextSlot.status === 'in_progress' || nextSlot.status === 'completed') && nextSlot.reference === slot.reference && (!slot.sessionId || !nextSlot.sessionId || nextSlot.sessionId === slot.sessionId)) { span++; } else { break; }
                           }
                         } else if (isBooked && slot.start && slot.end) {
                           while (rowIdx + span < timeSlots.length) {
@@ -2978,7 +2992,8 @@ export default function TherapistSchedulePage() {
         <BookingDetailModal
           bookingId={detailBookingId}
           token={token}
-          onClose={() => setDetailBookingId(null)}
+          lockContext={detailLockContext}
+          onClose={() => { setDetailBookingId(null); setDetailLockContext(null); }}
           onSuccess={() => setScheduleRefreshKey(k => k + 1)}
         />
       )}

@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
   FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
-  Trash2, Pencil,
+  Trash2, Pencil, Lock,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -672,28 +672,41 @@ function parseTimeToMinutes(val: any): number | null {
   return null;
 }
 
+export interface SessionLockContext {
+  sessionId?: string | null;
+  sessionIndex?: number | null;
+  therapistId?: string | null;
+  therapistName?: string | null;
+  startTime?: string | null;
+  arrangementId?: string | null;
+}
+
 // ── Booking Detail Modal ───────────────────────────────────────────────────────
 export function BookingDetailPopup({
   booking,
   onClose,
   onSuccess,
+  lockContext,
 }: {
   booking: Booking | null;
   onClose: () => void;
   onSuccess?: () => void;
+  lockContext?: SessionLockContext | null;
 }) {
   if (!booking) return null;
-  return <BookingDetailPopupContent booking={booking} onClose={onClose} onSuccess={onSuccess} />;
+  return <BookingDetailPopupContent booking={booking} onClose={onClose} onSuccess={onSuccess} lockContext={lockContext} />;
 }
 
 function BookingDetailPopupContent({
   booking,
   onClose,
   onSuccess,
+  lockContext,
 }: {
   booking: Booking;
   onClose: () => void;
   onSuccess?: () => void;
+  lockContext?: SessionLockContext | null;
 }) {
   const [activeTab, setActiveTab] = useState<'details' | 'payment'>('details');
   const [detail, setDetail] = useState<Record<string, unknown> | null>(null);
@@ -1720,6 +1733,135 @@ function BookingDetailPopupContent({
   };
 
   const canAddSession = !isCancelled && !isCompleted && !isPaymentSuccess && displaySessions.length < 3;
+
+  // Determine which session(s) are unlocked when opened from a specific schedule block
+  const unlockedSessionIndices = useMemo(() => {
+    const set = new Set<number>();
+    if (!lockContext || displaySessions.length <= 1) return set;
+
+    const targetSessId = String(lockContext.sessionId ?? '').toLowerCase().trim();
+    const targetTid = String(lockContext.therapistId ?? '').toLowerCase().trim();
+    const targetTName = String(lockContext.therapistName ?? '').toLowerCase().trim();
+    const targetArrId = String(lockContext.arrangementId ?? '').toLowerCase().trim();
+    const targetStartMin = lockContext.startTime ? parseTimeToMinutes(lockContext.startTime) : null;
+
+    const matchesTime = (s: (typeof displaySessions)[number]) => {
+      if (targetStartMin === null) return false;
+      const sStart = s.raw?.appointment_start ?? s.raw?.appointment_time ?? s.raw?.start;
+      const sMin = parseTimeToMinutes(sStart);
+      if (sMin !== null && sMin === targetStartMin) return true;
+      const sDur = Number(s.durationMin || 60);
+      if (sMin !== null && targetStartMin >= sMin && targetStartMin < sMin + sDur) return true;
+      return false;
+    };
+
+    // 1. Exact session_id match
+    if (targetSessId && targetSessId !== String(booking.id).toLowerCase().trim()) {
+      displaySessions.forEach((s, idx) => {
+        const sId = String(s.raw?.session_id ?? s.raw?.id ?? s.id ?? '').toLowerCase().trim();
+        if (sId && sId === targetSessId) {
+          set.add(idx);
+        }
+      });
+      if (set.size > 0) return set;
+    }
+
+    // 2. Therapist ID match (with time refinement if same therapist is in multiple sessions)
+    if (targetTid) {
+      const tidMatches: number[] = [];
+      displaySessions.forEach((s, idx) => {
+        const pId = String(
+          s.raw?.therapist_id ??
+          (s.raw?.therapist_data as any)?.id ??
+          (s.raw?.therapist_data as any)?.therapist_id ??
+          ''
+        ).toLowerCase().trim();
+        const secId = String(
+          s.raw?.secondary_therapist_id ??
+          (s.raw?.secondary_therapist_data as any)?.id ??
+          (s.raw?.secondary_therapist_data as any)?.therapist_id ??
+          ''
+        ).toLowerCase().trim();
+        if ((pId && pId === targetTid) || (secId && secId === targetTid)) {
+          tidMatches.push(idx);
+        }
+      });
+      if (tidMatches.length === 1) {
+        set.add(tidMatches[0]);
+        return set;
+      }
+      if (tidMatches.length > 1) {
+        const timeRefined = tidMatches.filter((idx) => matchesTime(displaySessions[idx]));
+        (timeRefined.length > 0 ? timeRefined : tidMatches).forEach((idx) => set.add(idx));
+        return set;
+      }
+    }
+
+    // 3. Therapist Name match (handles full name vs first name on schedule header)
+    if (targetTName) {
+      const targetFirst = targetTName.split(/\s+/)[0];
+      const nameMatches: number[] = [];
+      displaySessions.forEach((s, idx) => {
+        const pName = String(s.therapistName ?? '').toLowerCase().trim();
+        const secName = String(s.secondaryTherapistName ?? '').toLowerCase().trim();
+        const pFirst = pName.split(/\s+/)[0];
+        const secFirst = secName.split(/\s+/)[0];
+        const isMatch =
+          (pName && (pName === targetTName || pName.startsWith(targetTName + ' ') || targetTName.startsWith(pName + ' ') || (targetFirst.length >= 2 && pFirst === targetFirst))) ||
+          (secName && (secName === targetTName || secName.startsWith(targetTName + ' ') || targetTName.startsWith(secName + ' ') || (targetFirst.length >= 2 && secFirst === targetFirst)));
+        if (isMatch) {
+          nameMatches.push(idx);
+        }
+      });
+      if (nameMatches.length === 1) {
+        set.add(nameMatches[0]);
+        return set;
+      }
+      if (nameMatches.length > 1) {
+        const timeRefined = nameMatches.filter((idx) => matchesTime(displaySessions[idx]));
+        (timeRefined.length > 0 ? timeRefined : nameMatches).forEach((idx) => set.add(idx));
+        return set;
+      }
+    }
+
+    // 4. Arrangement ID match (for Room Schedule)
+    if (targetArrId) {
+      const arrMatches: number[] = [];
+      displaySessions.forEach((s, idx) => {
+        const aId = String(
+          s.raw?.service_arrangement_id ??
+          (s.raw?.service_arrangement_data as any)?.id ??
+          (s.raw?.service_arrangement_data as any)?.arrangement_id ??
+          ''
+        ).toLowerCase().trim();
+        if (aId && aId === targetArrId) {
+          arrMatches.push(idx);
+        }
+      });
+      if (arrMatches.length === 1) {
+        set.add(arrMatches[0]);
+        return set;
+      }
+      if (arrMatches.length > 1) {
+        const timeRefined = arrMatches.filter((idx) => matchesTime(displaySessions[idx]));
+        (timeRefined.length > 0 ? timeRefined : arrMatches).forEach((idx) => set.add(idx));
+        return set;
+      }
+    }
+
+    // 5. Fallback to explicit sessionIndex or startTime
+    if (typeof lockContext.sessionIndex === 'number' && displaySessions[lockContext.sessionIndex]) {
+      set.add(lockContext.sessionIndex);
+      return set;
+    }
+    if (targetStartMin !== null) {
+      displaySessions.forEach((s, idx) => {
+        if (matchesTime(s)) set.add(idx);
+      });
+    }
+
+    return set;
+  }, [lockContext, displaySessions, booking.id]);
 
   const bookingDate = useMemo(() => {
     const raw = detail?.appointment_date || (booking as any)?.appointment_date || (booking as any)?.date || booking.appointment_start;
@@ -3067,23 +3209,31 @@ function BookingDetailPopupContent({
                   </div>
 
                   <div className="space-y-3">
-                    {displaySessions.map((sess) => (
+                    {displaySessions.map((sess, sessIdx) => {
+                      const isSessionLocked = unlockedSessionIndices.size > 0 && !unlockedSessionIndices.has(sessIdx);
+                      return (
                       <div
                         key={sess.id}
-                        role={sess.raw?.session_id ? 'button' : undefined}
-                        tabIndex={sess.raw?.session_id ? 0 : undefined}
-                        onClick={() => { if (sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
+                        role={!isSessionLocked && sess.raw?.session_id ? 'button' : undefined}
+                        tabIndex={!isSessionLocked && sess.raw?.session_id ? 0 : undefined}
+                        onClick={() => { if (!isSessionLocked && sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
+                        onKeyDown={(e) => { if (!isSessionLocked && e.key === 'Enter' && sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
+                        title={isSessionLocked ? `Locked — open from ${sess.therapistName}'s schedule block to manage this session` : undefined}
                         className={cn(
-                          'flex items-center justify-between gap-3 rounded-2xl border border-[#f4cfd3] bg-white p-3.5 sm:p-4 shadow-xs hover:border-[#e8b5bb] transition-colors',
-                          Boolean(sess.raw?.session_id) && 'cursor-pointer'
+                          'flex items-center justify-between gap-3 rounded-2xl border p-3.5 sm:p-4 shadow-xs transition-colors',
+                          isSessionLocked
+                            ? 'border-border/60 bg-muted/40 opacity-60 cursor-not-allowed select-none'
+                            : cn('border-[#f4cfd3] bg-white hover:border-[#e8b5bb]', Boolean(sess.raw?.session_id) && 'cursor-pointer')
                         )}
                       >
                         {/* Left: Number circle + Info */}
                         <div className="flex min-w-0 items-center gap-3">
                           {/* Solid Circular Badge */}
-                          <span className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-[#b85d63] text-sm font-bold text-white shadow-xs">
-                            {sess.number}
+                          <span className={cn(
+                            'grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full text-sm font-bold text-white shadow-xs',
+                            isSessionLocked ? 'bg-slate-400 dark:bg-slate-600' : 'bg-[#b85d63]'
+                          )}>
+                            {isSessionLocked ? <Lock className="h-4 w-4" /> : sess.number}
                           </span>
 
                           <div className="min-w-0">
@@ -3105,6 +3255,12 @@ function BookingDetailPopupContent({
                               <span className="inline-flex items-center rounded-full bg-[#faebea] px-2.5 py-0.5 text-xs font-semibold text-[#b85d63]">
                                 {sess.roomName}
                               </span>
+                              {isSessionLocked && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-200/80 dark:bg-slate-800 px-2.5 py-0.5 text-[11px] font-bold text-slate-600 dark:text-slate-300 border border-slate-300/80 dark:border-slate-700">
+                                  <Lock className="h-3 w-3" />
+                                  Locked
+                                </span>
+                              )}
                             </div>
 
                             {/* Subtitle: User icon + Therapist name · Clock icon + Time (duration) */}
@@ -3152,12 +3308,19 @@ function BookingDetailPopupContent({
                           {(isUnpaidBooking || isPaidEditableBooking) && (
                             <button
                               type="button"
+                              disabled={isSessionLocked}
                               onClick={(e) => {
                                 e.stopPropagation();
+                                if (isSessionLocked) return;
                                 setEditingSessionIndex(sess.number - 1);
                               }}
-                              title={isPaidEditableBooking ? 'Change service (same price only)' : 'Edit session services'}
-                              className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary hover:bg-primary/20 hover:scale-105 active:scale-95 transition cursor-pointer"
+                              title={isSessionLocked ? 'Session locked' : isPaidEditableBooking ? 'Change service (same price only)' : 'Edit session services'}
+                              className={cn(
+                                'grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-primary/10 text-primary transition',
+                                isSessionLocked
+                                  ? 'opacity-40 cursor-not-allowed pointer-events-none'
+                                  : 'hover:bg-primary/20 hover:scale-105 active:scale-95 cursor-pointer'
+                              )}
                             >
                               <Pencil className="h-4 w-4" />
                             </button>
@@ -3168,6 +3331,7 @@ function BookingDetailPopupContent({
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              if (isSessionLocked) return;
                               if (displaySessions.length > 1 && !isCancelled && !isCompleted) {
                                 const base = rawSessions.length > 0 ? rawSessions.map(s => ({ ...s })) : [{ ...(detail || {}), ...booking }];
                                 const filtered = base.filter((_, i) => i !== sess.number - 1);
@@ -3177,16 +3341,17 @@ function BookingDetailPopupContent({
                                 handleCancel();
                               }
                             }}
-                            disabled={displaySessions.length <= 1 && (!canShowCancel || isCancelled || isCompleted)}
-                            title={displaySessions.length > 1 ? 'Remove session' : (canShowCancel && !isCancelled && !isCompleted ? 'Cancel / Remove' : undefined)}
-                            className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-[#fdeeee] text-[#d9534f] hover:bg-rose-100 hover:text-red-700 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={isSessionLocked || (displaySessions.length <= 1 && (!canShowCancel || isCancelled || isCompleted))}
+                            title={isSessionLocked ? 'Session locked' : displaySessions.length > 1 ? 'Remove session' : (canShowCancel && !isCancelled && !isCompleted ? 'Cancel / Remove' : undefined)}
+                            className="grid h-8 w-8 sm:h-9 sm:w-9 shrink-0 place-items-center rounded-full bg-[#fdeeee] text-[#d9534f] hover:bg-rose-100 hover:text-red-700 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
                           )}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
 
                     {canAddSession && (
                       <button
