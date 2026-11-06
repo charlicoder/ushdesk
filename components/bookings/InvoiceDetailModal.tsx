@@ -52,6 +52,9 @@ export function InvoiceDetailModal({
   const [invoice, setInvoice] = useState<AnyRecord | null>(initialInvoice || null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [journalEntries, setJournalEntries] = useState<AnyRecord[]>([]);
+  const [journalLoading, setJournalLoading] = useState(false);
+  const [accountNames, setAccountNames] = useState<Record<string, string>>({});
 
   // Close on Escape
   useEffect(() => {
@@ -87,6 +90,50 @@ export function InvoiceDetailModal({
       cancelled = true;
     };
   }, [invoiceNumber]);
+
+  // Journal entries of this invoice: its own posting entry + any entry that references the invoice (e.g. payments)
+  const invoiceJournalEntryId = invoice?.journal_entry_id ? String(invoice.journal_entry_id) : '';
+  useEffect(() => {
+    if (!invoiceNumber || invoiceNumber === '—') return;
+    let cancelled = false;
+    setJournalLoading(true);
+    (async () => {
+      try {
+        const ids: string[] = invoiceJournalEntryId ? [invoiceJournalEntryId] : [];
+        try {
+          const r = await authedFetch(`/uanr/api/v1/journal-entries/?search=${encodeURIComponent(invoiceNumber)}&page_size=20`);
+          const res = await r.json().catch(() => ({}));
+          const items: AnyRecord[] = res?.data?.items ?? res?.items ?? (Array.isArray(res?.data) ? res.data : []);
+          for (const it of items) {
+            const id = String(it.id ?? '');
+            const related = it.name === invoiceNumber || it.reference === invoiceNumber || String(it.narration ?? '').includes(invoiceNumber);
+            if (id && related && !ids.includes(id)) ids.push(id);
+          }
+        } catch { /* list is optional */ }
+        const details = await Promise.all(ids.slice(0, 10).map(async (id) => {
+          try {
+            const r = await authedFetch(`/uanr/api/v1/journal-entries/${id}`);
+            const res = await r.json().catch(() => ({}));
+            return (res?.data ?? res) as AnyRecord;
+          } catch { return null; }
+        }));
+        const entries = details.filter((d): d is AnyRecord => Boolean(d && (d.id || d.name)));
+        if (cancelled) return;
+        setJournalEntries(entries);
+        try {
+          const ar = await authedFetch('/uanr/api/v1/accounts/?page_size=500');
+          const ares = await ar.json().catch(() => ({}));
+          const accs: AnyRecord[] = ares?.data?.items ?? ares?.items ?? (Array.isArray(ares?.data) ? ares.data : []);
+          const map: Record<string, string> = {};
+          for (const a of accs) map[String(a.id)] = [a.code, a.name].filter(Boolean).join(' · ');
+          if (!cancelled) setAccountNames(map);
+        } catch { /* names are cosmetic */ }
+      } finally {
+        if (!cancelled) setJournalLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [invoiceNumber, invoiceJournalEntryId]);
 
   const currency = invoice?.currency_code || invoice?.currency || bookingData?.currency || 'KWD';
   const totalAmount = parseFloat(String(invoice?.amount_total ?? invoice?.total_amount ?? invoice?.total ?? bookingData?.totalPrice ?? 0)) || 0;
@@ -126,8 +173,92 @@ export function InvoiceDetailModal({
     }
   };
 
+  const esc = (v: unknown) =>
+    String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
   const handlePrint = () => {
-    window.print();
+    const rows = invoiceLines.map((line: AnyRecord, idx: number) => {
+      const qty = parseFloat(String(line.quantity ?? 1)) || 1;
+      const unit = parseFloat(String(line.unit_price ?? line.price_unit ?? line.price ?? 0)) || 0;
+      const sub = parseFloat(String(line.subtotal ?? line.price_subtotal ?? unit * qty)) || 0;
+      return `<tr><td class="c">${idx + 1}</td><td><strong>${esc(line.name || line.product_name || `Item ${idx + 1}`)}</strong>${line.description ? `<div class="muted">${esc(line.description)}</div>` : ''}</td><td class="r">${qty}</td><td class="r">${fmt(unit)}</td><td class="r">${fmt(sub)}</td></tr>`;
+    }).join('');
+    const status = invoice?.state ? String(invoice.state).toUpperCase() : (isPaid ? 'PAID' : 'DRAFT');
+    const customer = invoice?.partner_name || bookingData?.customerName || 'Walk-in Client';
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoiceNumber)}</title>
+<style>
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #2d241e; font-size: 12px; margin: 0; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #5a3e36; padding-bottom: 14px; }
+  .brand h1 { margin: 0; font-size: 26px; letter-spacing: 1px; color: #5a3e36; }
+  .brand p { margin: 2px 0 0; color: #7a6a62; font-size: 11px; }
+  .title { text-align: right; }
+  .title h2 { margin: 0; font-size: 22px; letter-spacing: 2px; }
+  .title .no { font-family: monospace; font-size: 14px; font-weight: bold; margin-top: 4px; }
+  .badge { display: inline-block; margin-top: 6px; padding: 3px 12px; border-radius: 12px; border: 1px solid #2f9e6f; color: #2f9e6f; font-weight: bold; font-size: 11px; }
+  .grid { display: flex; gap: 24px; margin: 18px 0; }
+  .box { flex: 1; border: 1px solid #e3d9d3; border-radius: 8px; padding: 12px 14px; }
+  .box h3 { margin: 0 0 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: #7a6a62; }
+  .box .row { display: flex; justify-content: space-between; margin: 4px 0; gap: 12px; }
+  .muted { color: #7a6a62; font-size: 11px; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  th { background: #5a3e36; color: #fff; text-align: left; padding: 8px 10px; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  td { padding: 9px 10px; border-bottom: 1px solid #eee5e0; vertical-align: top; }
+  .r { text-align: right; } .c { text-align: center; width: 36px; }
+  .totals { width: 46%; margin-left: auto; margin-top: 14px; }
+  .totals .row { display: flex; justify-content: space-between; padding: 5px 0; }
+  .totals .grand { border-top: 2px solid #5a3e36; margin-top: 4px; padding-top: 8px; font-size: 15px; font-weight: bold; }
+  .foot { margin-top: 36px; border-top: 1px solid #e3d9d3; padding-top: 10px; text-align: center; color: #7a6a62; font-size: 11px; }
+</style></head><body>
+  <div class="top">
+    <div class="brand"><h1>USH SPA</h1><p>Spa &amp; Wellness Center</p></div>
+    <div class="title"><h2>TAX INVOICE</h2><div class="no">${esc(invoiceNumber || invoice?.name)}</div><span class="badge">${esc(status)}</span></div>
+  </div>
+  <div class="grid">
+    <div class="box"><h3>Billed To</h3>
+      <div><strong>${esc(customer)}</strong></div>
+      ${bookingData?.customerPhone ? `<div class="muted">${esc(bookingData.customerPhone)}</div>` : ''}
+      ${bookingData?.customerEmail ? `<div class="muted">${esc(bookingData.customerEmail)}</div>` : ''}
+    </div>
+    <div class="box"><h3>Invoice Details</h3>
+      <div class="row"><span>Issue Date</span><strong>${esc(fmtDate(invoice?.invoice_date || invoice?.date || bookingData?.paymentDate))}</strong></div>
+      <div class="row"><span>Due Date</span><strong>${esc(fmtDate(invoice?.due_date || invoice?.invoice_date || bookingData?.paymentDate))}</strong></div>
+      <div class="row"><span>Branch</span><strong>${esc(bookingData?.branchName || '—')}</strong></div>
+      <div class="row"><span>Booking Ref.</span><strong>${esc(bookingData?.bookingNumber || '—')}</strong></div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th class="c">#</th><th>Description</th><th class="r">Qty</th><th class="r">Unit Price (${esc(currency)})</th><th class="r">Amount (${esc(currency)})</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="totals">
+    <div class="row"><span>Subtotal (Untaxed)</span><span>${fmt(untaxedAmount)} ${esc(currency)}</span></div>
+    ${taxAmount > 0 ? `<div class="row"><span>Tax / VAT</span><span>${fmt(taxAmount)} ${esc(currency)}</span></div>` : ''}
+    <div class="row grand"><span>Total</span><span>${fmt(totalAmount)} ${esc(currency)}</span></div>
+    <div class="row"><span>Amount Paid</span><span>${fmt(amountPaid)} ${esc(currency)}</span></div>
+    <div class="row"><strong>Balance Due</strong><strong>${fmt(balanceDue)} ${esc(currency)}</strong></div>
+  </div>
+  ${(bookingData?.paymentProvider || bookingData?.paymentMethod || bookingData?.transactionId) ? `<div class="box" style="margin-top:18px"><h3>Payment</h3>
+    <div class="row"><span>Method</span><strong>${esc(bookingData?.paymentProvider || bookingData?.paymentMethod || '—')}</strong></div>
+    ${bookingData?.paymentNumber ? `<div class="row"><span>Payment No.</span><strong>${esc(bookingData.paymentNumber)}</strong></div>` : ''}
+    ${bookingData?.transactionId ? `<div class="row"><span>Transaction ID</span><strong>${esc(bookingData.transactionId)}</strong></div>` : ''}
+  </div>` : ''}
+  <div class="foot">Thank you for choosing USH Spa. This is a computer-generated invoice.</div>
+</body></html>`;
+
+    const frame = document.createElement('iframe');
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(frame);
+    const doc = frame.contentWindow?.document;
+    if (!doc || !frame.contentWindow) { document.body.removeChild(frame); return; }
+    doc.open(); doc.write(html); doc.close();
+    const win = frame.contentWindow;
+    setTimeout(() => {
+      win.focus();
+      win.print();
+      setTimeout(() => { if (frame.parentNode) frame.parentNode.removeChild(frame); }, 1500);
+    }, 250);
   };
 
   // Compile line items from invoice record or fallback to booking service + addons + extra minutes
@@ -417,6 +548,79 @@ export function InvoiceDetailModal({
               </div>
             </div>
           )}
+
+          {/* 5. Journal Entries */}
+          <div className="rounded-2xl border border-border/60 bg-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-border/40 bg-muted/30 flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Journal Entries</h4>
+              <span className="text-[11px] font-bold text-muted-foreground flex items-center gap-1.5">
+                {journalLoading && <Loader2 className="h-3 w-3 animate-spin" />}
+                {journalEntries.length} entr{journalEntries.length === 1 ? 'y' : 'ies'}
+              </span>
+            </div>
+            {journalEntries.length === 0 ? (
+              <p className="px-4 py-4 text-xs text-muted-foreground">
+                {journalLoading ? 'Loading journal entries…' : 'No journal entries found for this invoice.'}
+              </p>
+            ) : (
+              <div className="divide-y divide-border/40">
+                {journalEntries.map((entry, ei) => {
+                  const items: AnyRecord[] = entry.items ?? entry.lines ?? [];
+                  const dr = items.reduce((a, l) => a + (parseFloat(String(l.debit_amount ?? l.debit ?? 0)) || 0), 0);
+                  const cr = items.reduce((a, l) => a + (parseFloat(String(l.credit_amount ?? l.credit ?? 0)) || 0), 0);
+                  return (
+                    <div key={entry.id || ei} className="px-4 py-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <div className="min-w-0">
+                          <p className="font-mono font-bold text-foreground">{entry.name || 'Journal Entry'}</p>
+                          <p className="text-[11px] text-muted-foreground truncate">
+                            {fmtDate(entry.entry_date || entry.accounting_date)}{entry.reference ? ` · Ref: ${entry.reference}` : ''}
+                          </p>
+                        </div>
+                        <span className="rounded-full border border-border/60 bg-muted/40 px-2.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
+                          {String(entry.state || 'posted')}
+                        </span>
+                      </div>
+                      <table className="w-full text-left text-[11px]">
+                        <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          <tr>
+                            <th className="py-1.5">Account</th>
+                            <th className="py-1.5 text-right">Debit</th>
+                            <th className="py-1.5 text-right">Credit</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/30">
+                          {items.map((l, li) => {
+                            const d = parseFloat(String(l.debit_amount ?? l.debit ?? 0)) || 0;
+                            const c = parseFloat(String(l.credit_amount ?? l.credit ?? 0)) || 0;
+                            return (
+                              <tr key={l.id || li}>
+                                <td className="py-1.5 pr-2">
+                                  <p className="font-semibold text-foreground">
+                                    {l.account_name || accountNames[String(l.account_id)] || (l.account_id ? `${String(l.account_id).slice(0, 8)}…` : '—')}
+                                  </p>
+                                  {l.name && <p className="text-[10px] text-muted-foreground">{l.name}</p>}
+                                </td>
+                                <td className="py-1.5 text-right font-mono font-semibold">{d > 0 ? fmt(d) : '—'}</td>
+                                <td className="py-1.5 text-right font-mono font-semibold">{c > 0 ? fmt(c) : '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="border-t border-border/50 font-bold">
+                          <tr>
+                            <td className="py-1.5 text-right uppercase text-[10px] text-muted-foreground">Totals ({currency})</td>
+                            <td className="py-1.5 text-right font-mono">{fmt(dr)}</td>
+                            <td className="py-1.5 text-right font-mono">{fmt(cr)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Modal Footer Actions */}

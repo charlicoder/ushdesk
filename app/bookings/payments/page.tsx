@@ -25,6 +25,9 @@ import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { useAppSelector } from '@/store/hooks';
+import { BookingDetailModal } from '@/components/bookings/BookingDetailModal';
+import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import {
   DateRangeFilter,
   DateFilterActiveBadge,
@@ -479,6 +482,8 @@ function DetailRow({ label, value, mono = false, copyable = false, copyText }: {
 
 // ── Payment Detail Modal ───────────────────────────────────────────────────────
 function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => void }) {
+  const authToken = useAppSelector((st) => st.auth.token) ?? '';
+  const [detailView, setDetailView] = useState<'booking' | 'invoice' | null>(null);
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
@@ -489,6 +494,12 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      {detailView === 'booking' && payment.booking_id && (
+        <BookingDetailModal bookingId={payment.booking_id} token={authToken} onClose={() => setDetailView(null)} />
+      )}
+      {detailView === 'invoice' && payment.invoice_number && (
+        <InvoiceDetailModal invoiceNumber={payment.invoice_number} bookingData={{ customerName: payment.customer_name, customerPhone: payment.customer_mobile, bookingNumber: payment.booking_number, branchName: payment.branch_name, totalPrice: payment.invoice_value, currency: payment.currency }} onClose={() => setDetailView(null)} />
+      )}
 
       {/* Panel */}
       <div className="relative z-10 w-full max-w-3xl sm:max-w-4xl lg:max-w-[880px] max-h-[92vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden transition-all duration-200">
@@ -507,30 +518,28 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
                   </span>
                 )}
                 {payment.booking_number && (
-                  <a
-                    href={`/bookings?search=${encodeURIComponent(payment.booking_number)}`}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => setDetailView("booking")}
                     className="font-mono text-xs font-bold text-primary bg-primary/10 hover:bg-primary/20 px-2 py-0.5 rounded-md border border-primary/20 inline-flex items-center gap-1 transition"
                     title="View Booking"
                   >
                     <Calendar className="h-3 w-3" />
                     <span>{payment.booking_number}</span>
                     <ExternalLink className="h-2.5 w-2.5" />
-                  </a>
+                  </button>
                 )}
                 {payment.invoice_number && (
-                  <a
-                    href={`/finance/invoices?search=${encodeURIComponent(payment.invoice_number)}`}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => setDetailView("invoice")}
                     className="font-mono text-xs font-bold text-foreground bg-muted hover:bg-muted/80 px-2 py-0.5 rounded-md border border-border/50 inline-flex items-center gap-1 transition"
                     title="View Invoice in Accounting"
                   >
                     <Receipt className="h-3 w-3 text-primary" />
                     <span>{payment.invoice_number}</span>
                     <ExternalLink className="h-2.5 w-2.5 text-muted-foreground" />
-                  </a>
+                  </button>
                 )}
               </div>
               <p className="text-xs text-muted-foreground">{payment.customer_mobile}</p>
@@ -590,15 +599,14 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
                 label="Booking Number"
                 value={
                   payment.booking_number ? (
-                    <a
-                      href={`/bookings?search=${encodeURIComponent(payment.booking_number)}`}
+                    <button
+                      type="button"
+                      onClick={() => setDetailView("booking")}
                       className="font-mono font-bold text-primary hover:underline inline-flex items-center gap-1.5"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       {payment.booking_number}
                       <ExternalLink className="h-3 w-3" />
-                    </a>
+                    </button>
                   ) : payment.booking_id ? (
                     shortId(payment.booking_id)
                   ) : (
@@ -613,15 +621,14 @@ function PaymentModal({ payment, onClose }: { payment: Payment; onClose: () => v
                 label="Invoice Number"
                 value={
                   payment.invoice_number ? (
-                    <a
-                      href={`/finance/invoices?search=${encodeURIComponent(payment.invoice_number)}`}
+                    <button
+                      type="button"
+                      onClick={() => setDetailView("invoice")}
                       className="font-mono font-bold text-primary hover:underline inline-flex items-center gap-1.5"
-                      target="_blank"
-                      rel="noreferrer"
                     >
                       {payment.invoice_number}
                       <ExternalLink className="h-3 w-3" />
-                    </a>
+                    </button>
                   ) : (
                     '—'
                   )
