@@ -78,7 +78,7 @@ export function Sidebar() {
     bookings:     pathname.startsWith('/bookings'),
     appointments: pathname.startsWith('/appointments'),
     finance:      pathname.startsWith('/finance'),
-    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services') || pathname.startsWith('/employees') || pathname.startsWith('/feedback'),
+    ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services') || pathname.startsWith('/courses') || pathname.startsWith('/employees') || pathname.startsWith('/feedback'),
     vendors:      pathname.startsWith('/vendors'),
   });
 
@@ -109,6 +109,7 @@ export function Sidebar() {
         { href: '/employees/working-hours', label: 'Working Hours',    icon: Clock,       permission: PERMISSIONS.USHSPA_WORKING_HOURS },
         { href: '/products',                label: t('navProducts'),   icon: Package,     permission: PERMISSIONS.USHSPA_PRODUCTS },
         { href: '/services',                label: t('navServices'),   icon: Sparkles,    permission: PERMISSIONS.USHSPA_SERVICES },
+        { href: '/courses',                 label: t('navCourses'),    icon: Layers,      permission: PERMISSIONS.USHSPA_COURSES },
         { href: '/feedback',                label: 'Feedback',         icon: Star,        permission: PERMISSIONS.USHSPA_FEEDBACK },
       ],
     },
@@ -118,10 +119,11 @@ export function Sidebar() {
       icon: BookOpen,
       permission: PERMISSIONS.BOOKINGS,
       children: [
-        { href: '/bookings',          label: 'Booking List',    icon: List,       permission: PERMISSIONS.BOOKINGS_BOOKING_LIST },
-        { href: '/bookings/payments', label: 'Payments',        icon: CreditCard, permission: PERMISSIONS.BOOKINGS_PAYMENTS },
-        { href: '/bookings/refunds',  label: 'Refunds',         icon: RotateCcw,  permission: PERMISSIONS.BOOKINGS_REFUNDS },
-        { href: '/bookings/reports',  label: 'Booking Reports', icon: PieChart,   permission: PERMISSIONS.BOOKINGS_BOOKING_REPORT },
+        { href: '/bookings',                      label: 'Booking List',         icon: List,       permission: PERMISSIONS.BOOKINGS_BOOKING_LIST },
+        { href: '/bookings/course-subscriptions', label: t('navCourseSubscriptions'), icon: BookMarked, permission: PERMISSIONS.BOOKINGS_COURSE_SUBSCRIPTIONS },
+        { href: '/bookings/payments',             label: 'Payments',             icon: CreditCard, permission: PERMISSIONS.BOOKINGS_PAYMENTS },
+        { href: '/bookings/refunds',              label: 'Refunds',              icon: RotateCcw,  permission: PERMISSIONS.BOOKINGS_REFUNDS },
+        { href: '/bookings/reports',              label: 'Booking Reports',      icon: PieChart,   permission: PERMISSIONS.BOOKINGS_BOOKING_REPORT },
       ],
     },
     {

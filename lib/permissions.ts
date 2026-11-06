@@ -30,17 +30,18 @@ export const PERMISSIONS = {
   APPOINTMENTS_GIFT_VOUCHER_REPORT:        'deskmenu.appointments.gift_voucher.report',
 
   // ── Bookings submenus ────────────────────────────────────────────────────────
-  BOOKINGS_BOOKING_LIST:   'deskmenu.bookings.booking_list',
-  BOOKINGS_PAYMENTS:       'deskmenu.bookings.payments',
-  BOOKINGS_REFUNDS:        'deskmenu.bookings.refunds',
-  BOOKINGS_BOOKING_REPORT: 'deskmenu.bookings.booking_report',
-  BOOKINGS_DISCOUNT:       'deskmenu.bookings.discount',
-  BOOKINGS_RESCHEDULE:     'deskmenu.bookings.reschedule',
-  BOOKINGS_CANCEL:         'deskmenu.bookings.cancel',
-  BOOKINGS_MAKE_PAYMENT:   'deskmenu.bookings.make_payment',
-  BOOKINGS_ADVANCE_STATUS: 'deskmenu.bookings.advance_status',
-  BOOKINGS_NO_SHOW:        'deskmenu.bookings.no_show',
-  BOOKINGS_PRINT_RECEIPT:  'deskmenu.bookings.print_receipt',
+  BOOKINGS_BOOKING_LIST:         'deskmenu.bookings.booking_list',
+  BOOKINGS_COURSE_SUBSCRIPTIONS: 'deskmenu.bookings.course_subscriptions',
+  BOOKINGS_PAYMENTS:             'deskmenu.bookings.payments',
+  BOOKINGS_REFUNDS:              'deskmenu.bookings.refunds',
+  BOOKINGS_BOOKING_REPORT:       'deskmenu.bookings.booking_report',
+  BOOKINGS_DISCOUNT:             'deskmenu.bookings.discount',
+  BOOKINGS_RESCHEDULE:           'deskmenu.bookings.reschedule',
+  BOOKINGS_CANCEL:               'deskmenu.bookings.cancel',
+  BOOKINGS_MAKE_PAYMENT:         'deskmenu.bookings.make_payment',
+  BOOKINGS_ADVANCE_STATUS:       'deskmenu.bookings.advance_status',
+  BOOKINGS_NO_SHOW:              'deskmenu.bookings.no_show',
+  BOOKINGS_PRINT_RECEIPT:        'deskmenu.bookings.print_receipt',
 
   // ── UshSpa submenus ──────────────────────────────────────────────────────────
   USHSPA_BRANCHES:          'deskmenu.ushspa.branches',
@@ -54,6 +55,8 @@ export const PERMISSIONS = {
   USHSPA_WORKING_HOURS:     'deskmenu.ushspa.working_hours',
   USHSPA_PRODUCTS:          'deskmenu.ushspa.products',
   USHSPA_SERVICES:          'deskmenu.ushspa.services',
+  USHSPA_COURSES:           'deskmenu.ushspa.courses',
+  USHSPA_COURSES_EDIT:      'deskmenu.ushspa.courses.edit',
   USHSPA_FEEDBACK:          'deskmenu.ushspa.feedback',
 
   // ── Finance submenus ─────────────────────────────────────────────────────────
@@ -701,6 +704,42 @@ export function hasPermission(
   if (isAdministratorRole(roleInfo, user)) return true;
   if (isRefundsAndFinancePermittedRole(roleInfo, user) && isRefundsOrFinancePermission(permission)) {
     return true;
+  }
+  if (permission === PERMISSIONS.USHSPA_COURSES) {
+    if (isSpaDirectorRole(roleInfo, user) || isBranchManagerRole(roleInfo, user)) return true;
+    return (
+      permissions.includes(PERMISSIONS.USHSPA_COURSES) ||
+      permissions.includes('courses.list') ||
+      permissions.includes('courses.view') ||
+      permissions.includes(PERMISSIONS.USHSPA_SERVICES)
+    );
+  }
+  if (permission === PERMISSIONS.USHSPA_COURSES_EDIT) {
+    if (isSpaDirectorRole(roleInfo, user) || isBranchManagerRole(roleInfo, user)) return true;
+    return (
+      permissions.includes(PERMISSIONS.USHSPA_COURSES_EDIT) ||
+      permissions.includes('courses.create') ||
+      permissions.includes('courses.update') ||
+      permissions.includes(PERMISSIONS.USHSPA_SERVICES)
+    );
+  }
+  if (permission === PERMISSIONS.BOOKINGS_COURSE_SUBSCRIPTIONS) {
+    if (
+      isSpaDirectorRole(roleInfo, user) ||
+      isBranchManagerRole(roleInfo, user) ||
+      isReceptionistRole(roleInfo, user) ||
+      isCallCenterAgentRole(roleInfo, user)
+    ) {
+      return true;
+    }
+    return (
+      permissions.includes(PERMISSIONS.BOOKINGS_COURSE_SUBSCRIPTIONS) ||
+      permissions.includes('course_subscriptions.view') ||
+      permissions.includes('course_subscriptions.sell') ||
+      permissions.includes('course_subscriptions.redeem') ||
+      permissions.includes(PERMISSIONS.BOOKINGS_BOOKING_LIST) ||
+      permissions.includes(PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER)
+    );
   }
   return permissions.includes(permission);
 }
