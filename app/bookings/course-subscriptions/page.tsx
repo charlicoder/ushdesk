@@ -14,7 +14,6 @@ import {
   RefreshCw,
   CheckCircle2,
   Clock,
-  XCircle,
   AlertCircle,
   CreditCard,
   Link2,
@@ -30,6 +29,19 @@ import {
   Sparkles,
   Receipt,
 } from 'lucide-react';
+
+// Brand palette (#543C30)
+const B = {
+  espresso: '#543C30',
+  espressoHover: '#6b4f41',
+  linen: '#dbcdc2',
+  blush: '#daccc1',
+  bg: '#faf7f5',
+  cardBg: '#ffffff',
+  textMain: '#2c1a12',
+  textMuted: '#8a6f63',
+  pillBg: '#f2ede9',
+} as const;
 
 const STATUS_BADGES: Record<string, { label: string; className: string }> = {
   active: {
@@ -472,12 +484,17 @@ function CourseSubscriptionsContent() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#2C241D] text-[#C5A059] flex items-center justify-center shadow-sm">
-            <BookMarked className="w-5 h-5" />
+          <div
+            className="w-10 h-10 rounded-xl text-white flex items-center justify-center shadow-sm"
+            style={{ background: B.espresso }}
+          >
+            <BookMarked className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-[#2C241D]">Course Subscriptions</h1>
-            <p className="text-sm text-[#6E6259]">
+            <h1 className="text-2xl font-bold" style={{ color: B.textMain }}>
+              Course Subscriptions
+            </h1>
+            <p className="text-sm" style={{ color: B.textMuted }}>
               Sell courses, confirm desk payments, track session balances, and book redemption sessions
             </p>
           </div>
@@ -486,16 +503,25 @@ function CourseSubscriptionsContent() {
         <div className="flex items-center gap-2.5">
           <button
             onClick={loadSubscriptions}
-            className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm font-medium text-[#2C241D] hover:bg-[#FAF8F5] flex items-center gap-2 transition-colors"
+            className="px-3.5 py-2.5 rounded-xl border bg-white text-sm font-medium hover:bg-[#faf7f5] flex items-center gap-2 transition-colors cursor-pointer"
+            style={{ borderColor: B.linen, color: B.espresso }}
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+              style={{ color: B.espresso }}
+            />
             Refresh
           </button>
           <Link
             href="/courses"
-            className="px-4 py-2.5 rounded-xl border border-[#C5A059]/40 bg-[#C5A059]/10 text-[#7C5E24] text-sm font-semibold hover:bg-[#C5A059]/20 flex items-center gap-2 transition-colors"
+            className="px-4 py-2.5 rounded-xl border text-sm font-semibold flex items-center gap-2 transition-colors"
+            style={{
+              borderColor: B.linen,
+              background: B.pillBg,
+              color: B.espresso,
+            }}
           >
-            <Layers className="w-4 h-4" />
+            <Layers className="w-4 h-4" style={{ color: B.espresso }} />
             Course Catalog
           </Link>
           <button
@@ -506,9 +532,10 @@ function CourseSubscriptionsContent() {
               }
               setSellModalOpen(true);
             }}
-            className="px-4 py-2.5 rounded-xl bg-[#2C241D] text-white text-sm font-semibold hover:bg-[#3F342A] flex items-center gap-2 shadow-sm transition-colors"
+            className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+            style={{ background: B.espresso }}
           >
-            <Plus className="w-4 h-4 text-[#C5A059]" />
+            <Plus className="w-4 h-4 text-white" />
             Sell Course
           </button>
         </div>
@@ -516,68 +543,116 @@ function CourseSubscriptionsContent() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-2xl p-5 border border-[#E5E0D8] shadow-sm">
+        <div
+          className="bg-white rounded-2xl p-5 border shadow-sm"
+          style={{ borderColor: B.linen }}
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#8C7D70]">
+            <span
+              className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: B.textMuted }}
+            >
               Total Subscriptions
             </span>
-            <BookMarked className="w-4 h-4 text-[#C5A059]" />
+            <BookMarked className="w-4 h-4" style={{ color: B.espresso }} />
           </div>
-          <p className="text-2xl font-bold text-[#2C241D] mt-2">{stats.total}</p>
-          <p className="text-xs text-[#6E6259] mt-1">All sold course packages</p>
+          <p className="text-2xl font-bold mt-2" style={{ color: B.textMain }}>
+            {stats.total}
+          </p>
+          <p className="text-xs mt-1" style={{ color: B.textMuted }}>
+            All sold course packages
+          </p>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 border border-[#E5E0D8] shadow-sm">
+        <div
+          className="bg-white rounded-2xl p-5 border shadow-sm"
+          style={{ borderColor: B.linen }}
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#8C7D70]">
+            <span
+              className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: B.textMuted }}
+            >
               Active Subscriptions
             </span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            <CheckCircle2 className="w-4 h-4" style={{ color: B.espresso }} />
           </div>
-          <p className="text-2xl font-bold text-emerald-700 mt-2">{stats.active}</p>
-          <p className="text-xs text-[#6E6259] mt-1">Ready for session redemption</p>
+          <p className="text-2xl font-bold mt-2" style={{ color: B.espresso }}>
+            {stats.active}
+          </p>
+          <p className="text-xs mt-1" style={{ color: B.textMuted }}>
+            Ready for session redemption
+          </p>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 border border-[#E5E0D8] shadow-sm">
+        <div
+          className="bg-white rounded-2xl p-5 border shadow-sm"
+          style={{ borderColor: B.linen }}
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#8C7D70]">
+            <span
+              className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: B.textMuted }}
+            >
               Pending Payment
             </span>
-            <Clock className="w-4 h-4 text-amber-600" />
+            <Clock className="w-4 h-4" style={{ color: B.espresso }} />
           </div>
-          <p className="text-2xl font-bold text-amber-700 mt-2">{stats.pending}</p>
-          <p className="text-xs text-[#6E6259] mt-1">Awaiting desk POS or payment link</p>
+          <p className="text-2xl font-bold mt-2" style={{ color: B.textMain }}>
+            {stats.pending}
+          </p>
+          <p className="text-xs mt-1" style={{ color: B.textMuted }}>
+            Awaiting desk POS or payment link
+          </p>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 border border-[#E5E0D8] shadow-sm">
+        <div
+          className="bg-white rounded-2xl p-5 border shadow-sm"
+          style={{ borderColor: B.linen }}
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-[#8C7D70]">
+            <span
+              className="text-xs font-semibold uppercase tracking-wider"
+              style={{ color: B.textMuted }}
+            >
               Available Sessions
             </span>
-            <Sparkles className="w-4 h-4 text-[#C5A059]" />
+            <Sparkles className="w-4 h-4" style={{ color: B.espresso }} />
           </div>
-          <p className="text-2xl font-bold text-[#2C241D] mt-2">{stats.totalAvailableSessions}</p>
-          <p className="text-xs text-[#6E6259] mt-1">Unredeemed sessions across active packages</p>
+          <p className="text-2xl font-bold mt-2" style={{ color: B.textMain }}>
+            {stats.totalAvailableSessions}
+          </p>
+          <p className="text-xs mt-1" style={{ color: B.textMuted }}>
+            Unredeemed sessions across active packages
+          </p>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-2xl p-4 border border-[#E5E0D8] shadow-sm flex flex-col md:flex-row items-stretch md:items-center gap-3">
+      <div
+        className="bg-white rounded-2xl p-4 border shadow-sm flex flex-col md:flex-row items-stretch md:items-center gap-3"
+        style={{ borderColor: B.linen }}
+      >
         <div className="relative flex-1">
-          <Search className="w-4 h-4 text-[#8C7D70] absolute left-3.5 top-1/2 -translate-y-1/2" />
+          <Search
+            className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2"
+            style={{ color: B.espresso }}
+          />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by subscription #, course name, service, or code..."
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+            className="w-full pl-10 pr-4 py-2.5 rounded-xl border text-sm focus:outline-none"
+            style={{ borderColor: B.linen, color: B.textMain }}
           />
         </div>
 
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+          className="px-3.5 py-2.5 rounded-xl border bg-white text-sm focus:outline-none"
+          style={{ borderColor: B.linen, color: B.textMain }}
         >
           <option value="all">All Statuses</option>
           <option value="active">Active</option>
@@ -592,7 +667,8 @@ function CourseSubscriptionsContent() {
         <select
           value={courseFilter}
           onChange={(e) => setCourseFilter(e.target.value)}
-          className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+          className="px-3.5 py-2.5 rounded-xl border bg-white text-sm focus:outline-none"
+          style={{ borderColor: B.linen, color: B.textMain }}
         >
           <option value="all">All Courses</option>
           {courses.map((c) => (
@@ -611,29 +687,39 @@ function CourseSubscriptionsContent() {
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-sm overflow-hidden">
+      <div
+        className="bg-white rounded-2xl border shadow-sm overflow-hidden"
+        style={{ borderColor: B.linen }}
+      >
         {loading ? (
-          <div className="p-12 text-center text-[#6E6259] flex flex-col items-center gap-3">
-            <Loader2 className="w-7 h-7 animate-spin text-[#C5A059]" />
+          <div
+            className="p-12 text-center flex flex-col items-center gap-3"
+            style={{ color: B.textMuted }}
+          >
+            <Loader2 className="w-7 h-7 animate-spin" style={{ color: B.espresso }} />
             <span className="text-sm">Loading course subscriptions...</span>
           </div>
         ) : subscriptions.length === 0 ? (
           <div className="p-12 text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-[#FAF8F5] border border-[#E5E0D8] flex items-center justify-center mx-auto text-[#8C7D70]">
+            <div
+              className="w-12 h-12 rounded-2xl border flex items-center justify-center mx-auto"
+              style={{ background: B.bg, borderColor: B.linen, color: B.espresso }}
+            >
               <BookMarked className="w-6 h-6" />
             </div>
-            <h3 className="text-base font-semibold text-[#2C241D]">
+            <h3 className="text-base font-semibold" style={{ color: B.textMain }}>
               No course subscriptions found
             </h3>
-            <p className="text-xs text-[#6E6259] max-w-md mx-auto">
+            <p className="text-xs max-w-md mx-auto" style={{ color: B.textMuted }}>
               Sell a course package to a customer to start tracking prepaid sessions and booking
               zero-due course redemptions.
             </p>
             <button
               onClick={() => setSellModalOpen(true)}
-              className="mt-2 px-4 py-2 rounded-xl bg-[#2C241D] text-white text-xs font-semibold hover:bg-[#3F342A] inline-flex items-center gap-1.5"
+              className="mt-2 px-4 py-2 rounded-xl text-white text-xs font-semibold hover:opacity-95 inline-flex items-center gap-1.5 cursor-pointer"
+              style={{ background: B.espresso }}
             >
-              <Plus className="w-4 h-4 text-[#C5A059]" />
+              <Plus className="w-4 h-4 text-white" />
               Sell Course Package
             </button>
           </div>
@@ -641,7 +727,14 @@ function CourseSubscriptionsContent() {
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="bg-[#FAF8F5] border-b border-[#E5E0D8] text-[11px] font-semibold uppercase tracking-wider text-[#8C7D70]">
+                <tr
+                  className="border-b text-[11px] font-semibold uppercase tracking-wider"
+                  style={{
+                    background: B.bg,
+                    borderColor: B.linen,
+                    color: B.textMuted,
+                  }}
+                >
                   <th className="py-3.5 px-4">Subscription #</th>
                   <th className="py-3.5 px-4">Customer</th>
                   <th className="py-3.5 px-4">Course & Service</th>
@@ -652,7 +745,7 @@ function CourseSubscriptionsContent() {
                   <th className="py-3.5 px-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#E5E0D8] text-sm">
+              <tbody className="divide-y text-sm" style={{ borderColor: B.linen }}>
                 {subscriptions.map((sub) => {
                   const effStatus = sub.effective_status || sub.status;
                   const badge = STATUS_BADGES[effStatus] || {
@@ -667,22 +760,24 @@ function CourseSubscriptionsContent() {
 
                   const canConfirm =
                     sub.status === 'payment_pending' || sub.status === 'payment_failed';
-                  const canRedeem = Boolean(sub.is_redeemable) || (effStatus === 'active' && avail > 0);
+                  const canRedeem =
+                    Boolean(sub.is_redeemable) || (effStatus === 'active' && avail > 0);
                   const canRefund =
                     (sub.status === 'active' || sub.status === 'expired') &&
                     used === 0 &&
                     reserved === 0;
 
                   return (
-                    <tr key={sub.id} className="hover:bg-[#FAF8F5]/60 transition-colors">
+                    <tr key={sub.id} className="hover:bg-[#faf7f5]/80 transition-colors">
                       <td className="py-4 px-4">
                         <button
                           onClick={() => openDetailModal(sub)}
-                          className="font-mono text-xs font-bold text-[#2C241D] hover:text-[#C5A059] underline decoration-dotted"
+                          className="font-mono text-xs font-bold underline decoration-dotted cursor-pointer"
+                          style={{ color: B.espresso }}
                         >
                           {sub.subscription_number}
                         </button>
-                        <div className="text-[11px] text-[#8C7D70] mt-0.5">
+                        <div className="text-[11px] mt-0.5" style={{ color: B.textMuted }}>
                           {sub.purchased_at
                             ? new Date(sub.purchased_at).toLocaleDateString()
                             : ''}
@@ -690,27 +785,30 @@ function CourseSubscriptionsContent() {
                       </td>
 
                       <td className="py-4 px-4">
-                        <div className="font-semibold text-[#2C241D]">
+                        <div className="font-semibold" style={{ color: B.textMain }}>
                           {formatCustomerName(sub)}
                         </div>
                         {sub.customer_data?.phone_number && (
-                          <div className="text-xs text-[#6E6259]">
+                          <div className="text-xs" style={{ color: B.textMuted }}>
                             {sub.customer_data.phone_number}
                           </div>
                         )}
                       </td>
 
                       <td className="py-4 px-4">
-                        <div className="font-medium text-[#2C241D]">
+                        <div className="font-medium" style={{ color: B.textMain }}>
                           {sub.course_name}{' '}
-                          <span className="font-mono text-xs text-[#8C7D70]">
+                          <span className="font-mono text-xs" style={{ color: B.textMuted }}>
                             ({sub.course_code})
                           </span>
                         </div>
-                        <div className="text-xs text-[#6E6259] flex items-center gap-1.5 mt-0.5">
+                        <div
+                          className="text-xs flex items-center gap-1.5 mt-0.5"
+                          style={{ color: B.textMuted }}
+                        >
                           <span>{sub.service_name}</span>
                           <span>·</span>
-                          <span className="text-[#7C5E24] font-medium">
+                          <span className="font-semibold" style={{ color: B.espresso }}>
                             {ARRANGEMENT_LABELS[sub.arrangement_type] || sub.arrangement_type}
                           </span>
                         </div>
@@ -718,33 +816,36 @@ function CourseSubscriptionsContent() {
 
                       <td className="py-4 px-4 min-w-[160px]">
                         <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="font-semibold text-[#2C241D]">
+                          <span className="font-semibold" style={{ color: B.textMain }}>
                             {avail} / {total} left
                           </span>
-                          <span className="text-[#8C7D70]">
+                          <span style={{ color: B.textMuted }}>
                             {used} used{reserved > 0 ? `, ${reserved} booked` : ''}
                           </span>
                         </div>
-                        <div className="w-full h-2 rounded-full bg-[#E5E0D8] overflow-hidden">
+                        <div
+                          className="w-full h-2 rounded-full overflow-hidden"
+                          style={{ background: B.linen }}
+                        >
                           <div
-                            className="h-full bg-[#C5A059] transition-all"
-                            style={{ width: `${usedPct}%` }}
+                            className="h-full transition-all"
+                            style={{ width: `${usedPct}%`, background: B.espresso }}
                           />
                         </div>
                       </td>
 
                       <td className="py-4 px-4">
-                        <div className="font-bold text-[#2C241D]">
+                        <div className="font-bold" style={{ color: B.textMain }}>
                           {Number(sub.price || 0).toFixed(3)} {sub.currency || 'KWD'}
                         </div>
                         {sub.invoice_number && (
-                          <div className="text-[11px] font-mono text-[#6E6259]">
+                          <div className="text-[11px] font-mono" style={{ color: B.textMuted }}>
                             {sub.invoice_number}
                           </div>
                         )}
                       </td>
 
-                      <td className="py-4 px-4 text-xs text-[#4A3F35]">
+                      <td className="py-4 px-4 text-xs" style={{ color: B.textMain }}>
                         {sub.expires_at ? (
                           <div>
                             <div>Exp: {new Date(sub.expires_at).toLocaleDateString()}</div>
@@ -755,7 +856,7 @@ function CourseSubscriptionsContent() {
                             )}
                           </div>
                         ) : (
-                          <span className="text-[#8C7D70]">Upon activation</span>
+                          <span style={{ color: B.textMuted }}>Upon activation</span>
                         )}
                       </td>
 
@@ -772,10 +873,11 @@ function CourseSubscriptionsContent() {
                           {canRedeem && (
                             <button
                               onClick={() => setRedeemSub(sub)}
-                              className="px-2.5 py-1.5 rounded-lg bg-[#2C241D] text-white hover:bg-[#3F342A] text-xs font-semibold inline-flex items-center gap-1 transition-colors"
+                              className="px-2.5 py-1.5 rounded-lg text-white hover:opacity-95 text-xs font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer"
+                              style={{ background: B.espresso }}
                               title="Book a session using this course"
                             >
-                              <CalendarPlus className="w-3.5 h-3.5 text-[#C5A059]" />
+                              <CalendarPlus className="w-3.5 h-3.5 text-white" />
                               Book Session
                             </button>
                           )}
@@ -792,10 +894,11 @@ function CourseSubscriptionsContent() {
                                   setActionError(null);
                                   setConfirmPaymentSub(sub);
                                 }}
-                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 text-xs font-semibold inline-flex items-center gap-1 transition-colors"
+                                className="px-2.5 py-1.5 rounded-lg text-white hover:opacity-95 text-xs font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer"
+                                style={{ background: B.espresso }}
                                 title="Confirm Desk Payment"
                               >
-                                <CreditCard className="w-3.5 h-3.5" />
+                                <CreditCard className="w-3.5 h-3.5 text-white" />
                                 Pay
                               </button>
                               <button
@@ -804,10 +907,11 @@ function CourseSubscriptionsContent() {
                                   setGeneratedPaymentUrl(sub.payment_url || null);
                                   setPaymentLinkSub(sub);
                                 }}
-                                className="p-1.5 rounded-lg border border-[#E5E0D8] text-[#2C241D] hover:bg-[#FAF8F5]"
+                                className="p-1.5 rounded-lg border hover:bg-[#faf7f5] cursor-pointer"
+                                style={{ borderColor: B.linen, color: B.espresso }}
                                 title="Payment Link"
                               >
-                                <Link2 className="w-4 h-4" />
+                                <Link2 className="w-4 h-4" style={{ color: B.espresso }} />
                               </button>
                               <button
                                 onClick={() => {
@@ -815,10 +919,11 @@ function CourseSubscriptionsContent() {
                                   setCancelReason('');
                                   setCancelSub(sub);
                                 }}
-                                className="p-1.5 rounded-lg text-red-600 hover:bg-red-50"
+                                className="p-1.5 rounded-lg border hover:bg-[#faf7f5] cursor-pointer"
+                                style={{ borderColor: B.linen, color: B.espresso }}
                                 title="Cancel Unpaid Subscription"
                               >
-                                <Ban className="w-4 h-4" />
+                                <Ban className="w-4 h-4" style={{ color: B.espresso }} />
                               </button>
                             </>
                           )}
@@ -830,19 +935,21 @@ function CourseSubscriptionsContent() {
                                 setRefundForm({ reason: '', refund_method: 'knet' });
                                 setRefundSub(sub);
                               }}
-                              className="p-1.5 rounded-lg text-purple-600 hover:bg-purple-50"
+                              className="p-1.5 rounded-lg border hover:bg-[#faf7f5] cursor-pointer"
+                              style={{ borderColor: B.linen, color: B.espresso }}
                               title="Refund Unused Course"
                             >
-                              <RotateCcw className="w-4 h-4" />
+                              <RotateCcw className="w-4 h-4" style={{ color: B.espresso }} />
                             </button>
                           )}
 
                           <button
                             onClick={() => openDetailModal(sub)}
-                            className="p-1.5 rounded-lg text-[#6E6259] hover:text-[#2C241D] hover:bg-[#FAF8F5]"
+                            className="p-1.5 rounded-lg border hover:bg-[#faf7f5] cursor-pointer"
+                            style={{ borderColor: B.linen, color: B.espresso }}
                             title="View Details & Session History"
                           >
-                            <Eye className="w-4 h-4" />
+                            <Eye className="w-4 h-4" style={{ color: B.espresso }} />
                           </button>
                         </div>
                       </td>
@@ -858,28 +965,42 @@ function CourseSubscriptionsContent() {
       {/* SELL COURSE MODAL */}
       {sellModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#2C241D] to-[#43362B] text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-xl overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[#C5A059]/20 border border-[#C5A059]/40 flex items-center justify-center">
-                  <BookMarked className="w-5 h-5 text-[#C5A059]" />
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <BookMarked className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold">Sell Course Subscription</h3>
-                  <p className="text-xs text-white/70">
+                  <h3 className="text-base font-extrabold text-white">Sell Course Subscription</h3>
+                  <p className="text-xs" style={{ color: B.linen }}>
                     Assign a course package to a customer and collect payment at desk or via link
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setSellModalOpen(false)}
-                className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10"
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSellSubmit} className="p-6 space-y-4 max-h-[82vh] overflow-y-auto">
+            <form
+              onSubmit={handleSellSubmit}
+              className="p-6 space-y-4 max-h-[82vh] overflow-y-auto"
+              style={{ background: B.bg }}
+            >
               {sellError && (
                 <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -890,13 +1011,19 @@ function CourseSubscriptionsContent() {
               {/* Customer Picker */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-[#4A3F35]">Customer *</label>
+                  <label
+                    className="text-xs font-extrabold uppercase tracking-wider"
+                    style={{ color: B.espresso }}
+                  >
+                    Customer *
+                  </label>
                   <button
                     type="button"
                     onClick={() => setCreateCustomerOpen(true)}
-                    className="text-xs font-semibold text-[#7C5E24] hover:underline inline-flex items-center gap-1"
+                    className="text-xs font-bold hover:underline inline-flex items-center gap-1 cursor-pointer"
+                    style={{ color: B.espresso }}
                   >
-                    <UserPlus className="w-3.5 h-3.5" />
+                    <UserPlus className="w-3.5 h-3.5" style={{ color: B.espresso }} />
                     + New Customer
                   </button>
                 </div>
@@ -905,12 +1032,14 @@ function CourseSubscriptionsContent() {
                   value={customerSearch}
                   onChange={(e) => setCustomerSearch(e.target.value)}
                   placeholder="Filter customer by name or phone..."
-                  className="w-full px-3.5 py-2 mb-2 rounded-xl border border-[#E5E0D8] text-xs text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                  className="w-full px-3.5 py-2 mb-2 rounded-xl border bg-white text-xs focus:outline-none"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 />
                 <select
                   value={sellForm.customer_id}
                   onChange={(e) => setSellForm((p) => ({ ...p, customer_id: e.target.value }))}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm focus:outline-none"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                   required
                 >
                   <option value="">Select Customer...</option>
@@ -929,13 +1058,17 @@ function CourseSubscriptionsContent() {
 
               {/* Course Picker */}
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1.5">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1.5"
+                  style={{ color: B.espresso }}
+                >
                   Course Package *
                 </label>
                 <select
                   value={sellForm.course_id}
                   onChange={(e) => setSellForm((p) => ({ ...p, course_id: e.target.value }))}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm focus:outline-none"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                   required
                 >
                   <option value="">Select Active Course...</option>
@@ -949,31 +1082,39 @@ function CourseSubscriptionsContent() {
               </div>
 
               {selectedSellCourse && (
-                <div className="bg-[#FAF8F5] rounded-xl p-4 border border-[#E5E0D8] text-xs space-y-1.5">
+                <div
+                  className="rounded-xl p-4 border text-xs space-y-1.5"
+                  style={{ background: B.cardBg, borderColor: B.linen }}
+                >
                   <div className="flex justify-between">
-                    <span className="text-[#6E6259]">Locked Service</span>
-                    <span className="font-semibold text-[#2C241D]">
+                    <span style={{ color: B.textMuted }}>Locked Service</span>
+                    <span className="font-semibold" style={{ color: B.textMain }}>
                       {selectedSellCourse.service?.name || 'Service'} (
                       {selectedSellCourse.service?.duration_minutes || 60} mins)
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#6E6259]">Room Arrangement</span>
-                    <span className="font-semibold text-[#7C5E24]">
+                    <span style={{ color: B.textMuted }}>Room Arrangement</span>
+                    <span className="font-semibold" style={{ color: B.espresso }}>
                       {ARRANGEMENT_LABELS[selectedSellCourse.arrangement_type] ||
                         selectedSellCourse.arrangement_type}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-[#6E6259]">Sessions & Validity</span>
-                    <span className="font-semibold text-[#2C241D]">
+                    <span style={{ color: B.textMuted }}>Sessions & Validity</span>
+                    <span className="font-semibold" style={{ color: B.textMain }}>
                       {selectedSellCourse.total_sessions} sessions · Valid for{' '}
                       {selectedSellCourse.validity_days} days
                     </span>
                   </div>
-                  <div className="flex justify-between pt-1 border-t border-[#E5E0D8]">
-                    <span className="text-[#6E6259] font-semibold">Total Package Price</span>
-                    <span className="text-sm font-bold text-[#2C241D]">
+                  <div
+                    className="flex justify-between pt-1 border-t"
+                    style={{ borderColor: B.linen }}
+                  >
+                    <span className="font-semibold" style={{ color: B.textMuted }}>
+                      Total Package Price
+                    </span>
+                    <span className="text-sm font-bold" style={{ color: B.espresso }}>
                       {Number(selectedSellCourse.price || 0).toFixed(3)}{' '}
                       {selectedSellCourse.currency || 'KWD'}
                     </span>
@@ -986,17 +1127,20 @@ function CourseSubscriptionsContent() {
                 <button
                   type="button"
                   onClick={() => setSellForm((p) => ({ ...p, payment_option: 'pay_at_desk' }))}
-                  className={`p-3.5 rounded-xl border text-left transition-all ${
-                    sellForm.payment_option === 'pay_at_desk'
-                      ? 'border-[#C5A059] bg-[#C5A059]/10 text-[#2C241D]'
-                      : 'border-[#E5E0D8] bg-white text-[#6E6259]'
-                  }`}
+                  className="p-3.5 rounded-xl border text-left transition-all cursor-pointer"
+                  style={{
+                    borderColor:
+                      sellForm.payment_option === 'pay_at_desk' ? B.espresso : B.linen,
+                    background:
+                      sellForm.payment_option === 'pay_at_desk' ? B.blush : B.cardBg,
+                    color: B.textMain,
+                  }}
                 >
                   <div className="flex items-center gap-2 font-semibold text-sm">
-                    <CreditCard className="w-4 h-4 text-[#C5A059]" />
+                    <CreditCard className="w-4 h-4" style={{ color: B.espresso }} />
                     Pay at Desk
                   </div>
-                  <p className="text-[11px] text-[#6E6259] mt-1">
+                  <p className="text-[11px] mt-1" style={{ color: B.textMuted }}>
                     Collect via KNET POS, Cash, or Card right now
                   </p>
                 </button>
@@ -1004,17 +1148,20 @@ function CourseSubscriptionsContent() {
                 <button
                   type="button"
                   onClick={() => setSellForm((p) => ({ ...p, payment_option: 'payment_link' }))}
-                  className={`p-3.5 rounded-xl border text-left transition-all ${
-                    sellForm.payment_option === 'payment_link'
-                      ? 'border-[#C5A059] bg-[#C5A059]/10 text-[#2C241D]'
-                      : 'border-[#E5E0D8] bg-white text-[#6E6259]'
-                  }`}
+                  className="p-3.5 rounded-xl border text-left transition-all cursor-pointer"
+                  style={{
+                    borderColor:
+                      sellForm.payment_option === 'payment_link' ? B.espresso : B.linen,
+                    background:
+                      sellForm.payment_option === 'payment_link' ? B.blush : B.cardBg,
+                    color: B.textMain,
+                  }}
                 >
                   <div className="flex items-center gap-2 font-semibold text-sm">
-                    <Link2 className="w-4 h-4 text-[#C5A059]" />
+                    <Link2 className="w-4 h-4" style={{ color: B.espresso }} />
                     Send Payment Link
                   </div>
-                  <p className="text-[11px] text-[#6E6259] mt-1">
+                  <p className="text-[11px] mt-1" style={{ color: B.textMuted }}>
                     Generate online payment link (MyFatoorah / Tap)
                   </p>
                 </button>
@@ -1022,7 +1169,10 @@ function CourseSubscriptionsContent() {
 
               {sellForm.payment_option === 'payment_link' && (
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Payment Gateway
                   </label>
                   <select
@@ -1033,7 +1183,8 @@ function CourseSubscriptionsContent() {
                         payment_gateway: e.target.value as 'myfatoorah' | 'tap' | 'deema',
                       }))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
+                    style={{ borderColor: B.linen, color: B.textMain }}
                   >
                     <option value="myfatoorah">MyFatoorah</option>
                     <option value="tap">Tap Payments</option>
@@ -1043,7 +1194,10 @@ function CourseSubscriptionsContent() {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   Notes (Optional)
                 </label>
                 <textarea
@@ -1051,22 +1205,28 @@ function CourseSubscriptionsContent() {
                   value={sellForm.notes}
                   onChange={(e) => setSellForm((p) => ({ ...p, notes: e.target.value }))}
                   placeholder="Optional sale remarks..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D]"
+                  className="w-full px-3.5 py-2 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 />
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E5E0D8]">
+              <div
+                className="flex items-center justify-end gap-3 pt-3 border-t"
+                style={{ borderColor: B.linen }}
+              >
                 <button
                   type="button"
                   onClick={() => setSellModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-[#E5E0D8] text-sm font-medium text-[#6E6259]"
+                  className="px-4 py-2.5 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={sellSubmitting}
-                  className="px-5 py-2.5 rounded-xl bg-[#2C241D] text-white text-sm font-semibold hover:bg-[#3F342A] disabled:opacity-50 flex items-center gap-2"
+                  className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                  style={{ background: B.espresso }}
                 >
                   {sellSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
                   {sellForm.payment_option === 'pay_at_desk'
@@ -1082,13 +1242,24 @@ function CourseSubscriptionsContent() {
       {/* CONFIRM DESK PAYMENT MODAL */}
       {confirmPaymentSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-md overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#2C241D] to-[#43362B] text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-2.5">
-                <CreditCard className="w-5 h-5 text-[#C5A059]" />
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <CreditCard className="w-5 h-5 text-white" />
+                </div>
                 <div>
-                  <h3 className="text-base font-semibold">Confirm Desk Payment</h3>
-                  <p className="text-xs text-white/70">
+                  <h3 className="text-base font-extrabold text-white">Confirm Desk Payment</h3>
+                  <p className="text-xs" style={{ color: B.linen }}>
                     {confirmPaymentSub.subscription_number} ·{' '}
                     {Number(confirmPaymentSub.price || 0).toFixed(3)}{' '}
                     {confirmPaymentSub.currency || 'KWD'}
@@ -1097,13 +1268,18 @@ function CourseSubscriptionsContent() {
               </div>
               <button
                 onClick={() => setConfirmPaymentSub(null)}
-                className="p-1.5 rounded-lg text-white/70 hover:text-white"
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleConfirmPayment} className="p-6 space-y-4">
+            <form
+              onSubmit={handleConfirmPayment}
+              className="p-6 space-y-4"
+              style={{ background: B.bg }}
+            >
               {actionError && (
                 <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">
                   {actionError}
@@ -1111,7 +1287,10 @@ function CourseSubscriptionsContent() {
               )}
 
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   Payment Provider *
                 </label>
                 <select
@@ -1119,7 +1298,8 @@ function CourseSubscriptionsContent() {
                   onChange={(e) =>
                     setConfirmForm((p) => ({ ...p, payment_provider: e.target.value }))
                   }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   <option value="knet_pos">KNET POS Terminal</option>
                   <option value="other">Cash / Manual</option>
@@ -1129,7 +1309,10 @@ function CourseSubscriptionsContent() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   Payment Method *
                 </label>
                 <select
@@ -1137,7 +1320,8 @@ function CourseSubscriptionsContent() {
                   onChange={(e) =>
                     setConfirmForm((p) => ({ ...p, payment_method: e.target.value }))
                   }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   <option value="knet">KNET</option>
                   <option value="cash">Cash</option>
@@ -1146,7 +1330,10 @@ function CourseSubscriptionsContent() {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   POS Receipt / Transaction Reference
                 </label>
                 <input
@@ -1156,7 +1343,8 @@ function CourseSubscriptionsContent() {
                     setConfirmForm((p) => ({ ...p, transaction_reference: e.target.value }))
                   }
                   placeholder="e.g. POS-984120"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D]"
+                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 />
               </div>
 
@@ -1164,14 +1352,16 @@ function CourseSubscriptionsContent() {
                 <button
                   type="button"
                   onClick={() => setConfirmPaymentSub(null)}
-                  className="px-4 py-2 rounded-xl border border-[#E5E0D8] text-sm text-[#6E6259]"
+                  className="px-4 py-2 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   Later
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-5 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
+                  className="px-5 py-2 rounded-xl text-white text-sm font-semibold hover:opacity-95 disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                  style={{ background: B.espresso }}
                 >
                   {actionLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                   Confirm & Activate Course
@@ -1185,13 +1375,26 @@ function CourseSubscriptionsContent() {
       {/* PAYMENT LINK MODAL */}
       {paymentLinkSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-md overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#2C241D] to-[#43362B] text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-2.5">
-                <Link2 className="w-5 h-5 text-[#C5A059]" />
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <Link2 className="w-5 h-5 text-white" />
+                </div>
                 <div>
-                  <h3 className="text-base font-semibold">Course Payment Link</h3>
-                  <p className="text-xs text-white/70">{paymentLinkSub.subscription_number}</p>
+                  <h3 className="text-base font-extrabold text-white">Course Payment Link</h3>
+                  <p className="text-xs" style={{ color: B.linen }}>
+                    {paymentLinkSub.subscription_number}
+                  </p>
                 </div>
               </div>
               <button
@@ -1199,13 +1402,14 @@ function CourseSubscriptionsContent() {
                   setPaymentLinkSub(null);
                   setGeneratedPaymentUrl(null);
                 }}
-                className="p-1.5 rounded-lg text-white/70 hover:text-white"
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4" style={{ background: B.bg }}>
               {actionError && (
                 <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">
                   {actionError}
@@ -1214,7 +1418,10 @@ function CourseSubscriptionsContent() {
 
               {generatedPaymentUrl ? (
                 <div className="space-y-3">
-                  <label className="block text-xs font-semibold text-[#4A3F35]">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider"
+                    style={{ color: B.espresso }}
+                  >
                     Shareable Payment Link
                   </label>
                   <div className="flex items-center gap-2">
@@ -1222,7 +1429,8 @@ function CourseSubscriptionsContent() {
                       type="text"
                       readOnly
                       value={generatedPaymentUrl}
-                      className="flex-1 px-3 py-2 rounded-xl border border-[#E5E0D8] bg-[#FAF8F5] text-xs font-mono text-[#2C241D]"
+                      className="flex-1 px-3 py-2 rounded-xl border bg-white text-xs font-mono"
+                      style={{ borderColor: B.linen, color: B.textMain }}
                     />
                     <button
                       type="button"
@@ -1231,9 +1439,10 @@ function CourseSubscriptionsContent() {
                         setCopiedUrl(true);
                         setTimeout(() => setCopiedUrl(false), 2000);
                       }}
-                      className="px-3 py-2 rounded-xl bg-[#2C241D] text-white text-xs font-semibold flex items-center gap-1"
+                      className="px-3 py-2 rounded-xl text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                      style={{ background: B.espresso }}
                     >
-                      <Copy className="w-3.5 h-3.5" />
+                      <Copy className="w-3.5 h-3.5 text-white" />
                       {copiedUrl ? 'Copied!' : 'Copy'}
                     </button>
                   </div>
@@ -1242,13 +1451,17 @@ function CourseSubscriptionsContent() {
 
               <form onSubmit={handleGeneratePaymentLink} className="space-y-3 pt-2">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Gateway
                   </label>
                   <select
                     value={paymentLinkGateway}
                     onChange={(e) => setPaymentLinkGateway(e.target.value)}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
+                    style={{ borderColor: B.linen, color: B.textMain }}
                   >
                     <option value="myfatoorah">MyFatoorah</option>
                     <option value="tap">Tap Payments</option>
@@ -1263,14 +1476,16 @@ function CourseSubscriptionsContent() {
                       setPaymentLinkSub(null);
                       setGeneratedPaymentUrl(null);
                     }}
-                    className="px-4 py-2 rounded-xl border border-[#E5E0D8] text-sm text-[#6E6259]"
+                    className="px-4 py-2 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
+                    style={{ borderColor: B.linen, color: B.textMain }}
                   >
                     Close
                   </button>
                   <button
                     type="submit"
                     disabled={actionLoading}
-                    className="px-4 py-2 rounded-xl bg-[#2C241D] text-white text-sm font-semibold flex items-center gap-2"
+                    className="px-4 py-2 rounded-xl text-white text-sm font-semibold flex items-center gap-2 cursor-pointer"
+                    style={{ background: B.espresso }}
                   >
                     {actionLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                     {generatedPaymentUrl ? 'Regenerate Link' : 'Generate Payment Link'}
@@ -1285,26 +1500,48 @@ function CourseSubscriptionsContent() {
       {/* CANCEL SUBSCRIPTION MODAL */}
       {cancelSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-md overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-red-900 text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-2.5">
-                <Ban className="w-5 h-5" />
-                <h3 className="text-base font-semibold">
-                  Cancel Unpaid Subscription ({cancelSub.subscription_number})
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <Ban className="w-5 h-5 text-white" />
+                </div>
+                <h3 className="text-base font-extrabold text-white">
+                  Cancel Subscription ({cancelSub.subscription_number})
                 </h3>
               </div>
-              <button onClick={() => setCancelSub(null)} className="text-white/70 hover:text-white">
-                <X className="w-5 h-5" />
+              <button
+                onClick={() => setCancelSub(null)}
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <form onSubmit={handleCancelSubscription} className="p-6 space-y-4">
+            <form
+              onSubmit={handleCancelSubscription}
+              className="p-6 space-y-4"
+              style={{ background: B.bg }}
+            >
               {actionError && (
                 <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">
                   {actionError}
                 </div>
               )}
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   Cancellation Reason
                 </label>
                 <textarea
@@ -1312,21 +1549,24 @@ function CourseSubscriptionsContent() {
                   value={cancelReason}
                   onChange={(e) => setCancelReason(e.target.value)}
                   placeholder="Reason for cancelling..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-[#E5E0D8] text-sm"
+                  className="w-full px-3.5 py-2 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 />
               </div>
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setCancelSub(null)}
-                  className="px-4 py-2 rounded-xl border border-[#E5E0D8] text-sm"
+                  className="px-4 py-2 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   Back
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 flex items-center gap-2"
+                  className="px-4 py-2 rounded-xl text-white text-sm font-semibold hover:opacity-95 flex items-center gap-2 cursor-pointer"
+                  style={{ background: B.espresso }}
                 >
                   {actionLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                   Confirm Cancel
@@ -1340,33 +1580,55 @@ function CourseSubscriptionsContent() {
       {/* REFUND SUBSCRIPTION MODAL */}
       {refundSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-md overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-[#2C241D] text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-2.5">
-                <RotateCcw className="w-5 h-5 text-[#C5A059]" />
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <RotateCcw className="w-5 h-5 text-white" />
+                </div>
                 <div>
-                  <h3 className="text-base font-semibold">Full Course Refund</h3>
-                  <p className="text-xs text-white/70">
+                  <h3 className="text-base font-extrabold text-white">Full Course Refund</h3>
+                  <p className="text-xs" style={{ color: B.linen }}>
                     {refundSub.subscription_number} ·{' '}
                     {Number(refundSub.price || 0).toFixed(3)} {refundSub.currency || 'KWD'}
                   </p>
                 </div>
               </div>
-              <button onClick={() => setRefundSub(null)} className="text-white/70 hover:text-white">
-                <X className="w-5 h-5" />
+              <button
+                onClick={() => setRefundSub(null)}
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
+              >
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <form onSubmit={handleRefundSubscription} className="p-6 space-y-4">
+            <form
+              onSubmit={handleRefundSubscription}
+              className="p-6 space-y-4"
+              style={{ background: B.bg }}
+            >
               {actionError && (
                 <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs">
                   {actionError}
                 </div>
               )}
-              <p className="text-xs text-[#6E6259]">
+              <p className="text-xs" style={{ color: B.textMuted }}>
                 Full refunds are permitted only when 0 sessions have been used or reserved.
               </p>
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   Refund Method *
                 </label>
                 <select
@@ -1374,7 +1636,8 @@ function CourseSubscriptionsContent() {
                   onChange={(e) =>
                     setRefundForm((p) => ({ ...p, refund_method: e.target.value }))
                   }
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm"
+                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   <option value="knet">KNET</option>
                   <option value="cash">Cash</option>
@@ -1383,7 +1646,10 @@ function CourseSubscriptionsContent() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                <label
+                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                  style={{ color: B.espresso }}
+                >
                   Refund Reason *
                 </label>
                 <textarea
@@ -1392,21 +1658,24 @@ function CourseSubscriptionsContent() {
                   value={refundForm.reason}
                   onChange={(e) => setRefundForm((p) => ({ ...p, reason: e.target.value }))}
                   placeholder="Enter reason for refund..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-[#E5E0D8] text-sm"
+                  className="w-full px-3.5 py-2 rounded-xl border bg-white text-sm"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 />
               </div>
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setRefundSub(null)}
-                  className="px-4 py-2 rounded-xl border border-[#E5E0D8] text-sm"
+                  className="px-4 py-2 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={actionLoading}
-                  className="px-4 py-2 rounded-xl bg-purple-700 text-white text-sm font-semibold hover:bg-purple-800 flex items-center gap-2"
+                  className="px-4 py-2 rounded-xl text-white text-sm font-semibold hover:opacity-95 flex items-center gap-2 cursor-pointer"
+                  style={{ background: B.espresso }}
                 >
                   {actionLoading && <Loader2 className="w-4 h-4 animate-spin" />}
                   Process Full Refund
@@ -1420,66 +1689,107 @@ function CourseSubscriptionsContent() {
       {/* DETAIL & SESSION USAGES MODAL */}
       {detailSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-3xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#2C241D] to-[#43362B] text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-3xl overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[#C5A059]/20 border border-[#C5A059]/40 flex items-center justify-center">
-                  <Receipt className="w-5 h-5 text-[#C5A059]" />
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <Receipt className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold">
+                  <h3 className="text-base font-extrabold text-white">
                     Subscription {detailSub.subscription_number}
                   </h3>
-                  <p className="text-xs text-white/70">
-                    {detailSub.course_name} ({detailSub.course_code}) · {formatCustomerName(detailSub)}
+                  <p className="text-xs" style={{ color: B.linen }}>
+                    {detailSub.course_name} ({detailSub.course_code}) ·{' '}
+                    {formatCustomerName(detailSub)}
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setDetailSub(null)}
-                className="p-1.5 rounded-lg text-white/70 hover:text-white"
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 space-y-5 max-h-[82vh] overflow-y-auto">
+            <div
+              className="p-6 space-y-5 max-h-[82vh] overflow-y-auto"
+              style={{ background: B.bg }}
+            >
               {/* Top summary grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E5E0D8]">
-                  <span className="text-[11px] font-semibold uppercase text-[#8C7D70]">
+                <div
+                  className="bg-white p-3.5 rounded-xl border"
+                  style={{ borderColor: B.linen }}
+                >
+                  <span
+                    className="text-[11px] font-semibold uppercase"
+                    style={{ color: B.textMuted }}
+                  >
                     Status
                   </span>
-                  <p className="text-sm font-bold text-[#2C241D] mt-1 capitalize">
+                  <p
+                    className="text-sm font-bold mt-1 capitalize"
+                    style={{ color: B.textMain }}
+                  >
                     {(detailSub.effective_status || detailSub.status || '').replace('_', ' ')}
                   </p>
                 </div>
-                <div className="bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E5E0D8]">
-                  <span className="text-[11px] font-semibold uppercase text-[#8C7D70]">
+                <div
+                  className="bg-white p-3.5 rounded-xl border"
+                  style={{ borderColor: B.linen }}
+                >
+                  <span
+                    className="text-[11px] font-semibold uppercase"
+                    style={{ color: B.textMuted }}
+                  >
                     Sessions Balance
                   </span>
-                  <p className="text-sm font-bold text-emerald-700 mt-1">
+                  <p className="text-sm font-bold mt-1" style={{ color: B.espresso }}>
                     {detailSub.available_sessions} / {detailSub.total_sessions} available
                   </p>
                 </div>
-                <div className="bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E5E0D8]">
-                  <span className="text-[11px] font-semibold uppercase text-[#8C7D70]">
+                <div
+                  className="bg-white p-3.5 rounded-xl border"
+                  style={{ borderColor: B.linen }}
+                >
+                  <span
+                    className="text-[11px] font-semibold uppercase"
+                    style={{ color: B.textMuted }}
+                  >
                     Price & Invoice
                   </span>
-                  <p className="text-sm font-bold text-[#2C241D] mt-1">
+                  <p className="text-sm font-bold mt-1" style={{ color: B.textMain }}>
                     {Number(detailSub.price || 0).toFixed(3)} {detailSub.currency || 'KWD'}
                   </p>
                   {detailSub.invoice_number && (
-                    <p className="text-[11px] font-mono text-[#6E6259]">
+                    <p className="text-[11px] font-mono" style={{ color: B.textMuted }}>
                       {detailSub.invoice_number}
                     </p>
                   )}
                 </div>
-                <div className="bg-[#FAF8F5] p-3.5 rounded-xl border border-[#E5E0D8]">
-                  <span className="text-[11px] font-semibold uppercase text-[#8C7D70]">
+                <div
+                  className="bg-white p-3.5 rounded-xl border"
+                  style={{ borderColor: B.linen }}
+                >
+                  <span
+                    className="text-[11px] font-semibold uppercase"
+                    style={{ color: B.textMuted }}
+                  >
                     Expires At
                   </span>
-                  <p className="text-sm font-bold text-[#2C241D] mt-1">
+                  <p className="text-sm font-bold mt-1" style={{ color: B.textMain }}>
                     {detailSub.expires_at
                       ? new Date(detailSub.expires_at).toLocaleDateString()
                       : 'Pending Activation'}
@@ -1490,22 +1800,35 @@ function CourseSubscriptionsContent() {
               {/* Session Usages Table */}
               <div>
                 <div className="flex items-center justify-between mb-2.5">
-                  <h4 className="text-sm font-bold text-[#2C241D]">
+                  <h4 className="text-sm font-bold" style={{ color: B.textMain }}>
                     Session Redemption History
                   </h4>
                   {detailLoading && (
-                    <span className="text-xs text-[#8C7D70] flex items-center gap-1">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span
+                      className="text-xs flex items-center gap-1"
+                      style={{ color: B.textMuted }}
+                    >
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: B.espresso }} />
                       Refreshing sessions...
                     </span>
                   )}
                 </div>
 
                 {Array.isArray(detailSub.sessions) && detailSub.sessions.length > 0 ? (
-                  <div className="border border-[#E5E0D8] rounded-xl overflow-hidden">
+                  <div
+                    className="bg-white border rounded-xl overflow-hidden"
+                    style={{ borderColor: B.linen }}
+                  >
                     <table className="w-full text-left border-collapse text-xs">
                       <thead>
-                        <tr className="bg-[#FAF8F5] border-b border-[#E5E0D8] text-[#8C7D70] uppercase">
+                        <tr
+                          className="border-b uppercase"
+                          style={{
+                            background: B.bg,
+                            borderColor: B.linen,
+                            color: B.textMuted,
+                          }}
+                        >
                           <th className="py-2.5 px-3">#</th>
                           <th className="py-2.5 px-3">Booking #</th>
                           <th className="py-2.5 px-3">Appointment</th>
@@ -1514,38 +1837,39 @@ function CourseSubscriptionsContent() {
                           <th className="py-2.5 px-3">Session Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-[#E5E0D8]">
+                      <tbody className="divide-y" style={{ borderColor: B.linen }}>
                         {detailSub.sessions.map((s: Record<string, any>) => (
                           <tr key={s.id}>
-                            <td className="py-2.5 px-3 font-bold text-[#2C241D]">
+                            <td className="py-2.5 px-3 font-bold" style={{ color: B.textMain }}>
                               #{s.session_number}
                             </td>
-                            <td className="py-2.5 px-3 font-mono font-semibold text-[#2C241D]">
+                            <td
+                              className="py-2.5 px-3 font-mono font-semibold"
+                              style={{ color: B.espresso }}
+                            >
                               {s.booking_number || s.booking_id}
                             </td>
-                            <td className="py-2.5 px-3 text-[#4A3F35]">
+                            <td className="py-2.5 px-3" style={{ color: B.textMain }}>
                               {s.appointment_start
                                 ? new Date(s.appointment_start).toLocaleString()
                                 : '—'}
                             </td>
-                            <td className="py-2.5 px-3 text-[#4A3F35]">
+                            <td className="py-2.5 px-3" style={{ color: B.textMain }}>
                               {s.branch_name || '—'}
                               {s.service_arrangement_name
                                 ? ` · ${s.service_arrangement_name}`
                                 : ''}
                             </td>
-                            <td className="py-2.5 px-3 text-[#4A3F35]">
+                            <td className="py-2.5 px-3" style={{ color: B.textMain }}>
                               {s.therapist_name || '—'}
                             </td>
                             <td className="py-2.5 px-3">
                               <span
-                                className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
-                                  s.status === 'consumed'
-                                    ? 'bg-emerald-50 text-emerald-700'
-                                    : s.status === 'reserved'
-                                    ? 'bg-amber-50 text-amber-700'
-                                    : 'bg-gray-100 text-gray-600'
-                                }`}
+                                className="px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                                style={{
+                                  background: B.pillBg,
+                                  color: B.espresso,
+                                }}
                               >
                                 {s.status}
                               </span>
@@ -1556,13 +1880,19 @@ function CourseSubscriptionsContent() {
                     </table>
                   </div>
                 ) : (
-                  <div className="p-6 rounded-xl border border-[#E5E0D8] bg-[#FAF8F5] text-center text-xs text-[#6E6259]">
+                  <div
+                    className="p-6 rounded-xl border bg-white text-center text-xs"
+                    style={{ borderColor: B.linen, color: B.textMuted }}
+                  >
                     No sessions have been booked or redeemed from this subscription yet.
                   </div>
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-3 border-t border-[#E5E0D8]">
+              <div
+                className="flex items-center justify-between pt-3 border-t"
+                style={{ borderColor: B.linen }}
+              >
                 <div className="flex items-center gap-2">
                   {(detailSub.is_redeemable ||
                     ((detailSub.effective_status || detailSub.status) === 'active' &&
@@ -1574,9 +1904,10 @@ function CourseSubscriptionsContent() {
                         setDetailSub(null);
                         setRedeemSub(target);
                       }}
-                      className="px-4 py-2 rounded-xl bg-[#2C241D] text-white text-xs font-semibold hover:bg-[#3F342A] inline-flex items-center gap-1.5"
+                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold hover:opacity-95 inline-flex items-center gap-1.5 cursor-pointer"
+                      style={{ background: B.espresso }}
                     >
-                      <CalendarPlus className="w-4 h-4 text-[#C5A059]" />
+                      <CalendarPlus className="w-4 h-4 text-white" />
                       Book & Redeem Session
                     </button>
                   )}
@@ -1584,7 +1915,8 @@ function CourseSubscriptionsContent() {
                 <button
                   type="button"
                   onClick={() => setDetailSub(null)}
-                  className="px-4 py-2 rounded-xl border border-[#E5E0D8] text-xs font-medium text-[#6E6259]"
+                  className="px-4 py-2 rounded-xl border bg-white text-xs font-semibold cursor-pointer"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   Close
                 </button>
@@ -1634,8 +1966,8 @@ export default function CourseSubscriptionsPage() {
     <DashboardShell>
       <Suspense
         fallback={
-          <div className="p-12 text-center text-[#6E6259] flex flex-col items-center gap-3">
-            <Loader2 className="w-7 h-7 animate-spin text-[#C5A059]" />
+          <div className="p-12 text-center text-[#8a6f63] flex flex-col items-center gap-3">
+            <Loader2 className="w-7 h-7 animate-spin text-[#543C30]" />
             <span className="text-sm">Loading course subscriptions...</span>
           </div>
         }
@@ -1645,4 +1977,3 @@ export default function CourseSubscriptionsPage() {
     </DashboardShell>
   );
 }
-
