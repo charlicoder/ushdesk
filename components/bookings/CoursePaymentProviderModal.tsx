@@ -745,3 +745,4 @@ export function CoursePaymentProviderModal({
     </div>
   );
 }
+

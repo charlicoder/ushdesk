@@ -23,6 +23,11 @@ import {
   Loader2,
   X,
   Calculator,
+  Eye,
+  Users,
+  Phone,
+  User,
+  ExternalLink,
 } from 'lucide-react';
 
 interface CourseItem {
@@ -84,6 +89,20 @@ const ARRANGEMENT_LABELS: Record<string, string> = Object.fromEntries(
   ARRANGEMENT_OPTIONS.map((o) => [o.value, o.label])
 );
 
+function formatDate(d?: string | null): string {
+  if (!d) return '—';
+  try {
+    const date = new Date(d);
+    return date.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return String(d).slice(0, 10);
+  }
+}
+
 export default function CoursesPage() {
   const { can } = usePermissions();
   const canEdit = can(PERMISSIONS.USHSPA_COURSES_EDIT) || can(PERMISSIONS.USHSPA_COURSES);
@@ -107,6 +126,14 @@ export default function CoursesPage() {
   const [sellModalOpen, setSellModalOpen] = useState(false);
   const [sellingCourse, setSellingCourse] = useState<CourseItem | null>(null);
 
+  // Subscriptions Count & Customers modal state
+  const [subCounts, setSubCounts] = useState<Record<string, number>>({});
+  const [customersModalOpen, setCustomersModalOpen] = useState(false);
+  const [selectedCourseForCustomers, setSelectedCourseForCustomers] = useState<CourseItem | null>(null);
+  const [courseSubscriptions, setCourseSubscriptions] = useState<Record<string, any>[]>([]);
+  const [loadingCourseSubs, setLoadingCourseSubs] = useState(false);
+  const [customerSearch, setCustomerSearch] = useState('');
+
   const [formData, setFormData] = useState({
     code: '',
     name_en: '',
@@ -127,9 +154,10 @@ export default function CoursesPage() {
     setLoading(true);
     setError(null);
     try {
-      const [coursesRes, servicesRes] = await Promise.all([
+      const [coursesRes, servicesRes, subsRes] = await Promise.all([
         authedFetch('/api/v1/courses?all=true'),
         authedFetch('/api/v1/services'),
+        authedFetch('/booknpay/api/v1/course-subscriptions/?page_size=1000').catch(() => null),
       ]);
 
       const coursesJson = await coursesRes.json().catch(() => ({}));
@@ -157,6 +185,23 @@ export default function CoursesPage() {
         ? servicesJson
         : [];
 
+      if (subsRes && subsRes.ok) {
+        const subsJson = await subsRes.json().catch(() => ({}));
+        const rawSubs: Record<string, any>[] = Array.isArray(subsJson?.results)
+          ? subsJson.results
+          : Array.isArray(subsJson?.data)
+          ? subsJson.data
+          : Array.isArray(subsJson)
+          ? subsJson
+          : [];
+        const counts: Record<string, number> = {};
+        for (const s of rawSubs) {
+          const cid = String(s.course_id || '');
+          if (cid) counts[cid] = (counts[cid] || 0) + 1;
+        }
+        setSubCounts(counts);
+      }
+
       setCourses(courseList);
       setServices(serviceList);
     } catch (err: unknown) {
@@ -165,6 +210,49 @@ export default function CoursesPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleViewCustomers = async (course: CourseItem) => {
+    setSelectedCourseForCustomers(course);
+    setCustomersModalOpen(true);
+    setCustomerSearch('');
+    setLoadingCourseSubs(true);
+    try {
+      const res = await authedFetch(
+        `/booknpay/api/v1/course-subscriptions/?course_id=${course.id}&page_size=100`
+      );
+      const json = await res.json().catch(() => ({}));
+      const list: Record<string, any>[] = Array.isArray(json?.results)
+        ? json.results
+        : Array.isArray(json?.data)
+        ? json.data
+        : Array.isArray(json)
+        ? json
+        : [];
+      setCourseSubscriptions(list);
+      setSubCounts((prev) => ({ ...prev, [course.id]: list.length }));
+    } catch {
+      setCourseSubscriptions([]);
+    } finally {
+      setLoadingCourseSubs(false);
+    }
+  };
+
+  const filteredSubs = useMemo(() => {
+    if (!customerSearch.trim()) return courseSubscriptions;
+    const q = customerSearch.toLowerCase();
+    return courseSubscriptions.filter((sub) => {
+      const cust = sub.customer_data || {};
+      const name = (
+        cust.name ||
+        cust.customer_name ||
+        cust.full_name ||
+        `${cust.first_name || ''} ${cust.last_name || ''}`
+      ).toLowerCase();
+      const phone = String(cust.phone_number || cust.phone || '').toLowerCase();
+      const num = String(sub.subscription_number || '').toLowerCase();
+      return name.includes(q) || phone.includes(q) || num.includes(q);
+    });
+  }, [courseSubscriptions, customerSearch]);
 
   useEffect(() => {
     loadData();
@@ -529,8 +617,8 @@ export default function CoursesPage() {
                     <th className="py-3.5 px-4">Code & Name</th>
                     <th className="py-3.5 px-4">Locked Service</th>
                     <th className="py-3.5 px-4">Room Type</th>
-                    <th className="py-3.5 px-4">Sessions</th>
-                    <th className="py-3.5 px-4">Validity</th>
+                    <th className="py-3.5 px-4">Sessions & Validity</th>
+                    <th className="py-3.5 px-4 text-center">Subscriptions</th>
                     <th className="py-3.5 px-4">Course Price</th>
                     <th className="py-3.5 px-4">Status</th>
                     <th className="py-3.5 px-4 text-right">Actions</th>
@@ -604,17 +692,30 @@ export default function CoursesPage() {
                         </td>
 
                         <td className="py-4 px-4">
-                          <span className="font-bold text-[#2C241D]">
-                            {course.total_sessions}
-                          </span>{' '}
-                          <span className="text-xs text-[#6E6259]">sessions</span>
+                          <div className="font-bold text-[#2C241D]">
+                            {course.total_sessions} <span className="text-xs font-normal text-[#6E6259]">sessions</span>
+                          </div>
+                          <div className="inline-flex items-center gap-1 text-xs text-[#8C7D70] mt-0.5">
+                            <Clock className="w-3.5 h-3.5 text-[#8C7D70]" />
+                            <span>{course.validity_days} days validity</span>
+                          </div>
                         </td>
 
-                        <td className="py-4 px-4">
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-[#4A3F35]">
-                            <Clock className="w-3.5 h-3.5 text-[#8C7D70]" />
-                            {course.validity_days} days
-                          </span>
+                        <td className="py-4 px-4 text-center">
+                          <button
+                            type="button"
+                            onClick={() => handleViewCustomers(course)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold transition-all cursor-pointer hover:shadow-xs border"
+                            style={{
+                              background: (subCounts[course.id] || 0) > 0 ? 'rgba(84,60,48,0.08)' : '#F5F2EF',
+                              color: (subCounts[course.id] || 0) > 0 ? B.espresso : '#8C7D70',
+                              borderColor: (subCounts[course.id] || 0) > 0 ? B.linen : '#E5E0D8',
+                            }}
+                            title={`View ${subCounts[course.id] || 0} subscribed customers`}
+                          >
+                            <Eye className="w-3.5 h-3.5" style={{ color: (subCounts[course.id] || 0) > 0 ? B.espresso : '#8C7D70' }} />
+                            <span>{subCounts[course.id] || 0}</span>
+                          </button>
                         </td>
 
                         <td className="py-4 px-4">
@@ -724,6 +825,276 @@ export default function CoursesPage() {
             loadData();
           }}
         />
+      )}
+
+      {/* Subscribed Customers List Popup Modal */}
+      {customersModalOpen && selectedCourseForCustomers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-2xl overflow-hidden flex flex-col"
+            style={{ borderColor: B.linen, maxHeight: 'min(90vh, 760px)' }}
+          >
+            {/* Header with #543C30 */}
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white shrink-0"
+              style={{ background: B.espresso }}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <Users className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="px-2 py-0.5 rounded text-[11px] font-mono font-bold"
+                      style={{ background: 'rgba(255,255,255,0.2)' }}
+                    >
+                      {selectedCourseForCustomers.code}
+                    </span>
+                    <h3 className="text-base font-extrabold text-white">
+                      {selectedCourseForCustomers.name_en || selectedCourseForCustomers.name}
+                    </h3>
+                  </div>
+                  <p className="text-xs mt-0.5" style={{ color: B.linen }}>
+                    Subscribed Customers ({courseSubscriptions.length})
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setCustomersModalOpen(false);
+                  setSelectedCourseForCustomers(null);
+                }}
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Course Summary Banner */}
+            <div
+              className="px-6 py-3 border-b flex items-center justify-between text-xs shrink-0"
+              style={{ background: B.bg, borderColor: B.lineMuted }}
+            >
+              <div className="flex items-center gap-3 text-[#6E6259]">
+                <span>
+                  <strong>{selectedCourseForCustomers.total_sessions}</strong> sessions
+                </span>
+                <span>•</span>
+                <span>
+                  <strong>{selectedCourseForCustomers.validity_days}</strong> days validity
+                </span>
+                <span>•</span>
+                <span>
+                  <strong>{Number(selectedCourseForCustomers.price || 0).toFixed(3)}</strong>{' '}
+                  {selectedCourseForCustomers.currency || 'KWD'}
+                </span>
+              </div>
+              <div className="font-semibold" style={{ color: B.espresso }}>
+                {courseSubscriptions.length}{' '}
+                {courseSubscriptions.length === 1 ? 'Subscription' : 'Subscriptions'}
+              </div>
+            </div>
+
+            {/* Search filter if there are subscriptions */}
+            {courseSubscriptions.length > 0 && (
+              <div className="px-6 pt-4 pb-2 shrink-0">
+                <div
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl border bg-white"
+                  style={{ borderColor: B.linen }}
+                >
+                  <Search className="w-4 h-4 text-[#8C7D70] shrink-0" />
+                  <input
+                    type="text"
+                    value={customerSearch}
+                    onChange={(e) => setCustomerSearch(e.target.value)}
+                    placeholder="Search by customer name, phone, or subscription number..."
+                    className="w-full text-xs bg-transparent outline-none text-[#2C241D] placeholder:text-[#8C7D70]"
+                  />
+                  {customerSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setCustomerSearch('')}
+                      className="text-[#8C7D70] hover:text-[#2C241D]"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Content Body */}
+            <div className="p-6 overflow-y-auto flex-1 space-y-3">
+              {loadingCourseSubs ? (
+                <div className="p-12 text-center text-[#8C7D70] flex flex-col items-center justify-center gap-2">
+                  <Loader2 className="w-6 h-6 animate-spin" style={{ color: B.espresso }} />
+                  <span className="text-xs">Loading customers...</span>
+                </div>
+              ) : courseSubscriptions.length === 0 ? (
+                <div className="p-12 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-[#FAF8F5] border border-[#E5E0D8] flex items-center justify-center mx-auto text-[#8C7D70]">
+                    <Users className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-[#2C241D]">No Subscriptions Yet</h4>
+                  <p className="text-xs text-[#6E6259] max-w-sm mx-auto">
+                    No customers have subscribed to this course package yet. You can sell this course from the Courses page table.
+                  </p>
+                  {selectedCourseForCustomers.status === 'active' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = selectedCourseForCustomers;
+                        setCustomersModalOpen(false);
+                        setSelectedCourseForCustomers(null);
+                        handleOpenSell(target);
+                      }}
+                      className="px-4 py-2 rounded-xl text-white text-xs font-semibold hover:opacity-95 cursor-pointer shadow-sm"
+                      style={{ background: B.espresso }}
+                    >
+                      Sell This Course Now
+                    </button>
+                  )}
+                </div>
+              ) : filteredSubs.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#8C7D70]">
+                  No customers match &quot;{customerSearch}&quot;
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {filteredSubs.map((sub) => {
+                    const cust = sub.customer_data || {};
+                    const custName =
+                      cust.name ||
+                      cust.customer_name ||
+                      cust.full_name ||
+                      [cust.first_name, cust.last_name].filter(Boolean).join(' ') ||
+                      'Customer';
+                    const custPhone = cust.phone_number || cust.phone || '';
+                    const totalSess = Number(sub.total_sessions || 0);
+                    const usedSess = Number(sub.used_sessions || 0);
+                    const progressPercent =
+                      totalSess > 0 ? Math.min(100, (usedSess / totalSess) * 100) : 0;
+                    const st = String(
+                      sub.status || sub.effective_status || 'active'
+                    ).toLowerCase();
+
+                    return (
+                      <div
+                        key={sub.id}
+                        className="p-4 rounded-2xl border transition-all hover:shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        style={{ background: B.cardBg, borderColor: B.linen }}
+                      >
+                        {/* Customer Info */}
+                        <div className="flex items-center gap-3">
+                          <div
+                            className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 border"
+                            style={{
+                              background: B.pillBg,
+                              color: B.espresso,
+                              borderColor: B.linen,
+                            }}
+                          >
+                            <User className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h5 className="font-bold text-sm text-[#2C241D]">{custName}</h5>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                                  st === 'active'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : st === 'payment_pending'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : st === 'exhausted'
+                                    ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                    : st === 'expired'
+                                    ? 'bg-gray-100 text-gray-600 border-gray-200'
+                                    : 'bg-red-50 text-red-600 border-red-200'
+                                }`}
+                              >
+                                {st.replace('_', ' ')}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-[#8C7D70] mt-0.5">
+                              {custPhone && (
+                                <span className="inline-flex items-center gap-1 font-mono">
+                                  <Phone className="w-3 h-3" />
+                                  {custPhone}
+                                </span>
+                              )}
+                              <span
+                                className="font-mono text-[11px]"
+                                style={{ color: B.espresso }}
+                              >
+                                {sub.subscription_number}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Progress and Dates */}
+                        <div className="flex items-center gap-4 text-xs sm:text-right shrink-0">
+                          <div>
+                            <div className="font-semibold text-[#2C241D]">
+                              {usedSess} of {totalSess} sessions used
+                            </div>
+                            {/* Progress bar */}
+                            <div className="w-28 h-1.5 rounded-full bg-[#E5E0D8] mt-1 overflow-hidden ml-auto">
+                              <div
+                                className="h-full rounded-full transition-all"
+                                style={{
+                                  width: `${progressPercent}%`,
+                                  background: B.espresso,
+                                }}
+                              />
+                            </div>
+                            <div className="text-[10px] text-[#8C7D70] mt-1">
+                              Purchased: {formatDate(sub.purchased_at || sub.created_at)}
+                            </div>
+                          </div>
+
+                          <Link
+                            href={`/bookings/course-subscriptions?search=${encodeURIComponent(
+                              sub.subscription_number
+                            )}`}
+                            title="View in Subscriptions"
+                            className="p-2 rounded-xl text-[#8C7D70] hover:text-[#543C30] hover:bg-[#FAF8F5] border border-transparent hover:border-[#E5E0D8] transition-colors"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div
+              className="px-6 py-3 border-t flex justify-end shrink-0"
+              style={{ background: B.bg, borderColor: B.linen }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setCustomersModalOpen(false);
+                  setSelectedCourseForCustomers(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white transition hover:opacity-95 cursor-pointer"
+                style={{ background: B.espresso }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Create / Edit Course Modal */}
