@@ -6,6 +6,7 @@ import { DashboardShell } from '@/components/dashboard/shell';
 import { authedFetch } from '@/lib/authedFetch';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PERMISSIONS } from '@/lib/permissions';
+import { SellCourseModal } from '@/components/bookings/SellCourseModal';
 import {
   Layers,
   Plus,
@@ -54,6 +55,19 @@ interface CourseItem {
   updated_at?: string;
 }
 
+const B = {
+  espresso: '#543C30',
+  espressoHover: '#6b4f41',
+  linen: '#dbcdc2',
+  blush: '#daccc1',
+  lineMuted: '#e8ddd7',
+  bg: '#faf7f5',
+  cardBg: '#ffffff',
+  textMain: '#2c1a12',
+  textMuted: '#8a6f63',
+  pillBg: '#f2ede9',
+} as const;
+
 const ARRANGEMENT_OPTIONS = [
   { value: 'single_room', label: 'Single Room' },
   { value: 'couple_room', label: 'Couple Room' },
@@ -88,6 +102,10 @@ export default function CoursesPage() {
   const [editingCourse, setEditingCourse] = useState<CourseItem | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Sell Course modal state
+  const [sellModalOpen, setSellModalOpen] = useState(false);
+  const [sellingCourse, setSellingCourse] = useState<CourseItem | null>(null);
 
   const [formData, setFormData] = useState({
     code: '',
@@ -327,6 +345,11 @@ export default function CoursesPage() {
     }
   };
 
+  const handleOpenSell = (course: CourseItem) => {
+    setSellingCourse(course);
+    setSellModalOpen(true);
+  };
+
   return (
     <DashboardShell>
       <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -334,8 +357,11 @@ export default function CoursesPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl bg-[#2C241D] text-[#C5A059] flex items-center justify-center shadow-sm">
-                <Layers className="w-5 h-5" />
+              <div
+                className="w-10 h-10 rounded-xl text-white flex items-center justify-center shadow-sm"
+                style={{ background: B.espresso }}
+              >
+                <Layers className="w-5 h-5 text-white" />
               </div>
               <div>
                 <h1 className="text-2xl font-bold text-[#2C241D]">Courses & Packages</h1>
@@ -349,24 +375,26 @@ export default function CoursesPage() {
           <div className="flex items-center gap-2.5">
             <button
               onClick={loadData}
-              className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm font-medium text-[#2C241D] hover:bg-[#FAF8F5] flex items-center gap-2 transition-colors"
+              className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm font-medium text-[#2C241D] hover:bg-[#FAF8F5] flex items-center gap-2 transition-colors cursor-pointer"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh
             </button>
             <Link
               href="/bookings/course-subscriptions"
-              className="px-4 py-2.5 rounded-xl border border-[#C5A059]/40 bg-[#C5A059]/10 text-[#7C5E24] text-sm font-semibold hover:bg-[#C5A059]/20 flex items-center gap-2 transition-colors"
+              className="px-4 py-2.5 rounded-xl border text-sm font-semibold flex items-center gap-2 transition-colors"
+              style={{ borderColor: B.linen, background: B.pillBg, color: B.espresso }}
             >
-              <BookMarked className="w-4 h-4" />
+              <BookMarked className="w-4 h-4" style={{ color: B.espresso }} />
               Subscriptions
             </Link>
             {canEdit && (
               <button
                 onClick={openCreateModal}
-                className="px-4 py-2.5 rounded-xl bg-[#2C241D] text-white text-sm font-semibold hover:bg-[#3F342A] flex items-center gap-2 shadow-sm transition-colors"
+                className="px-4 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 flex items-center gap-2 shadow-sm transition-colors cursor-pointer"
+                style={{ background: B.espresso }}
               >
-                <Plus className="w-4 h-4 text-[#C5A059]" />
+                <Plus className="w-4 h-4 text-white" />
                 New Course
               </button>
             )}
@@ -380,7 +408,7 @@ export default function CoursesPage() {
               <span className="text-xs font-semibold uppercase tracking-wider text-[#8C7D70]">
                 Total Courses
               </span>
-              <Layers className="w-4 h-4 text-[#C5A059]" />
+              <Layers className="w-4 h-4" style={{ color: B.espresso }} />
             </div>
             <p className="text-2xl font-bold text-[#2C241D] mt-2">{stats.total}</p>
             <p className="text-xs text-[#6E6259] mt-1">Configured catalog packages</p>
@@ -413,7 +441,7 @@ export default function CoursesPage() {
               <span className="text-xs font-semibold uppercase tracking-wider text-[#8C7D70]">
                 Avg Sessions / Course
               </span>
-              <Sparkles className="w-4 h-4 text-[#C5A059]" />
+              <Sparkles className="w-4 h-4" style={{ color: B.espresso }} />
             </div>
             <p className="text-2xl font-bold text-[#2C241D] mt-2">{stats.avgSessions}</p>
             <p className="text-xs text-[#6E6259] mt-1">Sessions per package</p>
@@ -429,14 +457,14 @@ export default function CoursesPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by code, course name, Arabic name, or service..."
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
             />
           </div>
 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+            className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
           >
             <option value="all">All Statuses</option>
             <option value="active">Active</option>
@@ -447,7 +475,7 @@ export default function CoursesPage() {
           <select
             value={arrangementFilter}
             onChange={(e) => setArrangementFilter(e.target.value)}
-            className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+            className="px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
           >
             <option value="all">All Room Types</option>
             {ARRANGEMENT_OPTIONS.map((o) => (
@@ -469,7 +497,7 @@ export default function CoursesPage() {
         <div className="bg-white rounded-2xl border border-[#E5E0D8] shadow-sm overflow-hidden">
           {loading ? (
             <div className="p-12 text-center text-[#6E6259] flex flex-col items-center gap-3">
-              <Loader2 className="w-7 h-7 animate-spin text-[#C5A059]" />
+              <Loader2 className="w-7 h-7 animate-spin" style={{ color: B.espresso }} />
               <span className="text-sm">Loading courses catalog...</span>
             </div>
           ) : filteredCourses.length === 0 ? (
@@ -485,9 +513,10 @@ export default function CoursesPage() {
               {canEdit && (
                 <button
                   onClick={openCreateModal}
-                  className="mt-2 px-4 py-2 rounded-xl bg-[#2C241D] text-white text-xs font-semibold hover:bg-[#3F342A] inline-flex items-center gap-1.5"
+                  className="mt-2 px-4 py-2 rounded-xl text-white text-xs font-semibold hover:opacity-95 inline-flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  style={{ background: B.espresso }}
                 >
-                  <Plus className="w-4 h-4 text-[#C5A059]" />
+                  <Plus className="w-4 h-4 text-white" />
                   Create First Course
                 </button>
               )}
@@ -524,7 +553,11 @@ export default function CoursesPage() {
                       >
                         <td className="py-4 px-4">
                           <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-md bg-[#2C241D] text-[#C5A059] font-mono text-xs font-semibold">
+                            {/* Code Badge matching the arrow mark in the image */}
+                            <span
+                              className="px-2 py-0.5 rounded-md text-white font-mono text-xs font-semibold shadow-xs"
+                              style={{ background: B.espresso }}
+                            >
                               {course.code}
                             </span>
                             <span className="font-semibold text-[#2C241D]">
@@ -556,7 +589,14 @@ export default function CoursesPage() {
                         </td>
 
                         <td className="py-4 px-4">
-                          <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-[#C5A059]/15 text-[#7C5E24] border border-[#C5A059]/30">
+                          <span
+                            className="px-2.5 py-1 rounded-full text-xs font-medium border"
+                            style={{
+                              background: B.pillBg,
+                              color: B.espresso,
+                              borderColor: B.linen,
+                            }}
+                          >
                             {course.arrangement_type_label ||
                               ARRANGEMENT_LABELS[course.arrangement_type] ||
                               course.arrangement_type}
@@ -614,19 +654,25 @@ export default function CoursesPage() {
                         <td className="py-4 px-4 text-right">
                           <div className="inline-flex items-center gap-1.5">
                             {course.status === 'active' && (
-                              <Link
-                                href={`/bookings/course-subscriptions?sell_course_id=${course.id}`}
-                                className="px-2.5 py-1.5 rounded-lg bg-[#C5A059]/15 text-[#7C5E24] hover:bg-[#C5A059]/25 text-xs font-semibold transition-colors"
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSell(course)}
+                                className="px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border hover:opacity-90"
+                                style={{
+                                  background: B.pillBg,
+                                  color: B.espresso,
+                                  borderColor: B.linen,
+                                }}
                               >
                                 Sell
-                              </Link>
+                              </button>
                             )}
                             {canEdit && (
                               <>
                                 <button
                                   onClick={() => openEditModal(course)}
                                   title="Edit Course"
-                                  className="p-1.5 rounded-lg text-[#6E6259] hover:text-[#2C241D] hover:bg-[#FAF8F5] transition-colors"
+                                  className="p-1.5 rounded-lg text-[#6E6259] hover:text-[#543C30] hover:bg-[#FAF8F5] transition-colors cursor-pointer"
                                 >
                                   <Edit3 className="w-4 h-4" />
                                 </button>
@@ -635,7 +681,7 @@ export default function CoursesPage() {
                                   title={
                                     course.status === 'active' ? 'Deactivate' : 'Activate'
                                   }
-                                  className="p-1.5 rounded-lg text-[#6E6259] hover:text-[#2C241D] hover:bg-[#FAF8F5] transition-colors"
+                                  className="p-1.5 rounded-lg text-[#6E6259] hover:text-[#543C30] hover:bg-[#FAF8F5] transition-colors cursor-pointer"
                                 >
                                   {course.status === 'active' ? (
                                     <XCircle className="w-4 h-4 text-amber-600" />
@@ -646,7 +692,7 @@ export default function CoursesPage() {
                                 <button
                                   onClick={() => handleDeleteCourse(course)}
                                   title="Delete Course"
-                                  className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                                  className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors cursor-pointer"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </button>
@@ -664,35 +710,63 @@ export default function CoursesPage() {
         </div>
       </div>
 
+      {/* Sell Course Subscription Modal */}
+      {sellModalOpen && (
+        <SellCourseModal
+          courseId={sellingCourse?.id}
+          courses={courses}
+          isOpen={sellModalOpen}
+          onClose={() => {
+            setSellModalOpen(false);
+            setSellingCourse(null);
+          }}
+          onSuccess={() => {
+            loadData();
+          }}
+        />
+      )}
+
       {/* Create / Edit Course Modal */}
       {modalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-2xl border border-[#E5E0D8] w-full max-w-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-r from-[#2C241D] to-[#43362B] text-white">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-2xl overflow-hidden"
+            style={{ borderColor: B.linen }}
+          >
+            {/* Modal Title Bar with #543C30 */}
+            <div
+              className="flex items-center justify-between px-6 py-4 text-white"
+              style={{ background: B.espresso }}
+            >
               <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-[#C5A059]/20 border border-[#C5A059]/40 flex items-center justify-center">
-                  <Layers className="w-5 h-5 text-[#C5A059]" />
+                <div
+                  className="w-9 h-9 rounded-xl flex items-center justify-center"
+                  style={{ background: 'rgba(255,255,255,0.15)' }}
+                >
+                  <Layers className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold">
+                  <h3 className="text-base font-extrabold text-white">
                     {editingCourse ? `Edit Course (${editingCourse.code})` : 'Create New Course'}
                   </h3>
-                  <p className="text-xs text-white/70">
+                  <p className="text-xs" style={{ color: B.linen }}>
                     Define locked service, room arrangement, session count, and package price
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setModalOpen(false)}
-                className="p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10"
+                className="p-1.5 rounded-xl text-white hover:bg-white/20 transition cursor-pointer"
+                style={{ background: 'rgba(255,255,255,0.12)' }}
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             <form
               onSubmit={handleSaveCourse}
               className="p-6 space-y-4 max-h-[82vh] overflow-y-auto"
+              style={{ background: B.bg }}
             >
               {formError && (
                 <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
@@ -703,7 +777,10 @@ export default function CoursesPage() {
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Course Code *
                   </label>
                   <input
@@ -713,13 +790,17 @@ export default function CoursesPage() {
                       setFormData((p) => ({ ...p, code: e.target.value.toUpperCase() }))
                     }
                     placeholder="CRS-THAI-06"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] font-mono text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border font-mono text-sm bg-white text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Status *
                   </label>
                   <select
@@ -730,7 +811,8 @@ export default function CoursesPage() {
                         status: e.target.value as 'active' | 'inactive' | 'draft',
                       }))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                   >
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
@@ -739,7 +821,10 @@ export default function CoursesPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Display Order
                   </label>
                   <input
@@ -749,14 +834,18 @@ export default function CoursesPage() {
                     onChange={(e) =>
                       setFormData((p) => ({ ...p, display_order: Number(e.target.value) }))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                   />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Course Name (English) *
                   </label>
                   <input
@@ -764,13 +853,17 @@ export default function CoursesPage() {
                     value={formData.name_en}
                     onChange={(e) => setFormData((p) => ({ ...p, name_en: e.target.value }))}
                     placeholder="e.g. 6-Session Royal Thai Massage Course"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Course Name (Arabic)
                   </label>
                   <input
@@ -778,43 +871,53 @@ export default function CoursesPage() {
                     dir="rtl"
                     value={formData.name_ar}
                     onChange={(e) => setFormData((p) => ({ ...p, name_ar: e.target.value }))}
-                    placeholder="كورس المساج التايلندي الملكي - ٦ جلسات"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    placeholder="مثال: باقة المساج التايلاندي الملكي 6 جلسات"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                   />
                 </div>
               </div>
 
-              {/* Service & Arrangement */}
+              {/* Service & Room Type */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Locked Service *
                   </label>
                   <select
                     value={formData.service_id}
                     onChange={(e) => setFormData((p) => ({ ...p, service_id: e.target.value }))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   >
                     <option value="">Select Service...</option>
                     {services.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.name || s.name_en} ({s.duration_minutes}m · {s.base_price} KWD)
+                        {s.name} {s.duration_minutes ? `(${s.duration_minutes}m)` : ''}{' '}
+                        {s.base_price ? `· ${Number(s.base_price).toFixed(3)} KWD` : ''}
                       </option>
                     ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
-                    Locked Room / Arrangement Type *
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
+                    Locked Room Arrangement *
                   </label>
                   <select
                     value={formData.arrangement_type}
                     onChange={(e) =>
                       setFormData((p) => ({ ...p, arrangement_type: e.target.value }))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   >
                     {ARRANGEMENT_OPTIONS.map((o) => (
@@ -829,7 +932,10 @@ export default function CoursesPage() {
               {/* Sessions, Validity, Price */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Total Sessions *
                   </label>
                   <input
@@ -840,13 +946,17 @@ export default function CoursesPage() {
                     onChange={(e) =>
                       setFormData((p) => ({ ...p, total_sessions: Number(e.target.value) }))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Validity (Days) *
                   </label>
                   <input
@@ -857,21 +967,26 @@ export default function CoursesPage() {
                     onChange={(e) =>
                       setFormData((p) => ({ ...p, validity_days: Number(e.target.value) }))
                     }
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   />
                 </div>
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-semibold text-[#4A3F35]">
+                    <label
+                      className="block text-xs font-extrabold uppercase tracking-wider"
+                      style={{ color: B.espresso }}
+                    >
                       Package Price (KWD) *
                     </label>
                     {selectedServiceObj?.base_price && (
                       <button
                         type="button"
                         onClick={handleAutoCalculatePrice}
-                        className="text-[11px] text-[#7C5E24] hover:underline inline-flex items-center gap-1"
+                        className="text-[11px] font-bold hover:underline inline-flex items-center gap-1 cursor-pointer"
+                        style={{ color: B.espresso }}
                       >
                         <Calculator className="w-3 h-3" />
                         Unit × {formData.total_sessions}
@@ -885,7 +1000,8 @@ export default function CoursesPage() {
                     value={formData.price}
                     onChange={(e) => setFormData((p) => ({ ...p, price: e.target.value }))}
                     placeholder="120.000"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                     required
                   />
                 </div>
@@ -894,7 +1010,10 @@ export default function CoursesPage() {
               {/* Descriptions */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Description (English)
                   </label>
                   <textarea
@@ -904,12 +1023,16 @@ export default function CoursesPage() {
                       setFormData((p) => ({ ...p, description_en: e.target.value }))
                     }
                     placeholder="Package details and terms..."
-                    className="w-full px-3.5 py-2 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#4A3F35] mb-1">
+                  <label
+                    className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                    style={{ color: B.espresso }}
+                  >
                     Description (Arabic)
                   </label>
                   <textarea
@@ -920,25 +1043,31 @@ export default function CoursesPage() {
                       setFormData((p) => ({ ...p, description_ar: e.target.value }))
                     }
                     placeholder="تفاصيل وشروط الباقة..."
-                    className="w-full px-3.5 py-2 rounded-xl border border-[#E5E0D8] text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#C5A059]"
+                    className="w-full px-3.5 py-2 rounded-xl border bg-white text-sm text-[#2C241D] focus:outline-none focus:ring-2 focus:ring-[#543C30]"
+                    style={{ borderColor: B.linen }}
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E5E0D8]">
+              <div
+                className="flex items-center justify-end gap-3 pt-3 border-t"
+                style={{ borderColor: B.linen }}
+              >
                 <button
                   type="button"
                   onClick={() => setModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl border border-[#E5E0D8] text-sm font-medium text-[#6E6259] hover:bg-[#FAF8F5]"
+                  className="px-4 py-2.5 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
+                  style={{ borderColor: B.linen, color: B.textMain }}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving}
-                  className="px-5 py-2.5 rounded-xl bg-[#2C241D] text-white text-sm font-semibold hover:bg-[#3F342A] disabled:opacity-50 flex items-center gap-2"
+                  className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 disabled:opacity-50 flex items-center gap-2 cursor-pointer shadow-sm"
+                  style={{ background: B.espresso }}
                 >
-                  {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {saving && <Loader2 className="w-4 h-4 animate-spin text-white" />}
                   {editingCourse ? 'Update Course' : 'Create Course'}
                 </button>
               </div>
@@ -949,4 +1078,3 @@ export default function CoursesPage() {
     </DashboardShell>
   );
 }
-

@@ -444,7 +444,7 @@ export function RedeemCourseModal({ subscription, onClose, onSuccess }: RedeemCo
           const aType = normalizeArrType(a.arrangement_type || a.type || a.room_type);
           return !aType || aType === normalizeArrType(requiredArrangementType);
         });
-        const finalArr = matchingArr.length > 0 ? matchingArr : mergedArrs;
+        const finalArr: Record<string, any>[] = matchingArr.length > 0 ? matchingArr : mergedArrs;
 
         // Parse availabilities response
         let availObj: any = null;
