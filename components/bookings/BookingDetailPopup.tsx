@@ -4689,6 +4689,30 @@ function BookingDetailPopupContent({
             subscriptionPaymentMethod: subPaymentMethod || null,
             subscriptionPaymentProvider: subPaymentProvider || null,
             subscriptionInvoiceNumber: subInvoiceNumber || null,
+            isVoucherRedemption: isGiftVoucherBooking || Boolean(detail?.voucher_id || (booking.raw as any)?.voucher_id),
+            isVoucherPackage: Boolean(
+              (detail?.voucher_data as any)?.is_package ||
+              (booking.raw as any)?.voucher_data?.is_package ||
+              (detail as any)?.is_packaged_services ||
+              (booking.raw as any)?.is_packaged_services
+            ),
+            voucherPackageName: String(
+              (detail?.voucher_data as any)?.package_name ||
+              (booking.raw as any)?.voucher_data?.package_name ||
+              (detail as any)?.package_name ||
+              (booking.raw as any)?.package_name ||
+              ''
+            ).trim() || null,
+            voucherPackagePrice: (detail?.voucher_data as any)?.package_price ?? (booking.raw as any)?.voucher_data?.package_price ?? null,
+            voucherCode: (detail?.voucher_data as any)?.voucher_number || (detail?.voucher_data as any)?.secret_code || (booking.raw as any)?.voucher_data?.voucher_number || null,
+            isPartialRedeem: Boolean(
+              (detail?.voucher_data as any)?.is_partial ||
+              (booking.raw as any)?.voucher_data?.is_partial ||
+              ((detail?.voucher_data as any)?.remaining_services && (detail?.voucher_data as any).remaining_services.length > 0) ||
+              ((booking.raw as any)?.voucher_data?.remaining_services && (booking.raw as any).voucher_data.remaining_services.length > 0)
+            ),
+            redeemedServices: (detail?.voucher_data as any)?.redeemed_services || (booking.raw as any)?.voucher_data?.redeemed_services || null,
+            remainingServices: (detail?.voucher_data as any)?.remaining_services || (booking.raw as any)?.voucher_data?.remaining_services || null,
           }}
           onClose={() => setShowReceiptModal(false)}
         />

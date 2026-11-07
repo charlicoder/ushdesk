@@ -18,8 +18,9 @@ import {
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
   CreditCard, Hash, Building2, Trash2, Plus, Users, Receipt, Gift,
-  MapPin, Check,
+  MapPin, Check, Printer,
 } from 'lucide-react';
+import { BookingReceiptModal } from './BookingReceiptModal';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import {
@@ -59,6 +60,7 @@ interface ApiBranch {
 interface ApiArrangement {
   id: string;
   name: string;
+  arrangement_name?: string;
   arrangement_type?: string;
   type?: string;
   capacity?: number;
@@ -157,7 +159,14 @@ function firstTruthy(...args: unknown[]): string {
 }
 
 function normalizeArrType(t: unknown): string {
-  return String(t ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const s = String(t ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (s.includes('couple')) return 'couple_room';
+  if (s.includes('double')) return 'double_room';
+  if (s.includes('single')) return 'single_room';
+  if (s.includes('vip')) return 'vip_suite';
+  if (s.includes('private')) return 'private_suite';
+  if (s.includes('open')) return 'open_area';
+  return s;
 }
 
 function fmt(val: unknown): string {
@@ -577,7 +586,17 @@ function getVoucherServices(voucher: AnyRecord): GiftedService[] {
 }
 
 /** Read-only list of what the gift voucher already covers: services, their add-ons and extra time. */
-function VoucherCoverageList({ voucher, currency }: { voucher: AnyRecord; currency: string }) {
+function VoucherCoverageList({
+  voucher,
+  currency,
+  isPackage,
+  packagePrice,
+}: {
+  voucher: AnyRecord;
+  currency: string;
+  isPackage?: boolean;
+  packagePrice?: number | string;
+}) {
   const gifted = getVoucherServices(voucher);
   return (
     <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/5 divide-y divide-emerald-500/15 overflow-hidden">
@@ -591,11 +610,15 @@ function VoucherCoverageList({ voucher, currency }: { voucher: AnyRecord; curren
                 <p className="text-[11px] text-muted-foreground">Service{g.duration > 0 ? ` · ${g.duration} min` : ''}</p>
               </div>
             </div>
-            {g.price != null && (
+            {isPackage ? (
+              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full shrink-0">
+                Included in Package
+              </span>
+            ) : g.price != null ? (
               <span className="text-xs font-extrabold text-emerald-600 dark:text-emerald-400 shrink-0">{fmt(g.price)} {currency}</span>
-            )}
+            ) : null}
           </div>
-          {g.addons.map((a) => (
+          {!isPackage && g.addons.map((a) => (
             <div key={`${g.id}-${a.id}`} className="flex items-center justify-between gap-3 px-4 py-2">
               <div className="flex items-center gap-2.5 min-w-0">
                 <Sparkles className="h-4 w-4 text-violet-500 shrink-0" />
@@ -607,7 +630,7 @@ function VoucherCoverageList({ voucher, currency }: { voucher: AnyRecord; curren
               <span className="text-xs font-bold text-foreground shrink-0">{fmt(a.price)} {currency}</span>
             </div>
           ))}
-          {g.extra.minutes > 0 && (
+          {!isPackage && g.extra.minutes > 0 && (
             <div className="flex items-center justify-between gap-3 px-4 py-2">
               <div className="flex items-center gap-2.5">
                 <Timer className="h-4 w-4 text-amber-500 shrink-0" />
@@ -621,6 +644,14 @@ function VoucherCoverageList({ voucher, currency }: { voucher: AnyRecord; curren
           )}
         </React.Fragment>
       ))}
+      {isPackage && packagePrice != null && (
+        <div className="flex items-center justify-between px-4 py-2.5 bg-emerald-500/10 border-t border-emerald-500/20 text-xs">
+          <span className="font-bold text-foreground">Package Total Price</span>
+          <span className="font-mono font-black text-emerald-700 dark:text-emerald-300">
+            {fmt(packagePrice)} {currency}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -702,10 +733,17 @@ function AddVoucherSessionModal({
   );
   const availableGiftedKey = availableGifted.map((g) => g.id).join(',');
   const voucherServiceName = availableGifted.map((g) => g.name).join(' + ') || 'Spa Service';
-  const requiredArrType = firstTruthy(
-    voucher.service_arrangement_data?.arrangement_type,
-    voucher.service_arrangement_data?.type,
-    voucher.arrangement_type
+  const requiredArrType = normalizeArrType(
+    firstTruthy(
+      voucher.service_arrangement_data?.arrangement_type,
+      voucher.service_arrangement_data?.type,
+      voucher.arrangement_type,
+      voucher.room_type,
+      voucher.service_arrangement_data?.room_type,
+      voucher.service_arrangement_data?.arrangement_name,
+      voucher.service_arrangement_data?.room,
+      voucher.arrangement_name
+    )
   );
 
   // 1. Load the (fixed) voucher service for this branch
@@ -791,7 +829,11 @@ function AddVoucherSessionModal({
         const common = (first ?? [])
           .filter((a) => rest.every((l) => l.some((x) => x.id === a.id)))
           .filter(
-            (a) => !requiredArrType || normalizeArrType(a.arrangement_type || a.type) === normalizeArrType(requiredArrType)
+            (a) => {
+              if (!requiredArrType) return true;
+              const aType = normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name);
+              return aType === requiredArrType;
+            }
           );
         setArrangements(common);
         setSelectedRoomId(common.length > 0 ? common[0].id : '');
@@ -1398,7 +1440,11 @@ function AddVoucherSessionModal({
         <div className="shrink-0 flex items-center justify-between border-t border-border/60 px-6 py-4 bg-muted/10">
           <div>
             <p className="text-xs text-muted-foreground">Duration: <strong className="text-foreground">{totalDuration} min</strong></p>
-            <p className="text-xs text-muted-foreground">Session Total: <strong className="text-primary font-bold">{fmt(sessionPrice)} KWD</strong></p>
+            {isPkg ? (
+              <p className="text-xs text-muted-foreground">Session: <strong className="text-emerald-600 dark:text-emerald-400 font-bold">Covered by Package</strong></p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Session Total: <strong className="text-primary font-bold">{fmt(sessionPrice)} KWD</strong></p>
+            )}
           </div>
           <div className="flex gap-2">
             <button
@@ -1487,9 +1533,11 @@ export function RedeemVoucherModal({
               extra_time: 0,
               price_for_extra_time: 0,
             })),
-            redemptions: [],
-            service_arrangement_data: null,
-            arrangement_type: '',
+            redemptions: Array.isArray(voucherProp.redemptions) ? voucherProp.redemptions : [],
+            service_arrangement_data: voucherProp.service_arrangement_data ?? null,
+            service_arrangement_id: voucherProp.service_arrangement_id ?? null,
+            arrangement_type: voucherProp.arrangement_type ?? voucherProp.service_arrangement_data?.arrangement_type ?? '',
+            room_type: voucherProp.room_type ?? voucherProp.service_arrangement_data?.room_type ?? voucherProp.arrangement_type ?? '',
             __package: pkgInfo,
           },
     [voucherProp, pkgInfo],
@@ -1499,6 +1547,7 @@ export function RedeemVoucherModal({
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sessions, setSessions] = useState<VoucherSession[]>([]);
   const [showAddSessionModal, setShowAddSessionModal] = useState(false);
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
 
   // Derived voucher metadata
   const originalBranchId = firstTruthy(voucher.branch_id, voucher.branch_data?.branch_id, voucher.branch_data?.id);
@@ -1588,7 +1637,12 @@ export function RedeemVoucherModal({
       firstTruthy(
         voucher.service_arrangement_data?.arrangement_type,
         voucher.service_arrangement_data?.type,
-        voucher.arrangement_type
+        voucher.arrangement_type,
+        voucher.room_type,
+        voucher.service_arrangement_data?.room_type,
+        voucher.service_arrangement_data?.arrangement_name,
+        voucher.service_arrangement_data?.room,
+        voucher.arrangement_name
       )
     );
     Promise.all(
@@ -1606,7 +1660,7 @@ export function RedeemVoucherModal({
             const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
               (a: ApiArrangement) => a.is_active !== false
             );
-            const ok = list.some((a) => !requiredType || normalizeArrType(a.arrangement_type || a.type) === requiredType);
+            const ok = list.some((a) => !requiredType || normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredType);
             if (!ok) return null;
           }
           return bId;
@@ -1822,6 +1876,16 @@ export function RedeemVoucherModal({
         payment_method: resolvedPaymentMethod,
         payment_through: resolvedPaymentThrough,
         payment_id: resolvedPaymentId,
+        is_package: isPackageVoucher,
+        package_name: pkgInfo?.name || null,
+        package_price: voucherAmount,
+        currency,
+        all_gifted_services: giftedList.map((g) => ({ id: g.id, name: g.name, duration: g.duration })),
+        redeemed_services: sessions.flatMap((s) => s.services.map((sv) => ({ id: sv.id, name: sv.name, duration: sv.duration_minutes }))),
+        remaining_services: giftedList
+          .filter((g) => !new Set(sessions.flatMap((s) => s.serviceIds.map(String))).has(g.id))
+          .map((g) => ({ id: g.id, name: g.name, duration: g.duration })),
+        is_partial: unassignedCount > 0,
       },
       created_by_user: currentUser?.id,
       created_by_user_data: currentUser ? { id: currentUser.id, name: currentUser.name || (currentUser as any).username || '' } : undefined,
@@ -2056,6 +2120,20 @@ export function RedeemVoucherModal({
                   <span className="text-muted-foreground">Branch:</span>
                   <span className="font-bold text-foreground">{selectedBranchName}</span>
                 </div>
+                {isPackageVoucher && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Gift Package:</span>
+                    <span className="font-bold text-foreground">{pkgInfo?.name || 'Spa Package'}</span>
+                  </div>
+                )}
+                {isPackageVoucher && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Package Total Price:</span>
+                    <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                      {fmt(voucher.total_amount ?? voucherAmount)} {currency} (Covered)
+                    </span>
+                  </div>
+                )}
                 <div className="pt-2 border-t border-border/40 space-y-1">
                   {sessions.map((s, i) => (
                     <div key={s.id} className="text-muted-foreground flex justify-between">
@@ -2064,15 +2142,54 @@ export function RedeemVoucherModal({
                     </div>
                   ))}
                 </div>
+                {/* Explain redeemed & remaining services for partial redeem */}
+                {(redeemOutcome?.status === 'partially_redeemed' || unassignedCount > 0) && (
+                  <div className="pt-2 border-t border-border/40 space-y-2 text-xs">
+                    <div>
+                      <p className="font-bold text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                        <span>✓ Redeemed in this booking ({sessions.flatMap((s) => s.services).length}):</span>
+                      </p>
+                      <p className="text-[11px] text-foreground font-semibold pl-2 mt-0.5">
+                        {sessions.flatMap((s) => s.services.map((sv) => sv.name)).join(', ')}
+                      </p>
+                    </div>
+                    {giftedList.filter((g) => !new Set(sessions.flatMap((s) => s.serviceIds.map(String))).has(g.id)).length > 0 && (
+                      <div className="pt-1.5 border-t border-dashed border-border/40">
+                        <p className="font-bold text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1">
+                          <span>⏳ Remaining on voucher ({giftedList.filter((g) => !new Set(sessions.flatMap((s) => s.serviceIds.map(String))).has(g.id)).length}):</span>
+                        </p>
+                        <p className="text-[11px] text-muted-foreground pl-2 mt-0.5">
+                          {giftedList
+                            .filter((g) => !new Set(sessions.flatMap((s) => s.serviceIds.map(String))).has(g.id))
+                            .map((g) => g.name)
+                            .join(', ')}
+                        </p>
+                        <p className="text-[10px] text-amber-700/80 italic pl-2 pt-0.5">
+                          Remaining services can be redeemed in future bookings using this voucher.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <button
-                type="button"
-                onClick={onClose}
-                className="rounded-xl px-6 py-2.5 text-xs font-bold text-white bg-primary hover:bg-primary/90 transition shadow-sm"
-              >
-                Done
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowReceiptModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-primary/40 text-primary hover:bg-primary/10 px-5 py-2.5 text-xs font-bold transition shadow-xs cursor-pointer"
+                >
+                  <Printer className="h-4 w-4" />
+                  <span>Print Receipt</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="rounded-xl px-6 py-2.5 text-xs font-bold text-white bg-primary hover:bg-primary/90 transition shadow-sm cursor-pointer"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           ) : (
             <>
@@ -2087,14 +2204,19 @@ export function RedeemVoucherModal({
                     </div>
                     {pkgInfo && (
                       <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3.5">
-                        <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">{pkgInfo.name} · package</p>
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">{pkgInfo.name} · package</p>
+                          <span className="text-xs font-bold text-amber-900 dark:text-amber-100 bg-amber-500/20 px-2 py-0.5 rounded-full">
+                            Package Price: {fmt(voucher.total_amount ?? voucherAmount)} {currency}
+                          </span>
+                        </div>
                         <p className="mt-0.5 text-[11px] text-muted-foreground">
                           {assignedCount}/{giftedList.length} included services scheduled. Add a session, choose the services
                           for it, then its room, time and therapist. Every service must be scheduled before you can confirm.
                         </p>
                       </div>
                     )}
-                    <VoucherCoverageList voucher={voucher} currency={currency} />
+                    <VoucherCoverageList voucher={voucher} currency={currency} isPackage={isPackageVoucher} packagePrice={voucher.total_amount ?? voucherAmount} />
                   </div>
 
                   {/* Sessions Header */}
@@ -2159,7 +2281,13 @@ export function RedeemVoucherModal({
                             </div>
                           </div>
                           <div className="flex items-center gap-3 shrink-0 ml-3">
-                            <span className="text-xs font-extrabold text-foreground">{fmt(sess.sessionPrice)} KWD</span>
+                            {isPackageVoucher ? (
+                              <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full">
+                                Covered by Package
+                              </span>
+                            ) : (
+                              <span className="text-xs font-extrabold text-foreground">{fmt(sess.sessionPrice)} KWD</span>
+                            )}
                             <button
                               type="button"
                               onClick={() => removeSession(idx)}
@@ -2204,9 +2332,11 @@ export function RedeemVoucherModal({
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider block">
-                  Total ({sessions.length} session{sessions.length > 1 ? 's' : ''})
+                  {isPackageVoucher ? 'Package Total Price' : `Total (${sessions.length} session${sessions.length > 1 ? 's' : ''})`}
                 </span>
-                <span className="text-sm font-extrabold text-foreground">{fmt(netPayablePrice)} KWD</span>
+                <span className="text-sm font-extrabold text-foreground">
+                  {isPackageVoucher ? `${fmt(voucher.total_amount ?? voucherAmount)} KWD` : `${fmt(netPayablePrice)} KWD`}
+                </span>
                 <span className="text-xs text-muted-foreground ml-1.5">({totalBookingDuration} min)</span>
               </div>
 
@@ -2247,6 +2377,56 @@ export function RedeemVoucherModal({
           existingSessions={sessions}
           onAdd={(newSess) => setSessions((prev) => [...prev, newSess])}
           onClose={() => setShowAddSessionModal(false)}
+        />
+      )}
+
+      {/* ── Print Receipt Modal ── */}
+      {showReceiptModal && bookingSuccess && (
+        <BookingReceiptModal
+          data={{
+            bookingNumber: bookingSuccess.booking_number || bookingSuccess.number || null,
+            reference: bookingSuccess.booking_number || bookingSuccess.id || null,
+            invoiceNumber: resolvedInvoiceNumber || null,
+            customerName: recipientName,
+            customerPhone: recipientPhone,
+            customerEmail: recipientEmail,
+            branchName: selectedBranchName,
+            arrangementName: sessions[0]?.arrangementName || null,
+            therapistName: sessions[0]?.therapistName || null,
+            secondaryTherapistName: sessions[0]?.secondaryTherapistName || null,
+            serviceName: isPackageVoucher ? (pkgInfo?.name || 'Spa Package') : sessions[0]?.services[0]?.name || 'Spa Service',
+            services: sessions.flatMap((s) =>
+              s.services.map((sv) => ({
+                name: sv.name,
+                category: sv.category,
+                price: isPackageVoucher ? 0 : sv.base_price,
+                duration: sv.duration_minutes,
+              }))
+            ),
+            appointmentStart: sessions[0]?.startTime || null,
+            appointmentDate: selectedDate,
+            timeSlot: sessions.map((s) => s.startTime).filter(Boolean).join(', ') || null,
+            totalDuration: totalBookingDuration,
+            currency,
+            subtotal: isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : totalBookingPrice,
+            totalAmount: isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : netPayablePrice,
+            paymentStatus: 'paid',
+            paymentMethod: `Gift Voucher (${resolvedPaymentProvider || 'Prepaid'})`,
+            paymentProvider: resolvedPaymentProvider || 'Gift Voucher',
+            isVoucherRedemption: true,
+            isVoucherPackage: isPackageVoucher,
+            voucherPackageName: pkgInfo?.name || null,
+            voucherPackagePrice: voucher.total_amount ?? voucherAmount,
+            voucherCode: voucher.voucher_number || voucherCode,
+            isPartialRedeem: unassignedCount > 0 || redeemOutcome?.status === 'partially_redeemed',
+            redeemedServices: sessions.flatMap((s) =>
+              s.services.map((sv) => ({ name: sv.name, duration: sv.duration_minutes }))
+            ),
+            remainingServices: giftedList
+              .filter((g) => !new Set(sessions.flatMap((s) => s.serviceIds.map(String))).has(g.id))
+              .map((g) => ({ name: g.name, duration: g.duration })),
+          }}
+          onClose={() => setShowReceiptModal(false)}
         />
       )}
 

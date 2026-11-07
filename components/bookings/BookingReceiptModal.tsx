@@ -15,6 +15,7 @@ import {
   Mail,
   ShieldCheck,
   BookMarked,
+  Gift,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -69,6 +70,15 @@ export interface BookingReceiptData {
   subscriptionPaymentMethod?: string | null;
   subscriptionPaymentProvider?: string | null;
   subscriptionInvoiceNumber?: string | null;
+  // Gift Voucher Redemption additions
+  isVoucherRedemption?: boolean;
+  isVoucherPackage?: boolean;
+  voucherPackageName?: string | null;
+  voucherPackagePrice?: number | string | null;
+  voucherCode?: string | null;
+  isPartialRedeem?: boolean;
+  redeemedServices?: Array<{ name?: string; duration?: number | string }> | null;
+  remainingServices?: Array<{ name?: string; duration?: number | string }> | null;
 }
 
 interface BookingReceiptModalProps {
@@ -233,12 +243,27 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
           .rounded-full { border-radius: 9999px; }
           .bg-slate-50 { background-color: #f8fafc; }
           .bg-white { background-color: #ffffff; }
+          .bg-amber-50 { background-color: #fffbeb; }
+          .bg-amber-100 { background-color: #fef3c7; }
+          .bg-emerald-100 { background-color: #d1fae5; }
+          .bg-emerald-600 { background-color: #059669; }
+          .bg-amber-500 { background-color: #f59e0b; }
           .border { border: 1px solid #e2e8f0; }
+          .border-amber-200 { border-color: #fde68a; }
           .text-emerald-700 { color: #047857; }
+          .text-emerald-800 { color: #065f46; }
+          .text-amber-700 { color: #b45309; }
+          .text-amber-800 { color: #92400e; }
+          .text-amber-900 { color: #78350f; }
           .text-slate-400 { color: #94a3b8; }
           .text-slate-500 { color: #64748b; }
           .text-slate-700 { color: #334155; }
           .text-slate-900 { color: #0f172a; }
+          .italic { font-style: italic; }
+          .pl-1 { padding-left: 4px; }
+          .pl-2 { padding-left: 8px; }
+          .font-semibold { font-weight: 600; }
+          .font-black { font-weight: 900; }
           .barcode-container {
             display: flex;
             justify-content: center;
@@ -337,6 +362,14 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 {data.isCourseRedemption ? (
                   <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs" style={{ background: '#543C30' }}>
                     <BookMarked className="h-3 w-3 text-white" /> COURSE REDEMPTION
+                  </span>
+                ) : data.isVoucherPackage ? (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs bg-amber-700">
+                    <Gift className="h-3 w-3 text-white" /> {data.isPartialRedeem ? 'PARTIAL PACKAGE REDEEM' : 'GIFT PACKAGE REDEMPTION'}
+                  </span>
+                ) : data.isVoucherRedemption ? (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs bg-emerald-700">
+                    <Gift className="h-3 w-3 text-white" /> {data.isPartialRedeem ? 'PARTIAL VOUCHER REDEEM' : 'GIFT VOUCHER REDEEM'}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-[10px] font-bold">
@@ -450,6 +483,98 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               </div>
             )}
 
+            {/* Gift Package Card (when package voucher) */}
+            {data.isVoucherPackage && !data.isCourseRedemption && (
+              <div className="my-3 p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-[11px]">
+                <div className="flex justify-between items-start text-slate-900">
+                  <span className="text-slate-500 font-semibold">Gift Package:</span>
+                  <span className="font-bold text-right text-slate-900 max-w-[220px]">
+                    {data.voucherPackageName || data.serviceName || 'Spa Package'}
+                  </span>
+                </div>
+                {data.voucherCode && (
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span className="text-slate-500 font-semibold">Voucher Code:</span>
+                    <span className="font-mono font-bold text-slate-900">{data.voucherCode}</span>
+                  </div>
+                )}
+                {data.voucherPackagePrice != null && (
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span className="text-slate-500 font-semibold">Package Price:</span>
+                    <span className="font-mono font-bold text-emerald-700">
+                      {(parseFloat(String(data.voucherPackagePrice)) || 0).toFixed(3)} {currency} (Prepaid)
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Partial Voucher Redemption Details (explaining which services redeemed and which remain) */}
+            {(data.isPartialRedeem || (data.remainingServices && data.remainingServices.length > 0)) && (
+              <div className="my-3 p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-[11px] space-y-2">
+                <div className="flex items-center justify-between text-amber-900 border-b border-amber-200/70 pb-1.5">
+                  <span className="font-extrabold uppercase tracking-wider text-[10px] text-amber-900">
+                    Partial Voucher Redemption
+                  </span>
+                  {data.voucherCode && (
+                    <span className="font-mono font-bold text-[10px] text-amber-800">
+                      #{data.voucherCode}
+                    </span>
+                  )}
+                </div>
+
+                {/* Services Redeemed Now */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                    ✓ Redeemed in this booking ({data.redeemedServices?.length || data.services?.length || 1}):
+                  </p>
+                  <div className="mt-1 space-y-1 pl-1">
+                    {(data.redeemedServices && data.redeemedServices.length > 0
+                      ? data.redeemedServices
+                      : data.services && data.services.length > 0
+                      ? data.services
+                      : [{ name: data.serviceName || 'Spa Service' }]
+                    ).map((s, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-slate-800 text-[11px]">
+                        <span className="flex items-center gap-1.5 font-semibold">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 shrink-0" />
+                          <span>{s.name || 'Service'}</span>
+                        </span>
+                        <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
+                          Redeemed
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Services Remaining on Voucher */}
+                {data.remainingServices && data.remainingServices.length > 0 && (
+                  <div className="pt-2 border-t border-dashed border-amber-200">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                      ⏳ Remaining on Voucher ({data.remainingServices.length}):
+                    </p>
+                    <div className="mt-1 space-y-1 pl-1">
+                      {data.remainingServices.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-slate-700 text-[11px]">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
+                            <span>{s.name || 'Service'}</span>
+                          </span>
+                          <span className="text-[10px] font-medium text-amber-700 bg-amber-100/70 px-1.5 py-0.5 rounded">
+                            Remaining
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-amber-800/80 pt-1 italic">
+                      Remaining services can be redeemed in future visits using voucher code #{data.voucherCode || 'on file'}.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Itemized Services & Addons */}
             <div className="py-3 border-b border-dashed border-slate-300 space-y-2">
               <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -473,9 +598,18 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                                 (Session #{data.currentSessionNumber ?? 1} of {data.totalSessions ?? 1} · Package Covered)
                               </span>
                             )}
+                            {data.isVoucherPackage && (
+                              <span className="text-[10px] text-emerald-700 block font-normal">
+                                (Included in Gift Package)
+                              </span>
+                            )}
                           </span>
                           <span className="font-mono">
-                            {data.isCourseRedemption ? `0.000 ${currency}` : `${p.toFixed(3)} ${currency}`}
+                            {data.isCourseRedemption
+                              ? `0.000 ${currency}`
+                              : data.isVoucherPackage
+                              ? 'Included'
+                              : `${p.toFixed(3)} ${currency}`}
                           </span>
                         </div>
                         {Number(sv.duration ?? 0) > 0 && (
@@ -495,10 +629,17 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                           (Session #{data.currentSessionNumber ?? 1} of {data.totalSessions ?? 1} · Package Covered)
                         </span>
                       )}
+                      {data.isVoucherPackage && (
+                        <span className="text-[10px] text-emerald-700 block font-normal">
+                          (Included in Gift Package)
+                        </span>
+                      )}
                     </span>
                     <span className="font-mono">
                       {data.isCourseRedemption
                         ? `0.000 ${currency}`
+                        : data.isVoucherPackage
+                        ? 'Included'
                         : servicePriceNum > 0
                         ? `${servicePriceNum.toFixed(3)} ${currency}`
                         : totalAmountNum > 0
@@ -542,9 +683,17 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             {/* Financial Summary */}
             <div className="py-3 border-b border-dashed border-slate-300 space-y-1.5 text-xs">
               <div className="flex justify-between text-slate-600">
-                <span>{data.isCourseRedemption ? 'Session Standard Value:' : 'Subtotal:'}</span>
+                <span>
+                  {data.isCourseRedemption
+                    ? 'Session Standard Value:'
+                    : data.isVoucherPackage
+                    ? 'Package Price:'
+                    : 'Subtotal:'}
+                </span>
                 <span className="font-mono">
-                  {data.subtotal != null
+                  {data.isVoucherPackage
+                    ? `${(parseFloat(String(data.voucherPackagePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum).toFixed(3)} ${currency}`
+                    : data.subtotal != null
                     ? `${(parseFloat(String(data.subtotal)) || 0).toFixed(3)} ${currency}`
                     : `${(totalAmountNum + (parseFloat(String(data.discount ?? '0')) || 0)).toFixed(3)} ${currency}`}
                 </span>
@@ -552,6 +701,11 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               {data.isCourseRedemption ? (
                 <div className="flex justify-between text-emerald-700 font-semibold">
                   <span>Course Package Coverage:</span>
+                  <span className="font-mono font-bold">-100% (Redeemed)</span>
+                </div>
+              ) : data.isVoucherPackage || data.isVoucherRedemption ? (
+                <div className="flex justify-between text-emerald-700 font-semibold">
+                  <span>Gift Voucher Coverage:</span>
                   <span className="font-mono font-bold">-100% (Redeemed)</span>
                 </div>
               ) : Number(data.discount ?? 0) > 0 ? (
@@ -566,10 +720,10 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               </div>
               <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200">
                 <span className="text-sm font-extrabold text-slate-900 uppercase">
-                  {data.isCourseRedemption ? 'Visit Balance Due:' : 'Total Paid:'}
+                  {data.isCourseRedemption || data.isVoucherRedemption ? 'Visit Balance Due:' : 'Total Paid:'}
                 </span>
-                <span className={cn('text-base font-black font-mono', data.isCourseRedemption ? 'text-emerald-700' : 'text-slate-900')}>
-                  {data.isCourseRedemption ? '0.000' : totalAmountNum.toFixed(3)} <span className="text-xs font-semibold">{currency}</span>
+                <span className={cn('text-base font-black font-mono', (data.isCourseRedemption || data.isVoucherRedemption) ? 'text-emerald-700' : 'text-slate-900')}>
+                  {data.isCourseRedemption || data.isVoucherRedemption ? '0.000' : totalAmountNum.toFixed(3)} <span className="text-xs font-semibold">{currency}</span>
                 </span>
               </div>
               {data.isCourseRedemption && (
@@ -577,6 +731,11 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   {data.subscriptionPrice
                     ? `Course Package: ${Number(data.subscriptionPrice).toFixed(3)} ${currency} (Prepaid in full)`
                     : 'Prepaid via Course Subscription'}
+                </div>
+              )}
+              {data.isVoucherPackage && (
+                <div className="text-[10px] text-slate-500 pt-0.5 text-right font-medium">
+                  {`Gift Package: ${(parseFloat(String(data.voucherPackagePrice ?? totalAmountNum)) || 0).toFixed(3)} ${currency} (Prepaid in full)`}
                 </div>
               )}
             </div>
@@ -588,6 +747,8 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 <span className="font-semibold text-slate-800 capitalize">
                   {data.isCourseRedemption
                     ? `Course Package (${data.subscriptionPaymentProvider || data.subscriptionPaymentMethod || 'Prepaid'})`
+                    : data.isVoucherRedemption
+                    ? `Gift Voucher (${data.paymentProvider || 'Prepaid'})`
                     : data.paymentMethod || data.paymentProvider || 'Desk Payment (Confirmed)'}
                 </span>
               </div>
@@ -595,6 +756,12 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 <div className="flex justify-between">
                   <span className="text-slate-500">Subscription Ref:</span>
                   <span className="font-mono font-bold text-slate-800">{data.courseSubscriptionNumber}</span>
+                </div>
+              )}
+              {data.isVoucherRedemption && data.voucherCode && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Voucher Code:</span>
+                  <span className="font-mono font-bold text-slate-800">{data.voucherCode}</span>
                 </div>
               )}
               {(data.subscriptionInvoiceNumber || data.invoiceNumber) && (
