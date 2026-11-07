@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { authedFetch } from '@/lib/authedFetch';
 import { CreateCustomerModal, type CreatedCustomer } from '@/components/bookings/CreateCustomerModal';
+import { CoursePaymentProviderModal } from '@/components/bookings/CoursePaymentProviderModal';
 import {
   BookMarked,
   X,
@@ -373,22 +374,12 @@ export function SellCourseModal({
   const [sellForm, setSellForm] = useState({
     customer_id: '',
     course_id: courseId,
-    payment_option: 'pay_at_desk' as 'pay_at_desk' | 'payment_link',
-    payment_gateway: 'myfatoorah' as 'myfatoorah' | 'tap' | 'deema',
     notes: '',
   });
 
-  const [submitting, setSubmitting] = useState(false);
+  const [discount, setDiscount] = useState<string>('0');
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Success sub-modals (pay at desk confirmation / payment link)
-  const [confirmPaymentSub, setConfirmPaymentSub] = useState<Record<string, any> | null>(null);
-  const [paymentLinkSub, setPaymentLinkSub] = useState<Record<string, any> | null>(null);
-  const [paymentProvider, setPaymentProvider] = useState('knet_pos');
-  const [paymentMethod, setPaymentMethod] = useState('knet');
-  const [txRef, setTxRef] = useState('');
-  const [confirming, setConfirming] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
 
   const authHeader = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -445,11 +436,15 @@ export function SellCourseModal({
     return courses.find((c) => String(c.id) === String(sellForm.course_id)) || null;
   }, [courses, sellForm.course_id]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const packagePrice = Number(selectedSellCourse?.price || 0);
+  const parsedDiscount = Math.max(0, parseFloat(discount) || 0);
+  const finalPrice = Math.max(0, packagePrice - parsedDiscount);
+  const effectiveCustomerId = selectedCustomer?.id || sellForm.customer_id;
+  const isPayDisabled = !effectiveCustomerId || !sellForm.course_id;
+
+  const handleOpenPaymentProvider = (e: React.FormEvent | React.MouseEvent) => {
     e.preventDefault();
     setError(null);
-
-    const effectiveCustomerId = selectedCustomer?.id || sellForm.customer_id;
     if (!effectiveCustomerId) {
       setError('Please select or create a customer.');
       return;
@@ -458,85 +453,7 @@ export function SellCourseModal({
       setError('Please select a course package.');
       return;
     }
-
-    setSubmitting(true);
-    try {
-      const payload: Record<string, any> = {
-        customer_id: effectiveCustomerId,
-        course_id: sellForm.course_id,
-        payment_option: sellForm.payment_option,
-        notes: sellForm.notes.trim() || null,
-      };
-      if (sellForm.payment_option === 'payment_link') {
-        payload.payment_gateway = sellForm.payment_gateway;
-      }
-
-      const res = await authedFetch('/booknpay/api/v1/course-subscriptions/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const msg =
-          json?.error?.message ||
-          json?.detail ||
-          json?.message ||
-          'Failed to create course subscription.';
-        setError(typeof msg === 'string' ? msg : JSON.stringify(msg));
-        return;
-      }
-
-      const created = json?.data || json;
-      if (onSuccess) onSuccess(created);
-
-      if (sellForm.payment_option === 'pay_at_desk') {
-        setConfirmPaymentSub(created);
-      } else if (created?.payment_url) {
-        setPaymentLinkSub(created);
-      } else {
-        onClose();
-      }
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Network error selling course.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleConfirmDeskPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!confirmPaymentSub) return;
-    setConfirming(true);
-    setError(null);
-    try {
-      const res = await authedFetch(
-        `/booknpay/api/v1/course-subscriptions/${confirmPaymentSub.id}/confirm-payment/`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            payment_provider: paymentProvider,
-            payment_method: paymentMethod,
-            transaction_reference: txRef.trim() || undefined,
-            payment_through: 'ushdesk',
-          }),
-        }
-      );
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          json?.error?.message || json?.detail || json?.message || 'Failed to confirm payment.'
-        );
-      }
-      if (onSuccess) onSuccess(json?.data || json);
-      setConfirmPaymentSub(null);
-      onClose();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Payment confirmation failed.');
-    } finally {
-      setConfirming(false);
-    }
+    setShowPaymentModal(true);
   };
 
   if (!isOpen) return null;
@@ -585,7 +502,7 @@ export function SellCourseModal({
 
           {/* Form */}
           <form
-            onSubmit={handleSubmit}
+            onSubmit={handleOpenPaymentProvider}
             className="p-6 space-y-4 overflow-y-auto"
             style={{ background: B.bg }}
           >
@@ -706,84 +623,45 @@ export function SellCourseModal({
                   </span>
                 </div>
                 <div
-                  className="flex justify-between pt-1 border-t"
+                  className="flex justify-between items-center pt-2 border-t"
                   style={{ borderColor: B.linen }}
                 >
-                  <span className="font-semibold" style={{ color: B.textMuted }}>
-                    Total Package Price
+                  <span className="font-semibold text-xs" style={{ color: B.textMuted }}>
+                    Package Price
                   </span>
-                  <span className="text-sm font-bold" style={{ color: B.espresso }}>
-                    {Number(selectedSellCourse.price || 0).toFixed(3)}{' '}
-                    {selectedSellCourse.currency || 'KWD'}
+                  <span className="font-bold text-xs" style={{ color: B.textMain }}>
+                    {packagePrice.toFixed(3)} {selectedSellCourse.currency || 'KWD'}
                   </span>
                 </div>
-              </div>
-            )}
 
-            {/* Payment Option */}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                type="button"
-                onClick={() => setSellForm((p) => ({ ...p, payment_option: 'pay_at_desk' }))}
-                className="p-3.5 rounded-xl border text-left transition-all cursor-pointer"
-                style={{
-                  borderColor: sellForm.payment_option === 'pay_at_desk' ? B.espresso : B.linen,
-                  background: sellForm.payment_option === 'pay_at_desk' ? B.blush : B.cardBg,
-                  color: B.textMain,
-                }}
-              >
-                <div className="flex items-center gap-2 font-semibold text-sm">
-                  <CreditCard className="w-4 h-4" style={{ color: B.espresso }} />
-                  Pay at Desk
+                <div className="flex justify-between items-center">
+                  <span className="font-semibold text-xs" style={{ color: B.textMuted }}>
+                    Discount ({selectedSellCourse.currency || 'KWD'})
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    max={packagePrice}
+                    step="0.001"
+                    value={discount}
+                    onChange={(e) => setDiscount(e.target.value)}
+                    placeholder="0.000"
+                    className="w-28 px-2.5 py-1 text-right text-xs font-bold rounded-lg border bg-white focus:outline-none"
+                    style={{ borderColor: B.linen, color: B.textMain }}
+                  />
                 </div>
-                <p className="text-[11px] mt-1" style={{ color: B.textMuted }}>
-                  Collect via KNET POS, Cash, or Card right now
-                </p>
-              </button>
 
-              <button
-                type="button"
-                onClick={() => setSellForm((p) => ({ ...p, payment_option: 'payment_link' }))}
-                className="p-3.5 rounded-xl border text-left transition-all cursor-pointer"
-                style={{
-                  borderColor: sellForm.payment_option === 'payment_link' ? B.espresso : B.linen,
-                  background: sellForm.payment_option === 'payment_link' ? B.blush : B.cardBg,
-                  color: B.textMain,
-                }}
-              >
-                <div className="flex items-center gap-2 font-semibold text-sm">
-                  <Link2 className="w-4 h-4" style={{ color: B.espresso }} />
-                  Send Payment Link
+                <div
+                  className="flex justify-between items-center pt-2 border-t"
+                  style={{ borderColor: B.linen }}
+                >
+                  <span className="font-bold text-xs" style={{ color: B.textMain }}>
+                    Final Total Package Price
+                  </span>
+                  <span className="text-base font-extrabold" style={{ color: B.espresso }}>
+                    {finalPrice.toFixed(3)} {selectedSellCourse.currency || 'KWD'}
+                  </span>
                 </div>
-                <p className="text-[11px] mt-1" style={{ color: B.textMuted }}>
-                  Generate online payment link (MyFatoorah / Tap)
-                </p>
-              </button>
-            </div>
-
-            {sellForm.payment_option === 'payment_link' && (
-              <div>
-                <label
-                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
-                  style={{ color: B.espresso }}
-                >
-                  Payment Gateway
-                </label>
-                <select
-                  value={sellForm.payment_gateway}
-                  onChange={(e) =>
-                    setSellForm((p) => ({
-                      ...p,
-                      payment_gateway: e.target.value as 'myfatoorah' | 'tap' | 'deema',
-                    }))
-                  }
-                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm focus:outline-none"
-                  style={{ borderColor: B.linen, color: B.textMain }}
-                >
-                  <option value="myfatoorah">MyFatoorah</option>
-                  <option value="tap">Tap Payments</option>
-                  <option value="deema">Deema</option>
-                </select>
               </div>
             )}
 
@@ -817,15 +695,14 @@ export function SellCourseModal({
                 Cancel
               </button>
               <button
-                type="submit"
-                disabled={submitting}
-                className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 disabled:opacity-50 flex items-center gap-2 cursor-pointer shadow-sm"
+                type="button"
+                onClick={handleOpenPaymentProvider}
+                disabled={isPayDisabled}
+                className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer shadow-sm transition"
                 style={{ background: B.espresso }}
               >
-                {submitting && <Loader2 className="w-4 h-4 animate-spin text-white" />}
-                {sellForm.payment_option === 'pay_at_desk'
-                  ? 'Create & Proceed to Desk Payment'
-                  : 'Create & Generate Link'}
+                <CreditCard className="w-4 h-4 text-white" />
+                <span>Pay & Confirm Subscription</span>
               </button>
             </div>
           </form>
@@ -863,236 +740,28 @@ export function SellCourseModal({
         />
       )}
 
-      {/* CONFIRM DESK PAYMENT MODAL */}
-      {confirmPaymentSub && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div
-            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
-            style={{ borderColor: B.linen }}
-          >
-            <div
-              className="flex items-center justify-between px-6 py-4 text-white"
-              style={{ background: B.espresso }}
-            >
-              <div className="flex items-center gap-2.5">
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.15)' }}
-                >
-                  <CreditCard className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-white">Confirm Desk Payment</h3>
-                  <p className="text-xs" style={{ color: B.linen }}>
-                    {confirmPaymentSub.subscription_number} ·{' '}
-                    {Number(confirmPaymentSub.price || 0).toFixed(3)}{' '}
-                    {confirmPaymentSub.currency || 'KWD'}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setConfirmPaymentSub(null);
-                  onClose();
-                }}
-                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.12)' }}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <form
-              onSubmit={handleConfirmDeskPayment}
-              className="p-6 space-y-4"
-              style={{ background: B.bg }}
-            >
-              <div>
-                <label
-                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
-                  style={{ color: B.espresso }}
-                >
-                  Payment Provider *
-                </label>
-                <select
-                  value={paymentProvider}
-                  onChange={(e) => setPaymentProvider(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
-                  style={{ borderColor: B.linen, color: B.textMain }}
-                >
-                  <option value="knet_pos">KNET POS Terminal</option>
-                  <option value="other">Cash / Manual</option>
-                  <option value="myfatoorah">MyFatoorah</option>
-                  <option value="tap">Tap</option>
-                </select>
-              </div>
-
-              <div>
-                <label
-                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
-                  style={{ color: B.espresso }}
-                >
-                  Payment Method *
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm"
-                  style={{ borderColor: B.linen, color: B.textMain }}
-                >
-                  <option value="knet">KNET</option>
-                  <option value="cash">Cash</option>
-                  <option value="card">Credit Card (Visa/Mastercard)</option>
-                  <option value="apple_pay">Apple Pay</option>
-                </select>
-              </div>
-
-              <div>
-                <label
-                  className="block text-xs font-extrabold uppercase tracking-wider mb-1"
-                  style={{ color: B.espresso }}
-                >
-                  POS / Transaction Reference (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={txRef}
-                  onChange={(e) => setTxRef(e.target.value)}
-                  placeholder="e.g. POS-AUTH-982134"
-                  className="w-full px-3.5 py-2.5 rounded-xl border bg-white text-sm font-mono"
-                  style={{ borderColor: B.linen, color: B.textMain }}
-                />
-              </div>
-
-              <div
-                className="flex items-center justify-end gap-3 pt-3 border-t"
-                style={{ borderColor: B.linen }}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    setConfirmPaymentSub(null);
-                    onClose();
-                  }}
-                  className="px-4 py-2.5 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
-                  style={{ borderColor: B.linen, color: B.textMain }}
-                >
-                  Skip for Now
-                </button>
-                <button
-                  type="submit"
-                  disabled={confirming}
-                  className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 disabled:opacity-50 flex items-center gap-2 cursor-pointer shadow-sm"
-                  style={{ background: B.espresso }}
-                >
-                  {confirming && <Loader2 className="w-4 h-4 animate-spin text-white" />}
-                  Confirm Payment
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* PAYMENT LINK MODAL */}
-      {paymentLinkSub && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div
-            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
-            style={{ borderColor: B.linen }}
-          >
-            <div
-              className="flex items-center justify-between px-6 py-4 text-white"
-              style={{ background: B.espresso }}
-            >
-              <div className="flex items-center gap-2.5">
-                <div
-                  className="w-9 h-9 rounded-xl flex items-center justify-center"
-                  style={{ background: 'rgba(255,255,255,0.15)' }}
-                >
-                  <Link2 className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-white">Payment Link Ready</h3>
-                  <p className="text-xs" style={{ color: B.linen }}>
-                    {paymentLinkSub.subscription_number} ·{' '}
-                    {Number(paymentLinkSub.price || 0).toFixed(3)}{' '}
-                    {paymentLinkSub.currency || 'KWD'}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => {
-                  setPaymentLinkSub(null);
-                  onClose();
-                }}
-                className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
-                style={{ background: 'rgba(255,255,255,0.12)' }}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4" style={{ background: B.bg }}>
-              <p className="text-xs" style={{ color: B.textMuted }}>
-                Share this link with the customer to collect payment online. The subscription will
-                automatically activate once payment succeeds.
-              </p>
-
-              <div
-                className="flex items-center gap-2 p-3 rounded-xl border bg-white"
-                style={{ borderColor: B.linen }}
-              >
-                <input
-                  type="text"
-                  readOnly
-                  value={paymentLinkSub.payment_url || ''}
-                  className="flex-1 bg-transparent text-xs font-mono outline-none truncate"
-                  style={{ color: B.textMain }}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (paymentLinkSub.payment_url) {
-                      navigator.clipboard.writeText(paymentLinkSub.payment_url);
-                      setCopiedLink(true);
-                      setTimeout(() => setCopiedLink(false), 2000);
-                    }
-                  }}
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition"
-                  style={{ background: B.pillBg, color: B.espresso }}
-                >
-                  {copiedLink ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      Copied!
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      Copy
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPaymentLinkSub(null);
-                    onClose();
-                  }}
-                  className="px-5 py-2.5 rounded-xl text-white text-sm font-semibold hover:opacity-95 cursor-pointer shadow-sm"
-                  style={{ background: B.espresso }}
-                >
-                  Done
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* SELECT PAYMENT PROVIDER MODAL */}
+      {showPaymentModal && selectedSellCourse && effectiveCustomerId && (
+        <CoursePaymentProviderModal
+          isOpen={showPaymentModal}
+          onClose={() => setShowPaymentModal(false)}
+          onSuccess={(sub) => {
+            setShowPaymentModal(false);
+            if (onSuccess) onSuccess(sub);
+            onClose();
+          }}
+          customerId={effectiveCustomerId}
+          customerName={customerName || customerLabel(selectedCustomer) || 'Customer'}
+          customerPhone={customerPhone(selectedCustomer)}
+          course={selectedSellCourse}
+          notes={sellForm.notes}
+          discount={parsedDiscount}
+          packagePrice={packagePrice}
+          finalPrice={finalPrice}
+          currency={selectedSellCourse.currency || 'KWD'}
+        />
       )}
     </>
   );
 }
+
