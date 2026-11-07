@@ -29,7 +29,11 @@ import {
   X,
   Sparkles,
   Receipt,
+  ExternalLink,
+  MessageCircle,
+  MessageSquare,
 } from 'lucide-react';
+import { whatsappShareUrl, sendPaymentLinkSms } from '@/lib/paymentLinks';
 
 // Brand palette (#543C30)
 const B = {
@@ -143,6 +147,60 @@ function CourseSubscriptionsContent() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
+  const [paymentLinkPhone, setPaymentLinkPhone] = useState('');
+  const [sendingSms, setSendingSms] = useState(false);
+  const [smsFeedback, setSmsFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (paymentLinkSub) {
+      const phone =
+        paymentLinkSub.customer_data?.phone_number ||
+        paymentLinkSub.customer_data?.phone ||
+        customers.find((c) => String(c.id) === String(paymentLinkSub.customer_id))?.phone_number ||
+        customers.find((c) => String(c.id) === String(paymentLinkSub.customer_id))?.phone ||
+        '';
+      setPaymentLinkPhone(phone);
+      setSmsFeedback(null);
+    }
+  }, [paymentLinkSub, customers]);
+
+  const handleSendPaymentLinkSms = async () => {
+    if (!paymentLinkSub || !generatedPaymentUrl) return;
+    const phone = paymentLinkPhone.trim();
+    if (!phone) {
+      setSmsFeedback({
+        type: 'error',
+        message: 'Please provide a valid phone number to send SMS.',
+      });
+      return;
+    }
+
+    setSendingSms(true);
+    setSmsFeedback(null);
+    try {
+      const custName = formatCustomerName(paymentLinkSub);
+      const courseName = paymentLinkSub.course_data?.name || paymentLinkSub.course_code || 'Course Package';
+      const price = Number(paymentLinkSub.price || 0).toFixed(3);
+      const curr = paymentLinkSub.currency || 'KWD';
+      const msg = `Dear ${custName}, here is your payment link for ${courseName} (${price} ${curr}): ${generatedPaymentUrl}`;
+      const res = await sendPaymentLinkSms({
+        phone_number: phone,
+        content: msg,
+      });
+      if (res.success) {
+        setSmsFeedback({ type: 'success', message: 'SMS sent successfully!' });
+      } else {
+        setSmsFeedback({ type: 'error', message: res.message || 'Failed to send SMS.' });
+      }
+    } catch (err: unknown) {
+      setSmsFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to send SMS',
+      });
+    } finally {
+      setSendingSms(false);
+    }
+  };
 
   const loadSubscriptions = useCallback(async () => {
     setLoading(true);
@@ -887,23 +945,6 @@ function CourseSubscriptionsContent() {
                             <>
                               <button
                                 onClick={() => {
-                                  setConfirmForm({
-                                    payment_provider: 'knet_pos',
-                                    payment_method: 'knet',
-                                    transaction_reference: '',
-                                  });
-                                  setActionError(null);
-                                  setConfirmPaymentSub(sub);
-                                }}
-                                className="px-2.5 py-1.5 rounded-lg text-white hover:opacity-95 text-xs font-semibold inline-flex items-center gap-1 transition-colors cursor-pointer"
-                                style={{ background: B.espresso }}
-                                title="Confirm Desk Payment"
-                              >
-                                <CreditCard className="w-3.5 h-3.5 text-white" />
-                                Pay
-                              </button>
-                              <button
-                                onClick={() => {
                                   setActionError(null);
                                   setGeneratedPaymentUrl(sub.payment_url || null);
                                   setPaymentLinkSub(sub);
@@ -1113,7 +1154,7 @@ function CourseSubscriptionsContent() {
       {paymentLinkSub && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div
-            className="bg-white rounded-3xl shadow-2xl border w-full max-w-md overflow-hidden"
+            className="bg-white rounded-3xl shadow-2xl border w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-200"
             style={{ borderColor: B.linen }}
           >
             <div
@@ -1130,7 +1171,7 @@ function CourseSubscriptionsContent() {
                 <div>
                   <h3 className="text-base font-extrabold text-white">Course Payment Link</h3>
                   <p className="text-xs" style={{ color: B.linen }}>
-                    {paymentLinkSub.subscription_number}
+                    {paymentLinkSub.subscription_number} · {Number(paymentLinkSub.price || 0).toFixed(3)} {paymentLinkSub.currency || 'KWD'}
                   </p>
                 </div>
               </div>
@@ -1138,6 +1179,7 @@ function CourseSubscriptionsContent() {
                 onClick={() => {
                   setPaymentLinkSub(null);
                   setGeneratedPaymentUrl(null);
+                  setSmsFeedback(null);
                 }}
                 className="p-1.5 rounded-xl text-white hover:bg-white/20 cursor-pointer"
                 style={{ background: 'rgba(255,255,255,0.12)' }}
@@ -1153,36 +1195,130 @@ function CourseSubscriptionsContent() {
                 </div>
               )}
 
+              {/* Customer & Course info summary */}
+              <div
+                className="p-3.5 rounded-2xl border bg-white space-y-1.5 text-xs shadow-xs"
+                style={{ borderColor: B.linen }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium" style={{ color: B.textMuted }}>Customer:</span>
+                  <span className="font-bold" style={{ color: B.textMain }}>{formatCustomerName(paymentLinkSub)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium" style={{ color: B.textMuted }}>Course Package:</span>
+                  <span className="font-semibold" style={{ color: B.textMain }}>
+                    {paymentLinkSub.course_data?.name || paymentLinkSub.course_code || 'Course Package'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-medium" style={{ color: B.textMuted }}>Total Package Price:</span>
+                  <span className="font-extrabold font-mono text-sm" style={{ color: B.espresso }}>
+                    {Number(paymentLinkSub.price || 0).toFixed(3)} {paymentLinkSub.currency || 'KWD'}
+                  </span>
+                </div>
+              </div>
+
               {generatedPaymentUrl ? (
-                <div className="space-y-3">
-                  <label
-                    className="block text-xs font-extrabold uppercase tracking-wider"
-                    style={{ color: B.espresso }}
-                  >
-                    Shareable Payment Link
-                  </label>
-                  <div className="flex items-center gap-2">
+                <div className="space-y-3.5 pt-1">
+                  <div>
+                    <label
+                      className="block text-xs font-extrabold uppercase tracking-wider mb-1.5"
+                      style={{ color: B.espresso }}
+                    >
+                      Shareable Payment Link
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={generatedPaymentUrl}
+                        className="flex-1 px-3 py-2 rounded-xl border bg-white text-xs font-mono select-all"
+                        style={{ borderColor: B.linen, color: B.textMain }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(generatedPaymentUrl);
+                          setCopiedUrl(true);
+                          setTimeout(() => setCopiedUrl(false), 2000);
+                        }}
+                        className="px-3 py-2 rounded-xl text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition shrink-0"
+                        style={{ background: B.espresso }}
+                      >
+                        <Copy className="w-3.5 h-3.5 text-white" />
+                        {copiedUrl ? 'Copied!' : 'Copy'}
+                      </button>
+                      <a
+                        href={generatedPaymentUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-2 rounded-xl border bg-white hover:bg-[#f2ede9] text-xs font-semibold flex items-center justify-center cursor-pointer transition shrink-0"
+                        style={{ borderColor: B.linen, color: B.espresso }}
+                        title="Open Payment Link"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      className="block text-xs font-extrabold uppercase tracking-wider mb-1"
+                      style={{ color: B.espresso }}
+                    >
+                      Customer Phone (for WhatsApp & SMS)
+                    </label>
                     <input
-                      type="text"
-                      readOnly
-                      value={generatedPaymentUrl}
-                      className="flex-1 px-3 py-2 rounded-xl border bg-white text-xs font-mono"
+                      type="tel"
+                      value={paymentLinkPhone}
+                      onChange={(e) => setPaymentLinkPhone(e.target.value)}
+                      placeholder="+965..."
+                      className="w-full px-3.5 py-2 rounded-xl border bg-white text-xs"
                       style={{ borderColor: B.linen, color: B.textMain }}
                     />
+                  </div>
+
+                  {/* Share with WhatsApp and Send SMS buttons */}
+                  <div className="grid grid-cols-2 gap-2.5 pt-1">
+                    <a
+                      href={whatsappShareUrl(
+                        paymentLinkPhone,
+                        `Dear ${formatCustomerName(paymentLinkSub)}, please complete your payment of ${Number(paymentLinkSub.price || 0).toFixed(3)} ${paymentLinkSub.currency || 'KWD'} for course subscription ${paymentLinkSub.subscription_number || ''}: ${generatedPaymentUrl}`
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 px-3 transition cursor-pointer shadow-xs"
+                    >
+                      <MessageCircle className="w-4 h-4" />
+                      <span>Share with WhatsApp</span>
+                    </a>
+
                     <button
                       type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(generatedPaymentUrl);
-                        setCopiedUrl(true);
-                        setTimeout(() => setCopiedUrl(false), 2000);
-                      }}
-                      className="px-3 py-2 rounded-xl text-white text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                      style={{ background: B.espresso }}
+                      onClick={handleSendPaymentLinkSms}
+                      disabled={sendingSms}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-bold py-2.5 px-3 transition cursor-pointer disabled:opacity-50 shadow-xs"
                     >
-                      <Copy className="w-3.5 h-3.5 text-white" />
-                      {copiedUrl ? 'Copied!' : 'Copy'}
+                      {sendingSms ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <MessageSquare className="w-4 h-4" />
+                      )}
+                      <span>Send SMS</span>
                     </button>
                   </div>
+
+                  {smsFeedback && (
+                    <div
+                      className={`p-2.5 rounded-xl text-xs font-medium text-center border ${
+                        smsFeedback.type === 'success'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-red-50 text-red-800 border-red-200'
+                      }`}
+                    >
+                      {smsFeedback.message}
+                    </div>
+                  )}
                 </div>
               ) : null}
 
@@ -1212,6 +1348,7 @@ function CourseSubscriptionsContent() {
                     onClick={() => {
                       setPaymentLinkSub(null);
                       setGeneratedPaymentUrl(null);
+                      setSmsFeedback(null);
                     }}
                     className="px-4 py-2 rounded-xl border bg-white text-sm font-semibold cursor-pointer"
                     style={{ borderColor: B.linen, color: B.textMain }}
