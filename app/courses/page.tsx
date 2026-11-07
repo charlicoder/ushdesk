@@ -616,7 +616,6 @@ export default function CoursesPage() {
                   <tr className="bg-[#FAF8F5] border-b border-[#E5E0D8] text-[11px] font-semibold uppercase tracking-wider text-[#8C7D70]">
                     <th className="py-3.5 px-4">Code & Name</th>
                     <th className="py-3.5 px-4">Locked Service</th>
-                    <th className="py-3.5 px-4">Room Type</th>
                     <th className="py-3.5 px-4">Sessions & Validity</th>
                     <th className="py-3.5 px-4 text-center">Subscriptions</th>
                     <th className="py-3.5 px-4">Course Price</th>
@@ -674,21 +673,6 @@ export default function CoursesPage() {
                               : ''}{' '}
                             {unitPrice > 0 ? `· ${unitPrice.toFixed(3)} KWD/session` : ''}
                           </div>
-                        </td>
-
-                        <td className="py-4 px-4">
-                          <span
-                            className="px-2.5 py-1 rounded-full text-xs font-medium border"
-                            style={{
-                              background: B.pillBg,
-                              color: B.espresso,
-                              borderColor: B.linen,
-                            }}
-                          >
-                            {course.arrangement_type_label ||
-                              ARRANGEMENT_LABELS[course.arrangement_type] ||
-                              course.arrangement_type}
-                          </span>
                         </td>
 
                         <td className="py-4 px-4">
