@@ -13,7 +13,7 @@ import { DashboardShell } from '@/components/dashboard/shell';
 import { useAppSelector } from '@/store/hooks';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
-import { isBranchRestrictedScheduleRole } from '@/lib/permissions';
+import { isBranchRestrictedScheduleRole, isAdministratorRole, isAdmin as checkIsAdmin } from '@/lib/permissions';
 import {
   NewAppointmentBookingModal,
 } from '@/components/bookings/NewAppointmentBookingModal';
@@ -977,17 +977,13 @@ function getBreakDurationMinutes(slot: Slot): number {
   return 60;
 }
 
-/** Minutes after a slot's start time during which it can still be booked. */
-const PAST_SLOT_GRACE_MINUTES = 60;
-
-function isSlotInPast(selectedDate: string, slotLabel: string): boolean {
-  if (!selectedDate || !slotLabel) return false;
+function isSlotInPast(selectedDate: string, slotLabel?: string, isAdmin: boolean = false): boolean {
+  if (isAdmin) return false;
+  if (!selectedDate) return false;
   const current = getCurrentKuwaitDateTime();
   if (selectedDate < current.dateStr) return true;
-  if (selectedDate > current.dateStr) return false;
-  const slotMin = slotToMinutes(slotLabel);
-  // A slot stays bookable for one hour after its start time
-  return slotMin <= current.minutes - PAST_SLOT_GRACE_MINUTES;
+  // Current date and future dates: all available slots remain open at any time
+  return false;
 }
 
 // ── Build schedule map from API data ──────────────────────────────────────────
@@ -998,6 +994,7 @@ function buildScheduleFromApi(
   timeSlots: string[],
   slotDurationMinutes: number,
   selectedDate?: string,
+  isAdmin: boolean = false,
 ): Record<string, Record<string, Slot>> {
   const sched: Record<string, Record<string, Slot>> = {};
 
@@ -1391,7 +1388,7 @@ function buildScheduleFromApi(
       }
 
       const isAvail = avIntervals.some(av => av.startMin <= slotStart && av.endMin >= slotEnd);
-      const isPast = selectedDate ? isSlotInPast(selectedDate, slotLabel) : false;
+      const isPast = selectedDate ? isSlotInPast(selectedDate, slotLabel, isAdmin) : false;
       sched[therapist.id][slotLabel] = { status: (isAvail && !isPast) ? 'available' : 'unavailable' };
     }
   }
@@ -1415,6 +1412,10 @@ export default function TherapistSchedulePage() {
   const user     = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const locale   = useAppSelector((s) => s.ui.locale);
+
+  const isAdmin = useMemo(() => {
+    return checkIsAdmin(user?.user_type) || (roleInfo?.is_superuser === true) || isAdministratorRole(roleInfo, user);
+  }, [user, roleInfo]);
 
   // Track assigned branch for role-restricted employees (Branch Manager, Customer Support Manager, Customer Support Agent)
   const [assignedBranch, setAssignedBranch] = useState<{ id: string; name: string } | null>(() => {
@@ -1843,7 +1844,7 @@ export default function TherapistSchedulePage() {
   }, []);
 
   const schedule = scheduleData
-    ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes, selectedDate)
+    ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes, selectedDate, isAdmin)
     : {};
 
   const filteredTherapists = search
@@ -1921,10 +1922,10 @@ export default function TherapistSchedulePage() {
   }, [branchLabel, dateDisplay]);
 
   const openBookingModal = useCallback((therapist: Therapist, timeSlot: string) => {
-    if (isSlotInPast(selectedDate, timeSlot)) return;
+    if (isSlotInPast(selectedDate, timeSlot, isAdmin)) return;
     const maxDurationMinutes = computeMaxContiguousMinutes(timeSlots, timeSlot, l => schedule[therapist.id]?.[l], grid.slot_duration_minutes);
     setBookingModal({ therapist, timeSlot, maxDurationMinutes });
-  }, [selectedDate, timeSlots, schedule, grid.slot_duration_minutes]);
+  }, [selectedDate, timeSlots, schedule, grid.slot_duration_minutes, isAdmin]);
 
   const handleDropBreak = useCallback(async (
     therapist: Therapist,

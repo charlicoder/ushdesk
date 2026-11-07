@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { usePermissions } from '@/hooks/use-permissions';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -177,6 +178,7 @@ export function RescheduleBookingModal({
   initialRescheduleParams,
   initialAvailabilitiesPromise,
 }: RescheduleBookingModalProps) {
+  const { isAdmin } = usePermissions();
   const rawToken = token || (typeof window !== 'undefined' ? localStorage.getItem('ush_access_token') ?? '' : '');
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
@@ -652,19 +654,15 @@ export function RescheduleBookingModal({
     });
     sortedMinutes.sort((a, b) => a - b);
 
-    const now = new Date();
-    const isToday = selectedDate === todayStr;
-    const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
+    if (!isAdmin && selectedDate < todayStr) {
+      setAvailableSlots([]);
+      return;
+    }
 
     const slots: { time: string; available: boolean }[] = [];
     const minRequiredTherapists = isCoupleRoom && therapists.length >= 2 ? 2 : 1;
 
     for (const m of sortedMinutes) {
-      // Per requirement: If today, do not show timeslots smaller than or equal to current datetime
-      if (isToday && m <= currentTotalMinutes) {
-        continue;
-      }
-
       const h = Math.floor(m / 60);
       const min = m % 60;
       const ampm = h >= 12 ? 'PM' : 'AM';
@@ -681,6 +679,7 @@ export function RescheduleBookingModal({
 
     setAvailableSlots(slots);
   }, [
+    isAdmin,
     selectedDate,
     selectedRoomId,
     arrangements,
@@ -1136,7 +1135,7 @@ export function RescheduleBookingModal({
                     <div className="flex items-center gap-2">
                       <input
                         type="date"
-                        min={todayStr}
+                        min={isAdmin ? undefined : todayStr}
                         value={selectedDate}
                         onChange={(e) => setSelectedDate(e.target.value)}
                         className="rounded-xl border border-border/70 bg-card px-3.5 py-2 text-sm font-semibold shadow-sm focus:border-primary focus:outline-none transition cursor-pointer"

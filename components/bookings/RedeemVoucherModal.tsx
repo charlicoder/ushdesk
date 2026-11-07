@@ -1485,7 +1485,7 @@ export function RedeemVoucherModal({
   const cleanToken = rawToken.replace(/^(Bearer\s+)+/i, '').trim();
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
   const currentUser = useAppSelector((s) => s.auth.user);
-  const { canApplyDiscount: allowDiscount } = usePermissions();
+  const { canApplyDiscount: allowDiscount, isAdmin } = usePermissions();
 
   // ── Package vouchers: the gifted package is redeemed through its included services ──
   const [pkgInfo, setPkgInfo] = useState<{
@@ -2072,7 +2072,7 @@ export function RedeemVoucherModal({
                     setSelectedDate(d);
                     setShowDatePicker(false);
                   }}
-                  minDate={todayStr}
+                  minDate={isAdmin ? undefined : todayStr}
                   maxDate={expireDateDay || undefined}
                 />
               </div>

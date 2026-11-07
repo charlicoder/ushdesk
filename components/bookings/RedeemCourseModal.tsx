@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { authedFetch } from '@/lib/authedFetch';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import {
   X,
@@ -278,6 +279,7 @@ function ArrangementCard({
 }
 
 export function RedeemCourseModal({ subscription, onClose, onSuccess }: RedeemCourseModalProps) {
+  const { isAdmin } = usePermissions();
   const [branches, setBranches] = useState<Record<string, any>[]>([]);
   const [serviceFullDetail, setServiceFullDetail] = useState<Record<string, any> | null>(null);
   const [arrangements, setArrangements] = useState<Record<string, any>[]>([]);
@@ -1085,7 +1087,7 @@ export function RedeemCourseModal({ subscription, onClose, onSuccess }: RedeemCo
                 <input
                   type="date"
                   value={appointmentDate}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={isAdmin ? undefined : new Date().toISOString().split('T')[0]}
                   max={
                     subscription.expires_at
                       ? new Date(subscription.expires_at).toISOString().split('T')[0]

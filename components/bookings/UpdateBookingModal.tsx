@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
+import { usePermissions } from '@/hooks/use-permissions';
 import { paymentLinksApi, type PaymentLink } from '@/lib/paymentLinks';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -332,6 +333,7 @@ export function UpdateBookingModal({
   initialUpdateParams,
   initialAvailabilitiesPromise,
 }: UpdateBookingModalProps) {
+  const { isAdmin } = usePermissions();
   const authHeader = token ? (token.startsWith('Bearer ') ? token : `Bearer ${token}`) : undefined;
 
   // Booking details state
@@ -865,19 +867,23 @@ export function UpdateBookingModal({
 
     const sortedMinutes: number[] = Array.from(allKnownMinutes).sort((a, b) => a - b);
 
-    const now = new Date();
-    const isToday = selectedDate === todayStr;
-    const currentTotalMinutes = now.getHours() * 60 + now.getMinutes();
+    if (!isAdmin && selectedDate < todayStr) {
+      const ownSlots: { time: string; available: boolean }[] = [];
+      if (bookingExistingMin !== null) {
+        const h = Math.floor(bookingExistingMin / 60);
+        const min = bookingExistingMin % 60;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const hd = h % 12 === 0 ? 12 : h % 12;
+        const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
+        ownSlots.push({ time: timeLabel, available: true });
+      }
+      setAvailableSlots(ownSlots);
+      return;
+    }
 
     const slots: { time: string; available: boolean }[] = [];
 
     for (const m of sortedMinutes) {
-      if (isToday && m <= currentTotalMinutes) {
-        if (bookingExistingMin === null || m !== bookingExistingMin) {
-          continue;
-        }
-      }
-
       const h = Math.floor(m / 60);
       const min = m % 60;
       const ampm = h >= 12 ? 'PM' : 'AM';
@@ -894,6 +900,7 @@ export function UpdateBookingModal({
 
     setAvailableSlots(slots);
   }, [
+    isAdmin,
     selectedDate,
     selectedRoomId,
     arrangements,
@@ -1637,7 +1644,7 @@ export function UpdateBookingModal({
                 <div className="flex items-center gap-2">
                   <input
                     type="date"
-                    min={initialDate && initialDate < todayStr ? initialDate : todayStr}
+                    min={isAdmin ? undefined : (initialDate && initialDate < todayStr ? initialDate : todayStr)}
                     max={maxDateStr}
                     value={selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
