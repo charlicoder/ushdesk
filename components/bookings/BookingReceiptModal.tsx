@@ -14,6 +14,7 @@ import {
   Phone,
   Mail,
   ShieldCheck,
+  BookMarked,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -56,6 +57,18 @@ export interface BookingReceiptData {
   paidAt?: string | null;
   createdAt?: string | null;
   notes?: string | null;
+  // Course Redemption additions
+  isCourseRedemption?: boolean;
+  courseCode?: string | null;
+  courseName?: string | null;
+  courseSubscriptionNumber?: string | null;
+  currentSessionNumber?: number | null;
+  totalSessions?: number | null;
+  remainingSessions?: number | null;
+  subscriptionPrice?: number | string | null;
+  subscriptionPaymentMethod?: string | null;
+  subscriptionPaymentProvider?: string | null;
+  subscriptionInvoiceNumber?: string | null;
 }
 
 interface BookingReceiptModalProps {
@@ -207,6 +220,25 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
           .text-muted { color: #6b7280; }
           .uppercase { text-transform: uppercase; }
           .tracking-wider { letter-spacing: 0.05em; }
+          .grid { display: grid; }
+          .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+          .gap-1 { gap: 4px; }
+          .gap-1\.5 { gap: 6px; }
+          .p-1 { padding: 4px; }
+          .p-1\.5 { padding: 6px; }
+          .p-3 { padding: 12px; }
+          .rounded { border-radius: 6px; }
+          .rounded-lg { border-radius: 8px; }
+          .rounded-xl { border-radius: 12px; }
+          .rounded-full { border-radius: 9999px; }
+          .bg-slate-50 { background-color: #f8fafc; }
+          .bg-white { background-color: #ffffff; }
+          .border { border: 1px solid #e2e8f0; }
+          .text-emerald-700 { color: #047857; }
+          .text-slate-400 { color: #94a3b8; }
+          .text-slate-500 { color: #64748b; }
+          .text-slate-700 { color: #334155; }
+          .text-slate-900 { color: #0f172a; }
           .barcode-container {
             display: flex;
             justify-content: center;
@@ -298,13 +330,19 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               <p className="text-[10px] text-slate-500">
                 State of Kuwait &bull; desk.ushspa.co
               </p>
-              <div className="pt-2 flex items-center justify-center gap-2">
+              <div className="pt-2 flex items-center justify-center gap-2 flex-wrap">
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-0.5 text-[10px] font-bold">
                   <CheckCircle2 className="h-3 w-3" /> COMPLETED
                 </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-[10px] font-bold">
-                  <ShieldCheck className="h-3 w-3" /> PAID
-                </span>
+                {data.isCourseRedemption ? (
+                  <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs" style={{ background: '#543C30' }}>
+                    <BookMarked className="h-3 w-3 text-white" /> COURSE REDEMPTION
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-[10px] font-bold">
+                    <ShieldCheck className="h-3 w-3" /> PAID
+                  </span>
+                )}
               </div>
             </div>
 
@@ -380,6 +418,38 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               )}
             </div>
 
+            {/* Course Package & Session Progress for Course Redemption */}
+            {data.isCourseRedemption && (
+              <div className="my-3 p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2 text-[11px]">
+                <div className="flex justify-between items-start text-slate-900">
+                  <span className="text-slate-500 font-semibold">Course:</span>
+                  <span className="font-bold text-right text-slate-900 max-w-[220px]">
+                    {data.courseCode ? `[${data.courseCode}] ` : ''}{data.courseName || 'Course Package'}
+                  </span>
+                </div>
+                {data.courseSubscriptionNumber && (
+                  <div className="flex justify-between items-center text-slate-700">
+                    <span className="text-slate-500 font-semibold">Subscription #:</span>
+                    <span className="font-mono font-bold text-slate-900">{data.courseSubscriptionNumber}</span>
+                  </div>
+                )}
+                <div className="pt-2 border-t border-dashed border-slate-200 grid grid-cols-3 gap-1.5 text-center">
+                  <div className="p-1.5 rounded-lg bg-white border border-slate-200">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-bold">Current</span>
+                    <span className="font-black text-slate-900 text-xs">Session #{data.currentSessionNumber ?? 1}</span>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-white border border-slate-200">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-bold">Total</span>
+                    <span className="font-bold text-slate-700 text-xs">{data.totalSessions ?? 1} Sessions</span>
+                  </div>
+                  <div className="p-1.5 rounded-lg bg-white border border-slate-200">
+                    <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-bold">Remaining</span>
+                    <span className="font-bold text-emerald-700 text-xs">{data.remainingSessions ?? 0} Left</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Itemized Services & Addons */}
             <div className="py-3 border-b border-dashed border-slate-300 space-y-2">
               <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
@@ -398,8 +468,15 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                           <span>
                             {data.services && data.services.length > 1 ? `#${idx + 1} ` : ''}
                             {sv.name || 'Spa Service'}
+                            {data.isCourseRedemption && (
+                              <span className="text-[10px] text-emerald-700 block font-normal">
+                                (Session #{data.currentSessionNumber ?? 1} of {data.totalSessions ?? 1} · Package Covered)
+                              </span>
+                            )}
                           </span>
-                          <span className="font-mono">{p.toFixed(3)} {currency}</span>
+                          <span className="font-mono">
+                            {data.isCourseRedemption ? `0.000 ${currency}` : `${p.toFixed(3)} ${currency}`}
+                          </span>
                         </div>
                         {Number(sv.duration ?? 0) > 0 && (
                           <p className="text-[10px] text-slate-500">{sv.duration} mins</p>
@@ -409,21 +486,30 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   })}
                 </div>
               ) : (
-              <div className="space-y-0.5">
-                <div className="flex justify-between font-bold text-slate-900 text-xs">
-                  <span>{data.serviceName || 'Spa Service'}</span>
-                  <span className="font-mono">
-                    {servicePriceNum > 0
-                      ? `${servicePriceNum.toFixed(3)} ${currency}`
-                      : totalAmountNum > 0
-                      ? `${totalAmountNum.toFixed(3)} ${currency}`
-                      : `0.000 ${currency}`}
-                  </span>
+                <div className="space-y-0.5">
+                  <div className="flex justify-between font-bold text-slate-900 text-xs">
+                    <span>
+                      {data.serviceName || 'Spa Service'}
+                      {data.isCourseRedemption && (
+                        <span className="text-[10px] text-emerald-700 block font-normal">
+                          (Session #{data.currentSessionNumber ?? 1} of {data.totalSessions ?? 1} · Package Covered)
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-mono">
+                      {data.isCourseRedemption
+                        ? `0.000 ${currency}`
+                        : servicePriceNum > 0
+                        ? `${servicePriceNum.toFixed(3)} ${currency}`
+                        : totalAmountNum > 0
+                        ? `${totalAmountNum.toFixed(3)} ${currency}`
+                        : `0.000 ${currency}`}
+                    </span>
+                  </div>
+                  {data.serviceDuration && (
+                    <p className="text-[10px] text-slate-500">{data.serviceDuration} mins base service</p>
+                  )}
                 </div>
-                {data.serviceDuration && (
-                  <p className="text-[10px] text-slate-500">{data.serviceDuration} mins base service</p>
-                )}
-              </div>
               )}
 
               {/* Addons */}
@@ -456,29 +542,43 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             {/* Financial Summary */}
             <div className="py-3 border-b border-dashed border-slate-300 space-y-1.5 text-xs">
               <div className="flex justify-between text-slate-600">
-                <span>Subtotal:</span>
+                <span>{data.isCourseRedemption ? 'Session Standard Value:' : 'Subtotal:'}</span>
                 <span className="font-mono">
                   {data.subtotal != null
                     ? `${(parseFloat(String(data.subtotal)) || 0).toFixed(3)} ${currency}`
                     : `${(totalAmountNum + (parseFloat(String(data.discount ?? '0')) || 0)).toFixed(3)} ${currency}`}
                 </span>
               </div>
-              {Number(data.discount ?? 0) > 0 && (
+              {data.isCourseRedemption ? (
+                <div className="flex justify-between text-emerald-700 font-semibold">
+                  <span>Course Package Coverage:</span>
+                  <span className="font-mono font-bold">-100% (Redeemed)</span>
+                </div>
+              ) : Number(data.discount ?? 0) > 0 ? (
                 <div className="flex justify-between text-emerald-700">
                   <span>Discount:</span>
                   <span className="font-mono font-bold">-{(parseFloat(String(data.discount)) || 0).toFixed(3)} {currency}</span>
                 </div>
-              )}
+              ) : null}
               <div className="flex justify-between text-slate-600">
                 <span>Tax / VAT (0%):</span>
                 <span className="font-mono">0.000 {currency}</span>
               </div>
               <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200">
-                <span className="text-sm font-extrabold text-slate-900 uppercase">Total Paid:</span>
-                <span className="text-base font-black text-slate-900 font-mono">
-                  {totalAmountNum.toFixed(3)} <span className="text-xs font-semibold">{currency}</span>
+                <span className="text-sm font-extrabold text-slate-900 uppercase">
+                  {data.isCourseRedemption ? 'Visit Balance Due:' : 'Total Paid:'}
+                </span>
+                <span className={cn('text-base font-black font-mono', data.isCourseRedemption ? 'text-emerald-700' : 'text-slate-900')}>
+                  {data.isCourseRedemption ? '0.000' : totalAmountNum.toFixed(3)} <span className="text-xs font-semibold">{currency}</span>
                 </span>
               </div>
+              {data.isCourseRedemption && (
+                <div className="text-[10px] text-slate-500 pt-0.5 text-right font-medium">
+                  {data.subscriptionPrice
+                    ? `Course Package: ${Number(data.subscriptionPrice).toFixed(3)} ${currency} (Prepaid in full)`
+                    : 'Prepaid via Course Subscription'}
+                </div>
+              )}
             </div>
 
             {/* Payment Method / Audit */}
@@ -486,13 +586,23 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               <div className="flex justify-between">
                 <span className="text-slate-500">Payment Method:</span>
                 <span className="font-semibold text-slate-800 capitalize">
-                  {data.paymentMethod || data.paymentProvider || 'Desk Payment (Confirmed)'}
+                  {data.isCourseRedemption
+                    ? `Course Package (${data.subscriptionPaymentProvider || data.subscriptionPaymentMethod || 'Prepaid'})`
+                    : data.paymentMethod || data.paymentProvider || 'Desk Payment (Confirmed)'}
                 </span>
               </div>
-              {data.invoiceNumber && (
+              {data.isCourseRedemption && data.courseSubscriptionNumber && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Subscription Ref:</span>
+                  <span className="font-mono font-bold text-slate-800">{data.courseSubscriptionNumber}</span>
+                </div>
+              )}
+              {(data.subscriptionInvoiceNumber || data.invoiceNumber) && (
                 <div className="flex justify-between">
                   <span className="text-slate-500">Invoice No:</span>
-                  <span className="font-mono font-bold text-slate-800">{data.invoiceNumber}</span>
+                  <span className="font-mono font-bold text-slate-800">
+                    {data.subscriptionInvoiceNumber || data.invoiceNumber}
+                  </span>
                 </div>
               )}
               {data.transactionId && (

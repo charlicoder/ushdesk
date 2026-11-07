@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle,
   ChevronDown, Calendar, Clock, MapPin, User, Scissors,
-  CreditCard, CheckCircle2, XCircle, BookOpen,
+  CreditCard, CheckCircle2, XCircle, BookOpen, BookMarked,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
   FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
@@ -83,6 +83,7 @@ export interface Booking {
   total_price?: string | null;
   services?: Array<Record<string, unknown>>;
   sessions?: Array<Record<string, unknown>>;
+  course_data?: Record<string, unknown> | null;
   raw: Record<string, unknown>;
 }
 
@@ -259,6 +260,7 @@ export function normalise(raw: Record<string, unknown>): Booking {
       services:          svcList,
       sessions:          (Array.isArray(raw.sessions) ? raw.sessions : []) as Array<Record<string, unknown>>,
       pricing:           (raw.pricing ?? raw.pricing_details ?? null) as Record<string, unknown> | null,
+      course_data:       (raw.course_data ?? null) as Record<string, unknown> | null,
       raw,
     };
 }
@@ -753,6 +755,8 @@ function BookingDetailPopupContent({
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
   const [invoiceRecord, setInvoiceRecord] = useState<Record<string, unknown> | null>(null);
   const [fetchedPaymentNumber, setFetchedPaymentNumber] = useState<string>('');
+  const [courseSubscription, setCourseSubscription] = useState<Record<string, any> | null>(null);
+  const [loadingCourseSubscription, setLoadingCourseSubscription] = useState(false);
   const [completing, setCompleting] = useState(false);
   const [showFeedbackPrompt, setShowFeedbackPrompt] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
@@ -1159,6 +1163,151 @@ function BookingDetailPopupContent({
     fetchDetail(true);
   }, [fetchDetail]);
 
+  const rawBkObj = (detail || booking?.raw || {}) as Record<string, any>;
+
+  const courseData = (
+    detail?.course_data ||
+    (booking as any)?.course_data ||
+    (booking?.raw as any)?.course_data ||
+    rawBkObj.course_data ||
+    null
+  ) as Record<string, any> | null;
+
+  const courseSubscriptionId = String(
+    courseData?.subscription_id ||
+    (detail as any)?.course_subscription_id ||
+    (booking?.raw as any)?.course_subscription_id ||
+    (booking as any)?.course_subscription_id ||
+    rawBkObj.course_subscription_id ||
+    ''
+  ).trim();
+
+  const isCourseRedemption = Boolean(
+    courseData ||
+    courseSubscriptionId ||
+    booking.payment_method === 'course_redemption' ||
+    booking.payment_provider === 'course_redemption' ||
+    rawBkObj.payment_method === 'course_redemption' ||
+    rawBkObj.payment_type === 'course_redemption' ||
+    rawBkObj.booking_type === 'course_redemption'
+  );
+
+  // Fetch course subscription for complete payment & session details
+  useEffect(() => {
+    if (!courseSubscriptionId) return;
+    let cancelled = false;
+    setLoadingCourseSubscription(true);
+    authedFetch(`/booknpay/api/v1/course-subscriptions/${courseSubscriptionId}/`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (cancelled) return;
+        const sub = res?.data ?? res;
+        if (sub && (sub.id || sub.subscription_number)) {
+          setCourseSubscription(sub);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoadingCourseSubscription(false);
+      });
+    return () => { cancelled = true; };
+  }, [courseSubscriptionId]);
+
+  const courseCode = String(
+    courseData?.course_code ||
+    courseSubscription?.course_code ||
+    courseSubscription?.course_data?.code ||
+    ''
+  ).trim();
+
+  const courseName = String(
+    courseData?.course_name ||
+    courseSubscription?.course_name ||
+    courseSubscription?.course_data?.name ||
+    ''
+  ).trim();
+
+  const courseSubNumber = String(
+    courseData?.subscription_number ||
+    courseSubscription?.subscription_number ||
+    ''
+  ).trim();
+
+  const currentSessionNumber = Number(
+    courseData?.session_number ||
+    (booking?.raw as any)?.session_number ||
+    rawBkObj.session_number ||
+    courseSubscription?.used_sessions ||
+    1
+  );
+
+  const totalCourseSessions = Number(
+    courseData?.total_sessions ||
+    courseSubscription?.total_sessions ||
+    0
+  );
+
+  const remainingCourseSessions = Number(
+    courseData?.remaining_sessions ??
+    courseSubscription?.available_sessions ??
+    (totalCourseSessions > 0 ? Math.max(0, totalCourseSessions - currentSessionNumber) : 0)
+  );
+
+  const subPrice = String(
+    courseData?.price ??
+    courseSubscription?.price ??
+    ''
+  ).trim();
+
+  const subCurrency = String(
+    courseData?.currency ||
+    courseSubscription?.currency ||
+    booking.currency ||
+    'KWD'
+  ).trim();
+
+  const subPaymentProvider = String(
+    courseData?.payment_provider ||
+    courseData?.payment_gateway ||
+    courseSubscription?.payment_provider ||
+    courseSubscription?.payment_gateway ||
+    ''
+  ).trim();
+
+  const subPaymentMethod = String(
+    courseData?.payment_method ||
+    courseSubscription?.payment_method ||
+    ''
+  ).trim();
+
+  const subPaymentNumber = String(
+    courseData?.payment_number ||
+    courseSubscription?.payment_number ||
+    ''
+  ).trim();
+
+  const subTxRef = String(
+    courseData?.transaction_reference ||
+    courseSubscription?.transaction_reference ||
+    ''
+  ).trim();
+
+  const subPaidAt = String(
+    courseData?.activated_at ||
+    courseData?.purchased_at ||
+    courseSubscription?.activated_at ||
+    courseSubscription?.purchased_at ||
+    ''
+  ).trim();
+
+  const subInvoiceNumber = String(
+    courseData?.invoice_number ||
+    courseData?.invoice_id ||
+    courseSubscription?.invoice_number ||
+    courseSubscription?.invoice_id ||
+    ''
+  ).trim();
+
   const invoiceNumber = String(
     detail?.invoice_number ??
     detail?.invoice_id ??
@@ -1168,6 +1317,11 @@ function BookingDetailPopupContent({
     (detail?.payment_data as any)?.invoice_id ??
     (detail?.voucher_data as any)?.invoice_number ??
     (detail?.voucher_data as any)?.invoice_id ??
+    subInvoiceNumber ??
+    (courseData as any)?.invoice_number ??
+    (courseData as any)?.invoice_id ??
+    (courseSubscription as any)?.invoice_number ??
+    (courseSubscription as any)?.invoice_id ??
     (booking as any)?.invoice_number ??
     (booking as any)?.invoice_id ??
     (booking as any)?.payment_data?.invoice_id ??
@@ -1184,6 +1338,9 @@ function BookingDetailPopupContent({
     (detail?.payment_data as any)?.data?.InvoiceTransactions?.[0]?.PaymentId ??
     (detail?.voucher_data as any)?.payment_number ??
     (detail?.voucher_data as any)?.payment_data?.payment_number ??
+    subPaymentNumber ??
+    (courseData as any)?.payment_number ??
+    (courseSubscription as any)?.payment_number ??
     (booking as any)?.payment_number ??
     (booking as any)?.payment_data?.payment_number ??
     (booking?.raw as any)?.payment_number ??
@@ -1249,7 +1406,7 @@ function BookingDetailPopupContent({
     ''
   ).toLowerCase();
 
-  const rawBkObj = (detail || booking?.raw || {}) as Record<string, any>;
+  // rawBkObj is defined above
   const isDualTherapistBooking =
     arrType === 'couple_room' ||
     arrType === 'double_room' ||
@@ -1982,6 +2139,9 @@ function BookingDetailPopupContent({
     (paymentDataObj as any)?.reference_id ??
     (detail as any)?.transaction_id ??
     (detail as any)?.reference_id ??
+    subTxRef ??
+    (courseData as any)?.transaction_reference ??
+    (courseSubscription as any)?.transaction_reference ??
     (booking as any).transaction_id ??
     (booking as any).reference_id ??
     ''
@@ -1995,12 +2155,16 @@ function BookingDetailPopupContent({
   ).trim();
 
   const paymentProvider = String(
-    booking.payment_provider ||
-    booking.payment_gateway ||
-    (paymentDataObj as any)?.payment_provider ||
-    (paymentDataObj as any)?.payment_gateway ||
-    booking.payment_method ||
-    'Front Desk'
+    isCourseRedemption
+      ? (subPaymentProvider ? `${subPaymentProvider} (Course Subscription)` : 'Course Subscription')
+      : (
+          booking.payment_provider ||
+          booking.payment_gateway ||
+          (paymentDataObj as any)?.payment_provider ||
+          (paymentDataObj as any)?.payment_gateway ||
+          booking.payment_method ||
+          'Front Desk'
+        )
   ).trim();
 
   // Cancel booking — opens BookingCancellationModal which handles all accounting steps
@@ -3474,6 +3638,123 @@ function BookingDetailPopupContent({
               <>
                 {/* ── TAB 2: PAYMENT & INVOICES ── */}
 
+                {/* ── COURSE SUBSCRIPTION REDEMPTION BANNER & METRICS ── */}
+                {isCourseRedemption && (
+                  <div className="rounded-2xl border border-[#543C30]/25 bg-gradient-to-br from-[#543C30]/[0.08] via-card to-card p-5 sm:p-6 shadow-xs space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#543C30]/15">
+                      <div className="flex items-center gap-3">
+                        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#543C30] text-white shadow-xs">
+                          <BookMarked className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#543C30] bg-[#543C30]/10 px-2.5 py-0.5 rounded-full border border-[#543C30]/20">
+                              Course Subscription Redemption
+                            </span>
+                            {courseSubNumber && (
+                              <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-foreground">
+                                <span>{courseSubNumber}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(courseSubNumber);
+                                    setCopiedType('crs_sub');
+                                    setTimeout(() => setCopiedType(null), 2000);
+                                  }}
+                                  className="text-muted-foreground hover:text-foreground transition p-0.5"
+                                  title="Copy subscription number"
+                                >
+                                  {copiedType === 'crs_sub' ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <h3 className="text-sm sm:text-base font-bold text-foreground mt-0.5">
+                            {courseCode ? `${courseCode} – ${courseName}` : (courseName || 'Course Package')}
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          <span>Prepaid Package</span>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 3 Metrics: Current Session, Remaining Sessions, Total Sessions */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="rounded-xl border border-[#543C30]/20 bg-card p-3.5 shadow-2xs">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Current Session</p>
+                        <div className="flex items-baseline gap-1.5 mt-1">
+                          <span className="text-2xl font-black text-[#543C30]">#{currentSessionNumber}</span>
+                          <span className="text-xs text-muted-foreground font-medium">of {totalCourseSessions || '—'}</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Redeemed in this booking</p>
+                      </div>
+
+                      <div className="rounded-xl border border-emerald-500/25 bg-emerald-50/40 dark:bg-emerald-950/20 p-3.5 shadow-2xs">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Remaining Sessions</p>
+                        <div className="flex items-baseline gap-1.5 mt-1">
+                          <span className="text-2xl font-black text-emerald-700 dark:text-emerald-300">{remainingCourseSessions}</span>
+                          <span className="text-xs text-emerald-600/80 font-medium">left</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Available for future bookings</p>
+                      </div>
+
+                      <div className="rounded-xl border border-border/60 bg-card p-3.5 shadow-2xs">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total Package Sessions</p>
+                        <div className="flex items-baseline gap-1.5 mt-1">
+                          <span className="text-2xl font-black text-foreground">{totalCourseSessions}</span>
+                          <span className="text-xs text-muted-foreground font-medium">sessions</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Total purchased sessions</p>
+                      </div>
+                    </div>
+
+                    {/* Visual Progress Bar */}
+                    {totalCourseSessions > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-muted-foreground">Package Usage Progress</span>
+                          <span className="font-bold text-[#543C30]">
+                            {Math.min(100, Math.round((currentSessionNumber / totalCourseSessions) * 100))}% Completed
+                          </span>
+                        </div>
+                        <div className="h-2 w-full rounded-full bg-black/5 dark:bg-white/10 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-[#543C30] transition-all duration-300"
+                            style={{ width: `${Math.min(100, Math.max(0, Math.round((currentSessionNumber / totalCourseSessions) * 100)))}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Course Subscription Payment & Invoice Summary */}
+                    <div className="rounded-xl bg-muted/30 border border-border/50 p-3 text-xs grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase font-semibold">Package Price</p>
+                        <p className="font-bold text-foreground mt-0.5 font-mono">
+                          {subPrice ? `${parseFloat(subPrice).toFixed(3)} ${subCurrency}` : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase font-semibold">Payment Provider</p>
+                        <p className="font-bold text-foreground mt-0.5">{subPaymentProvider || 'Prepaid'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase font-semibold">Payment Method</p>
+                        <p className="font-bold text-foreground mt-0.5 capitalize">{subPaymentMethod || 'Course Package'}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase font-semibold">Sub. Invoice #</p>
+                        <p className="font-bold font-mono text-foreground mt-0.5 truncate">{subInvoiceNumber || '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* 1. Official Invoice Card */}
                 <div className={cn(
                   'rounded-2xl border p-5 sm:p-6 transition shadow-xs space-y-4',
@@ -3610,9 +3891,11 @@ function BookingDetailPopupContent({
                     <div>
                       <p className="text-[10px] text-muted-foreground uppercase font-semibold">Balance Due</p>
                       <p className="font-bold mt-0.5 text-foreground">
-                        {(isPaid || isRewarded || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
-                          ? `0.000 ${currency}`
-                          : `${computedTotal.toFixed(3)} ${currency}`}
+                        {isCourseRedemption
+                          ? `0.000 ${currency} (Covered)`
+                          : (isPaid || isRewarded || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid')
+                            ? `0.000 ${currency}`
+                            : `${computedTotal.toFixed(3)} ${currency}`}
                       </p>
                     </div>
                   </div>
@@ -3641,6 +3924,15 @@ function BookingDetailPopupContent({
                         <span>+{extraPrice.toFixed(3)} {currency}</span>
                       </div>
                     )}
+                    {isCourseRedemption && (
+                      <div className="flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-3 py-2 rounded-xl border border-emerald-500/20 font-medium">
+                        <div className="flex items-center gap-2">
+                          <BookMarked className="h-4 w-4 shrink-0 text-[#543C30]" />
+                          <span>Course Package Coverage ({courseSubNumber || 'Course Subscription'} – Session #{currentSessionNumber} of {totalCourseSessions})</span>
+                        </div>
+                        <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400">-100% (Covered)</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -3662,7 +3954,7 @@ function BookingDetailPopupContent({
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
-                      <p className="font-semibold text-foreground mt-0.5 capitalize">{booking.payment_method || (detail as any)?.payment_method || (detail?.voucher_data as any)?.payment_method || '—'}</p>
+                      <p className="font-semibold text-foreground mt-0.5 capitalize">{subPaymentMethod || booking.payment_method || (detail as any)?.payment_method || (detail?.voucher_data as any)?.payment_method || '—'}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Payment Number</p>
@@ -3673,9 +3965,17 @@ function BookingDetailPopupContent({
                       <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? (isLoyaltyBooking ? 'ushspa' : 'ushdesk'))}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
-                      <p className="text-[10px] text-muted-foreground font-medium">Amount</p>
-                      <p className="font-bold text-primary mt-0.5 font-mono">{computedTotal.toFixed(3)} {currency}</p>
+                      <p className="text-[10px] text-muted-foreground font-medium">{isCourseRedemption ? 'Session Balance' : 'Amount'}</p>
+                      <p className="font-bold text-primary mt-0.5 font-mono">
+                        {isCourseRedemption ? `0.000 ${currency} (Covered)` : `${computedTotal.toFixed(3)} ${currency}`}
+                      </p>
                     </div>
+                    {isCourseRedemption && Boolean(subPrice) && (
+                      <div className="rounded-xl bg-card border border-border/40 p-2.5">
+                        <p className="text-[10px] text-muted-foreground font-medium">Package Total Price</p>
+                        <p className="font-bold text-foreground mt-0.5 font-mono">{parseFloat(subPrice).toFixed(3)} {subCurrency}</p>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
@@ -4373,11 +4673,22 @@ function BookingDetailPopupContent({
             totalAmount: computedTotal,
             status: 'completed',
             paymentStatus: String(detail?.payment_status ?? booking.payment_status ?? 'success'),
-            paymentMethod: booking.payment_method || booking.payment_provider || 'Desk Payment',
-            paymentProvider: booking.payment_provider || booking.payment_gateway,
-            transactionId: String(paymentDataObj?.transaction_id ?? ''),
-            referenceId: String(paymentDataObj?.reference_id ?? ''),
-            paidAt: String(paymentDataObj?.paid_at ?? ''),
+            paymentMethod: isCourseRedemption ? (subPaymentMethod || 'Course Package') : (booking.payment_method || booking.payment_provider || 'Desk Payment'),
+            paymentProvider: isCourseRedemption ? (subPaymentProvider || 'Course Package') : (booking.payment_provider || booking.payment_gateway),
+            transactionId: String(paymentDataObj?.transaction_id ?? (isCourseRedemption ? subTxRef : '')),
+            referenceId: String(paymentDataObj?.reference_id ?? (isCourseRedemption ? (subPaymentNumber || courseSubNumber) : '')),
+            paidAt: String(paymentDataObj?.paid_at ?? (isCourseRedemption ? subPaidAt : '')),
+            isCourseRedemption: isCourseRedemption,
+            courseCode: courseCode || null,
+            courseName: courseName || null,
+            courseSubscriptionNumber: courseSubNumber || null,
+            currentSessionNumber: currentSessionNumber,
+            totalSessions: totalCourseSessions,
+            remainingSessions: remainingCourseSessions,
+            subscriptionPrice: subPrice || null,
+            subscriptionPaymentMethod: subPaymentMethod || null,
+            subscriptionPaymentProvider: subPaymentProvider || null,
+            subscriptionInvoiceNumber: subInvoiceNumber || null,
           }}
           onClose={() => setShowReceiptModal(false)}
         />
