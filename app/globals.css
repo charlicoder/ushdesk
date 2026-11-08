@@ -236,3 +236,23 @@
 
 /* ---------- RTL helpers ---------- */
 [dir='rtl'] .flip-x { transform: scaleX(-1); }
+
+/* ---------- Touch drag-and-drop (therapist / room schedule) ---------- */
+/* Highlight valid drop target during touch drag */
+[data-slot-cell][data-touch-drag-over='true'][data-touch-drag-valid='true'] {
+  outline: 2px solid #10b981;
+  outline-offset: -2px;
+  background-color: rgba(16, 185, 129, 0.12);
+}
+/* Highlight invalid drop target during touch drag */
+[data-slot-cell][data-touch-drag-over='true'][data-touch-drag-valid='false'] {
+  outline: 2px solid #ef4444;
+  outline-offset: -2px;
+  background-color: rgba(239, 68, 68, 0.1);
+}
+/* Prevent long-press context menu / text selection on draggable cards */
+[draggable='true'] {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}

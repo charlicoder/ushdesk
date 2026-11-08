@@ -407,6 +407,9 @@ export function MakePaymentModal({
               payment_status: 'paid',
               payment_method: 'KNET Card',
               payment_gateway: 'KNET',
+              // Physical branch KNET POS terminal → stored as payment_provider=knet_pos
+              payment_provider: 'KNET Card',
+              payment_through: 'ushdesk',
               reference_id: ref,
             }),
           });
@@ -543,6 +546,8 @@ export function MakePaymentModal({
               payment_status: 'paid',
               payment_method: 'Boubyan Link',
               payment_gateway: 'Other',
+              payment_provider: 'Boubyan Link',
+              payment_through: 'ushdesk',
               reference_id: ref,
             }),
           });

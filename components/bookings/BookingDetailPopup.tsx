@@ -4,7 +4,7 @@ import Link from 'next/link';
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Search, LayoutGrid, List, RefreshCw, AlertCircle,
-  ChevronDown, Calendar, Clock, MapPin, User, Scissors,
+  ChevronDown, Calendar, CalendarClock, Clock, MapPin, User, Scissors,
   CreditCard, CheckCircle2, XCircle, BookOpen, BookMarked,
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
@@ -4502,6 +4502,25 @@ function BookingDetailPopupContent({
                     className="rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98] border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 cursor-pointer"
                   >
                     Cancel Booking
+                  </button>
+                )}
+
+                {/* Reschedule Booking: active paid/rewarded/pending, not cancelled, not completed, not no-show, with permission */}
+                {hasReschedulePermission && !isCancelled && !isCompleted && !isNoShow && (isPaymentSuccess || isPaymentPending) && (
+                  <button
+                    type="button"
+                    onClick={handleOpenReschedule}
+                    disabled={!canReschedule}
+                    title={rescheduleBlockReason}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2.5 text-xs font-bold transition whitespace-nowrap active:scale-[0.98]',
+                      !canReschedule
+                        ? 'border-border/60 bg-muted/50 text-muted-foreground/50 cursor-not-allowed shadow-none'
+                        : 'border-blue-300 dark:border-blue-800/60 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 cursor-pointer'
+                    )}
+                  >
+                    <CalendarClock className="h-3.5 w-3.5" />
+                    Reschedule
                   </button>
                 )}
 

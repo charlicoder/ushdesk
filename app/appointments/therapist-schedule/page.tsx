@@ -499,6 +499,7 @@ function SlotCell({
   isDraggable,
   onDragStart,
   onDragEnd,
+  onTouchStart,
   isDragging,
 }: {
   slot: Slot;
@@ -508,6 +509,7 @@ function SlotCell({
   isDraggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
   onDragEnd?: (e: React.DragEvent) => void;
+  onTouchStart?: (e: React.TouchEvent) => void;
   isDragging?: boolean;
 }) {
   if (slot.status === 'unavailable') {
@@ -564,13 +566,14 @@ function SlotCell({
         draggable={isDraggable ?? true}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
+        onTouchStart={onTouchStart}
         onClick={onClick}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
         className={cn(
           "flex h-full min-h-[82px] flex-col items-center justify-between rounded-xl border border-orange-300 dark:border-orange-700/60 bg-orange-50/90 dark:bg-orange-950/50 p-1.5 text-center select-none transition group shadow-xs cursor-grab active:cursor-grabbing hover:border-orange-500 hover:bg-orange-100 dark:hover:bg-orange-900/60 hover:shadow-md",
           isDragging && "opacity-40 border-dashed border-orange-500 scale-95"
         )}
-        title="Break Time — Drag vertically to move, or click to view working hours"
+        title="Break Time — Drag to move, or click to view working hours"
       >
         <div className="w-full flex items-center justify-between text-orange-600/70 dark:text-orange-400/70 px-0.5">
           <GripVertical className="h-3 w-3 shrink-0 cursor-grab active:cursor-grabbing text-orange-600 dark:text-orange-400" />
@@ -707,6 +710,7 @@ function SlotCell({
       draggable={isDraggable ?? false}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onTouchStart={onTouchStart}
       onClick={onClick}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.(); }}
       style={isCompleted ? { backgroundColor: '#D3C0B2', borderColor: '#B8A394', color: '#2D241E' } : undefined}
@@ -1495,6 +1499,11 @@ export default function TherapistSchedulePage() {
   const [updatingBreak, setUpdatingBreak] = useState(false);
   const [breakToast, setBreakToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const dragJustEndedRef = useRef(false);
+
+  // Touch drag state refs (avoid re-renders during active touch move)
+  const touchDragActiveRef = useRef(false);
+  const touchGhostRef = useRef<HTMLDivElement | null>(null);
+  const touchDragTypeRef = useRef<'break' | 'booking' | null>(null);
 
   // Drag-and-drop state for bookings / sessions / couple therapists
   const [draggedBooking, setDraggedBooking] = useState<DraggedBookingData | null>(null);
@@ -2295,6 +2304,291 @@ export default function TherapistSchedulePage() {
     }
   }, [selectedDate, token, preserveScroll, checkTherapistProvidesService]);
 
+  // ── Touch / Pointer drag support for iPad and touch screens ───────────────────
+  // HTML5 drag-and-drop does not fire on touch devices. We replicate the same
+  // drag logic using touch events. A ghost element follows the finger while
+  // dragging, and we use document.elementFromPoint() to find the drop target.
+
+  // Note: touchDragActiveRef, touchGhostRef, touchDragTypeRef declared earlier
+  // near the break DnD state block to keep all drag refs together.
+
+  // Captured drag data (same shape as mouse drag, stored in refs to avoid stale closures)
+  const touchBreakDataRef = useRef<{
+    therapistId: string;
+    therapistName: string;
+    originalTimeSlot: string;
+    durationMinutes: number;
+  } | null>(null);
+  const touchBookingDataRef = useRef<DraggedBookingData | null>(null);
+  // Last highlighted cell (to clear highlight without setState lag)
+  const touchLastCellRef = useRef<Element | null>(null);
+
+  /** Create a small floating ghost div that follows the finger */
+  const createTouchGhost = useCallback((label: string, color: string) => {
+    const ghost = document.createElement('div');
+    ghost.style.cssText = [
+      'position:fixed',
+      'z-index:9999',
+      'pointer-events:none',
+      'padding:6px 10px',
+      'border-radius:10px',
+      `background:${color}`,
+      'color:#fff',
+      'font-size:11px',
+      'font-weight:700',
+      'white-space:nowrap',
+      'box-shadow:0 4px 16px rgba(0,0,0,0.3)',
+      'opacity:0.92',
+      'transform:translate(-50%,-120%)',
+      'user-select:none',
+      '-webkit-user-select:none',
+    ].join(';');
+    ghost.textContent = label;
+    document.body.appendChild(ghost);
+    touchGhostRef.current = ghost;
+  }, []);
+
+  const removeTouchGhost = useCallback(() => {
+    if (touchGhostRef.current) {
+      touchGhostRef.current.remove();
+      touchGhostRef.current = null;
+    }
+  }, []);
+
+  /** Find drop-target cell element from touch coordinates */
+  const getCellUnderTouch = useCallback((x: number, y: number): Element | null => {
+    // Temporarily hide ghost so it doesn't block elementFromPoint
+    if (touchGhostRef.current) touchGhostRef.current.style.display = 'none';
+    const el = document.elementFromPoint(x, y);
+    if (touchGhostRef.current) touchGhostRef.current.style.display = '';
+    if (!el) return null;
+    // Walk up to find the cell with data-slot-cell attribute
+    let node: Element | null = el;
+    while (node && node !== document.body) {
+      if (node.hasAttribute('data-slot-cell')) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }, []);
+
+  /** Highlight a drop-target cell with an overlay class */
+  const highlightTouchCell = useCallback((cell: Element | null, isValid: boolean, reason?: string) => {
+    // Clear previous highlight
+    if (touchLastCellRef.current && touchLastCellRef.current !== cell) {
+      touchLastCellRef.current.removeAttribute('data-touch-drag-over');
+      touchLastCellRef.current.removeAttribute('data-touch-drag-valid');
+    }
+    if (cell) {
+      cell.setAttribute('data-touch-drag-over', 'true');
+      cell.setAttribute('data-touch-drag-valid', isValid ? 'true' : 'false');
+      if (reason) cell.setAttribute('data-touch-drag-reason', reason);
+      else cell.removeAttribute('data-touch-drag-reason');
+    }
+    touchLastCellRef.current = cell;
+  }, []);
+
+  const clearTouchHighlight = useCallback(() => {
+    if (touchLastCellRef.current) {
+      touchLastCellRef.current.removeAttribute('data-touch-drag-over');
+      touchLastCellRef.current.removeAttribute('data-touch-drag-valid');
+      touchLastCellRef.current.removeAttribute('data-touch-drag-reason');
+      touchLastCellRef.current = null;
+    }
+  }, []);
+
+  /** Called by SlotCell break_time onTouchStart */
+  const handleBreakTouchStart = useCallback((
+    e: React.TouchEvent,
+    therapistId: string,
+    therapistName: string,
+    originalTimeSlot: string,
+    durationMinutes: number,
+  ) => {
+    // Only start touch-drag if the touch starts on a draggable break cell
+    e.stopPropagation();
+    e.preventDefault(); // Prevent iOS scroll / long-press context menu on touchstart
+    touchDragActiveRef.current = true;
+    touchDragTypeRef.current = 'break';
+    touchBreakDataRef.current = { therapistId, therapistName, originalTimeSlot, durationMinutes };
+    touchBookingDataRef.current = null;
+    // Update React state so visual "dragging" effect applies
+    setDraggedBreak({ therapistId, therapistName, originalTimeSlot, durationMinutes });
+    createTouchGhost('Moving Break ☕', '#ea580c');
+  }, [createTouchGhost]);
+
+  /** Called by SlotCell booking card onTouchStart */
+  const handleBookingTouchStart = useCallback((
+    e: React.TouchEvent,
+    data: DraggedBookingData,
+  ) => {
+    e.stopPropagation();
+    e.preventDefault(); // Prevent iOS scroll / long-press context menu on touchstart
+    touchDragActiveRef.current = true;
+    touchDragTypeRef.current = 'booking';
+    touchBookingDataRef.current = data;
+    touchBreakDataRef.current = null;
+    setDraggedBooking(data);
+    createTouchGhost(`Moving: ${data.sourceTherapistName}`, '#7c3aed');
+  }, [createTouchGhost]);
+
+  // Global touch event handlers (attached once, use refs to avoid stale closures)
+  const validateBookingDropRef = useRef<typeof validateBookingDrop | null>(null);
+  const handleDropBreakRef = useRef<typeof handleDropBreak | null>(null);
+  const handleDropBookingRef = useRef<typeof handleDropBooking | null>(null);
+
+  // Keep refs in sync with latest callbacks
+  useEffect(() => {
+    validateBookingDropRef.current = validateBookingDrop;
+  }, [validateBookingDrop]);
+  useEffect(() => {
+    handleDropBreakRef.current = handleDropBreak;
+  }, [handleDropBreak]);
+  useEffect(() => {
+    handleDropBookingRef.current = handleDropBooking;
+  }, [handleDropBooking]);
+
+  // Keep therapists ref for touch drop resolution
+  const therapistsRef = useRef<Therapist[]>([]);
+  useEffect(() => { therapistsRef.current = filteredTherapists; }, [filteredTherapists]);
+
+  useEffect(() => {
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touchDragActiveRef.current) return;
+      // Prevent page scroll while dragging
+      e.preventDefault();
+
+      const touch = e.touches[0];
+      if (!touch) return;
+
+      // Move ghost
+      if (touchGhostRef.current) {
+        touchGhostRef.current.style.left = `${touch.clientX}px`;
+        touchGhostRef.current.style.top = `${touch.clientY}px`;
+      }
+
+      // Find cell under finger
+      const cell = getCellUnderTouch(touch.clientX, touch.clientY);
+      if (!cell) {
+        highlightTouchCell(null, false);
+        setDragOverSlot(null);
+        setDragOverBookingSlot(null);
+        return;
+      }
+
+      const targetTherapistId = cell.getAttribute('data-therapist-id') ?? '';
+      const targetTime = cell.getAttribute('data-time') ?? '';
+      if (!targetTherapistId || !targetTime) {
+        highlightTouchCell(null, false);
+        return;
+      }
+
+      if (touchDragTypeRef.current === 'break' && touchBreakDataRef.current) {
+        const isSameTherapist = targetTherapistId === touchBreakDataRef.current.therapistId;
+        if (isSameTherapist) {
+          highlightTouchCell(cell, true);
+          setDragOverSlot({ therapistId: targetTherapistId, time: targetTime });
+          setDragOverBookingSlot(null);
+        } else {
+          highlightTouchCell(cell, false, 'Break can only move within same therapist column');
+          setDragOverSlot(null);
+        }
+      } else if (touchDragTypeRef.current === 'booking' && touchBookingDataRef.current) {
+        const targetTherapist = therapistsRef.current.find(t => t.id === targetTherapistId);
+        if (!targetTherapist || !validateBookingDropRef.current) {
+          highlightTouchCell(cell, false);
+          return;
+        }
+        const val = validateBookingDropRef.current(targetTherapist, targetTime, touchBookingDataRef.current);
+        highlightTouchCell(cell, val.isValid, val.reason);
+        setDragOverBookingSlot({ therapistId: targetTherapistId, time: targetTime, ...val });
+        setDragOverSlot(null);
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (!touchDragActiveRef.current) return;
+      touchDragActiveRef.current = false;
+
+      removeTouchGhost();
+      clearTouchHighlight();
+
+      const touch = e.changedTouches[0];
+      if (!touch) {
+        setDraggedBreak(null);
+        setDraggedBooking(null);
+        setDragOverSlot(null);
+        setDragOverBookingSlot(null);
+        return;
+      }
+
+      const cell = getCellUnderTouch(touch.clientX, touch.clientY);
+      const targetTherapistId = cell?.getAttribute('data-therapist-id') ?? '';
+      const targetTime = cell?.getAttribute('data-time') ?? '';
+
+      if (touchDragTypeRef.current === 'break' && touchBreakDataRef.current && targetTime && targetTherapistId === touchBreakDataRef.current.therapistId) {
+        const breakData = touchBreakDataRef.current;
+        setDraggedBreak(null);
+        setDragOverSlot(null);
+        if (handleDropBreakRef.current) {
+          const targetTherapist = therapistsRef.current.find(t => t.id === targetTherapistId);
+          if (targetTherapist) {
+            handleDropBreakRef.current(targetTherapist, targetTime, breakData);
+          }
+        }
+      } else if (touchDragTypeRef.current === 'booking' && touchBookingDataRef.current && targetTime && targetTherapistId) {
+        const bookingData = touchBookingDataRef.current;
+        const targetTherapist = therapistsRef.current.find(t => t.id === targetTherapistId);
+        if (targetTherapist && validateBookingDropRef.current && handleDropBookingRef.current) {
+          const val = validateBookingDropRef.current(targetTherapist, targetTime, bookingData);
+          if (!val.isValid) {
+            toast.error(val.reason || 'Cannot move booking here');
+          } else {
+            handleDropBookingRef.current(targetTherapist, targetTime, bookingData);
+          }
+        }
+        setDraggedBooking(null);
+        setDragOverBookingSlot(null);
+      } else {
+        setDraggedBreak(null);
+        setDraggedBooking(null);
+        setDragOverSlot(null);
+        setDragOverBookingSlot(null);
+      }
+
+      touchBreakDataRef.current = null;
+      touchBookingDataRef.current = null;
+      touchDragTypeRef.current = null;
+      dragJustEndedRef.current = true;
+      setTimeout(() => { dragJustEndedRef.current = false; }, 150);
+    };
+
+    const onTouchCancel = () => {
+      if (!touchDragActiveRef.current) return;
+      touchDragActiveRef.current = false;
+      removeTouchGhost();
+      clearTouchHighlight();
+      setDraggedBreak(null);
+      setDraggedBooking(null);
+      setDragOverSlot(null);
+      setDragOverBookingSlot(null);
+      touchBreakDataRef.current = null;
+      touchBookingDataRef.current = null;
+      touchDragTypeRef.current = null;
+    };
+
+    // { passive: false } required so we can call preventDefault() to block scroll during drag
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
+    document.addEventListener('touchcancel', onTouchCancel);
+    return () => {
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('touchcancel', onTouchCancel);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getCellUnderTouch, highlightTouchCell, clearTouchHighlight, removeTouchGhost]);
+  // ── End touch drag support ─────────────────────────────────────────────────────
+
   // Handle clicking an unavailable slot (supports selecting multiple contiguous slots)
   const handleUnavailableClick = useCallback((therapist: Therapist, time: string) => {
     setContextMenu(null);
@@ -2796,6 +3090,9 @@ export default function TherapistSchedulePage() {
                         cells.push(
                           <div
                             key={`${t.id}-${time}`}
+                            data-slot-cell="true"
+                            data-therapist-id={t.id}
+                            data-time={time}
                             style={{
                               gridColumn: tIdx + 1,
                               gridRow: span > 1 ? `${rowIdx + 1} / span ${span}` : rowIdx + 1,
@@ -2933,6 +3230,39 @@ export default function TherapistSchedulePage() {
                                   });
                                   e.dataTransfer.setData('text/plain', bookingId);
                                   e.dataTransfer.effectAllowed = 'move';
+                                }
+                              }}
+                              onTouchStart={(e) => {
+                                if (!(isBreak || (!isSlotCompleted && isBooked))) return;
+                                if (isBreak) {
+                                  const dur = getBreakDurationMinutes(slot);
+                                  handleBreakTouchStart(e, t.id, t.name, time, dur);
+                                } else if (isBooked && !isSlotCompleted) {
+                                  const bookingId = slot.bookingId || slot.reference || '';
+                                  if (!bookingId) return;
+                                  const durMin = slot.durationMinutes || getBreakDurationMinutes(slot);
+                                  const isCouple = isDoubleOccupancy(slot.arrangementType) || Boolean(slot.secondaryTherapistId);
+                                  if (slot.serviceId) {
+                                    checkTherapistProvidesService(slot.serviceId, t.id);
+                                  }
+                                  handleBookingTouchStart(e, {
+                                    bookingId,
+                                    sessionId: slot.sessionId,
+                                    sessionIndex: slot.sessionIndex,
+                                    durationMinutes: durMin,
+                                    serviceId: slot.serviceId,
+                                    serviceName: slot.service,
+                                    isSecondaryTherapist: Boolean(slot.isSecondaryTherapist),
+                                    sourceTherapistId: t.id,
+                                    sourceTherapistName: t.name,
+                                    primaryTherapistId: slot.primaryTherapistId || t.id,
+                                    secondaryTherapistId: slot.secondaryTherapistId,
+                                    arrangementType: slot.arrangementType,
+                                    isCoupleRoom: isCouple,
+                                    originalTimeSlot: time,
+                                    sessions: slot.sessions,
+                                    rawBooking: slot.rawBooking,
+                                  });
                                 }
                               }}
                               onDragEnd={() => {
