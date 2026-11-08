@@ -1,6 +1,6 @@
 'use client';
 
-import { DEFAULT_TIMEZONE as KUWAIT_TZ, toZonedIsoFromLocal } from '@/lib/datetime';
+import { DEFAULT_TIMEZONE as KUWAIT_TZ, toZonedIsoFromLocal, kuwaitDateString, kuwaitDatePlusDays } from '@/lib/datetime';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
@@ -3558,7 +3558,7 @@ function VoucherDetailModal({
   );
 }
 
-// ── Voucher Filter Popover (Multi-Status, Channel, Created By) ─────────────────
+// ── Voucher Filter Popover (Multi-Status, Channel, Created By, Created At, Redeemed At) ─────────────────
 
 interface VoucherFilterPopoverProps {
   statusFilters: string[];
@@ -3568,6 +3568,12 @@ interface VoucherFilterPopoverProps {
   createdByFilter: string;
   onCreatedByChange: (creator: string) => void;
   creatorOptions: Array<{ id: string; name: string }>;
+  createdDateFilter: DateFilterType;
+  createdDateRange: DateRange;
+  onCreatedDateChange: (type: DateFilterType, range: DateRange) => void;
+  redeemedDateFilter: DateFilterType;
+  redeemedDateRange: DateRange;
+  onRedeemedDateChange: (type: DateFilterType, range: DateRange) => void;
   onReset: () => void;
 }
 
@@ -3579,6 +3585,12 @@ function VoucherFilterPopover({
   createdByFilter,
   onCreatedByChange,
   creatorOptions,
+  createdDateFilter,
+  createdDateRange,
+  onCreatedDateChange,
+  redeemedDateFilter,
+  redeemedDateRange,
+  onRedeemedDateChange,
   onReset,
 }: VoucherFilterPopoverProps) {
   const [open, setOpen] = useState(false);
@@ -3600,10 +3612,30 @@ function VoucherFilterPopover({
     { id: 'ushspa', label: 'USHSpa' },
   ];
 
+  const datePresetOptions: Array<{ id: DateFilterType; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'today', label: 'Today' },
+    { id: 'last_week', label: 'Last 7D' },
+    { id: 'last_month', label: 'Last 30D' },
+  ];
+
+  const applyPreset = (
+    type: DateFilterType,
+    cb: (t: DateFilterType, r: DateRange) => void
+  ) => {
+    const today = kuwaitDateString();
+    if (type === 'all') cb('all', {});
+    else if (type === 'today') cb('today', { from: today, to: today });
+    else if (type === 'last_week') cb('last_week', { from: kuwaitDatePlusDays(-7), to: today });
+    else if (type === 'last_month') cb('last_month', { from: kuwaitDatePlusDays(-30), to: today });
+  };
+
   const activeCount =
     (statusFilters.length > 0 && statusFilters.length < statusOptions.length ? 1 : 0) +
     (channelFilter !== 'all' ? 1 : 0) +
-    (createdByFilter !== 'all' ? 1 : 0);
+    (createdByFilter !== 'all' ? 1 : 0) +
+    (createdDateFilter !== 'all' ? 1 : 0) +
+    (redeemedDateFilter !== 'all' ? 1 : 0);
 
   const toggleStatus = (stId: string) => {
     if (statusFilters.includes(stId)) {
@@ -3620,6 +3652,15 @@ function VoucherFilterPopover({
   const handleClearStatuses = () => {
     onStatusChange([]);
   };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open]);
 
   return (
     <div className="relative inline-block text-left">
@@ -3642,135 +3683,311 @@ function VoucherFilterPopover({
       </button>
 
       {open && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full mt-2 z-50 w-80 rounded-3xl border border-border/80 bg-card p-4 shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-border/40 pb-2">
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-primary" />
-                <span className="text-xs font-extrabold text-foreground">Filter Vouchers</span>
-              </div>
-              {activeCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onReset();
-                    setOpen(false);
-                  }}
-                  className="text-[11px] font-semibold text-primary hover:underline cursor-pointer"
-                >
-                  Reset all
-                </button>
-              )}
-            </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+            onClick={() => setOpen(false)}
+          />
 
-            {/* 1. Status Multi-select */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                  Status (Multi-Select)
-                </label>
-                <div className="flex items-center gap-2 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllStatuses}
-                    className="text-primary hover:underline font-semibold cursor-pointer"
-                  >
-                    Select all
-                  </button>
-                  <span className="text-border">•</span>
-                  <button
-                    type="button"
-                    onClick={handleClearStatuses}
-                    className="text-muted-foreground hover:text-foreground font-semibold cursor-pointer"
-                  >
-                    Clear
-                  </button>
+          {/* Popup Modal Dialog */}
+          <div className="relative z-10 flex w-full max-w-2xl max-h-[88vh] flex-col overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-border/50 bg-muted/30 px-6 py-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary">
+                  <SlidersHorizontal className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-extrabold text-foreground">Filter Gift Vouchers</h3>
+                    {activeCount > 0 && (
+                      <span className="inline-flex items-center rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold text-primary">
+                        {activeCount} active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Filter by status, sales channel, creator, created date, and redeemed date
+                  </p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                {statusOptions.map((opt) => {
-                  const isChecked = statusFilters.includes(opt.id);
-                  return (
-                    <label
-                      key={opt.id}
-                      className={cn(
-                        'flex items-center gap-2 rounded-xl border p-2 text-xs font-medium cursor-pointer transition select-none',
-                        isChecked
-                          ? 'border-primary/50 bg-primary/5 text-foreground'
-                          : 'border-border/60 hover:bg-muted/30 text-muted-foreground'
-                      )}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleStatus(opt.id)}
-                        className="h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
-                      />
-                      <span>{opt.label}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 2. Channel Filter */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                Sales Channel
-              </label>
-              <div className="grid grid-cols-2 gap-1.5">
-                {channelOptions.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => onChannelChange(opt.id)}
-                    className={cn(
-                      'rounded-xl border py-1.5 px-2.5 text-xs font-semibold text-center transition cursor-pointer',
-                      channelFilter === opt.id
-                        ? 'border-primary bg-primary text-white shadow-xs'
-                        : 'border-border/60 hover:bg-muted/40 text-muted-foreground'
-                    )}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* 3. Created By Filter */}
-            <div className="space-y-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                Created By
-              </label>
-              <select
-                value={createdByFilter}
-                onChange={(e) => onCreatedByChange(e.target.value)}
-                className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-semibold text-foreground outline-none focus:border-primary cursor-pointer"
-              >
-                <option value="all">All Creators</option>
-                <option value="__online__">Online / Self-Service</option>
-                {creatorOptions.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Done button */}
-            <div className="pt-2 border-t border-border/40">
               <button
                 type="button"
                 onClick={() => setOpen(false)}
-                className="w-full h-9 rounded-xl bg-primary text-white text-xs font-bold hover:bg-primary/90 transition shadow-xs cursor-pointer"
+                className="grid h-8 w-8 place-items-center rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition cursor-pointer"
+                aria-label="Close filter popup"
               >
-                Apply Filters
+                <X className="h-4 w-4" />
               </button>
             </div>
+
+            {/* Scrollable Modal Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* 1. Status Multi-select */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Status (Multi-Select)
+                  </label>
+                  <div className="flex items-center gap-2.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllStatuses}
+                      className="text-primary hover:underline font-semibold cursor-pointer"
+                    >
+                      Select all
+                    </button>
+                    <span className="text-border">•</span>
+                    <button
+                      type="button"
+                      onClick={handleClearStatuses}
+                      className="text-muted-foreground hover:text-foreground font-semibold cursor-pointer"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {statusOptions.map((opt) => {
+                    const isChecked = statusFilters.includes(opt.id);
+                    return (
+                      <label
+                        key={opt.id}
+                        className={cn(
+                          'flex items-center gap-2.5 rounded-xl border px-3 py-2.5 text-xs font-semibold cursor-pointer transition select-none',
+                          isChecked
+                            ? 'border-primary bg-primary/10 text-foreground shadow-2xs'
+                            : 'border-border/70 bg-background/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleStatus(opt.id)}
+                          className="h-4 w-4 shrink-0 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                        />
+                        <span className="leading-snug">{opt.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 2 & 3. Sales Channel & Created By (2-column responsive grid) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/40">
+                {/* Sales Channel */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Sales Channel
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {channelOptions.map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => onChannelChange(opt.id)}
+                        className={cn(
+                          'rounded-xl border py-2 px-3 text-xs font-semibold text-center transition cursor-pointer',
+                          channelFilter === opt.id
+                            ? 'border-primary bg-primary text-white shadow-xs'
+                            : 'border-border/70 bg-background/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Created By */}
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                    Created By
+                  </label>
+                  <select
+                    value={createdByFilter}
+                    onChange={(e) => onCreatedByChange(e.target.value)}
+                    className="w-full h-10 rounded-xl border border-border bg-background px-3.5 text-xs font-semibold text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer"
+                  >
+                    <option value="all">All Creators</option>
+                    <option value="__online__">Online / Self-Service</option>
+                    {creatorOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* 4 & 5. Created At & Redeemed At Date Ranges (2-column responsive cards) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/40">
+                {/* Created At Card */}
+                <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                      <Calendar className="h-3.5 w-3.5 text-primary" />
+                      Created At
+                    </label>
+                    {createdDateFilter !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => onCreatedDateChange('all', {})}
+                        className="text-[11px] font-semibold text-rose-500 hover:underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {datePresetOptions.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p.id, onCreatedDateChange)}
+                        className={cn(
+                          'rounded-lg border py-1.5 px-2 text-[11px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
+                          createdDateFilter === p.id
+                            ? 'border-primary bg-primary text-white shadow-2xs'
+                            : 'border-border/70 bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 pt-1">
+                    <div>
+                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1">From Date</span>
+                      <input
+                        type="date"
+                        value={createdDateRange.from || ''}
+                        onChange={(e) => {
+                          const from = e.target.value || undefined;
+                          const to = createdDateRange.to;
+                          onCreatedDateChange(!from && !to ? 'all' : 'custom', { from, to });
+                        }}
+                        className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1">To Date</span>
+                      <input
+                        type="date"
+                        value={createdDateRange.to || ''}
+                        onChange={(e) => {
+                          const to = e.target.value || undefined;
+                          const from = createdDateRange.from;
+                          onCreatedDateChange(!from && !to ? 'all' : 'custom', { from, to });
+                        }}
+                        className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Redeemed At Card */}
+                <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                      <CalendarDays className="h-3.5 w-3.5 text-violet-500" />
+                      Redeemed At
+                    </label>
+                    {redeemedDateFilter !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => onRedeemedDateChange('all', {})}
+                        className="text-[11px] font-semibold text-rose-500 hover:underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {datePresetOptions.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p.id, onRedeemedDateChange)}
+                        className={cn(
+                          'rounded-lg border py-1.5 px-2 text-[11px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
+                          redeemedDateFilter === p.id
+                            ? 'border-primary bg-primary text-white shadow-2xs'
+                            : 'border-border/70 bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 pt-1">
+                    <div>
+                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1">From Date</span>
+                      <input
+                        type="date"
+                        value={redeemedDateRange.from || ''}
+                        onChange={(e) => {
+                          const from = e.target.value || undefined;
+                          const to = redeemedDateRange.to;
+                          onRedeemedDateChange(!from && !to ? 'all' : 'custom', { from, to });
+                        }}
+                        className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1">To Date</span>
+                      <input
+                        type="date"
+                        value={redeemedDateRange.to || ''}
+                        onChange={(e) => {
+                          const to = e.target.value || undefined;
+                          const from = redeemedDateRange.from;
+                          onRedeemedDateChange(!from && !to ? 'all' : 'custom', { from, to });
+                        }}
+                        className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between gap-3 border-t border-border/50 bg-muted/20 px-6 py-4 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  onReset();
+                }}
+                disabled={activeCount === 0}
+                className="rounded-xl border border-border bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                Reset All
+              </button>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-xl border border-border bg-background px-4 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  className="rounded-xl bg-primary px-6 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition active:scale-[0.98] cursor-pointer"
+                >
+                  Apply Filters
+                </button>
+              </div>
+            </div>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -5122,9 +5339,11 @@ export default function GiftVouchersPage() {
     });
   }, [vouchers, employeeMap, user]);
 
-  // Date filters & pagination
+  // Date filters (Created At & Redeemed At) & pagination
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
+  const [redeemedDateFilter, setRedeemedDateFilter] = useState<DateFilterType>('all');
+  const [redeemedDateRange,  setRedeemedDateRange]  = useState<DateRange>({});
   const [page,       setPage]       = useState(1);
   const [pageSize,   setPageSize]   = useState(20);
 
@@ -5133,7 +5352,7 @@ export default function GiftVouchersPage() {
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-  }, [searchQuery, statusFilters, channelFilter, createdByFilter, dateFilter, dateRange]);
+  }, [searchQuery, statusFilters, channelFilter, createdByFilter, dateFilter, dateRange, redeemedDateFilter, redeemedDateRange]);
   const [shareVoucher,     setShareVoucher]     = useState<Voucher | null>(null);
   const [shareChannel,     setShareChannel]     = useState<'sms' | 'whatsapp'>('whatsapp');
   const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
@@ -5368,14 +5587,34 @@ export default function GiftVouchersPage() {
         if (!match) return false;
       }
 
-      // 3. Date filter
-      if (!matchesDateRange(v.created_at || v.expire_date, dateRange)) {
-        return false;
+      // 3. Created At date filter
+      if (dateRange.from || dateRange.to) {
+        if (!v.created_at) return false;
+        const createdKuwaitDate = kuwaitDateString(v.created_at);
+        if (!matchesDateRange(createdKuwaitDate, dateRange) && !matchesDateRange(v.created_at, dateRange)) {
+          return false;
+        }
+      }
+
+      // 4. Redeemed At date filter
+      if (redeemedDateRange.from || redeemedDateRange.to) {
+        const redeemedCandidates = [
+          v.redeemed_at,
+          ...(Array.isArray(v.redemptions) ? v.redemptions.map((r) => r?.redeemed_at) : []),
+          v.status?.toLowerCase() === 'redeemed' && !v.redeemed_at ? v.booking_data?.created_at : null,
+        ].filter((ts): ts is string => Boolean(ts));
+
+        if (redeemedCandidates.length === 0) return false;
+        const matchesRedeemed = redeemedCandidates.some((ts) => {
+          const redeemedKuwaitDate = kuwaitDateString(ts);
+          return matchesDateRange(redeemedKuwaitDate, redeemedDateRange) || matchesDateRange(ts, redeemedDateRange);
+        });
+        if (!matchesRedeemed) return false;
       }
 
       return true;
     });
-  }, [vouchers, statusFilters, channelFilter, createdByFilter, searchQuery, dateRange]);
+  }, [vouchers, statusFilters, channelFilter, createdByFilter, searchQuery, dateRange, redeemedDateRange]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginatedVouchers = useMemo(() => {
@@ -5584,7 +5823,7 @@ export default function GiftVouchersPage() {
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
+          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || redeemedDateFilter !== 'all' || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
           { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
           { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
@@ -5623,7 +5862,7 @@ export default function GiftVouchersPage() {
             )}
           </div>
 
-          {/* Filter Icon Popover (Status multi-select, Channel, Created By) */}
+          {/* Filter Icon Popover (Status multi-select, Channel, Created By, Created At, Redeemed At) */}
           <VoucherFilterPopover
             statusFilters={statusFilters}
             onStatusChange={(statuses) => setStatusFilters(statuses)}
@@ -5632,20 +5871,49 @@ export default function GiftVouchersPage() {
             createdByFilter={createdByFilter}
             onCreatedByChange={(cr) => setCreatedByFilter(cr)}
             creatorOptions={creatorOptions}
+            createdDateFilter={dateFilter}
+            createdDateRange={dateRange}
+            onCreatedDateChange={(type, range) => {
+              setDateFilter(type);
+              setDateRange(range);
+              setPage(1);
+            }}
+            redeemedDateFilter={redeemedDateFilter}
+            redeemedDateRange={redeemedDateRange}
+            onRedeemedDateChange={(type, range) => {
+              setRedeemedDateFilter(type);
+              setRedeemedDateRange(range);
+              setPage(1);
+            }}
             onReset={() => {
               setStatusFilters([]);
               setChannelFilter('all');
               setCreatedByFilter('all');
+              setDateFilter('all');
+              setDateRange({});
+              setRedeemedDateFilter('all');
+              setRedeemedDateRange({});
             }}
           />
 
           <DateRangeFilter
-            buttonLabelPrefix="Date Filters"
+            buttonLabelPrefix="Created At"
             dateFilter={dateFilter}
             dateRange={dateRange}
             onChange={(type, range) => {
               setDateFilter(type);
               setDateRange(range);
+              setPage(1);
+            }}
+          />
+
+          <DateRangeFilter
+            buttonLabelPrefix="Redeemed At"
+            dateFilter={redeemedDateFilter}
+            dateRange={redeemedDateRange}
+            onChange={(type, range) => {
+              setRedeemedDateFilter(type);
+              setRedeemedDateRange(range);
               setPage(1);
             }}
           />
@@ -5670,11 +5938,22 @@ export default function GiftVouchersPage() {
       {/* ── Active Date / Channel / Status / Created By Filter Badges ── */}
       <div className="flex flex-wrap items-center gap-2">
         <DateFilterActiveBadge
+          labelPrefix="Created At:"
           dateFilter={dateFilter}
           dateRange={dateRange}
           onClear={() => {
             setDateFilter('all');
             setDateRange({});
+            setPage(1);
+          }}
+        />
+        <DateFilterActiveBadge
+          labelPrefix="Redeemed At:"
+          dateFilter={redeemedDateFilter}
+          dateRange={redeemedDateRange}
+          onClear={() => {
+            setRedeemedDateFilter('all');
+            setRedeemedDateRange({});
             setPage(1);
           }}
         />
@@ -5758,7 +6037,7 @@ export default function GiftVouchersPage() {
               ? `No vouchers match "${searchQuery}"`
               : 'No vouchers match the selected filter'}
           </p>
-          {(searchQuery.trim() || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || dateFilter !== 'all') && (
+          {(searchQuery.trim() || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || dateFilter !== 'all' || redeemedDateFilter !== 'all') && (
             <button
               onClick={() => {
                 setSearchQuery('');
@@ -5767,6 +6046,8 @@ export default function GiftVouchersPage() {
                 setCreatedByFilter('all');
                 setDateFilter('all');
                 setDateRange({});
+                setRedeemedDateFilter('all');
+                setRedeemedDateRange({});
               }}
               className="mt-3 text-xs font-bold text-primary hover:underline cursor-pointer"
             >

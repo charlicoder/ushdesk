@@ -642,10 +642,13 @@ export function HomeServiceAddSessionModal({
       .finally(() => setServicesLoading(false));
   }, [isFirstSession, defaultTherapistId, branchId, authHeader, homeService]);
 
-  // ── Load arrangements when primary service changes ──
+  // ── Load arrangements when primary service (or package) changes ──
+  const arrangementTargetServiceId = splitPkg
+    ? (serviceIds.length > 0 ? String(splitPkg.id) : '')
+    : String(extraServices[serviceIds[0]]?.package_id || serviceIds[0] || '');
+
   useEffect(() => {
-    const primaryId = serviceIds[0];
-    if (homeService || !primaryId || !branchId) {
+    if (homeService || !arrangementTargetServiceId || !branchId) {
       setArrangements([]);
       setArrangementId('');
       setArrangementName('');
@@ -654,15 +657,15 @@ export function HomeServiceAddSessionModal({
     }
     setArrangementsLoading(true);
     const qs = new URLSearchParams({ branch_id: branchId });
-    authedFetch(`/api/v1/services/${primaryId}/arrangements/?${qs}`, {
+    authedFetch(`/api/v1/services/${arrangementTargetServiceId}/arrangements/?${qs}`, {
       headers: authHeader ? { Authorization: authHeader } : undefined,
     })
       .then(r => r.json())
       .then(d => {
         let list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? []))
           .filter((a: ApiArrangement) => a.is_active !== false);
-        // Package group: only rooms that every service of the group shares
-        if (groupRoomIdsRef.current && groupRoomIdsRef.current.size > 0) {
+        // Package group: only rooms that every service of the group shares (when not using package-level rooms)
+        if (!splitPkg && groupRoomIdsRef.current && groupRoomIdsRef.current.size > 0) {
           const allowed = groupRoomIdsRef.current;
           list = list.filter(a => allowed.has(String(a.id)));
         }
@@ -672,11 +675,15 @@ export function HomeServiceAddSessionModal({
           setArrangementId(first.id);
           setArrangementName(first.name);
           setArrangementType(first.arrangement_type ?? '');
+        } else {
+          setArrangementId('');
+          setArrangementName('');
+          setArrangementType('');
         }
       })
       .catch(() => setArrangements([]))
       .finally(() => setArrangementsLoading(false));
-  }, [serviceIds[0], branchId, authHeader]);
+  }, [arrangementTargetServiceId, branchId, authHeader, homeService, splitPkg]);
 
   // ── Load arrangement services ──
   useEffect(() => {
@@ -907,10 +914,11 @@ export function HomeServiceAddSessionModal({
 
   // Drop additional services that are not offered in the (changed) room
   useEffect(() => {
+    if (splitPkg || selectedServices.some(s => Boolean(s.package_id))) return;
     if (arrangementServices === null || serviceIds.length < 2) return;
     const keep = serviceIds.filter((id, i) => i === 0 || arrangementServiceIdSet.has(String(id)));
     if (keep.length !== serviceIds.length) setServiceIds(keep);
-  }, [arrangementServices, arrangementServiceIdSet, serviceIds]);
+  }, [arrangementServices, arrangementServiceIdSet, serviceIds, splitPkg, selectedServices]);
 
   const toggleService = (sv: ApiService) => {
     if (!serviceIds.includes(sv.id) && serviceDisabledReason(sv)) return;
@@ -962,26 +970,6 @@ export function HomeServiceAddSessionModal({
     if (!splitPkg) return null;
     if (usedIds(splitPkg.id).has(c.id)) return 'Already in another session';
     if (!therapistOffers(c.id)) return `Not offered by ${defaultTherapistName}`;
-    const others = serviceIds.filter(id => id !== c.id);
-    if (others.length === 0) return null;
-    const rooms = pkgPlan?.rooms_by_service ?? null;
-    if (rooms) {
-      const mine = rooms[c.id] ?? [];
-      if (arrangementId) {
-        return mine.includes(arrangementId) ? null : 'Not available in the selected room';
-      }
-      const common = others.map(id => rooms[id] ?? []).reduce<string[] | null>(
-        (acc, r) => (acc === null ? r : acc.filter(x => r.includes(x))),
-        null,
-      ) ?? [];
-      if (mine.length === 0 || common.length === 0 || !mine.some(x => common.includes(x))) {
-        return 'Not available in the same room';
-      }
-      return null;
-    }
-    if (arrangementServices !== null && arrangementId && !arrangementServiceIdSet.has(String(c.id))) {
-      return 'Not available in the selected room';
-    }
     return null;
   };
 
@@ -1018,8 +1006,8 @@ export function HomeServiceAddSessionModal({
     const pickIds = group
       ? group.service_ids.filter(id => remainingIds.has(id))
       : [remaining.find(c => therapistOffers(c.id))?.id ?? remaining[0].id];
-    groupRoomIdsRef.current = auto && group && group.room_required ? new Set(group.arrangements.map(a => String(a.id))) : null;
-    setGroupRoomless(auto && Boolean(group && !group.room_required));
+    groupRoomIdsRef.current = null;
+    setGroupRoomless(false);
     const comps = Object.fromEntries(
       remaining.map(c => [c.id, makeComponent(pkg, c, all)]),
     );

@@ -776,17 +776,8 @@ function AddVoucherSessionModal({
 
   const primaryService = selectedServices[0] ?? null;
 
-  // Package: a service that shares no room with the ticked ones cannot join this session
-  const pkgDisabledReason = (gid: string): string | null => {
-    if (!isPkg || !pkgRooms || selectedServiceIds.includes(gid) || selectedServiceIds.length === 0) return null;
-    const mine = pkgRooms[gid] ?? [];
-    const common = selectedServiceIds
-      .map((x) => pkgRooms[x] ?? [])
-      .reduce<string[] | null>((acc, r) => (acc === null ? r : acc.filter((i) => r.includes(i))), null) ?? [];
-    return mine.length > 0 && common.length > 0 && mine.some((i) => common.includes(i))
-      ? null
-      : 'Not available in the same room';
-  };
+  // Package: all included services share the packaged service's room arrangements
+  const pkgDisabledReason = (_gid: string): string | null => null;
 
   // Toggle service selection
   const toggleService = (sv: ApiService) => {
@@ -801,10 +792,14 @@ function AddVoucherSessionModal({
     });
   };
 
-  // 2. Load arrangements supported by EVERY service assigned to this session
+  // 2. Load arrangements: for package vouchers, always use the packaged service's arrangements
   const selectedServiceKey = selectedServiceIds.join(',');
   useEffect(() => {
-    const ids = selectedServiceKey ? selectedServiceKey.split(',') : [];
+    const ids = selectedServiceKey
+      ? isPkg && voucher.__package?.id
+        ? [String(voucher.__package.id)]
+        : selectedServiceKey.split(',')
+      : [];
     if (ids.length === 0 || !branchId) {
       setArrangements([]);
       return;
@@ -844,7 +839,7 @@ function AddVoucherSessionModal({
     return () => {
       cancelled = true;
     };
-  }, [selectedServiceKey, branchId, authHeader, requiredArrType]);
+  }, [selectedServiceKey, isPkg, voucher.__package?.id, branchId, authHeader, requiredArrType]);
 
   // Selected arrangement object
   const selectedArrangement = useMemo(
@@ -1650,8 +1645,8 @@ export function RedeemVoucherModal({
         const bId = String(b.id ?? b.branch_id ?? '');
         if (!bId) return null;
         try {
-          // the branch must offer a matching room for EVERY gifted service
-          const ids = giftedServiceIds.length > 0 ? giftedServiceIds : [serviceId];
+          // For package vouchers, check arrangements of the packaged service itself
+          const ids = isPackageVoucher && pkgInfo?.id ? [String(pkgInfo.id)] : (giftedServiceIds.length > 0 ? giftedServiceIds : [serviceId]);
           for (const sid of ids) {
             const r = await authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${bId}`, {
               headers: authHeader ? { Authorization: authHeader } : undefined,
@@ -1677,7 +1672,7 @@ export function RedeemVoucherModal({
     return () => {
       cancelled = true;
     };
-  }, [branches, serviceId, giftedServiceIds, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type]);
+  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type]);
 
   // Fetch voucher availabilities for branch
   useEffect(() => {

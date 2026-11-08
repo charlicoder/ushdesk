@@ -233,11 +233,13 @@ export function DateFilterActiveBadge({
   dateRange,
   onClear,
   onEditCustom,
+  labelPrefix = 'Active Filter:',
 }: {
   dateFilter: DateFilterType;
   dateRange: DateRange;
   onClear: () => void;
   onEditCustom?: () => void;
+  labelPrefix?: string;
 }) {
   if (dateFilter === 'all') return null;
 
@@ -252,7 +254,7 @@ export function DateFilterActiveBadge({
 
   return (
     <div className="mt-2.5 flex items-center gap-2 animate-in fade-in">
-      <span className="text-xs text-muted-foreground">Active Filter:</span>
+      {labelPrefix && <span className="text-xs text-muted-foreground">{labelPrefix}</span>}
       <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
         <Calendar className="h-3 w-3" />
         <button
