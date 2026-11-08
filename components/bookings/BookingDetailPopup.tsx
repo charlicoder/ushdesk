@@ -930,12 +930,9 @@ function BookingDetailPopupContent({
         : `Call Center Agents cannot reschedule or cancel past or immediate appointments.`)
     : null;
 
-  const canReschedule = !callCenterRescheduleBlocked && !isPastAllowedDaysFromApptStart;
-  const rescheduleBlockReason = callCenterRescheduleBlocked
-    ? (AGENT_BLOCK_REASON ?? undefined)
-    : isPastAllowedDaysFromApptStart
-    ? RESCHEDULE_DAYS_REASON
-    : undefined;
+  // Reschedule restrictions: time-based restrictions removed as requested
+  const canReschedule = true;
+  const rescheduleBlockReason = undefined;
 
   // Combine existing cancel eligibility with Call Center restriction
   const effectiveCanCancel = canCancel && !callCenterCancelBlocked;

@@ -12,7 +12,7 @@ import {
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
   KeyRound, Globe, Send, QrCode, FileText, ShieldCheck, Receipt,
   Trash2, Edit3, Pencil, SlidersHorizontal, Filter, History, UserCheck, FileSpreadsheet,
-  Printer, Download, CheckSquare, Square,
+  Printer, Download, CheckSquare, Square, TrendingUp,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -27,6 +27,8 @@ import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { paymentLinksApi, whatsappShareUrl, smsShareUrl, sendPaymentLinkSms, type PaymentLink } from '@/lib/paymentLinks';
 import { usePermissions } from '@/hooks/use-permissions';
 import { extractRoleCandidates } from '@/lib/permissions';
+import { getAssignedBranchId, getAssignedBranchName } from '@/lib/branchScope';
+import { VoucherSalesReportModal, type VoucherSalesPeriod } from '@/components/bookings/VoucherSalesReportModal';
 import {
   DateRangeFilter,
   DateFilterActiveBadge,
@@ -5613,6 +5615,40 @@ export default function GiftVouchersPage() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [employeeMap, setEmployeeMap] = useState<Record<string, string>>({});
 
+  // Sales report (daily / weekly / monthly / custom)
+  const [salesMenuOpen, setSalesMenuOpen] = useState(false);
+  const [salesPeriod, setSalesPeriod] = useState<VoucherSalesPeriod | null>(null);
+  const [assignedBranch, setAssignedBranch] = useState<{ id: string | null; name: string | null }>(() => ({
+    id: getAssignedBranchId(),
+    name: getAssignedBranchName(),
+  }));
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await authedFetch('/api/v1/employees/me');
+        if (!res.ok) return;
+        const json = await res.json().catch(() => ({}));
+        const emp = (json?.data ?? json?.employee ?? json) as Record<string, any>;
+        if (active && emp) {
+          const bId = emp.branch_id ?? emp.branch?.id ?? emp.branch?.branch_id ?? (Array.isArray(emp.branches) && emp.branches[0]?.id ? emp.branches[0].id : null);
+          const bName = emp.branch_name ?? emp.branch?.name ?? emp.branch?.branch_name ?? (Array.isArray(emp.branches) && emp.branches[0]?.name ? emp.branches[0].name : null);
+          if (bId || bName) {
+            setAssignedBranch({
+              id: bId ? String(bId).trim() : null,
+              name: bName ? String(bName).trim() : null,
+            });
+          }
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+  const reportBranchId = assignedBranch.id || (user?.branch_id ? String(user.branch_id).trim() : null);
+  const reportBranchName = assignedBranch.name || (user?.branch_name ? String(user.branch_name).trim() : null);
+
   useEffect(() => {
     authedFetch('/uauth/api/v1/employees/')
       .then((r) => (r.ok ? r.json() : null))
@@ -6234,6 +6270,37 @@ export default function GiftVouchersPage() {
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             Refresh
           </button>
+
+          {/* Sales Reports dropdown */}
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setSalesMenuOpen((o) => !o)}
+              className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-semibold shadow-sm hover:bg-muted/50 transition"
+              title="Sales Reports"
+            >
+              <TrendingUp className="h-4 w-4 text-primary" />
+              <span>Sales Report</span>
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+            {salesMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setSalesMenuOpen(false)} />
+                <div className="absolute right-0 top-full mt-2 z-50 w-48 overflow-hidden rounded-2xl border border-border bg-card py-1.5 shadow-2xl">
+                  {([['daily', 'Daily Report'], ['weekly', 'Weekly Report'], ['monthly', 'Monthly Report'], ['custom', 'Custom Date']] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => { setSalesPeriod(key); setSalesMenuOpen(false); }}
+                      className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm font-semibold text-foreground hover:bg-muted/60 transition cursor-pointer"
+                    >
+                      <FileText className="h-3.5 w-3.5 text-muted-foreground" /> {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
         <button
           onClick={() => setShowCreate(true)}
@@ -6933,6 +7000,18 @@ export default function GiftVouchersPage() {
           allFilteredVouchers={filtered}
           employeeMap={employeeMap}
           onClose={() => setShowReportModal(false)}
+        />
+      )}
+
+      {/* ── Voucher Sales Report Modal ── */}
+      {salesPeriod && (
+        <VoucherSalesReportModal
+          period={salesPeriod}
+          vouchers={vouchers}
+          getCreatorName={(v) => resolveVoucherCreator(v as Voucher, employeeMap).name}
+          restrictedBranchId={reportBranchId}
+          restrictedBranchName={reportBranchName}
+          onClose={() => setSalesPeriod(null)}
         />
       )}
     </DashboardShell>
