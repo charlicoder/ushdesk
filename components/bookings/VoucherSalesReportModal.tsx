@@ -115,7 +115,7 @@ export function VoucherSalesReportModal({
   const today = todayKw();
 
   const [stage, setStage] = useState<'configure' | 'report'>('configure');
-  const [statuses, setStatuses] = useState<Set<StatusKey>>(new Set(['pending', 'active', 'redeemed']));
+  const [statuses, setStatuses] = useState<Set<StatusKey>>(new Set<StatusKey>(['pending', 'active', 'redeemed']));
   const [dailyDate, setDailyDate] = useState(today);
   const [weekEnding, setWeekEnding] = useState(today);
   const [month, setMonth] = useState(today.slice(0, 7));
