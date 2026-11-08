@@ -4591,8 +4591,8 @@ function BookingDetailPopupContent({
                     </button>
                   </div>
                 )}
-                {/* Make Payment */}
-                {hasPaymentPermission && !isCancelled && !isNoShow && (!isPastApptEnd || String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase().startsWith('home')) && isPaymentPending && !isPaid && !isRewarded && (!effectivePaymentUrl || String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase().startsWith('home')) && (
+                {/* Make Payment: always shown while the booking's payment is pending (no past/future or payment-link restriction) */}
+                {hasPaymentPermission && isPaymentPending && (
                   <button
                     type="button"
                     onClick={() => {
