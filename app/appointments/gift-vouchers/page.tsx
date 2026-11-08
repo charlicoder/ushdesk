@@ -1372,6 +1372,141 @@ function VoucherDetailModal({
   const [resolvedPrimaryTherapist, setResolvedPrimaryTherapist] = useState<Record<string, any> | null>(null);
   const [resolvedSecondaryTherapist, setResolvedSecondaryTherapist] = useState<Record<string, any> | null>(null);
 
+  const [fetchedPackageDetail, setFetchedPackageDetail] = useState<{
+    id: string;
+    name: string;
+    base_price?: string | number;
+    duration_minutes?: number;
+    included_services: Array<{ id: string; name: string; duration_minutes: number }>;
+  } | null>(null);
+
+  const primaryVoucherServiceId = String(
+    voucher.service_id ||
+    voucher.services?.[0]?.service_id ||
+    (voucher.service_data as any)?.id ||
+    (voucher.services?.[0]?.service_data as any)?.id ||
+    ''
+  ).trim();
+
+  useEffect(() => {
+    setFetchedPackageDetail(null);
+    if (!primaryVoucherServiceId) return;
+    let cancelled = false;
+    authedFetch(`/api/v1/services/${primaryVoucherServiceId}/`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const svc = (d?.data ?? d) as Record<string, any>;
+        const inc = Array.isArray(svc?.included_services) ? svc.included_services : [];
+        const isPkg = Boolean(
+          svc?.is_packaged_services === true ||
+          String(svc?.is_packaged_services).toLowerCase() === 'true' ||
+          svc?.is_packaged === true ||
+          String(svc?.is_packaged).toLowerCase() === 'true' ||
+          inc.length > 0
+        );
+        if (!isPkg) return;
+        setFetchedPackageDetail({
+          id: String(svc.id ?? primaryVoucherServiceId),
+          name: String(svc.name ?? voucher.service_data?.name ?? 'Package'),
+          base_price: svc.base_price ?? voucher.service_data?.base_price,
+          duration_minutes: Number(svc.duration_minutes ?? voucher.service_data?.duration_minutes ?? 0),
+          included_services: inc.map((c: any) => ({
+            id: String(c.id ?? c.service_id ?? ''),
+            name: String(c.name ?? c.service_name ?? 'Service'),
+            duration_minutes: Number(c.duration_minutes ?? c.duration ?? 0) || 0,
+          })),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [primaryVoucherServiceId, voucher.id, voucher.service_data?.name, voucher.service_data?.base_price, token]);
+
+  const physicalItems: OrderedItem[] = useMemo(() => {
+    if (Array.isArray(voucher.ordered_items) && voucher.ordered_items.length > 0) {
+      return voucher.ordered_items;
+    }
+    const pd = (voucher as any).product_data;
+    if (pd && typeof pd === 'object' && (pd.name || pd.price)) {
+      return [
+        {
+          product_id: pd.id,
+          name: pd.name || 'Physical Gift Product',
+          price: pd.price ?? 0,
+          quantity: Number(pd.quantity ?? 1) || 1,
+          total_price: pd.total_price ?? pd.price ?? 0,
+          image: pd.image ?? null,
+          currency: pd.currency || voucher.currency,
+        },
+      ];
+    }
+    return [];
+  }, [voucher]);
+
+  const physicalItemsTotal = useMemo(
+    () =>
+      physicalItems.reduce((sum, item) => {
+        const qty = Number(item.quantity ?? 1) || 1;
+        const unit = parseFloat(String(item.price ?? 0)) || 0;
+        const tot = parseFloat(String(item.total_price ?? unit * qty)) || unit * qty;
+        return sum + tot;
+      }, 0),
+    [physicalItems]
+  );
+
+  const inlineIncludedServices: Array<{ id: string; name: string; duration_minutes: number }> = useMemo(() => {
+    const rawSd = (voucher.service_data ?? voucher.services?.[0]?.service_data ?? {}) as Record<string, any>;
+    const rawInc = Array.isArray(rawSd.included_services) ? rawSd.included_services : [];
+    return rawInc.map((c: any) => ({
+      id: String(c.id ?? c.service_id ?? ''),
+      name: String(c.name ?? c.service_name ?? 'Service'),
+      duration_minutes: Number(c.duration_minutes ?? c.duration ?? 0) || 0,
+    }));
+  }, [voucher.service_data, voucher.services]);
+
+  const packageIncludedServices = useMemo(() => {
+    if (fetchedPackageDetail && fetchedPackageDetail.included_services.length > 0) {
+      return fetchedPackageDetail.included_services;
+    }
+    if (inlineIncludedServices.length > 0) {
+      return inlineIncludedServices;
+    }
+    return [];
+  }, [fetchedPackageDetail, inlineIncludedServices]);
+
+  const isPackageVoucher = useMemo(() => {
+    const rawSd = (voucher.service_data ?? voucher.services?.[0]?.service_data ?? {}) as Record<string, any>;
+    return Boolean(
+      fetchedPackageDetail ||
+      rawSd.is_packaged_services === true ||
+      String(rawSd.is_packaged_services ?? '').toLowerCase() === 'true' ||
+      rawSd.is_packaged === true ||
+      String(rawSd.is_packaged ?? '').toLowerCase() === 'true' ||
+      packageIncludedServices.length > 0
+    );
+  }, [fetchedPackageDetail, voucher.service_data, voucher.services, packageIncludedServices.length]);
+
+  const packageName =
+    voucher.service_data?.name ||
+    voucher.services?.[0]?.service_data?.name ||
+    fetchedPackageDetail?.name ||
+    'Spa Package';
+
+  const packageOrServicePrice = useMemo(() => {
+    const fromSvcEntry = parseFloat(String(voucher.services?.[0]?.service_data?.base_price ?? '')) || 0;
+    if (fromSvcEntry > 0) return fromSvcEntry;
+    const fromSvcData = parseFloat(String(voucher.service_data?.base_price ?? '')) || 0;
+    if (fromSvcData > 0) return fromSvcData;
+    const fromPkgDetail = parseFloat(String(fetchedPackageDetail?.base_price ?? '')) || 0;
+    if (fromPkgDetail > 0) return fromPkgDetail;
+    const totalAmt = parseFloat(String(voucher.total_amount ?? 0)) || 0;
+    return Math.max(0, totalAmt - physicalItemsTotal);
+  }, [voucher, fetchedPackageDetail, physicalItemsTotal]);
+
   const handleRedeemClick = () => {
     const serviceId = voucher.service_id || (voucher.service_data as any)?.id;
     const branchId = voucher.branch_id || voucher.branch_data?.branch_id;
@@ -2130,18 +2265,18 @@ function VoucherDetailModal({
               </div>
 
               {/* Ordered Items & Services */}
-              {(Boolean(voucher.ordered_items?.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(voucher.addons?.length)) && (
+              {(Boolean(physicalItems.length) || Boolean(voucher.service_data?.name) || Boolean(voucher.service_id) || Boolean(voucher.addons?.length)) && (
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wider text-foreground mb-2 flex items-center gap-1.5">
                     <Package className="h-3.5 w-3.5 text-primary" />
                     Gift Items
-                    {voucher.ordered_items && voucher.ordered_items.length > 0 ? ` (${voucher.ordered_items.length})` : ''}
+                    {physicalItems.length > 0 ? ` (${physicalItems.length})` : ''}
                   </p>
                   <div className="space-y-3">
                     {/* Physical Products */}
-                    {voucher.ordered_items && voucher.ordered_items.length > 0 && (
+                    {physicalItems.length > 0 && (
                       <div className="space-y-2">
-                        {voucher.ordered_items.map((item, i) => (
+                        {physicalItems.map((item, i) => (
                           <div key={i} className="flex items-center gap-3 rounded-xl border border-border/60 bg-card p-3">
                             {item.image && (
                               <img src={item.image} alt={item.name_en || item.name} className="h-12 w-12 rounded-lg object-cover shrink-0"
@@ -2151,13 +2286,91 @@ function VoucherDetailModal({
                               <p className="font-semibold text-xs text-foreground truncate">{item.name_en || item.name || 'Item'}</p>
                               <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {formatAmount(item.price, item.currency || voucher.currency)}</p>
                             </div>
-                            <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price, item.currency || voucher.currency)}</span>
+                            <span className="text-xs font-bold text-foreground shrink-0">{formatAmount(item.total_price ?? item.price, item.currency || voucher.currency)}</span>
                           </div>
                         ))}
                       </div>
                     )}
 
                     {/* Service Details (including addons & extratime) */}
+                    {isPackageVoucher && (voucher.service_data?.name || voucher.service_id) ? (
+                      <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
+                        {voucher.service_data?.image && (
+                          <img
+                            src={voucher.service_data.image}
+                            alt={packageName}
+                            className="w-full h-28 object-cover"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        )}
+                        <div className="p-3.5 space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-violet-500 mb-0.5">
+                                <Sparkles className="h-3 w-3" />Spa Package
+                              </div>
+                              <p className="font-bold text-sm text-foreground">{packageName}</p>
+                            </div>
+                            <span className="text-xs font-bold text-foreground shrink-0 font-mono">
+                              {formatAmount(packageOrServicePrice, voucher.service_data?.currency || voucher.currency)}
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            {getVoucherTotalDuration(voucher) > 0 && (
+                              <span className="flex items-center gap-1">
+                                <Clock className="h-3 w-3 text-primary" />
+                                {getVoucherTotalDuration(voucher)} min
+                              </span>
+                            )}
+                            {voucher.branch_data?.name && (
+                              <span className="flex items-center gap-1">
+                                <Building className="h-3 w-3 text-muted-foreground" />
+                                {voucher.branch_data.name}
+                              </span>
+                            )}
+                            {voucher.service_arrangement_data?.arrangement_name && (
+                              <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                                {voucher.service_arrangement_data.arrangement_name}
+                              </span>
+                            )}
+                          </div>
+
+                          {packageIncludedServices.length > 0 && (
+                            <div className="pt-2.5 border-t border-border/50">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+                                <Scissors className="h-3 w-3 text-primary" />
+                                Included Services ({packageIncludedServices.length})
+                              </p>
+                              <div className="space-y-1.5">
+                                {packageIncludedServices.map((inc, idx) => (
+                                  <div
+                                    key={inc.id || `inc-svc-${idx}`}
+                                    className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary/10 text-[10px] font-bold text-primary">
+                                        {idx + 1}
+                                      </span>
+                                      <span className="font-medium text-foreground truncate">{inc.name}</span>
+                                    </div>
+                                    {inc.duration_minutes > 0 && (
+                                      <span className="text-[11px] text-muted-foreground shrink-0 ml-2 flex items-center gap-1">
+                                        <Clock className="h-3 w-3 text-primary/70" />
+                                        {inc.duration_minutes} min
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                    <>
                     {/* Multi-service voucher: every gifted service with its own add-ons / extra time */}
                     {(voucher.services?.length ?? 0) > 1 && (
                       <div className="space-y-2.5">
@@ -2227,9 +2440,9 @@ function VoucherDetailModal({
                               </div>
                               <p className="font-bold text-sm text-foreground">{voucher.service_data?.name || 'Service'}</p>
                             </div>
-                            {(voucher.service_data?.base_price || voucher.total_amount) && (
+                            {(packageOrServicePrice > 0 || voucher.service_data?.base_price || voucher.total_amount) && (
                               <span className="text-xs font-bold text-foreground shrink-0">
-                                {formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
+                                {formatAmount(packageOrServicePrice || voucher.service_data?.base_price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
                               </span>
                             )}
                           </div>
@@ -2303,6 +2516,8 @@ function VoucherDetailModal({
                           )}
                         </div>
                       </div>
+                    )}
+                    </>
                     )}
 
                     {/* Fallback Addons if no service_data?.name */}
@@ -2878,12 +3093,45 @@ function VoucherDetailModal({
                 </div>
 
                 {/* Itemized breakdown in invoice */}
-                <div className="pt-1 space-y-2 pb-1">
+                <div className="pt-1 space-y-2.5 pb-1">
                   <div className="flex items-center justify-between text-xs text-muted-foreground font-semibold">
                     <span>Description</span>
                     <span>Amount</span>
                   </div>
-                  {(voucher.services?.length ?? 0) > 1 ? (
+
+                  {isPackageVoucher && (voucher.service_data?.name || voucher.service_id) ? (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-bold text-foreground">{packageName}</span>
+                        <span className="font-bold font-mono text-foreground">
+                          {formatAmount(packageOrServicePrice, voucher.currency)}
+                        </span>
+                      </div>
+                      {packageIncludedServices.length > 0 && (
+                        <div className="ml-1 pl-3 border-l-2 border-violet-500/30 space-y-1">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Included Services ({packageIncludedServices.length})
+                          </p>
+                          {packageIncludedServices.map((inc, sIdx) => (
+                            <div
+                              key={inc.id || `pay-inc-${sIdx}`}
+                              className="flex items-center justify-between text-xs text-foreground/85"
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-violet-500/60 shrink-0" />
+                                <span>{inc.name}</span>
+                              </span>
+                              {inc.duration_minutes > 0 && (
+                                <span className="text-[11px] text-muted-foreground shrink-0">
+                                  {inc.duration_minutes} min
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (voucher.services?.length ?? 0) > 1 ? (
                     voucher.services!.map((sv, si) => (
                       <React.Fragment key={`inv-${si}`}>
                         <div className="flex items-center justify-between text-xs">
@@ -2904,26 +3152,82 @@ function VoucherDetailModal({
                         )}
                       </React.Fragment>
                     ))
-                  ) : (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium text-foreground">
-                      {voucher.service_data?.name || (isDigital ? (voucher.digital_product_data?.title || 'Digital Gift Item') : (isPhysical ? 'Gift Voucher / Physical Products' : 'Gift Voucher'))}
-                    </span>
-                    <span className="font-semibold">{formatAmount(voucher.service_data?.base_price || voucher.total_amount, voucher.currency)}</span>
-                  </div>
-                  )}
-                  {!((voucher.services?.length ?? 0) > 1) && voucher.addons && voucher.addons.map((a, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>+ Add-on: {a.name}</span>
-                      <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
+                  ) : (voucher.service_data?.name || voucher.service_id || physicalItems.length === 0) ? (
+                    <>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-foreground">
+                          {voucher.service_data?.name || (isDigital ? (voucher.digital_product_data?.title || 'Digital Gift Item') : (isPhysical ? 'Gift Voucher / Physical Products' : 'Gift Voucher'))}
+                        </span>
+                        <span className="font-semibold">
+                          {formatAmount(packageOrServicePrice || voucher.service_data?.base_price || voucher.total_amount, voucher.currency)}
+                        </span>
+                      </div>
+                      {voucher.addons && voucher.addons.map((a, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>+ Add-on: {a.name}</span>
+                          <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
+                        </div>
+                      ))}
+                      {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>+ Extra Minutes (+{voucher.extra_time}m)</span>
+                          <span>+{formatAmount(voucher.price_for_extra_time || 0, voucher.currency)}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : null}
+
+                  {physicalItems.length > 0 && (
+                    <div className="space-y-1.5 pt-2 border-t border-border/30">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                        <Package className="h-3 w-3 text-primary" />
+                        Physical Product Items ({physicalItems.length})
+                      </p>
+                      {physicalItems.map((item, idx) => {
+                        const qty = Number(item.quantity ?? 1) || 1;
+                        const unitPrice = parseFloat(String(item.price ?? 0)) || 0;
+                        const lineTotal = parseFloat(String(item.total_price ?? unitPrice * qty)) || unitPrice * qty;
+                        return (
+                          <div key={item.product_id || `pay-prod-${idx}`} className="flex items-center justify-between text-xs">
+                            <span className="font-medium text-foreground">
+                              {item.name_en || item.name || 'Product Item'}
+                              {qty > 1 ? <span className="text-muted-foreground ml-1">(×{qty})</span> : null}
+                            </span>
+                            <span className="font-semibold font-mono text-foreground">
+                              {formatAmount(lineTotal, item.currency || voucher.currency)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))}
-                  {!((voucher.services?.length ?? 0) > 1) && Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                  )}
+
+                  {Number(voucher.discount) > 0 && (
+                    <div className="flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400 pt-1.5 border-t border-border/30">
+                      <span>Discount</span>
+                      <span className="font-mono font-semibold">-{formatAmount(voucher.discount, voucher.currency)}</span>
+                    </div>
+                  )}
+
+                  <div className="pt-2.5 mt-1 border-t border-border/50 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-extrabold text-foreground">
+                      <span>Total Price</span>
+                      <span className="font-mono text-sm text-violet-600 dark:text-violet-400">
+                        {formatAmount(voucher.total_amount, voucher.currency)}
+                      </span>
+                    </div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
-                      <span>+ Extra Minutes (+{voucher.extra_time}m)</span>
-                      <span>+{formatAmount(voucher.price_for_extra_time || 0, voucher.currency)}</span>
+                      <span className="text-[10px] uppercase font-bold tracking-wider">Billed To</span>
+                      <span className="font-bold text-foreground">
+                        {voucher.sender_data?.name || voucher.sender_details?.name || voucher.recipient_data?.name || 'Customer'}
+                        {(voucher.sender_data?.phone_number || voucher.sender_details?.phone_number) ? (
+                          <span className="text-[11px] font-normal text-muted-foreground ml-1.5 font-mono">
+                            ({voucher.sender_data?.phone_number || voucher.sender_details?.phone_number})
+                          </span>
+                        ) : null}
+                      </span>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
 
@@ -3482,7 +3786,12 @@ function VoucherDetailModal({
             customerPhone: voucher.sender_data?.phone_number || voucher.sender_details?.phone_number,
             customerEmail: voucher.sender_data?.email || voucher.sender_details?.email,
             serviceName: voucher.service_data?.name || (isPhysical ? 'Gift Voucher / Physical Items' : 'Gift Voucher'),
-            servicePrice: voucher.service_data?.base_price || voucher.total_amount,
+            servicePrice: packageOrServicePrice || voucher.service_data?.base_price || voucher.total_amount,
+            isPackage: isPackageVoucher,
+            packageName: isPackageVoucher ? packageName : null,
+            packagePrice: isPackageVoucher ? packageOrServicePrice : null,
+            includedServices: isPackageVoucher ? packageIncludedServices : undefined,
+            orderedItems: physicalItems,
             addons: voucher.addons,
             extraMinutes: voucher.extra_time,
             extraPrice: voucher.price_for_extra_time ? parseFloat(voucher.price_for_extra_time) : 0,

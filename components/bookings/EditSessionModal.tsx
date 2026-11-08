@@ -40,6 +40,8 @@ export interface EditSessionModalProps {
   serviceArrangementId?: string;
   /** Paid bookings: services can only be swapped for ones with the same price (no add/remove/price edits). */
   restrictToSamePrice?: boolean;
+  /** Whether this booking is for a package (compare using individual service price while keeping package pricing). */
+  isPackageBooking?: boolean;
   currency?: string;
   authHeader?: string;
   onClose: () => void;
@@ -56,6 +58,8 @@ interface ApiBranchService {
   price?: string | number;
   currency?: string;
   category_name?: string;
+  is_packaged_services?: boolean | string;
+  is_packaged?: boolean | string;
 }
 
 export function EditSessionModal({
@@ -66,6 +70,7 @@ export function EditSessionModal({
   branchId,
   serviceArrangementId,
   restrictToSamePrice = false,
+  isPackageBooking = false,
   addons: addonsProp,
   currency = 'KWD',
   authHeader,
@@ -303,14 +308,60 @@ export function EditSessionModal({
     setServices((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const samePriceOptions = (svc: EditableServiceItem): ApiBranchService[] =>
-    branchServices.filter((b) => {
-      if (arrangementServiceIds && !arrangementServiceIds.has(String(b.id))) return false;
+  const isPkgServiceItem = (b: any): boolean =>
+    b?.is_packaged_services === true ||
+    String(b?.is_packaged_services ?? '').toLowerCase() === 'true' ||
+    b?.is_packaged === true ||
+    String(b?.is_packaged ?? '').toLowerCase() === 'true';
+
+  const isPackageComponent = (svc: EditableServiceItem): boolean =>
+    Boolean(
+      isPackageBooking ||
+      svc.package_id ||
+      svc.package_name ||
+      svc.service_data?.package_id ||
+      svc.service_data?.package_name
+    );
+
+  // Resolve the individual service's own catalog price (not the package price) for comparison
+  const getServiceComparisonPrice = (svc: EditableServiceItem): number => {
+    const svcNameNorm = String(svc.service_name || svc.name || '').trim().toLowerCase();
+    const fromBranch =
+      branchServices.find((b) => String(b.id) === String(svc.service_id)) ||
+      (svcNameNorm
+        ? branchServices.find((b) => !isPkgServiceItem(b) && String(b.name || '').trim().toLowerCase() === svcNameNorm)
+        : undefined);
+    if (fromBranch) {
+      const branchPrice = parseFloat(String(fromBranch.base_price ?? fromBranch.price ?? 0)) || 0;
+      if (branchPrice > 0) return branchPrice;
+    }
+    const catalogPrice = parseFloat(String(svc.catalog_price ?? svc.service_data?.catalog_base_price ?? 0)) || 0;
+    if (catalogPrice > 0) return catalogPrice;
+    const compPrice = parseFloat(String(svc.component_price ?? svc.service_data?.component_price ?? 0)) || 0;
+    const pkgPrice = parseFloat(String(svc.package_price ?? svc.service_data?.package_price ?? 0)) || 0;
+    if (compPrice > 0 && (pkgPrice <= 0 || Math.abs(compPrice - pkgPrice) > 0.0005)) {
+      return compPrice;
+    }
+    return Number(svc.base_price) || 0;
+  };
+
+  const samePriceOptions = (svc: EditableServiceItem): ApiBranchService[] => {
+    const targetPrice = getServiceComparisonPrice(svc);
+    const pkgMode = isPackageComponent(svc);
+    const restrictByRoom =
+      !pkgMode &&
+      arrangementServiceIds !== null &&
+      arrangementServiceIds.has(String(svc.service_id));
+
+    return branchServices.filter((b) => {
+      if (isPkgServiceItem(b)) return false;
+      if (restrictByRoom && arrangementServiceIds && !arrangementServiceIds.has(String(b.id))) return false;
       if (String(b.id) === String(svc.service_id)) return false;
       if (services.some((x) => String(x.service_id) === String(b.id))) return false;
       const price = parseFloat(String(b.base_price ?? b.price ?? 0)) || 0;
-      return Math.abs(price - (Number(svc.base_price) || 0)) < 0.0005;
+      return Math.abs(price - targetPrice) < 0.0005;
     });
+  };
 
   const handleReplaceService = (index: number, newId: string) => {
     const item = branchServices.find((b) => String(b.id) === newId);
@@ -320,14 +371,27 @@ export function EditSessionModal({
     const pr = parseFloat(String(item.base_price ?? item.price ?? 0)) || 0;
     setServices((prev) => {
       const copy = [...prev];
+      const oldSvc = copy[index];
+      const preserveSlotPrice = Boolean(oldSvc && (isPackageComponent(oldSvc) || restrictToSamePrice));
+      const slotPrice = preserveSlotPrice ? (Number(oldSvc.base_price ?? oldSvc.price ?? 0) || 0) : pr;
       copy[index] = {
+        ...(oldSvc || {}),
         service_id: item.id,
         service_name: item.name,
         name: item.name,
         duration_minutes: dur,
-        base_price: pr,
-        price: pr,
-        service_data: { id: item.id, name: item.name, duration_minutes: dur, base_price: pr },
+        base_price: slotPrice,
+        price: slotPrice,
+        catalog_price: pr,
+        component_price: pr,
+        service_data: {
+          ...(oldSvc?.service_data || {}),
+          id: item.id,
+          name: item.name,
+          duration_minutes: dur,
+          base_price: pr,
+          catalog_base_price: pr,
+        },
       };
       return copy;
     });

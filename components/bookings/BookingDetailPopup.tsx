@@ -1899,6 +1899,7 @@ function BookingDetailPopupContent({
     );
     const allEntries = [...svcEntries, ...allSessionSvcEntries];
 
+    let pkgId = '';
     let pkgName = '';
     let hasPkgMeta = false;
 
@@ -1909,6 +1910,9 @@ function BookingDetailPopupContent({
       const isPkgSvc = isTruthyFlag(e.is_packaged_services ?? sd.is_packaged_services ?? e.is_packaged ?? sd.is_packaged);
       if (pId || pName || isPkgSvc) {
         hasPkgMeta = true;
+        if (!pkgId && typeof pId === 'string' && pId.trim()) {
+          pkgId = pId.trim();
+        }
         if (!pkgName && typeof pName === 'string' && pName.trim()) {
           pkgName = pName.trim();
         }
@@ -1926,6 +1930,18 @@ function BookingDetailPopupContent({
       Boolean((detail as any)?.package_id || (booking.raw as any)?.package_id || detailSd.package_id)
     ) {
       hasPkgMeta = true;
+    }
+
+    if (!pkgId) {
+      const candidateId =
+        voucherData.package_id ??
+        (detail as any)?.package_id ??
+        (booking.raw as any)?.package_id ??
+        detailSd.package_id ??
+        '';
+      if (typeof candidateId === 'string' && candidateId.trim()) {
+        pkgId = candidateId.trim();
+      }
     }
 
     if (!pkgName) {
@@ -1951,6 +1967,7 @@ function BookingDetailPopupContent({
 
     return {
       isPackage,
+      packageId: pkgId || null,
       packageName: pkgName || null,
     };
   }, [rawSessions, svcEntries, detail, booking.raw, isCourseRedemption, multiItems, displaySessions]);
@@ -2691,6 +2708,16 @@ function BookingDetailPopupContent({
         let sServices = (Array.isArray(s.services) ? s.services : [])
           .map((sv: any, sIdx: number) => {
             const sId = [sv.service_id, sv.id].find(isUuid) || undefined;
+            const pkgId = [
+              sv.package_id,
+              sv.service_data?.package_id,
+              packageInfo.packageId,
+            ].find(isUuid) || undefined;
+            const pkgName =
+              sv.package_name ||
+              sv.service_data?.package_name ||
+              packageInfo.packageName ||
+              undefined;
             return {
               service_id: sId,
               service_name: sv.service_name || sv.name || undefined,
@@ -2698,6 +2725,8 @@ function BookingDetailPopupContent({
               base_duration: Number(sv.duration_minutes ?? sv.duration ?? 60),
               duration_minutes: Number(sv.duration_minutes ?? sv.duration ?? 60),
               position: sIdx,
+              ...(pkgId ? { package_id: pkgId } : {}),
+              ...(pkgName ? { package_name: pkgName } : {}),
             };
           })
           .filter((sv: any) => Boolean(sv.service_id));
@@ -4617,7 +4646,8 @@ function BookingDetailPopupContent({
       {editingSessionIndex !== null && displaySessions[editingSessionIndex] && (
         <EditSessionModal
           isOpen={true}
-          restrictToSamePrice={isPaidEditableBooking}
+          restrictToSamePrice={isPaidEditableBooking || isPackageBooking}
+          isPackageBooking={isPackageBooking}
           addons={getSessionAddons(displaySessions[editingSessionIndex]?.raw as any)}
           sessionIndex={editingSessionIndex}
           sessionNumber={editingSessionIndex + 1}

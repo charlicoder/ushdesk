@@ -39,6 +39,19 @@ export interface InvoiceDetailModalProps {
     branchName?: string | null;
     status?: string;
     pricing?: AnyRecord | null;
+    isPackage?: boolean;
+    packageName?: string | null;
+    packagePrice?: string | number | null;
+    includedServices?: Array<{ id?: string; name: string; duration_minutes?: number }>;
+    orderedItems?: Array<{
+      product_id?: string;
+      name?: string;
+      name_en?: string;
+      price?: number | string;
+      quantity?: number;
+      total_price?: number | string;
+      currency?: string;
+    }>;
   };
   onClose: () => void;
 }
@@ -181,7 +194,10 @@ export function InvoiceDetailModal({
       const qty = parseFloat(String(line.quantity ?? 1)) || 1;
       const unit = parseFloat(String(line.unit_price ?? line.price_unit ?? line.price ?? 0)) || 0;
       const sub = parseFloat(String(line.subtotal ?? line.price_subtotal ?? unit * qty)) || 0;
-      return `<tr><td class="c">${idx + 1}</td><td><strong>${esc(line.name || line.product_name || `Item ${idx + 1}`)}</strong>${line.description ? `<div class="muted">${esc(line.description)}</div>` : ''}</td><td class="r">${qty}</td><td class="r">${fmt(unit)}</td><td class="r">${fmt(sub)}</td></tr>`;
+      const incList = Array.isArray(line.includedServices) && line.includedServices.length > 0
+        ? `<div class="muted" style="margin-top:4px">${line.includedServices.map((s: AnyRecord) => `• ${esc(s.name)}${s.duration_minutes ? ` (${s.duration_minutes} min)` : ''}`).join('<br/>')}</div>`
+        : '';
+      return `<tr><td class="c">${idx + 1}</td><td><strong>${esc(line.name || line.product_name || `Item ${idx + 1}`)}</strong>${line.description ? `<div class="muted">${esc(line.description)}</div>` : ''}${incList}</td><td class="r">${qty}</td><td class="r">${fmt(unit)}</td><td class="r">${fmt(sub)}</td></tr>`;
     }).join('');
     const status = invoice?.state ? String(invoice.state).toUpperCase() : (isPaid ? 'PAID' : 'DRAFT');
     const customer = invoice?.partner_name || bookingData?.customerName || 'Walk-in Client';
@@ -266,7 +282,66 @@ export function InvoiceDetailModal({
     (Array.isArray(invoice?.lines) && invoice?.lines) ||
     null;
 
-  const invoiceLines = (rawInvoiceLines && rawInvoiceLines.length > 0)
+  const hasCustomVoucherBreakdown = Boolean(
+    bookingData?.isPackage || (Array.isArray(bookingData?.orderedItems) && bookingData!.orderedItems!.length > 0)
+  );
+
+  const invoiceLines = hasCustomVoucherBreakdown
+    ? [
+        ...(bookingData?.isPackage
+          ? [
+              {
+                name: bookingData.packageName || bookingData.serviceName || 'Spa Package',
+                description: '',
+                quantity: 1,
+                price_unit: parseFloat(String(bookingData.packagePrice ?? bookingData.servicePrice ?? 0)) || 0,
+                price_subtotal: parseFloat(String(bookingData.packagePrice ?? bookingData.servicePrice ?? 0)) || 0,
+                includedServices: bookingData.includedServices ?? [],
+              },
+            ]
+          : bookingData?.serviceName
+          ? [
+              {
+                name: bookingData.serviceName,
+                description: bookingData.serviceCategory ? `Category: ${bookingData.serviceCategory}` : '',
+                quantity: 1,
+                price_unit: parseFloat(String(bookingData.servicePrice ?? bookingData.pricing?.base_price ?? 0)) || 0,
+                price_subtotal: parseFloat(String(bookingData.servicePrice ?? bookingData.pricing?.base_price ?? 0)) || 0,
+              },
+              ...(bookingData.addons ?? []).map((addon) => ({
+                name: addon.name || addon.addon_name || 'Add-on Treatment',
+                description: 'Appointment Enhancement',
+                quantity: 1,
+                price_unit: parseFloat(String(addon.price ?? addon.base_price ?? 0)) || 0,
+                price_subtotal: parseFloat(String(addon.price ?? addon.base_price ?? 0)) || 0,
+              })),
+              ...(Number(bookingData.extraMinutes ?? 0) > 0
+                ? [
+                    {
+                      name: `Extra Session Time (+${bookingData.extraMinutes} min)`,
+                      description: 'Extended appointment duration',
+                      quantity: 1,
+                      price_unit: parseFloat(String(bookingData.extraPrice ?? 0)) || 0,
+                      price_subtotal: parseFloat(String(bookingData.extraPrice ?? 0)) || 0,
+                    },
+                  ]
+                : []),
+            ]
+          : []),
+        ...(bookingData?.orderedItems ?? []).map((item) => {
+          const qty = Number(item.quantity ?? 1) || 1;
+          const unit = parseFloat(String(item.price ?? 0)) || 0;
+          const sub = parseFloat(String(item.total_price ?? unit * qty)) || unit * qty;
+          return {
+            name: item.name_en || item.name || 'Physical Product Item',
+            description: 'Physical Product Item',
+            quantity: qty,
+            price_unit: unit,
+            price_subtotal: sub,
+          };
+        }),
+      ]
+    : (rawInvoiceLines && rawInvoiceLines.length > 0)
     ? rawInvoiceLines
     : [
         {
@@ -462,23 +537,47 @@ export function InvoiceDetailModal({
                 const lineQty = line.quantity || 1;
                 const linePrice = parseFloat(String(line.unit_price ?? line.price_unit ?? line.price ?? 0)) || 0;
                 const lineSubtotal = parseFloat(String(line.subtotal ?? line.price_subtotal ?? linePrice * lineQty)) || 0;
+                const incServices: Array<{ id?: string; name: string; duration_minutes?: number }> =
+                  Array.isArray(line.includedServices) ? line.includedServices : [];
 
                 return (
-                  <div key={idx} className="px-4 py-3 flex items-center justify-between gap-4 text-xs hover:bg-muted/10 transition">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-bold text-foreground leading-tight">{lineName}</p>
-                      {lineDesc && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{lineDesc}</p>}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="font-mono font-bold text-foreground">
-                        {fmt(lineSubtotal)} <span className="text-[10px] font-normal text-muted-foreground">{currency}</span>
-                      </p>
-                      {lineQty > 1 && (
-                        <p className="text-[10px] text-muted-foreground">
-                          {lineQty} × {fmt(linePrice)}
+                  <div key={idx} className="px-4 py-3 text-xs hover:bg-muted/10 transition space-y-2">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-foreground leading-tight">{lineName}</p>
+                        {lineDesc && <p className="text-[11px] text-muted-foreground mt-0.5 truncate">{lineDesc}</p>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="font-mono font-bold text-foreground">
+                          {fmt(lineSubtotal)} <span className="text-[10px] font-normal text-muted-foreground">{currency}</span>
                         </p>
-                      )}
+                        {lineQty > 1 && (
+                          <p className="text-[10px] text-muted-foreground">
+                            {lineQty} × {fmt(linePrice)}
+                          </p>
+                        )}
+                      </div>
                     </div>
+                    {incServices.length > 0 && (
+                      <div className="ml-1 pl-3 border-l-2 border-violet-500/30 space-y-1">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                          Included Services ({incServices.length})
+                        </p>
+                        {incServices.map((inc, sIdx) => (
+                          <div key={inc.id || `inc-${sIdx}`} className="flex items-center justify-between text-[11px] text-foreground/85">
+                            <span className="flex items-center gap-1.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-violet-500/60 shrink-0" />
+                              <span className="font-medium">{inc.name}</span>
+                            </span>
+                            {Number(inc.duration_minutes) > 0 && (
+                              <span className="text-[10px] text-muted-foreground shrink-0">
+                                {inc.duration_minutes} min
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -508,6 +607,19 @@ export function InvoiceDetailModal({
                   {fmt(balanceDue)} {currency}
                 </span>
               </div>
+              {hasCustomVoucherBreakdown && (invoice?.partner_name || bookingData?.customerName) && (
+                <div className="flex items-center justify-between pt-2 mt-1 border-t border-border/40 text-xs">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Billed To:</span>
+                  <span className="font-bold text-foreground">
+                    {invoice?.partner_name || bookingData?.customerName}
+                    {bookingData?.customerPhone ? (
+                      <span className="text-[11px] font-normal text-muted-foreground ml-1.5 font-mono">
+                        ({bookingData.customerPhone})
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
