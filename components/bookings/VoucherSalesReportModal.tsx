@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Printer, TrendingUp, Building2, CreditCard, Wallet, UserCheck, CalendarDays,
-  CheckCircle2, Clock, Gift, BarChart3, ArrowLeft,
+  CheckCircle2, Clock, Gift, BarChart3, ArrowLeft, Eye,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +23,15 @@ export interface ReportVoucher {
   payment_provider?: string | null;
   payment_through?: string | null;
   payment_data?: any;
+  voucher_number?: string | null;
+  secret_code?: string | null;
+  sender_details?: { name?: string } | null;
+  sender_data?: { name?: string } | null;
+  recipient_details?: { name?: string } | null;
+  recipient_data?: { name?: string } | null;
+  recipient_phone?: string | null;
+  gift_from?: string | null;
+  gift_to?: string | null;
 }
 
 interface Props {
@@ -89,6 +98,22 @@ const providerLabel = (raw: string | null | undefined) => {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 };
 
+const voucherProvider = (v: ReportVoucher) =>
+  providerLabel(v.payment_provider || v.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway);
+
+const senderOf = (v: ReportVoucher) =>
+  String(v.sender_data?.name || v.sender_details?.name || v.gift_from || '').trim() || '—';
+const recipientOf = (v: ReportVoucher) =>
+  String(v.recipient_data?.name || v.recipient_details?.name || v.gift_to || v.recipient_phone || '').trim() || '—';
+
+const fmtDateTime = (raw: string | null | undefined) => {
+  if (!raw) return '—';
+  const d = new Date(String(raw));
+  return isNaN(d.getTime())
+    ? String(raw)
+    : d.toLocaleString('en-GB', { timeZone: TZ, dateStyle: 'medium', timeStyle: 'short' });
+};
+
 /** Classifies a voucher into exactly one report bucket + the date it is counted on. */
 function classify(v: ReportVoucher): { key: StatusKey; date: string } | null {
   const s = String(v.status ?? '').toLowerCase().trim();
@@ -101,7 +126,7 @@ function classify(v: ReportVoucher): { key: StatusKey; date: string } | null {
   return null;
 }
 
-interface Row { label: string; count: number; total: number }
+interface Row { label: string; count: number; total: number; items: ReportVoucher[] }
 
 export function VoucherSalesReportModal({
   period,
@@ -121,6 +146,7 @@ export function VoucherSalesReportModal({
   const [month, setMonth] = useState(today.slice(0, 7));
   const [customFrom, setCustomFrom] = useState(addDays(today, -6));
   const [customTo, setCustomTo] = useState(today);
+  const [detail, setDetail] = useState<{ title: string; items: ReportVoucher[] } | null>(null);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -187,14 +213,13 @@ export function VoucherSalesReportModal({
       const m = new Map<string, Row>();
       for (const v of list) {
         const k = keyFn(v) || 'Other';
-        const r = m.get(k) ?? { label: k, count: 0, total: 0 };
-        r.count += 1; r.total += num(v.total_amount);
+        const r = m.get(k) ?? { label: k, count: 0, total: 0, items: [] };
+        r.count += 1; r.total += num(v.total_amount); r.items.push(v);
         m.set(k, r);
       }
       return Array.from(m.values()).sort((a, b) => b.total - a.total);
     };
-    const providerOf = (v: ReportVoucher) =>
-      providerLabel(v.payment_provider || v.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway);
+    const providerOf = voucherProvider;
     const build = (list: ReportVoucher[]) => ({
       byBranch: group(list, (v) => v.branch_data?.name || 'Unassigned'),
       byThrough: group(list, (v) => throughLabel(v.payment_through)),
@@ -259,7 +284,19 @@ export function VoucherSalesReportModal({
               return (
                 <tr key={r.label}>
                   <td className="px-4 py-2 font-semibold text-foreground">{r.label}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{r.count}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">
+                    <span className="inline-flex items-center justify-end gap-1.5">
+                      {r.count}
+                      <button
+                        type="button"
+                        onClick={() => setDetail({ title: `${title} · ${r.label}`, items: r.items })}
+                        title={`View ${r.count} voucher${r.count !== 1 ? 's' : ''}`}
+                        className="no-print grid h-6 w-6 place-items-center rounded-lg text-primary hover:bg-primary/10 transition cursor-pointer"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </button>
+                    </span>
+                  </td>
                   <td className="px-2 py-2 text-right font-mono font-bold tabular-nums">{kwd(r.total)}</td>
                   <td className="px-4 py-2">
                     <div className="flex items-center gap-2">
@@ -514,6 +551,65 @@ export function VoucherSalesReportModal({
           </div>
         </div>
       </div>
+
+      {/* ── Vouchers of the clicked breakdown row ── */}
+      {detail && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setDetail(null)} />
+          <div className="relative z-10 w-full max-w-5xl max-h-[85vh] flex flex-col rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden">
+            <div className="shrink-0 flex items-center justify-between gap-3 border-b border-border/50 px-5 py-3.5">
+              <div className="min-w-0">
+                <p className="text-sm font-extrabold text-foreground truncate">{detail.title}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {detail.items.length} voucher{detail.items.length !== 1 ? 's' : ''} ·{' '}
+                  {kwd(detail.items.reduce((s, v) => s + num(v.total_amount), 0))} {currency}
+                </p>
+              </div>
+              <button type="button" onClick={() => setDetail(null)} className="grid h-8 w-8 place-items-center rounded-lg bg-muted/60 hover:bg-muted transition cursor-pointer" aria-label="Close">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-muted/60 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="px-4 py-2 text-left">Voucher Code</th>
+                    <th className="px-2 py-2 text-left">Created At</th>
+                    <th className="px-2 py-2 text-left">Redeemed At</th>
+                    <th className="px-2 py-2 text-left">Sender</th>
+                    <th className="px-2 py-2 text-left">Recipient</th>
+                    <th className="px-2 py-2 text-left">Payment Provider</th>
+                    <th className="px-2 py-2 text-left">Status</th>
+                    <th className="px-4 py-2 text-right">Amount ({currency})</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/40">
+                  {detail.items.map((v) => (
+                    <tr key={v.id} className="hover:bg-muted/30">
+                      <td className="px-4 py-2 font-mono font-bold text-foreground whitespace-nowrap">{v.secret_code || v.voucher_number || v.id.slice(0, 8)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{fmtDateTime(v.created_at)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{fmtDateTime(v.redeemed_at)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{senderOf(v)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{recipientOf(v)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{voucherProvider(v)}</td>
+                      <td className="px-2 py-2 capitalize whitespace-nowrap">{String(v.status ?? '').replace(/_/g, ' ')}</td>
+                      <td className="px-4 py-2 text-right font-mono font-bold tabular-nums">{kwd(num(v.total_amount))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="border-t-2 border-border/60 bg-muted/30 font-extrabold">
+                  <tr>
+                    <td className="px-4 py-2" colSpan={7}>Total</td>
+                    <td className="px-4 py-2 text-right font-mono tabular-nums">
+                      {kwd(detail.items.reduce((s, v) => s + num(v.total_amount), 0))}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

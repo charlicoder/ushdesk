@@ -10,6 +10,7 @@ import {
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
 import { usePermissions } from '@/hooks/use-permissions';
+import { RescheduleSessionsPanel, RoomCardRow, TherapistThumb, type RoomOption, type SessionReschedulePlanItem } from '@/components/bookings/RescheduleSessionsPanel';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -43,6 +44,7 @@ interface ApiArrangement {
   arrangement_type?: string;
   type?: string;
   capacity?: number;
+  image?: string | null;
   branch_id?: string;
   branch_name?: string;
   availabilities?: Record<string, string[]>;
@@ -343,6 +345,21 @@ export function RescheduleBookingModal({
   }, [initialRescheduleParams?.appointmentDate, bk, isoStart, todayStr, isParkedBooking]);
 
   const daysCount = initialRescheduleParams?.daysCount ?? 30;
+
+  // ── Multi-session bookings: reschedule session by session ───────────────
+  // Every session is placed in order with its own room / free therapist, so the
+  // therapists already attached to the sessions are not pinned.
+  const multiSessions = useMemo(() => {
+    const raw = ((bk?.sessions ?? initialBooking?.sessions) ?? []) as AnyRecord[];
+    if (!Array.isArray(raw) || raw.length < 2) return [] as AnyRecord[];
+    return [...raw].sort(
+      (a, b) =>
+        (new Date(a?.appointment_start ?? 0).getTime() || 0) -
+        (new Date(b?.appointment_start ?? 0).getTime() || 0),
+    );
+  }, [bk, initialBooking]);
+  const isMultiSession = multiSessions.length > 1;
+  const [sessionPlan, setSessionPlan] = useState<SessionReschedulePlanItem[] | null>(null);
 
   // Initialize selected branch and date from booking
   useEffect(() => {
@@ -917,6 +934,106 @@ export function RescheduleBookingModal({
     }
   };
 
+  // ── Submit: multi-session reschedule (each session carries its own room/therapist/time) ──
+  const handleUpdateMultiSession = async () => {
+    if (!sessionPlan || sessionPlan.length === 0 || !selectedBranchId || !selectedDate) {
+      setSubmitError('Please place every session (room, timeslot and therapist) before saving.');
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+
+    const selBranch = branches.find((b) => (b.id ?? b.branch_id) === selectedBranchId);
+    const branchName = selBranch?.branch_name ?? selBranch?.name ?? 'Branch';
+
+    const sessionsPayload = sessionPlan.map((p) => {
+      const t = p.therapist;
+      const th: AnyRecord = { id: t.id, therapist_id: t.id, therapist_name: t.name, name: t.name };
+      const arrData: AnyRecord = {
+        id: p.arrangement.id,
+        arrangement_id: p.arrangement.id,
+        arrangement_name: p.arrangement.name,
+        name: p.arrangement.name,
+        room_name: p.arrangement.name,
+        arrangement_type: p.arrangement.type,
+      };
+      const obj: AnyRecord = {
+        ...p.session,
+        appointment_start: p.appointmentStart,
+        appointment_end: p.appointmentEnd,
+        appointment_time: p.appointmentStart.slice(11, 19),
+        therapist_id: t.id,
+        therapist_name: t.name,
+        therapist_data: th,
+        service_arrangement_id: p.arrangement.id,
+        arrangement_name: p.arrangement.name,
+        room_name: p.arrangement.name,
+        arrangement_type: p.arrangement.type,
+        service_arrangement_data: arrData,
+      };
+      if (p.secondary) {
+        obj.secondary_therapist_id = p.secondary.id;
+        obj.secondary_therapist_name = p.secondary.name;
+        obj.secondary_therapist_data = {
+          id: p.secondary.id,
+          therapist_id: p.secondary.id,
+          therapist_name: p.secondary.name,
+          name: p.secondary.name,
+        };
+      } else {
+        obj.secondary_therapist_id = null;
+        obj.secondary_therapist_name = null;
+        obj.secondary_therapist_data = null;
+      }
+      return obj;
+    });
+
+    const first = sessionPlan[0];
+    const last = sessionPlan[sessionPlan.length - 1];
+    const payload: AnyRecord = {
+      branch_id: selectedBranchId,
+      branch_data: { id: selectedBranchId, branch_id: selectedBranchId, branch_name: branchName, name: branchName },
+      appointment_date: selectedDate,
+      appointment_start: first.appointmentStart,
+      appointment_end: last.appointmentEnd,
+      service_arrangement_id: first.arrangement.id,
+      therapist_id: first.therapist.id,
+      sessions: sessionsPayload,
+      source: 'ushdesk',
+      reason: 'Rescheduled by desk staff',
+    };
+
+    try {
+      const res = await authedFetch(`/booknpay/api/v1/bookings/${bookingId}/`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        setSubmitSuccess(true);
+        setTimeout(() => {
+          onSuccess?.();
+          onClose();
+        }, 900);
+        return;
+      }
+      const errData = await res.json().catch(() => ({}));
+      const msg = String(
+        errData.detail || errData.message ||
+        (typeof errData.error === 'string' ? errData.error : errData.error?.message) ||
+        `Error ${res.status}`,
+      );
+      throw new Error(msg);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Failed to update booking. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const RoomTypeIcon = TYPE_ICONS[selectedArrangement?.arrangement_type ?? selectedArrangement?.type ?? ''] ?? Building2;
 
   return (
@@ -1053,6 +1170,7 @@ export function RescheduleBookingModal({
               </div>
 
               {/* ── Room / Arrangement Selection (Requirement 1.i.d & 1.i.e) ── */}
+              {!isMultiSession && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1084,47 +1202,72 @@ export function RescheduleBookingModal({
                     </div>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {arrangements.map((arr) => {
-                      const isSel = arr.id === selectedRoomId;
-                      const IconComp = TYPE_ICONS[arr.arrangement_type ?? arr.type ?? ''] ?? Building2;
-                      return (
-                        <button
-                          key={arr.id}
-                          type="button"
-                          onClick={() => setSelectedRoomId(arr.id)}
-                          className={cn(
-                            'flex items-center gap-3 rounded-xl border p-3 text-left transition cursor-pointer',
-                            isSel
-                              ? 'border-violet-500 bg-violet-500/10 dark:bg-violet-950/30 ring-1 ring-violet-500'
-                              : 'border-border/70 bg-card hover:bg-muted/40'
-                          )}
-                        >
-                          <div className={cn(
-                            'grid h-8 w-8 shrink-0 place-items-center rounded-lg',
-                            isSel ? 'bg-violet-500 text-white' : 'bg-muted text-muted-foreground'
-                          )}>
-                            <IconComp className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-xs font-bold truncate">{arr.name}</p>
-                            <p className="text-[10px] text-muted-foreground capitalize">
-                              {(arr.arrangement_type ?? arr.type ?? 'Room').replace(/_/g, ' ')}
-                              {arr.capacity ? ` • Cap: ${arr.capacity}` : ''}
-                            </p>
-                          </div>
-                          {isSel && (
-                            <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <RoomCardRow
+                    rooms={arrangements as RoomOption[]}
+                    selectedId={selectedRoomId}
+                    onSelect={setSelectedRoomId}
+                  />
                 )}
               </div>
+              )}
+
+              {/* ── Multi-session booking: pick the date, then place each session in order ── */}
+              {isMultiSession && (
+                <div className="space-y-3 pt-2 border-t border-border/40">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <CalendarDays className="h-3.5 w-3.5 text-indigo-500" />
+                      Select Date
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        min={isAdmin ? undefined : todayStr}
+                        value={selectedDate}
+                        onChange={(e) => setSelectedDate(e.target.value)}
+                        className="rounded-xl border border-border/70 bg-card px-3.5 py-2 text-sm font-semibold shadow-sm focus:border-primary focus:outline-none transition cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDate(todayStr)}
+                        className={cn(
+                          'rounded-xl px-3 py-2 text-xs font-bold transition cursor-pointer border',
+                          selectedDate === todayStr
+                            ? 'bg-primary text-white border-primary'
+                            : 'bg-muted/40 text-muted-foreground border-border hover:bg-muted'
+                        )}
+                      >
+                        Today
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = new Date();
+                          d.setDate(d.getDate() + 1);
+                          setSelectedDate(kuwaitDateString(d));
+                        }}
+                        className="rounded-xl px-3 py-2 text-xs font-bold transition cursor-pointer border bg-muted/40 text-muted-foreground border-border hover:bg-muted"
+                      >
+                        Tomorrow
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      This booking has {multiSessions.length} sessions. Each session is scheduled one after another;
+                      a free therapist is found for every session.
+                    </p>
+                  </div>
+                  <RescheduleSessionsPanel
+                    sessions={multiSessions}
+                    branchId={selectedBranchId}
+                    date={selectedDate}
+                    fetchJson={fetchJson}
+                    onPlanChange={setSessionPlan}
+                  />
+                </div>
+              )}
 
               {/* ── Date & Timeslot Section (Requirement 1.i.f) ── */}
-              {selectedRoomId && (
+              {!isMultiSession && selectedRoomId && (
                 <div className="space-y-3 pt-2 border-t border-border/40">
                   {/* Date Picker */}
                   <div className="space-y-1.5">
@@ -1221,7 +1364,7 @@ export function RescheduleBookingModal({
               )}
 
               {/* ── Auto-Selected Therapist (Requirement 1.i.g) ── */}
-              {selectedTimeSlot && (
+              {!isMultiSession && selectedTimeSlot && (
                 <div className="space-y-1.5 pt-2 border-t border-border/40">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1247,13 +1390,13 @@ export function RescheduleBookingModal({
                               setSelectedTherapist(t);
                             }}
                             className={cn(
-                              'inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-bold transition border cursor-pointer',
+                              'inline-flex items-center gap-2 rounded-xl pl-1.5 pr-3 py-1.5 text-xs font-bold transition border cursor-pointer',
                               isSelected
                                 ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
                                 : 'bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground'
                             )}
                           >
-                            <User className="h-3 w-3" />
+                            <TherapistThumb name={getTherapistDisplayName(t)} src={t.avatar ?? t.photo_url ?? t.profile_picture} size={26} />
                             {getTherapistDisplayName(t)}
                           </button>
                         );
@@ -1348,42 +1491,42 @@ export function RescheduleBookingModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            disabled={
-              submitting ||
-              submitSuccess ||
-              !selectedBranchId ||
-              !selectedRoomId ||
-              !selectedDate ||
-              !selectedTimeSlot ||
-              !selectedTherapistId
-            }
-            onClick={handleUpdateBooking}
-            className={cn(
-              'inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer',
-              submitting || submitSuccess || !selectedBranchId || !selectedRoomId || !selectedDate || !selectedTimeSlot || !selectedTherapistId
-                ? 'bg-muted/70 text-muted-foreground/50 border border-border/60 cursor-not-allowed'
-                : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 active:scale-[0.98]'
-            )}
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Updating Booking…
-              </>
-            ) : submitSuccess ? (
-              <>
-                <CheckCircle2 className="h-4 w-4" />
-                Rescheduled!
-              </>
-            ) : (
-              <>
-                <CalendarDays className="h-4 w-4" />
-                Update Booking
-              </>
-            )}
-          </button>
+          {(() => {
+            const incomplete = isMultiSession
+              ? !selectedBranchId || !selectedDate || !sessionPlan
+              : !selectedBranchId || !selectedRoomId || !selectedDate || !selectedTimeSlot || !selectedTherapistId;
+            const blocked = submitting || submitSuccess || incomplete;
+            return (
+              <button
+                type="button"
+                disabled={blocked}
+                onClick={isMultiSession ? handleUpdateMultiSession : handleUpdateBooking}
+                className={cn(
+                  'inline-flex items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer',
+                  blocked
+                    ? 'bg-muted/70 text-muted-foreground/50 border border-border/60 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 active:scale-[0.98]'
+                )}
+              >
+                {submitting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Updating Booking…
+                  </>
+                ) : submitSuccess ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Rescheduled!
+                  </>
+                ) : (
+                  <>
+                    <CalendarDays className="h-4 w-4" />
+                    Update Booking
+                  </>
+                )}
+              </button>
+            );
+          })()}
         </div>
       </div>
     </div>

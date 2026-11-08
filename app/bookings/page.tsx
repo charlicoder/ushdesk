@@ -41,8 +41,7 @@ import {
   STATUS_STYLES, PAYMENT_STYLES, STATUS_BAR, statusStyle, paymentStyle,
   CustomerAvatar, DRow, BookingDetailPopup,
 } from "@/components/bookings/BookingDetailPopup";
-import { SalesReportModal, type SalesReportPeriod } from '@/components/payments/SalesReportModal';
-import { normalise as normalisePayment, type RawPayment } from '@/app/bookings/payments/page';
+import { BookingSalesReportModal, type BookingSalesPeriod } from '@/components/bookings/BookingSalesReportModal';
 import { getAssignedBranchId, getAssignedBranchName } from '@/lib/branchScope';
 
 // ── Page ───────────────────────────────────────────────────────────────────────
@@ -62,7 +61,7 @@ export default function BookingListPage() {
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
   const [salesMenuOpen, setSalesMenuOpen] = useState(false);
-  const [salesPeriod, setSalesPeriod] = useState<SalesReportPeriod | null>(null);
+  const [salesPeriod, setSalesPeriod] = useState<BookingSalesPeriod | null>(null);
 
   const { user } = useAppSelector((state) => state.auth);
   const [assignedBranch, setAssignedBranch] = useState<{ id: string | null; name: string | null }>(() => ({
@@ -296,7 +295,7 @@ export default function BookingListPage() {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setSalesMenuOpen(false)} />
               <div className="absolute right-0 top-full mt-2 z-50 w-48 overflow-hidden rounded-2xl border border-border bg-card py-1.5 shadow-2xl">
-                {([['daily', 'Daily Report'], ['weekly', 'Weekly Report'], ['monthly', 'Monthly Report']] as const).map(([key, label]) => (
+                {([['daily', 'Daily Report'], ['weekly', 'Weekly Report'], ['monthly', 'Monthly Report'], ['custom', 'Custom Date']] as const).map(([key, label]) => (
                   <button
                     key={key}
                     type="button"
@@ -827,9 +826,8 @@ export default function BookingListPage() {
 
       {/* ── Sales Report Modal ── */}
       {salesPeriod && (
-        <SalesReportModal
+        <BookingSalesReportModal
           period={salesPeriod}
-          normalisePayment={(r) => normalisePayment(r as RawPayment, branchMap)}
           restrictedBranchId={restrictedBranchId}
           restrictedBranchName={restrictedBranchName}
           onClose={() => setSalesPeriod(null)}
