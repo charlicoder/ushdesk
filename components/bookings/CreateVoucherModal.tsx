@@ -968,6 +968,7 @@ function SectionLabel({ icon: Icon, label }: { icon: React.ElementType; label: s
 export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const authHeader = `Bearer ${token}`;
   const currentUser = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const { canApplyDiscount: allowDiscount } = usePermissions();
   const [discount, setDiscount] = useState<string>('');
 
@@ -1715,6 +1716,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         : deliveryMode === 'scheduled'
         ? 'scheduled'
         : 'active',
+      created_by: currentUser?.id ? String(currentUser.id) : null,
+      created_by_name: currentUser?.name || '',
+      created_by_role: roleInfo?.role_name || currentUser?.role_name || currentUser?.role || currentUser?.user_type || 'Staff',
+      created_by_user: currentUser?.name || '',
+      created_by_user_data: currentUser ? {
+        id: String(currentUser.id),
+        name: currentUser.name,
+        role: roleInfo?.role_name || currentUser?.role_name || currentUser?.role || currentUser?.user_type || 'Staff',
+        phone_number: currentUser.phone_number || '',
+        email: currentUser.email || '',
+      } : {},
       transaction_id: null,
       reference_id: null,
       receipt_image: null,
@@ -1742,6 +1754,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
           Authorization: authHeader,
           'Content-Type': 'application/json',
           Accept: 'application/json',
+          'X-User-Id': currentUser?.id ? String(currentUser.id) : '',
+          'X-User-Name': encodeURIComponent(currentUser?.name || ''),
+          'X-User-Role': encodeURIComponent(roleInfo?.role_name || currentUser?.role_name || currentUser?.role || currentUser?.user_type || 'Staff'),
         },
         body: JSON.stringify(payload),
       });

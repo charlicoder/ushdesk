@@ -234,6 +234,9 @@ interface Voucher {
   recipient_details: PersonDetails;
   recipient_data?: PersonDetails;
   created_by: string;
+  created_by_name?: string | null;
+  created_by_role?: string | null;
+  created_by_user_data?: Record<string, any> | null;
   total_duration: number;
   total_amount: string;
   discount?: string | number | null;
@@ -275,6 +278,151 @@ interface Voucher {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function isRawUuid(val: string | null | undefined): boolean {
+  if (!val || typeof val !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+}
+
+function resolveVoucherCreator(
+  voucher: Voucher,
+  employeeMap?: Record<string, string>
+): { name: string; role?: string } {
+  // 1. Direct model properties
+  if (voucher.created_by_name && voucher.created_by_name.trim() && !isRawUuid(voucher.created_by_name)) {
+    const isOnline = ['ushweb', 'ushspa', 'online', 'app', 'web'].includes(
+      String(voucher.payment_through || '').toLowerCase()
+    );
+    return {
+      name: voucher.created_by_name.trim(),
+      role: voucher.created_by_role || (isOnline ? 'Customer' : 'Staff'),
+    };
+  }
+
+  // 2. User data snapshot
+  if (voucher.created_by_user_data?.name && !isRawUuid(String(voucher.created_by_user_data.name))) {
+    return {
+      name: String(voucher.created_by_user_data.name).trim(),
+      role: voucher.created_by_user_data.role || voucher.created_by_role || 'Staff',
+    };
+  }
+
+  // 3. Employee map check (if created_by is a staff ID)
+  if (voucher.created_by && employeeMap?.[voucher.created_by]) {
+    return {
+      name: employeeMap[voucher.created_by],
+      role: voucher.created_by_role || 'Staff',
+    };
+  }
+
+  // 4. Initial update history event
+  if (Array.isArray(voucher.update_history) && voucher.update_history.length > 0) {
+    const first = voucher.update_history[0];
+    const firstAction = String(first?.action || '');
+    if (firstAction === 'created' || firstAction === 'voucher_created') {
+      const hName = first.changed_by_name || first.performed_by_name || first.user_data?.name;
+      if (hName && typeof hName === 'string' && hName.trim() && !isRawUuid(hName)) {
+        return {
+          name: hName.trim(),
+          role: first.changed_by_role || first.performed_by_role || first.user_data?.role || voucher.created_by_role,
+        };
+      }
+    }
+  }
+
+  // 5. Online / Web purchases -> sender name
+  const isOnline = ['ushweb', 'ushspa', 'online', 'app', 'web'].includes(
+    String(voucher.payment_through || '').toLowerCase()
+  );
+  const senderName = voucher.sender_data?.name || voucher.sender_details?.name || voucher.gift_from;
+  if (isOnline || !voucher.created_by) {
+    if (senderName && senderName.trim()) {
+      return { name: senderName.trim(), role: 'Customer' };
+    }
+    return { name: 'Online Customer', role: 'Customer' };
+  }
+
+  // 6. Fallback if created_by is an unrecognized UUID
+  if (voucher.created_by && isRawUuid(voucher.created_by)) {
+    if (senderName && senderName.trim()) {
+      return { name: senderName.trim(), role: 'Customer' };
+    }
+    return { name: 'Staff Member', role: 'Staff' };
+  }
+
+  return { name: voucher.created_by || 'Staff', role: 'Staff' };
+}
+
+function resolveAuditLogActor(
+  entry: Record<string, any>,
+  voucher: Voucher,
+  employeeMap?: Record<string, string>
+): { name: string; role?: string } {
+  const action = String(entry.action || '');
+  const isCreated = action === 'created' || action === 'voucher_created';
+
+  // 1. If explicit actor name stored in entry:
+  let actorName =
+    entry.changed_by_name ||
+    entry.performed_by_name ||
+    entry.actor_name ||
+    entry.user_data?.name;
+
+  let actorRole =
+    entry.changed_by_role ||
+    entry.performed_by_role ||
+    entry.actor_role ||
+    entry.user_data?.role;
+
+  // 2. If it's the creation entry:
+  if (isCreated) {
+    if (!actorName || isRawUuid(String(actorName))) {
+      const creator = resolveVoucherCreator(voucher, employeeMap);
+      actorName = creator.name;
+      actorRole = actorRole || creator.role;
+    }
+  }
+
+  // 3. If actorName is missing or is raw UUID or literal 'staff':
+  if (!actorName || actorName.toLowerCase() === 'staff' || isRawUuid(String(actorName))) {
+    const rawId = String(entry.changed_by || entry.performed_by || entry.actor_id || entry.user || '');
+    if (rawId && employeeMap?.[rawId]) {
+      actorName = employeeMap[rawId];
+      actorRole = actorRole || 'Staff';
+    } else if (rawId && rawId === voucher.created_by) {
+      const creator = resolveVoucherCreator(voucher, employeeMap);
+      actorName = creator.name;
+      actorRole = actorRole || creator.role;
+    } else if (action === 'status_updated' && entry.new_status === 'active') {
+      const isOnline = ['ushweb', 'ushspa', 'online', 'app', 'web'].includes(
+        String(voucher.payment_through || '').toLowerCase()
+      );
+      if (isOnline) {
+        actorName = 'Payment Gateway / Online';
+        actorRole = actorRole || 'Payment';
+      }
+    } else if (action === 'details_updated' && entry.updated_fields?.includes?.('payment_id')) {
+      actorName = 'Payment Gateway';
+      actorRole = actorRole || 'Payment';
+    }
+  }
+
+  if (!actorName || isRawUuid(String(actorName))) {
+    actorName = 'Staff';
+  }
+
+  if (!actorRole) {
+    if (actorName === 'Payment Gateway' || actorName.includes('Payment')) {
+      actorRole = 'Payment';
+    } else if (voucher.sender_data?.name && actorName === voucher.sender_data.name) {
+      actorRole = 'Customer';
+    } else {
+      actorRole = 'Staff';
+    }
+  }
+
+  return { name: actorName, role: actorRole };
+}
 
 function firstTruthy<T>(...vals: (T | null | undefined | '' | false | 0)[]): T | undefined {
   for (const v of vals) {
@@ -726,6 +874,8 @@ function EditVoucherModal({
   onClose: () => void;
   onSuccess: (updated: Voucher) => void;
 }) {
+  const currentUser = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const [senderName, setSenderName] = useState(voucher.sender_data?.name || voucher.sender_details?.name || '');
   const [senderPhone, setSenderPhone] = useState(voucher.sender_data?.phone_number || voucher.sender_details?.phone_number || '');
   const [giftFrom, setGiftFrom] = useState(voucher.gift_from || voucher.sender_data?.name || '');
@@ -740,6 +890,9 @@ function EditVoucherModal({
     e.preventDefault();
     setSubmitting(true);
     setError(null);
+
+    const actorRole = roleInfo?.role_name || currentUser?.role_name || currentUser?.role || currentUser?.user_type || 'Staff';
+    const actorName = currentUser?.name || 'Staff';
 
     try {
       const payload: Record<string, any> = {
@@ -757,11 +910,25 @@ function EditVoucherModal({
         gift_message: giftMessage.trim(),
         gift_from: giftFrom.trim() || senderName.trim(),
         update_note: updateNote.trim() || undefined,
+        changed_by: currentUser?.id ? String(currentUser.id) : undefined,
+        changed_by_name: actorName,
+        changed_by_role: actorRole,
+        change_by_user_data: currentUser ? {
+          id: String(currentUser.id),
+          name: currentUser.name,
+          role: actorRole,
+          email: currentUser.email || '',
+        } : undefined,
       };
 
       const res = await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Id': currentUser?.id ? String(currentUser.id) : '',
+          'X-User-Name': encodeURIComponent(actorName),
+          'X-User-Role': encodeURIComponent(actorRole),
+        },
         body: JSON.stringify(payload),
       });
 
@@ -944,6 +1111,8 @@ function RescheduleDeliveryModal({
   onClose,
   onSuccess,
 }: RescheduleDeliveryModalProps) {
+  const currentUser = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const existingDt = voucher.scheduled_delivery_at ? new Date(voucher.scheduled_delivery_at) : null;
   const initialDate = existingDt ? existingDt.toISOString().split('T')[0] : '';
   const initialTime = existingDt
@@ -982,6 +1151,8 @@ function RescheduleDeliveryModal({
 
     setIsSubmitting(true);
     const newScheduledAt = `${deliveryDate}T${deliveryTime}:00`;
+    const actorRole = roleInfo?.role_name || currentUser?.role_name || currentUser?.role || currentUser?.user_type || 'Staff';
+    const actorName = currentUser?.name || 'Staff';
 
     try {
       const res = await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/schedule/`, {
@@ -989,9 +1160,15 @@ function RescheduleDeliveryModal({
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'X-User-Id': currentUser?.id ? String(currentUser.id) : '',
+          'X-User-Name': encodeURIComponent(actorName),
+          'X-User-Role': encodeURIComponent(actorRole),
         },
         body: JSON.stringify({
           scheduled_delivery_at: newScheduledAt,
+          changed_by: currentUser?.id ? String(currentUser.id) : undefined,
+          changed_by_name: actorName,
+          changed_by_role: actorRole,
         }),
       });
 
@@ -2549,9 +2726,21 @@ function VoucherDetailModal({
                   <UserCheck className="h-4 w-4 text-emerald-500 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Created By</p>
-                    <p className="font-semibold text-foreground truncate" title={employeeMap?.[voucher.created_by] || voucher.created_by || 'Online'}>
-                      {employeeMap?.[voucher.created_by] || voucher.created_by || 'Online / Customer'}
-                    </p>
+                    {(() => {
+                      const creator = resolveVoucherCreator(voucher, employeeMap);
+                      return (
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <p className="font-semibold text-foreground truncate" title={creator.name}>
+                            {creator.name}
+                          </p>
+                          {creator.role && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-primary/10 text-primary border border-primary/20">
+                              {creator.role}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -3062,9 +3251,21 @@ function VoucherDetailModal({
                   </div>
                   <div className="rounded-xl bg-card border border-border/40 p-2.5">
                     <p className="text-[10px] text-muted-foreground font-medium">Created By</p>
-                    <p className="font-semibold text-foreground mt-0.5 truncate" title={employeeMap?.[voucher.created_by] || voucher.created_by || 'Online'}>
-                      {employeeMap?.[voucher.created_by] || voucher.created_by || 'Online / Customer'}
-                    </p>
+                    {(() => {
+                      const creator = resolveVoucherCreator(voucher, employeeMap);
+                      return (
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <p className="font-semibold text-foreground truncate" title={creator.name}>
+                            {creator.name}
+                          </p>
+                          {creator.role && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium bg-primary/10 text-primary border border-primary/20">
+                              {creator.role}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                   <div className="rounded-xl bg-card border border-border/40 p-2.5">
                     <p className="text-[10px] text-muted-foreground font-medium">Sales Channel</p>
@@ -3099,10 +3300,10 @@ function VoucherDetailModal({
                   <div className="relative pl-6 space-y-4 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/60">
                     {voucher.update_history.map((entry, idx) => {
                       const action = String(entry.action || 'updated');
-                      const isCreated = action === 'voucher_created';
+                      const isCreated = action === 'created' || action === 'voucher_created';
                       const isStatus = action.includes('status');
                       const timestamp = entry.timestamp || entry.created_at;
-                      const who = entry.performed_by_name || entry.performed_by || entry.created_by || entry.user || 'Staff';
+                      const actor = resolveAuditLogActor(entry, voucher, employeeMap);
 
                       return (
                         <div key={idx} className="relative group">
@@ -3122,13 +3323,18 @@ function VoucherDetailModal({
                               </span>
                             </div>
 
-                            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+                            <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 flex-wrap">
                               <User className="h-3 w-3 text-primary shrink-0" />
-                              <span>Updated by: <strong className="text-foreground">{who}</strong></span>
+                              <span>{isCreated ? 'Created by:' : 'Updated by:'} <strong className="text-foreground">{actor.name}</strong></span>
+                              {actor.role && (
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-foreground border border-border/40">
+                                  {actor.role}
+                                </span>
+                              )}
                               {entry.ip_address && (
                                 <span className="text-muted-foreground/60 font-mono text-[10px]">({entry.ip_address})</span>
                               )}
-                            </p>
+                            </div>
 
                             {entry.note && (
                               <div className="rounded-lg bg-muted/40 p-2 text-xs italic text-foreground">
@@ -3894,8 +4100,10 @@ function getVoucherFieldValue(
       return voucher.redeemed_at ? fmtDate(voucher.redeemed_at) : '';
     case 'redeemed_by':
       return voucher.redeemed_by ? (employeeMap?.[voucher.redeemed_by] || voucher.redeemed_by) : '';
-    case 'created_by':
-      return voucher.created_by ? (employeeMap?.[voucher.created_by] || voucher.created_by) : '';
+    case 'created_by': {
+      const creator = resolveVoucherCreator(voucher, employeeMap);
+      return creator.role ? `${creator.name} (${creator.role})` : creator.name;
+    }
     default:
       return '';
   }
@@ -4903,10 +5111,15 @@ export default function GiftVouchersPage() {
         ids.add(v.created_by);
       }
     });
-    return Array.from(ids).map((id) => ({
-      id,
-      name: employeeMap[id] || (user?.id === id && user?.name ? user.name : (id.length > 20 ? `Staff (${id.slice(0, 6)})` : id)),
-    }));
+    return Array.from(ids).map((id) => {
+      const sample = vouchers.find((v) => v.created_by === id);
+      const creator = sample ? resolveVoucherCreator(sample, employeeMap) : null;
+      const resolved = employeeMap[id] || (user?.id === id && user?.name ? user.name : creator?.name);
+      return {
+        id,
+        name: resolved || (id.length > 20 ? `Staff (${id.slice(0, 6)})` : id),
+      };
+    });
   }, [vouchers, employeeMap, user]);
 
   // Date filters & pagination
@@ -5193,10 +5406,29 @@ export default function GiftVouchersPage() {
 
   const handleBulkUpdateStatus = async (status: string, note?: string) => {
     const ids = Array.from(selectedIds);
+    const actorRole = roleInfo?.role_name || user?.role_name || user?.role || user?.user_type || 'Staff';
+    const actorName = user?.name || 'Staff';
     const res = await authedFetch('/booknpay/api/v1/vouchers/batch-update-status/', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ voucher_ids: ids, status, note }),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Id': user?.id ? String(user.id) : '',
+        'X-User-Name': encodeURIComponent(actorName),
+        'X-User-Role': encodeURIComponent(actorRole),
+      },
+      body: JSON.stringify({
+        voucher_ids: ids,
+        status,
+        note,
+        changed_by: user?.id ? String(user.id) : undefined,
+        changed_by_name: actorName,
+        changed_by_role: actorRole,
+        change_by_user_data: user ? {
+          id: String(user.id),
+          name: user.name,
+          role: actorRole,
+        } : undefined,
+      }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

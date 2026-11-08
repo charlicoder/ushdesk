@@ -2401,6 +2401,9 @@ export function RedeemVoucherModal({
                 category: sv.category,
                 price: isPackageVoucher ? 0 : sv.base_price,
                 duration: sv.duration_minutes,
+                therapistName: s.therapistName || null,
+                secondaryTherapistName: s.secondaryTherapistName || null,
+                arrangementName: s.arrangementName || null,
               }))
             ),
             appointmentStart: sessions[0]?.startTime || null,

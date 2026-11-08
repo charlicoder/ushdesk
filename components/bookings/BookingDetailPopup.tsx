@@ -1889,6 +1889,148 @@ function BookingDetailPopupContent({
     return displaySessions.length === 1 ? Number(extraMinutes) || 0 : 0;
   };
 
+  // Detect whether this booking is for a package (multiple services bundled under a package price)
+  const packageInfo = useMemo(() => {
+    const isTruthyFlag = (v: unknown): boolean =>
+      v === true || String(v ?? '').trim().toLowerCase() === 'true' || v === 1 || String(v ?? '').trim() === '1';
+
+    const allSessionSvcEntries = rawSessions.flatMap((s) =>
+      (Array.isArray(s.services) ? s.services : []) as Array<Record<string, unknown>>
+    );
+    const allEntries = [...svcEntries, ...allSessionSvcEntries];
+
+    let pkgName = '';
+    let hasPkgMeta = false;
+
+    for (const e of allEntries) {
+      const sd = (e.service_data ?? {}) as Record<string, unknown>;
+      const pId = e.package_id ?? sd.package_id;
+      const pName = e.package_name ?? sd.package_name;
+      const isPkgSvc = isTruthyFlag(e.is_packaged_services ?? sd.is_packaged_services ?? e.is_packaged ?? sd.is_packaged);
+      if (pId || pName || isPkgSvc) {
+        hasPkgMeta = true;
+        if (!pkgName && typeof pName === 'string' && pName.trim()) {
+          pkgName = pName.trim();
+        }
+      }
+    }
+
+    const detailSd = ((detail?.service_data ?? booking.raw?.service_data) ?? {}) as Record<string, unknown>;
+    const voucherData = ((detail?.voucher_data ?? (booking.raw as any)?.voucher_data) ?? {}) as Record<string, unknown>;
+    if (
+      isTruthyFlag((detail as any)?.is_packaged_services) ||
+      isTruthyFlag((booking.raw as any)?.is_packaged_services) ||
+      isTruthyFlag(detailSd.is_packaged_services) ||
+      isTruthyFlag(detailSd.is_packaged) ||
+      isTruthyFlag(voucherData.is_package) ||
+      Boolean((detail as any)?.package_id || (booking.raw as any)?.package_id || detailSd.package_id)
+    ) {
+      hasPkgMeta = true;
+    }
+
+    if (!pkgName) {
+      const candidateName =
+        voucherData.package_name ??
+        (detail as any)?.package_name ??
+        (booking.raw as any)?.package_name ??
+        detailSd.package_name ??
+        '';
+      if (typeof candidateName === 'string' && candidateName.trim()) {
+        pkgName = candidateName.trim();
+      }
+    }
+
+    // Also detect multi-service / multi-session package carrier pricing pattern
+    // (where the first component carries the package price > 0 and subsequent component(s) have 0 price)
+    const hasCarrierZeroPricePattern =
+      !isCourseRedemption &&
+      ((multiItems.length > 1 && multiItems.some((it) => it.price > 0) && multiItems.some((it) => it.price === 0)) ||
+        (displaySessions.length > 1 && displaySessions.some((s) => s.price > 0) && displaySessions.some((s) => s.price === 0)));
+
+    const isPackage = hasPkgMeta || hasCarrierZeroPricePattern;
+
+    return {
+      isPackage,
+      packageName: pkgName || null,
+    };
+  }, [rawSessions, svcEntries, detail, booking.raw, isCourseRedemption, multiItems, displaySessions]);
+
+  const isPackageBooking = packageInfo.isPackage;
+  const packageName = packageInfo.packageName;
+  const effectivePackagePrice =
+    servicePrice > 0
+      ? servicePrice
+      : parseFloat(
+          String(
+            (detail?.voucher_data as any)?.package_price ??
+            (booking.raw as any)?.voucher_data?.package_price ??
+            (detail?.voucher_data as any)?.total_amount ??
+            detail?.total_amount ??
+            booking.total_amount ??
+            '0'
+          )
+        ) || 0;
+
+  const receiptServices = useMemo(() => {
+    if (displaySessions.length > 0) {
+      const items: Array<{
+        name: string;
+        category?: string | null;
+        price: number;
+        duration: number;
+        therapistName?: string | null;
+        secondaryTherapistName?: string | null;
+        arrangementName?: string | null;
+      }> = [];
+
+      displaySessions.forEach((sess) => {
+        const rawSvcs = Array.isArray(sess.raw?.services) ? (sess.raw?.services as Array<Record<string, any>>) : [];
+        const tName = sess.therapistName && sess.therapistName !== '—' ? sess.therapistName : null;
+        const secTName = sess.secondaryTherapistName && sess.secondaryTherapistName !== '—' ? sess.secondaryTherapistName : null;
+        const arrName = sess.roomName && sess.roomName !== '—' ? sess.roomName : null;
+
+        if (rawSvcs.length > 1) {
+          rawSvcs.forEach((sv) => {
+            const sd = (sv.service_data ?? {}) as Record<string, any>;
+            const svName = String(sv.service_name ?? sv.name ?? sd.name ?? sd.service_name ?? sess.serviceName ?? 'Service').trim();
+            const svPrice = parseFloat(String(sv.base_price ?? sv.arrangement_price ?? sv.price ?? sd.base_price ?? '0')) || 0;
+            const svDur = Number(sv.duration_minutes ?? sv.base_duration ?? sd.duration_minutes ?? 0) || 0;
+            items.push({
+              name: svName,
+              category: String(sd.category ?? sv.service_category ?? ''),
+              price: svPrice,
+              duration: svDur,
+              therapistName: tName,
+              secondaryTherapistName: secTName,
+              arrangementName: arrName,
+            });
+          });
+        } else {
+          items.push({
+            name: sess.serviceName,
+            category: booking.service_category,
+            price: sess.price,
+            duration: sess.durationMin,
+            therapistName: tName,
+            secondaryTherapistName: secTName,
+            arrangementName: arrName,
+          });
+        }
+      });
+      return items;
+    }
+
+    return serviceItems.map((it) => ({
+      name: it.name,
+      category: it.category,
+      price: it.price,
+      duration: it.duration,
+      therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
+      secondaryTherapistName: secondaryTherapistName || null,
+      arrangementName: booking.arrangement_name,
+    }));
+  }, [displaySessions, serviceItems, booking.service_category, booking.therapist_name, booking.arrangement_name, primaryTherapistName, secondaryTherapistName]);
+
   const canAddSession = !isCancelled && !isCompleted && !isPaymentSuccess && displaySessions.length < 3;
 
   // Determine which session(s) are unlocked when opened from a specific schedule block
@@ -3464,9 +3606,11 @@ function BookingDetailPopupContent({
 
                         {/* Right: Price + Edit Action + Trash Action Button */}
                         <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
-                          <span className="font-mono text-sm sm:text-base font-extrabold text-[#b85d63]">
-                            {sess.price.toFixed(3)} {currency}
-                          </span>
+                          {!isPackageBooking && (
+                            <span className="font-mono text-sm sm:text-base font-extrabold text-[#b85d63]">
+                              {sess.price.toFixed(3)} {currency}
+                            </span>
+                          )}
 
                           {/* Edit session icon: appears only for unpaid bookings */}
                           {(isUnpaidBooking || isPaidEditableBooking) && (
@@ -3596,7 +3740,12 @@ function BookingDetailPopupContent({
                     <CreditCard className="h-3.5 w-3.5 text-primary" /> Pricing &amp; Total Amount
                   </p>
                   <div className="space-y-1.5 text-xs">
-                    {serviceItems.length > 1 ? serviceItems.map((it, i) => (
+                    {isPackageBooking ? (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span className="truncate pr-2">{packageName ? `Package Price (${packageName}):` : 'Package Price:'}</span>
+                        <span className="font-mono font-semibold text-foreground">{effectivePackagePrice.toFixed(3)} {currency}</span>
+                      </div>
+                    ) : serviceItems.length > 1 ? serviceItems.map((it, i) => (
                       <div key={i} className="flex justify-between text-muted-foreground">
                         <span className="truncate pr-2">#{i + 1} {it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}:</span>
                         <span className="font-mono font-semibold text-foreground">{it.price.toFixed(3)} {currency}</span>
@@ -3906,12 +4055,32 @@ function BookingDetailPopupContent({
                       <span>Description</span>
                       <span>Amount</span>
                     </div>
-                    {serviceItems.map((it, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-foreground">{serviceItems.length > 1 ? `#${i + 1} ` : ''}{it.name}{serviceItems.length > 1 && it.duration > 0 ? ` (${it.duration}m)` : ''}</span>
-                        <span className="font-semibold">{it.price.toFixed(3)} {currency}</span>
+                    {isPackageBooking ? (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-foreground">
+                            {packageName ? `Package Price (${packageName})` : 'Package Price'}
+                          </span>
+                          <span className="font-semibold font-mono">{effectivePackagePrice.toFixed(3)} {currency}</span>
+                        </div>
+                        {serviceItems.length > 1 && (
+                          <div className="pl-2.5 space-y-1 border-l-2 border-border/50">
+                            {serviceItems.map((it, i) => (
+                              <div key={i} className="text-[11px] text-muted-foreground">
+                                #{i + 1} {it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    ))}
+                    ) : (
+                      serviceItems.map((it, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs">
+                          <span className="font-medium text-foreground">{serviceItems.length > 1 ? `#${i + 1} ` : ''}{it.name}{serviceItems.length > 1 && it.duration > 0 ? ` (${it.duration}m)` : ''}</span>
+                          <span className="font-semibold">{it.price.toFixed(3)} {currency}</span>
+                        </div>
+                      ))
+                    )}
                     {effAddons.map((a, i) => (
                       <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>+ Add-on: {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}</span>
@@ -4547,10 +4716,12 @@ function BookingDetailPopupContent({
                     )}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3 border-t border-border/40 pt-3">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Session price</span>
-                  <span className="font-mono font-extrabold text-[#b85d63]">{activeSess.price.toFixed(3)} {currency}</span>
-                </div>
+                {!isPackageBooking && (
+                  <div className="flex items-center justify-between gap-3 border-t border-border/40 pt-3">
+                    <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Session price</span>
+                    <span className="font-mono font-extrabold text-[#b85d63]">{activeSess.price.toFixed(3)} {currency}</span>
+                  </div>
+                )}
               </div>
               <div className="flex justify-end border-t border-border/50 bg-muted/20 px-5 py-3">
                 <button type="button" onClick={() => setActiveSessionId(null)} className="rounded-xl border border-border/60 bg-background px-4 py-2 text-xs font-semibold hover:bg-muted transition cursor-pointer">
@@ -4652,7 +4823,10 @@ function BookingDetailPopupContent({
             serviceName: booking.service_name,
             serviceCategory: booking.service_category,
             servicePrice: servicePrice,
-            services: serviceItems.map(it => ({ name: it.name, category: it.category, price: it.price, duration: it.duration })),
+            services: receiptServices,
+            isPackageBooking: isPackageBooking,
+            packageName: packageName,
+            packagePrice: effectivePackagePrice,
             appointmentStart: booking.appointment_start,
             appointmentEnd: booking.appointment_end,
             appointmentDate: formatDate(booking.appointment_start),

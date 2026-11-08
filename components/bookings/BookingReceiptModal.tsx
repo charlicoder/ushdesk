@@ -34,7 +34,18 @@ export interface BookingReceiptData {
   serviceCategory?: string | null;
   servicePrice?: number | string | null;
   /** All booked services (one line each). When omitted the single `serviceName` is shown. */
-  services?: Array<{ name?: string; category?: string | null; price?: number | string; duration?: number | string }>;
+  services?: Array<{
+    name?: string;
+    category?: string | null;
+    price?: number | string;
+    duration?: number | string;
+    therapistName?: string | null;
+    secondaryTherapistName?: string | null;
+    arrangementName?: string | null;
+  }>;
+  isPackageBooking?: boolean;
+  packageName?: string | null;
+  packagePrice?: number | string | null;
   appointmentStart?: string | null;
   appointmentEnd?: string | null;
   timeSlot?: string | null;
@@ -102,6 +113,16 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
   const totalAmountNum = parseFloat(String(data.totalAmount ?? '0')) || 0;
   const servicePriceNum = parseFloat(String(data.servicePrice ?? '0')) || 0;
   const extraPriceNum = parseFloat(String(data.extraPrice ?? '0')) || 0;
+  const isPackageServiceBooking = Boolean(
+    data.isPackageBooking ||
+    data.isVoucherPackage ||
+    (!data.isCourseRedemption &&
+      !data.isVoucherRedemption &&
+      data.services &&
+      data.services.length > 1 &&
+      data.services.some((s) => (parseFloat(String(s.price ?? '0')) || 0) > 0) &&
+      data.services.some((s) => (parseFloat(String(s.price ?? '0')) || 0) === 0))
+  );
   const receiptRefNumber = data.invoiceNumber || data.reference || data.bookingNumber || 'RECEIPT';
   const bookingNumber = data.bookingNumber || (data.reference !== receiptRefNumber ? data.reference : null);
 
@@ -431,24 +452,6 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   <span className="font-mono text-slate-800">{data.customerPhone}</span>
                 </div>
               )}
-              {data.therapistName && (
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Therapist{data.secondaryTherapistName ? ' 1' : ''}:</span>
-                  <span className="font-semibold text-slate-800">{data.therapistName}</span>
-                </div>
-              )}
-              {data.secondaryTherapistName && (
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Therapist 2:</span>
-                  <span className="font-semibold text-slate-800">{data.secondaryTherapistName}</span>
-                </div>
-              )}
-              {data.arrangementName && (
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Arrangement:</span>
-                  <span className="font-semibold text-slate-800">{data.arrangementName}</span>
-                </div>
-              )}
             </div>
 
             {/* Course Package & Session Progress for Course Redemption */}
@@ -579,14 +582,26 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="py-3 border-b border-dashed border-slate-300 space-y-2">
               <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 <span>Description</span>
-                <span>Amount</span>
+                {(!isPackageServiceBooking || (data.addons && data.addons.length > 0) || Number(data.extraMinutes ?? 0) > 0) && (
+                  <span>Amount</span>
+                )}
               </div>
 
-              {/* Services (one line per service) */}
+              {/* Services (one line per service/session) */}
               {data.services && data.services.length > 0 ? (
                 <div className="space-y-1.5">
                   {data.services.map((sv, idx) => {
                     const p = parseFloat(String(sv.price ?? '0')) || 0;
+                    const itemTherapist = sv.therapistName || data.therapistName || null;
+                    const itemSecTherapist = sv.secondaryTherapistName || (idx === 0 ? data.secondaryTherapistName : null) || null;
+                    const itemArrangement = sv.arrangementName || data.arrangementName || null;
+                    const metaParts = [
+                      Number(sv.duration ?? 0) > 0 ? `${sv.duration} mins` : null,
+                      itemTherapist && itemTherapist !== '—'
+                        ? `Therapist: ${itemTherapist}${itemSecTherapist && itemSecTherapist !== '—' ? ` + ${itemSecTherapist}` : ''}`
+                        : null,
+                      itemArrangement && itemArrangement !== '—' ? itemArrangement : null,
+                    ].filter(Boolean);
                     return (
                       <div key={idx} className="space-y-0.5">
                         <div className="flex justify-between font-bold text-slate-900 text-xs">
@@ -604,16 +619,16 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                               </span>
                             )}
                           </span>
-                          <span className="font-mono">
-                            {data.isCourseRedemption
-                              ? `0.000 ${currency}`
-                              : data.isVoucherPackage
-                              ? 'Included'
-                              : `${p.toFixed(3)} ${currency}`}
-                          </span>
+                          {!isPackageServiceBooking && (
+                            <span className="font-mono">
+                              {data.isCourseRedemption
+                                ? `0.000 ${currency}`
+                                : `${p.toFixed(3)} ${currency}`}
+                            </span>
+                          )}
                         </div>
-                        {Number(sv.duration ?? 0) > 0 && (
-                          <p className="text-[10px] text-slate-500">{sv.duration} mins</p>
+                        {metaParts.length > 0 && (
+                          <p className="text-[10px] text-slate-500">{metaParts.join(' · ')}</p>
                         )}
                       </div>
                     );
@@ -635,21 +650,30 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                         </span>
                       )}
                     </span>
-                    <span className="font-mono">
-                      {data.isCourseRedemption
-                        ? `0.000 ${currency}`
-                        : data.isVoucherPackage
-                        ? 'Included'
-                        : servicePriceNum > 0
-                        ? `${servicePriceNum.toFixed(3)} ${currency}`
-                        : totalAmountNum > 0
-                        ? `${totalAmountNum.toFixed(3)} ${currency}`
-                        : `0.000 ${currency}`}
-                    </span>
+                    {!isPackageServiceBooking && (
+                      <span className="font-mono">
+                        {data.isCourseRedemption
+                          ? `0.000 ${currency}`
+                          : servicePriceNum > 0
+                          ? `${servicePriceNum.toFixed(3)} ${currency}`
+                          : totalAmountNum > 0
+                          ? `${totalAmountNum.toFixed(3)} ${currency}`
+                          : `0.000 ${currency}`}
+                      </span>
+                    )}
                   </div>
-                  {data.serviceDuration && (
-                    <p className="text-[10px] text-slate-500">{data.serviceDuration} mins base service</p>
-                  )}
+                  {(() => {
+                    const singleMetaParts = [
+                      data.serviceDuration ? `${data.serviceDuration} mins` : (data.totalDuration ? `${data.totalDuration} mins` : null),
+                      data.therapistName && data.therapistName !== '—'
+                        ? `Therapist: ${data.therapistName}${data.secondaryTherapistName && data.secondaryTherapistName !== '—' ? ` + ${data.secondaryTherapistName}` : ''}`
+                        : null,
+                      data.arrangementName && data.arrangementName !== '—' ? data.arrangementName : null,
+                    ].filter(Boolean);
+                    return singleMetaParts.length > 0 ? (
+                      <p className="text-[10px] text-slate-500">{singleMetaParts.join(' · ')}</p>
+                    ) : null;
+                  })()}
                 </div>
               )}
 
@@ -686,13 +710,15 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 <span>
                   {data.isCourseRedemption
                     ? 'Session Standard Value:'
-                    : data.isVoucherPackage
-                    ? 'Package Price:'
+                    : isPackageServiceBooking
+                    ? (data.packageName ? `Package Price (${data.packageName}):` : 'Package Price:')
                     : 'Subtotal:'}
                 </span>
-                <span className="font-mono">
+                <span className="font-mono font-semibold text-slate-900">
                   {data.isVoucherPackage
-                    ? `${(parseFloat(String(data.voucherPackagePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum).toFixed(3)} ${currency}`
+                    ? `${(parseFloat(String(data.voucherPackagePrice ?? data.packagePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum).toFixed(3)} ${currency}`
+                    : isPackageServiceBooking
+                    ? `${(parseFloat(String(data.packagePrice ?? data.servicePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum).toFixed(3)} ${currency}`
                     : data.subtotal != null
                     ? `${(parseFloat(String(data.subtotal)) || 0).toFixed(3)} ${currency}`
                     : `${(totalAmountNum + (parseFloat(String(data.discount ?? '0')) || 0)).toFixed(3)} ${currency}`}
@@ -714,10 +740,12 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   <span className="font-mono font-bold">-{(parseFloat(String(data.discount)) || 0).toFixed(3)} {currency}</span>
                 </div>
               ) : null}
-              <div className="flex justify-between text-slate-600">
-                <span>Tax / VAT (0%):</span>
-                <span className="font-mono">0.000 {currency}</span>
-              </div>
+              {!isPackageServiceBooking && (
+                <div className="flex justify-between text-slate-600">
+                  <span>Tax / VAT (0%):</span>
+                  <span className="font-mono">0.000 {currency}</span>
+                </div>
+              )}
               <div className="flex justify-between items-baseline pt-1.5 border-t border-slate-200">
                 <span className="text-sm font-extrabold text-slate-900 uppercase">
                   {data.isCourseRedemption || data.isVoucherRedemption ? 'Visit Balance Due:' : 'Total Paid:'}
