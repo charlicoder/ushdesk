@@ -1453,6 +1453,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     return result;
   }, [selectedBranch, fullDetail, extraServices, extraDetails]);
 
+  // Rooms of the same arrangement type are offered as a single choice
+  const arrangementGroups = useMemo(() => {
+    const m = new Map<string, Arrangement[]>();
+    arrangements.forEach((a) => {
+      const raw = a as unknown as Record<string, unknown>;
+      const k = String(a.arrangement_type ?? raw.type ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_') || `id:${a.id}`;
+      m.set(k, [...(m.get(k) ?? []), a]);
+    });
+    return Array.from(m.entries()).map(([key, list]) => ({ key, list }));
+  }, [arrangements]);
+
   const addons: AddonItem[] = isPackagedService ? [] : (selectedArrangt?.addons ?? []);
 
   const toggleAddon = (addon: AddonItem, checked: boolean) =>
@@ -2179,7 +2190,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     <div className="flex items-center justify-between mb-2">
                       <SectionLabel icon={Gift} label="Room / Arrangement" />
                       <span className="text-[10px]" style={{ color: B.textMuted }}>
-                        {arrangements.length} option{arrangements.length !== 1 ? 's' : ''}
+                        {arrangementGroups.length} option{arrangementGroups.length !== 1 ? 's' : ''}
                       </span>
                     </div>
                     <div
@@ -2187,18 +2198,27 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       style={{ scrollbarWidth: 'thin', scrollbarColor: `${B.linen} transparent` }}
                     >
                       <div className="flex gap-3 pb-3" style={{ width: 'max-content' }}>
-                        {arrangements.map((arr, idx) => (
-                          <ArrangementCard
-                            key={arr.id ?? idx}
-                            arr={arr}
-                            active={selectedArrangt?.id === arr.id}
-                            onSelect={() => {
-                              setSelectedArrangt(arr);
-                              setSelectedAddons([]);
-                            }}
-                            index={idx}
-                          />
-                        ))}
+                        {arrangementGroups.map(({ key, list }, idx) => {
+                          const first = list[0];
+                          const inGroup = selectedArrangt ? list.some((a) => a.id === selectedArrangt.id) : false;
+                          // several rooms of the same type are shown as one card named after the type
+                          const cardArr: Arrangement = list.length > 1
+                            ? { ...first, arrangement_name: key.startsWith('id:') ? first.arrangement_name : key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) }
+                            : first;
+                          return (
+                            <ArrangementCard
+                              key={key}
+                              arr={cardArr}
+                              active={inGroup}
+                              onSelect={() => {
+                                if (inGroup) return;
+                                setSelectedArrangt(first);
+                                setSelectedAddons([]);
+                              }}
+                              index={idx}
+                            />
+                          );
+                        })}
                       </div>
                     </div>
                   </div>

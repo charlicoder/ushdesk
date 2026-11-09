@@ -599,6 +599,9 @@ export function AddSessionSubModal({
   const [arrangementType, setArrangementType] = useState('');
   const [arrangements, setArrangements] = useState<ApiArrangement[]>([]);
   const [arrangementsLoading, setArrangementsLoading] = useState(false);
+  /** Rooms of the same arrangement type are shown as one card; the actual room is auto-assigned per time slot */
+  const [arrangementTypeKey, setArrangementTypeKey] = useState('');
+  const [roomBookings, setRoomBookings] = useState<any[]>([]);
 
   const [arrangementServices, setArrangementServices] = useState<ApiService[] | null>(null);
   const [arrangementAddons, setArrangementAddons] = useState<ApiAddOn[]>([]);
@@ -671,6 +674,7 @@ export function AddSessionSubModal({
           list = list.filter(a => allowed.has(String(a.id)));
         }
         setArrangements(list);
+        setArrangementTypeKey(list.length > 0 ? String(list[0].arrangement_type ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_') || `id:${list[0].id}` : '');
         if (list.length > 0) {
           const first = list[0];
           setArrangementId(first.id);
@@ -790,6 +794,89 @@ export function AddSessionSubModal({
   const baseDuration = selectedServices.reduce((sum, sv) => sum + (sv.duration_minutes ?? 60), 0);
   const totalDuration = (primaryService ? baseDuration : 0) + addonDuration + extraMinutes;
   const totalPrice = servicePrice + addonTotal + extraMinutesPrice;
+
+  // ── Rooms of the same type: one card, combined availability, auto-assigned room ──
+  const arrKeyOf = (a: ApiArrangement) =>
+    String(a.arrangement_type ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_') || `id:${a.id}`;
+  const arrangementGroups = useMemo(() => {
+    const m = new Map<string, ApiArrangement[]>();
+    arrangements.forEach(a => {
+      const k = arrKeyOf(a);
+      m.set(k, [...(m.get(k) ?? []), a]);
+    });
+    return Array.from(m.entries()).map(([key, list]) => ({ key, list }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrangements]);
+  const activeGroup = arrangementGroups.find(g => g.key === arrangementTypeKey)
+    ?? arrangementGroups.find(g => g.list.some(a => a.id === arrangementId))
+    ?? arrangementGroups[0]
+    ?? null;
+  const groupRooms = activeGroup?.list ?? [];
+
+  // Existing bookings of the day (to know which rooms are taken at a given time)
+  useEffect(() => {
+    if (homeService || !branchId || !date || arrangements.length === 0) { setRoomBookings([]); return; }
+    let cancelled = false;
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId);
+    const branchParam = isUuid ? `&branch_id=${branchId}` : '';
+    authedFetch(`/booknpay/api/v1/bookings?date=${date}${branchParam}&page_size=100`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled) setRoomBookings(Array.isArray(d) ? d : (d?.data ?? d?.results ?? [])); })
+      .catch(() => { if (!cancelled) setRoomBookings([]); });
+    return () => { cancelled = true; };
+  }, [homeService, branchId, date, arrangements.length, authHeader]);
+
+  const isRoomFree = (roomId: string, startSlot: string, dur: number): boolean => {
+    if (!roomId || !startSlot) return true;
+    const startMin = parseClockToMinutes(toHHMM(startSlot));
+    const endMin = startMin + (dur > 0 ? dur : 30);
+    const target = String(roomId).toLowerCase().trim();
+    const overlaps = (st: any, en: any) => {
+      const a = parseTimeToMinutes(st);
+      const b = parseTimeToMinutes(en);
+      return a !== null && b !== null && startMin < b && endMin > a;
+    };
+    for (const bk of [...((scheduleData as any)?.bookings ?? []), ...roomBookings]) {
+      const status = String(bk.status ?? bk.booking_status ?? '').toLowerCase().trim();
+      if (status === 'cancelled' || status === 'refunded' || status === 'parked') continue;
+      if (Array.isArray(bk.sessions) && bk.sessions.length > 0) {
+        for (const ss of bk.sessions) {
+          const rid = String(ss.service_arrangement_id ?? ss.service_arrangement_data?.arrangement_id ?? bk.service_arrangement_id ?? '').toLowerCase().trim();
+          if (rid === target && overlaps(ss.appointment_start || ss.start || bk.appointment_start || bk.start, ss.appointment_end || ss.end || bk.appointment_end || bk.end)) return false;
+        }
+      } else {
+        const rid = String(bk.service_arrangement_id ?? bk.service_arrangement_data?.arrangement_id ?? '').toLowerCase().trim();
+        if (rid === target && overlaps(bk.appointment_start || bk.start, bk.appointment_end || bk.end)) return false;
+      }
+    }
+    return true;
+  };
+  const effectiveStartSlot = isFirstSession ? defaultTimeSlot : selectedTimeSlot;
+  const roomsFreeAt = (slot: string): ApiArrangement[] => groupRooms.filter(r => isRoomFree(r.id, slot, totalDuration));
+
+  const applyRoom = (a: ApiArrangement) => {
+    setArrangementId(a.id);
+    setArrangementName(a.name);
+    setArrangementType(a.arrangement_type ?? '');
+  };
+  const selectGroup = (key: string) => {
+    setArrangementTypeKey(key);
+    const list = arrangementGroups.find(g => g.key === key)?.list ?? [];
+    const free = effectiveStartSlot ? list.filter(r => isRoomFree(r.id, effectiveStartSlot, totalDuration)) : list;
+    const pick = free.find(r => r.id === arrangementId) ?? free[0] ?? list[0];
+    if (pick) applyRoom(pick);
+  };
+
+  // Auto-select the room (of the chosen type) that is free for the selected start time
+  useEffect(() => {
+    if (groupRooms.length === 0 || !effectiveStartSlot) return;
+    const free = groupRooms.filter(r => isRoomFree(r.id, effectiveStartSlot, totalDuration));
+    if (free.length === 0 || free.some(r => r.id === arrangementId)) return;
+    applyRoom(free[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupRooms, effectiveStartSlot, totalDuration, roomBookings, arrangementId]);
 
   // ── Available Time Slots for this session ──
   // For subsequent sessions: timeslots must start at or after previous session's end time!
@@ -1384,36 +1471,30 @@ export function AddSessionSubModal({
                       <p className="text-base font-extrabold text-foreground">Select Room</p>
                       {arrangementsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
                     </div>
-                    {arrangements.length > 0 && (
+                    {arrangementGroups.length > 0 && (
                       <span className="text-xs font-semibold text-muted-foreground">
-                        {arrangements.length} options
+                        {arrangementGroups.length} options
                       </span>
                     )}
                   </div>
 
                   {arrangements.length > 0 && (
                     <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1" style={{ scrollbarWidth: 'none' }}>
-                      {arrangements.map(arr => {
+                      {arrangementGroups.map(({ key: groupKey, list: groupList }) => {
+                        const arr = groupList.find(a => a.id === arrangementId) ?? groupList[0];
                         const cfg = getArrCfg(arr.arrangement_type);
                         const Icon = cfg.Icon;
-                        const isSelected = arrangementId === arr.id;
+                        const isSelected = activeGroup?.key === groupKey;
                         const price = arr.arrangement_price ?? arr.base_price;
+                        const cardLabel = groupList.length > 1 && ARRANGEMENT_CFG[groupKey] ? ARRANGEMENT_CFG[groupKey].label : arr.name;
                         return (
                           <div
-                            key={arr.id}
+                            key={groupKey}
                             role="button"
                             tabIndex={0}
-                            onClick={() => {
-                              setArrangementId(arr.id);
-                              setArrangementName(arr.name);
-                              setArrangementType(arr.arrangement_type ?? '');
-                            }}
+                            onClick={() => selectGroup(groupKey)}
                             onKeyDown={e => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                setArrangementId(arr.id);
-                                setArrangementName(arr.name);
-                                setArrangementType(arr.arrangement_type ?? '');
-                              }
+                              if (e.key === 'Enter' || e.key === ' ') selectGroup(groupKey);
                             }}
                             className={cn(
                               'relative flex-shrink-0 w-[140px] h-[175px] rounded-2xl overflow-hidden transition-all duration-200 group cursor-pointer select-none',
@@ -1446,7 +1527,7 @@ export function AddSessionSubModal({
                               <div className="h-6 shrink-0" />
                               <div className="flex-1 flex items-center justify-center px-1">
                                 <p className="text-[13px] font-extrabold text-white leading-snug text-center break-words line-clamp-3">
-                                  {arr.name}
+                                  {cardLabel}
                                 </p>
                               </div>
                               <div className="shrink-0 pt-1 text-center">
@@ -1918,16 +1999,21 @@ export function AddSessionSubModal({
                       <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-48 overflow-y-auto p-1">
                         {timeSlots.map(slot => {
                           const active = selectedTimeSlot === slot;
+                          // free if ANY room of the chosen type is free at this time
+                          const roomTaken = !homeService && groupRooms.length > 0 && roomsFreeAt(slot).length === 0;
                           return (
                             <button
                               key={slot}
                               type="button"
+                              disabled={roomTaken && !active}
                               onClick={() => setSelectedTimeSlot(slot)}
                               className={cn(
                                 'rounded-xl border py-2 px-1 text-center text-xs font-bold transition cursor-pointer',
                                 active
                                   ? 'border-primary bg-primary text-white shadow-md'
-                                  : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                                  : roomTaken
+                                    ? 'border-border/30 bg-muted/30 text-muted-foreground/40 cursor-not-allowed line-through'
+                                    : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                               )}
                             >
                               {slot}
