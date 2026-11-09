@@ -12,7 +12,7 @@ import {
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
   KeyRound, Globe, Send, QrCode, FileText, ShieldCheck, Receipt,
   Trash2, Edit3, Pencil, SlidersHorizontal, Filter, History, UserCheck, FileSpreadsheet,
-  Printer, Download, CheckSquare, Square, TrendingUp,
+  Printer, Download, CheckSquare, Square, TrendingUp, Link2,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -22,6 +22,7 @@ import { authedFetch } from '@/lib/authedFetch';
 import { CreateVoucherModal } from '@/components/bookings/CreateVoucherModal';
 import { RescheduleBookingModal } from '@/components/bookings/RescheduleBookingModal';
 import { RedeemVoucherModal } from '@/components/bookings/RedeemVoucherModal';
+import { MyReferralLinkButton } from '@/components/bookings/MyReferralLinkButton';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { paymentLinksApi, whatsappShareUrl, smsShareUrl, sendPaymentLinkSms, type PaymentLink } from '@/lib/paymentLinks';
@@ -239,6 +240,12 @@ interface Voucher {
   created_by_name?: string | null;
   created_by_role?: string | null;
   created_by_user_data?: Record<string, any> | null;
+  /** First time the voucher became ACTIVE (payment success) */
+  activation_datetime?: string | null;
+  /** Employee whose affiliate link (?ref=NNNN) generated this sale */
+  referenced_by?: string | null;
+  referenced_by_name?: string | null;
+  referral_number?: string | null;
   total_duration: number;
   total_amount: string;
   discount?: string | number | null;
@@ -2966,6 +2973,33 @@ function VoucherDetailModal({
                   </div>
                 </div>
               </div>
+
+              {/* Activated At & Referred By (only when present) */}
+              {(voucher.activation_datetime || voucher.referenced_by_name) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {voucher.activation_datetime && (
+                    <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Activated</p>
+                        <p className="font-semibold text-foreground truncate">{formatDate(voucher.activation_datetime)}</p>
+                      </div>
+                    </div>
+                  )}
+                  {voucher.referenced_by_name && (
+                    <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-muted/20 p-3 text-xs">
+                      <Link2 className="h-4 w-4 text-violet-500 shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Referred By</p>
+                        <p className="font-semibold text-foreground truncate" title={voucher.referenced_by_name}>
+                          {voucher.referenced_by_name}
+                          {voucher.referral_number ? ` (#${voucher.referral_number})` : ''}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           ) : activeTab === 'payments' ? (
             /* ── TAB 2: PAYMENT & INVOICES ── */
@@ -4569,6 +4603,8 @@ const REPORT_FIELDS: ReportField[] = [
 
   // Audit
   { id: 'created_at', label: 'Created At', category: 'Audit', defaultSelected: true },
+  { id: 'activation_datetime', label: 'Activated At', category: 'Audit', defaultSelected: false },
+  { id: 'referenced_by', label: 'Referred By', category: 'Audit', defaultSelected: false },
   { id: 'expire_date', label: 'Expires At', category: 'Audit', defaultSelected: true },
   { id: 'redeemed_at', label: 'Redeemed At', category: 'Audit', defaultSelected: true },
   { id: 'redeemed_by', label: 'Redeemed By (Staff)', category: 'Audit', defaultSelected: false },
@@ -4627,6 +4663,12 @@ function getVoucherFieldValue(
       return voucher.gift_message || '';
     case 'created_at':
       return voucher.created_at ? fmtDate(voucher.created_at) : '';
+    case 'activation_datetime':
+      return voucher.activation_datetime ? fmtDate(voucher.activation_datetime) : '';
+    case 'referenced_by':
+      return voucher.referenced_by_name
+        ? `${voucher.referenced_by_name}${voucher.referral_number ? ` (#${voucher.referral_number})` : ''}`
+        : '';
     case 'expire_date':
       return voucher.expire_date ? fmtDate(voucher.expire_date) : '';
     case 'redeemed_at':
@@ -6307,6 +6349,7 @@ export default function GiftVouchersPage() {
             )}
           </div>
         </div>
+        <MyReferralLinkButton />
         <button
           onClick={() => setShowCreate(true)}
           className="flex h-10 items-center gap-2 rounded-xl bg-primary hover:bg-primary/90 px-5 text-sm font-bold text-white shadow-sm transition active:scale-[0.98] shrink-0"

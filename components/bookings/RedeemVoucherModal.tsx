@@ -140,6 +140,8 @@ export interface VoucherSession {
   addonIds: string[];
   arrangementAddonIds: string[];
   allAddons: ApiAddOn[];
+  /** Internal ids of the voucher add-on units used by this session */
+  addonUids?: string[];
   extraMinutes: number;
   extraMinutesPrice: number;
   /** What of the voucher this session consumes (sent to the voucher as a partial redemption) */
@@ -656,208 +658,187 @@ function VoucherCoverageList({
   );
 }
 
-// ── Add Session Sub-Popup Window ─────────────────────────────────────────────
+// ── Voucher add-on pool ──────────────────────────────────────────────────────
+// Add-ons of a voucher are NOT bound to a service: any still-unused add-on can be attached to any
+// service of any session (or left for a later redemption).
 
-interface AddVoucherSessionModalProps {
-  sessionIndex: number;
+interface PoolAddon extends ApiAddOn {
+  /** Unique id of this gifted add-on unit within the voucher */
+  uid: string;
+  /** Service the add-on was originally gifted with (only used as the default attachment) */
+  originServiceId: string;
+}
+
+function getVoucherAddonPool(voucher: AnyRecord): PoolAddon[] {
+  const pool: PoolAddon[] = [];
+  if (voucher?.__package) {
+    mapAddons(voucher.__package.addons).forEach((a, i) =>
+      pool.push({ ...a, uid: `pkg:${a.id}:${i}`, originServiceId: '' })
+    );
+  } else {
+    const raw: AnyRecord[] =
+      Array.isArray(voucher?.services) && voucher.services.length > 0
+        ? voucher.services
+        : [{ service_id: voucher?.service_id, service_data: voucher?.service_data, addons: voucher?.addons }];
+    raw.forEach((e, si) => {
+      const sid = String(e.service_id ?? e.service_data?.id ?? `svc-${si}`);
+      mapAddons(e.addons).forEach((a, i) => pool.push({ ...a, uid: `${sid}:${a.id}:${i}`, originServiceId: sid }));
+    });
+  }
+  // Remove add-ons already consumed by earlier (partial) redemptions
+  const used = new Map<string, number>();
+  (Array.isArray(voucher?.redemptions) ? voucher.redemptions : []).forEach((r: AnyRecord) =>
+    (Array.isArray(r?.services) ? r.services : []).forEach((x: AnyRecord) =>
+      (Array.isArray(x?.addon_ids) ? x.addon_ids : []).forEach((id: unknown) =>
+        used.set(String(id), (used.get(String(id)) ?? 0) + 1)
+      )
+    )
+  );
+  return pool.filter((a) => {
+    const n = used.get(a.id) ?? 0;
+    if (n > 0) {
+      used.set(a.id, n - 1);
+      return false;
+    }
+    return true;
+  });
+}
+
+/** Arrangement type required by the voucher for the given service(s), if any. */
+function computeRequiredArrType(voucher: AnyRecord, serviceIds: string[]): string {
+  const rawServices: AnyRecord[] = Array.isArray(voucher.services) ? voucher.services : [];
+  const matchedSvc = rawServices.find((s) => serviceIds.includes(String(s.service_id ?? s.service_data?.id ?? '')));
+  if (matchedSvc) {
+    const svcType = normalizeArrType(
+      firstTruthy(
+        matchedSvc.service_arrangement_data?.arrangement_type,
+        matchedSvc.service_arrangement_data?.type,
+        matchedSvc.arrangement_type,
+        matchedSvc.room_type,
+        matchedSvc.service_arrangement_data?.room_type,
+        matchedSvc.service_arrangement_data?.arrangement_name,
+        matchedSvc.service_arrangement_data?.room,
+        matchedSvc.arrangement_name
+      )
+    );
+    if (svcType) return svcType;
+  }
+  if (rawServices.length <= 1) {
+    return normalizeArrType(
+      firstTruthy(
+        voucher.service_arrangement_data?.arrangement_type,
+        voucher.service_arrangement_data?.type,
+        voucher.arrangement_type,
+        voucher.room_type,
+        voucher.service_arrangement_data?.room_type,
+        voucher.service_arrangement_data?.arrangement_name,
+        voucher.service_arrangement_data?.room,
+        voucher.arrangement_name
+      )
+    );
+  }
+  return '';
+}
+
+const arrTypeKey = (a: ApiArrangement) =>
+  normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) || `id:${a.id}`;
+
+// ── Per-service session block (room, time slot, therapist, add-ons) ──────────
+
+interface SessionReport {
+  draft: VoucherSession | null;
+  missing: string | null;
+  duration: number;
+  price: number;
+}
+
+interface ServiceSessionBlockProps {
+  gifted: GiftedService;
+  service: ApiService | undefined;
+  servicesLoading: boolean;
+  showTitle: boolean;
+  isPkg: boolean;
+  pkgId: string;
+  giftedCount: number;
   branchId: string;
   selectedDate: string;
   voucher: AnyRecord;
   availabilitiesData: any;
   authHeader: string;
-  existingSessions: VoucherSession[];
-  onAdd: (sess: VoucherSession) => void;
-  onClose: () => void;
+  addonPool: PoolAddon[];
+  blockAddons: PoolAddon[];
+  assignedTo: (uid: string) => string;
+  serviceNameOf: (id: string) => string;
+  onAssignAddon: (uid: string, serviceId: string) => void;
+  onReport: (serviceId: string, report: SessionReport) => void;
 }
 
-function AddVoucherSessionModal({
-  sessionIndex,
+function ServiceSessionBlock({
+  gifted,
+  service,
+  servicesLoading,
+  showTitle,
+  isPkg,
+  pkgId,
+  giftedCount,
   branchId,
   selectedDate,
   voucher,
   availabilitiesData,
   authHeader,
-  existingSessions,
-  onAdd,
-  onClose,
-}: AddVoucherSessionModalProps) {
-  const [services, setServices] = useState<ApiService[]>([]);
-  const [servicesLoading, setServicesLoading] = useState(false);
-  const [serviceSearch, setServiceSearch] = useState('');
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
-  // Add-ons / extra time of the chosen services are optional: untick to leave them out of this redemption
-  const [excludedAddons, setExcludedAddons] = useState<Set<string>>(new Set());
-  const [skippedExtra, setSkippedExtra] = useState<Set<string>>(new Set());
+  addonPool,
+  blockAddons,
+  assignedTo,
+  serviceNameOf,
+  onAssignAddon,
+  onReport,
+}: ServiceSessionBlockProps) {
+  const gid = gifted.id;
+  const requiredArrType = useMemo(() => computeRequiredArrType(voucher, [gid]), [voucher, gid]);
+  const [skipExtra, setSkipExtra] = useState(false);
 
   const [arrangements, setArrangements] = useState<ApiArrangement[]>([]);
   const [arrangementsLoading, setArrangementsLoading] = useState(false);
+  const [selectedTypeKey, setSelectedTypeKey] = useState<string>('');
   const [selectedRoomId, setSelectedRoomId] = useState<string>('');
-
-  const [arrangementAddons, setArrangementAddons] = useState<ApiAddOn[]>([]);
-  const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
-  const [selectedArrAddonIds, setSelectedArrAddonIds] = useState<string[]>([]);
-
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
-  const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
 
   const [selectedTherapistId, setSelectedTherapistId] = useState<string>('');
   const [selectedTherapist, setSelectedTherapist] = useState<ApiTherapist | null>(null);
   const [selectedSecondaryTherapistId, setSelectedSecondaryTherapistId] = useState<string>('');
   const [selectedSecondaryTherapist, setSelectedSecondaryTherapist] = useState<ApiTherapist | null>(null);
 
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  // Package voucher: services are the package's included services (nothing preselected, no add-ons)
-  const isPkg = Boolean(voucher.__package);
-  const [pkgRooms, setPkgRooms] = useState<Record<string, string[]> | null>(null);
+  // 1. Load this service's arrangements (package: the packaged service's first, falling back to the service's own)
   useEffect(() => {
-    if (!isPkg || !branchId) return;
-    authedFetch(`/api/v1/services/${voucher.__package.id}/package-plan/?branch_id=${encodeURIComponent(branchId)}`, {
-      headers: authHeader ? { Authorization: authHeader } : undefined,
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setPkgRooms(d?.rooms_by_service ?? null))
-      .catch(() => setPkgRooms(null));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPkg, branchId, authHeader]);
-
-  // Gifted services of the voucher not yet assigned to another session
-  const giftedServices = useMemo(() => getVoucherServices(voucher), [voucher]);
-  const assignedElsewhere = useMemo(
-    () => new Set(existingSessions.flatMap((x) => x.serviceIds.map(String))),
-    [existingSessions]
-  );
-  const availableGifted = useMemo(
-    () => giftedServices.filter((g) => !assignedElsewhere.has(g.id)),
-    [giftedServices, assignedElsewhere]
-  );
-  const availableGiftedKey = availableGifted.map((g) => g.id).join(',');
-  const voucherServiceName = availableGifted.map((g) => g.name).join(' + ') || 'Spa Service';
-  const requiredArrType = useMemo(() => {
-    // 1. Check if any service in this session has a specific arrangement defined in voucher.services
-    const rawServices: AnyRecord[] = Array.isArray(voucher.services) ? voucher.services : [];
-    const matchedSvc = rawServices.find((s) =>
-      selectedServiceIds.includes(String(s.service_id ?? s.service_data?.id ?? ''))
-    );
-    if (matchedSvc) {
-      const svcType = normalizeArrType(
-        firstTruthy(
-          matchedSvc.service_arrangement_data?.arrangement_type,
-          matchedSvc.service_arrangement_data?.type,
-          matchedSvc.arrangement_type,
-          matchedSvc.room_type,
-          matchedSvc.service_arrangement_data?.room_type,
-          matchedSvc.service_arrangement_data?.arrangement_name,
-          matchedSvc.service_arrangement_data?.room,
-          matchedSvc.arrangement_name
-        )
-      );
-      if (svcType) return svcType;
-    }
-    // 2. If it's a single-service voucher (or not multi-service), check root voucher arrangement
-    const isMultiSvc = rawServices.length > 1;
-    if (!isMultiSvc) {
-      return normalizeArrType(
-        firstTruthy(
-          voucher.service_arrangement_data?.arrangement_type,
-          voucher.service_arrangement_data?.type,
-          voucher.arrangement_type,
-          voucher.room_type,
-          voucher.service_arrangement_data?.room_type,
-          voucher.service_arrangement_data?.arrangement_name,
-          voucher.service_arrangement_data?.room,
-          voucher.arrangement_name
-        )
-      );
-    }
-    return '';
-  }, [voucher, selectedServiceIds]);
-
-  // 1. Load the (fixed) voucher service for this branch
-  useEffect(() => {
-    setServicesLoading(true);
-    authedFetch(`/api/v1/services/?branch_id=${branchId}&is_active=true`, {
-      headers: authHeader ? { Authorization: authHeader } : undefined,
-    })
-      .then((r) => r.json())
-      .then((d) => {
-        const all: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
-        const wanted = availableGiftedKey ? availableGiftedKey.split(',') : [];
-        const list = wanted.length > 0
-          ? wanted.map((id) => all.find((s) => String(s.id) === id)).filter((s): s is ApiService => Boolean(s))
-          : all.slice(0, 1);
-        setServices(list);
-        // default: all still-unassigned gifted services go into this session (user can untick to split)
-        setSelectedServiceIds(isPkg ? [] : list.map((s) => String(s.id)));
-      })
-      .catch(() => setServices([]))
-      .finally(() => setServicesLoading(false));
-  }, [branchId, authHeader, availableGiftedKey]);
-
-  // Selected services objects
-  const selectedServices = useMemo(() => {
-    return selectedServiceIds
-      .map((id) => services.find((s) => String(s.id) === String(id)))
-      .filter((s): s is ApiService => Boolean(s));
-  }, [services, selectedServiceIds]);
-
-  const primaryService = selectedServices[0] ?? null;
-
-  // Package: all included services share the packaged service's room arrangements
-  const pkgDisabledReason = (_gid: string): string | null => null;
-
-  // Toggle service selection
-  const toggleService = (sv: ApiService) => {
-    const id = String(sv.id);
-    if (!selectedServiceIds.includes(id) && pkgDisabledReason(id)) return;
-    const order = services.map((x) => String(x.id));
-    setSelectedServiceIds((prev) => {
-      if (prev.includes(id)) {
-        return prev.length > 1 || isPkg ? prev.filter((x) => x !== id) : prev; // keep at least one (not for packages)
-      }
-      return order.filter((x) => x === id || prev.includes(x)); // keep gifted order
-    });
-  };
-
-  // 2. Load arrangements: for package vouchers, always use the packaged service's arrangements
-  const selectedServiceKey = selectedServiceIds.join(',');
-  useEffect(() => {
-    const ids = selectedServiceKey
-      ? isPkg && voucher.__package?.id
-        ? [String(voucher.__package.id)]
-        : selectedServiceKey.split(',')
-      : [];
-    if (ids.length === 0 || !branchId) {
+    if (!branchId) {
       setArrangements([]);
       return;
     }
     let cancelled = false;
     setArrangementsLoading(true);
-    Promise.all(
-      ids.map((sid) =>
-        authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${branchId}`, {
-          headers: authHeader ? { Authorization: authHeader } : undefined,
-        })
-          .then((r) => r.json())
-          .then((d) =>
-            (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter((a: ApiArrangement) => a.is_active !== false) as ApiArrangement[]
-          )
-          .catch(() => [] as ApiArrangement[])
-      )
-    )
-      .then((lists) => {
+    const load = (sid: string) =>
+      authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${branchId}`, {
+        headers: authHeader ? { Authorization: authHeader } : undefined,
+      })
+        .then((r) => r.json())
+        .then(
+          (d) =>
+            (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
+              (a: ApiArrangement) => a.is_active !== false
+            ) as ApiArrangement[]
+        )
+        .catch(() => [] as ApiArrangement[]);
+    (pkgId ? load(pkgId).then((l) => (l.length > 0 ? l : load(gid))) : load(gid))
+      .then((all) => {
         if (cancelled) return;
-        const [first, ...rest] = lists;
-        const allCommon = (first ?? []).filter((a) => rest.every((l) => l.some((x) => x.id === a.id)));
         const matched = requiredArrType
-          ? allCommon.filter((a) => {
-              const aType = normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name);
-              return aType === requiredArrType;
-            })
-          : allCommon;
-        const common = matched.length > 0 ? matched : allCommon;
+          ? all.filter((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredArrType)
+          : all;
+        const common = matched.length > 0 ? matched : all;
         setArrangements(common);
+        setSelectedTypeKey(common.length > 0 ? arrTypeKey(common[0]) : '');
         setSelectedRoomId(common.length > 0 ? common[0].id : '');
+        setSelectedTimeSlot('');
       })
       .finally(() => {
         if (!cancelled) setArrangementsLoading(false);
@@ -865,12 +846,22 @@ function AddVoucherSessionModal({
     return () => {
       cancelled = true;
     };
-  }, [selectedServiceKey, isPkg, voucher.__package?.id, branchId, authHeader, requiredArrType]);
+  }, [gid, pkgId, branchId, authHeader, requiredArrType]);
 
-  // Selected arrangement object
+  // Arrangements of the same type are shown once; their time slots are combined
+  const groups = useMemo(() => {
+    const m = new Map<string, ApiArrangement[]>();
+    arrangements.forEach((a) => {
+      const k = arrTypeKey(a);
+      m.set(k, [...(m.get(k) ?? []), a]);
+    });
+    return Array.from(m.entries()).map(([key, list]) => ({ key, list }));
+  }, [arrangements]);
+  const selectedGroup = groups.find((g) => g.key === selectedTypeKey) ?? groups[0] ?? null;
+  const groupRooms = useMemo(() => selectedGroup?.list ?? [], [selectedGroup]);
   const selectedArrangement = useMemo(
-    () => arrangements.find((a) => a.id === selectedRoomId) || arrangements[0] || null,
-    [arrangements, selectedRoomId]
+    () => groupRooms.find((a) => a.id === selectedRoomId) || groupRooms[0] || null,
+    [groupRooms, selectedRoomId]
   );
 
   const isCoupleRoom = useMemo(() => {
@@ -878,75 +869,22 @@ function AddVoucherSessionModal({
     return arrType === 'couple_room' || arrType === 'double_room' || arrType.includes('couple') || arrType.includes('double');
   }, [selectedArrangement]);
 
-  // 3. Load arrangement add-ons
+  // Price / duration of this service's session
+  const extra = skipExtra ? { minutes: 0, price: 0 } : gifted.extra;
+  const arrPrice =
+    selectedArrangement?.arrangement_price != null ? parseFloat(String(selectedArrangement.arrangement_price)) || 0 : null;
+  const servicePrice =
+    arrPrice !== null ? arrPrice : parseFloat(String(service?.arrangement_price ?? service?.base_price ?? '0')) || 0;
+  const addonsPrice = blockAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
+  const addonsDuration = blockAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
+  const baseDuration = (service?.duration_minutes ?? 60) || 60;
+  const totalDuration = baseDuration + addonsDuration + extra.minutes;
+  const sessionPrice = servicePrice + addonsPrice + extra.price;
+
+  // 2. Therapists: for multi-service vouchers re-load availability for exactly this service
+  const [serviceAvail, setServiceAvail] = useState<any>(null);
   useEffect(() => {
-    if (!selectedRoomId) {
-      setArrangementAddons([]);
-      return;
-    }
-    authedFetch(`/api/v1/service-arrangements/${selectedRoomId}/addons/`, {
-      headers: authHeader ? { Authorization: authHeader } : undefined,
-    })
-      .then((r) => r.json())
-      .then((d) => setArrangementAddons(Array.isArray(d) ? d : (d.data ?? d.results ?? [])))
-      .catch(() => setArrangementAddons([]));
-    setSelectedArrAddonIds([]);
-  }, [selectedRoomId, authHeader]);
-
-  // Service add-ons union
-  const serviceAddons = useMemo(() => {
-    const seen = new Set<string>();
-    const out: ApiAddOn[] = [];
-    selectedServices.forEach((sv) => {
-      (sv.add_ons ?? []).forEach((a) => {
-        if (!seen.has(a.id)) {
-          seen.add(a.id);
-          out.push(a);
-        }
-      });
-    });
-    return out;
-  }, [selectedServices]);
-
-  // Extra time calculation
-  const extraMinutesUnit = primaryService?.extra_minutes ?? 0;
-  const extraPricePerUnit = parseFloat(String(primaryService?.price_for_extra_minutes ?? '0')) || 0;
-  const hasExtraTime = Number(extraMinutesUnit) > 0 && extraPricePerUnit > 0;
-  const calcExtraPrice = (mins: number) => {
-    if (mins <= 0 || !hasExtraTime) return 0;
-    return (mins / Number(extraMinutesUnit)) * extraPricePerUnit;
-  };
-  // Add-ons and extra time are already part of the gifted voucher (read-only)
-  const selectedGifted = availableGifted.filter((g) => selectedServiceIds.includes(g.id));
-  const chosenAddonsOf = (g: GiftedService) => g.addons.filter((a) => !excludedAddons.has(`${g.id}:${a.id}`));
-  const useExtraOf = (g: GiftedService) => (skippedExtra.has(g.id) ? { minutes: 0, price: 0 } : g.extra);
-  const extraMinutes = selectedGifted.reduce((t, g) => t + useExtraOf(g).minutes, 0);
-  const extraMinutesPrice = selectedGifted.reduce((t, g) => t + useExtraOf(g).price, 0);
-
-  // Price calculations
-  const arrPrice = selectedArrangement?.arrangement_price != null ? parseFloat(String(selectedArrangement.arrangement_price)) || 0 : null;
-  const priceOfService = (sv: ApiService, idx: number) => {
-    if (idx === 0) {
-      return arrPrice !== null ? arrPrice : parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0;
-    }
-    return parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0;
-  };
-  const servicesPrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
-
-  const allAddons = selectedGifted.flatMap((g) => chosenAddonsOf(g));
-  const addonsPrice = allAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
-  const addonsDuration = allAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
-
-  const baseDuration = selectedServices.reduce((sum, sv) => sum + (sv.duration_minutes ?? 60), 0) || 60;
-  const totalDuration = baseDuration + addonsDuration + extraMinutes;
-  const sessionPrice = servicesPrice + addonsPrice + extraMinutesPrice;
-
-  // 4. Therapists: for multi-service vouchers re-load availability for exactly the services of this
-  // session (therapists / rooms must support all of them); single-service vouchers use the prop.
-  const [sessionAvail, setSessionAvail] = useState<any>(null);
-  useEffect(() => {
-    if (giftedServices.length <= 1 || !selectedServiceKey || !branchId) return;
-    const ids = selectedServiceKey.split(',');
+    if (giftedCount <= 1 || !branchId) return;
     let cancelled = false;
     authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
       method: 'POST',
@@ -955,22 +893,22 @@ function AddVoucherSessionModal({
         ...(authHeader ? { Authorization: authHeader } : {}),
       },
       body: JSON.stringify({
-        service_id: ids[0],
-        service_ids: ids,
+        service_id: gid,
+        service_ids: [gid],
         branch_id: branchId,
         expire_date: toZonedIsoFromLocal(voucher.expire_date),
       }),
     })
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setSessionAvail(d);
+        if (!cancelled) setServiceAvail(d);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [giftedServices.length, selectedServiceKey, branchId, authHeader, voucher.expire_date]);
-  const effectiveAvail = giftedServices.length > 1 ? sessionAvail : availabilitiesData;
+  }, [giftedCount, gid, branchId, authHeader, voucher.expire_date]);
+  const effectiveAvail = giftedCount > 1 ? serviceAvail : availabilitiesData;
 
   const therapists = useMemo<ApiTherapist[]>(() => {
     return Array.isArray(effectiveAvail?.therapists)
@@ -980,23 +918,18 @@ function AddVoucherSessionModal({
       : [];
   }, [effectiveAvail]);
 
-  // Compute Available Timeslots
-  useEffect(() => {
-    if (!selectedDate || arrangements.length === 0) {
-      setAvailableSlots([]);
-      return;
-    }
-
-    const selArrangement = arrangements.find((a) => a.id === selectedRoomId) || arrangements[0];
-    if (!selArrangement) {
-      setAvailableSlots([]);
-      return;
-    }
+  // 3. Time slots: combined over every arrangement of the selected type
+  const slotInfo = useMemo(() => {
+    const out = {
+      slots: [] as { time: string; minutes: number; available: boolean }[],
+      fit: new Map<number, string[]>(),
+    };
+    if (!selectedDate || groupRooms.length === 0) return out;
 
     // A start time is only free when EVERY 30-min step of the session fits in the free slots
-    // (a booking cannot start at a free slot that is followed by an existing booking).
+    const steps = Math.max(1, Math.ceil(totalDuration / 30));
     const fitsDuration = (free: Set<number>, start: number) => {
-      for (let k = 0; k < Math.max(1, Math.ceil(totalDuration / 30)); k++) {
+      for (let k = 0; k < steps; k++) {
         if (!free.has(start + k * 30)) return false;
       }
       return true;
@@ -1013,50 +946,55 @@ function AddVoucherSessionModal({
       });
     }
 
-    const rawArrDay = selArrangement.availabilities?.[selectedDate];
-    const hasArrangementData = Array.isArray(rawArrDay);
-    const rawArrSlots: string[] = hasArrangementData ? (rawArrDay as string[]) : [];
-    const arrangementSlotsForDay = new Set<number>(rawArrSlots.map((s) => parseTimeToMinutes(s)));
+    const roomData = groupRooms.map((r) => {
+      const raw = r.availabilities?.[selectedDate];
+      return {
+        id: r.id,
+        // no availability data for the room/day = unknown (allow, the server re-checks); empty list = fully booked
+        hasData: Array.isArray(raw),
+        free: new Set<number>((Array.isArray(raw) ? (raw as string[]) : []).map((s) => parseTimeToMinutes(s))),
+      };
+    });
 
     const branchInfo = effectiveAvail?.branch ?? availabilitiesData?.branch;
-    const openTime = branchInfo?.opening_time || '09:00:00';
-    const closeTime = branchInfo?.closing_time || '23:00:00';
-    const step = 30;
-
-    const startMin = parseTimeToMinutes(openTime);
-    let endMin = parseTimeToMinutes(closeTime);
+    const startMin = parseTimeToMinutes(branchInfo?.opening_time || '09:00:00');
+    let endMin = parseTimeToMinutes(branchInfo?.closing_time || '23:00:00');
     if (endMin <= startMin) endMin = 23 * 60;
 
     const allKnownMinutes = new Set<number>();
-    for (let m = startMin; m < endMin; m += step) {
-      allKnownMinutes.add(m);
-    }
+    for (let m = startMin; m < endMin; m += 30) allKnownMinutes.add(m);
     therapistSlotsForDay.forEach((m) => allKnownMinutes.add(m));
-    arrangementSlotsForDay.forEach((m) => allKnownMinutes.add(m));
+    roomData.forEach((r) => r.free.forEach((m) => allKnownMinutes.add(m)));
 
-    const sortedMinutes = Array.from(allKnownMinutes).sort((a, b) => a - b);
     const minRequiredTherapists = isCoupleRoom && therapists.length >= 2 ? 2 : 1;
-
-    const slots: { time: string; available: boolean }[] = [];
-    for (const m of sortedMinutes) {
+    for (const m of Array.from(allKnownMinutes).sort((a, b) => a - b)) {
       const h = Math.floor(m / 60);
       const min = m % 60;
       const ampm = h >= 12 ? 'PM' : 'AM';
       const hd = h % 12 === 0 ? 12 : h % 12;
       const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
-
-      const isAvailableInTherapists = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists;
-      // no availability data for the room/day = unknown (allow, the server re-checks); empty list = fully booked
-      const isAvailableInArrangement = !hasArrangementData || fitsDuration(arrangementSlotsForDay, m);
-      const available = isAvailableInTherapists && isAvailableInArrangement;
-
-      slots.push({ time: timeLabel, available });
+      const roomsFit = roomData.filter((r) => !r.hasData || fitsDuration(r.free, m)).map((r) => r.id);
+      const available = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists && roomsFit.length > 0;
+      out.fit.set(m, roomsFit);
+      out.slots.push({ time: timeLabel, minutes: m, available });
     }
+    return out;
+  }, [selectedDate, groupRooms, therapists, effectiveAvail, availabilitiesData, isCoupleRoom, totalDuration]);
 
-    setAvailableSlots(slots);
-  }, [selectedDate, selectedRoomId, arrangements, therapists, effectiveAvail, availabilitiesData, isCoupleRoom, totalDuration]);
+  // Keep the chosen time valid and auto-select the room (of the chosen type) that is free at that time
+  useEffect(() => {
+    if (!selectedTimeSlot) return;
+    const m = parseTimeToMinutes(selectedTimeSlot);
+    const slot = slotInfo.slots.find((s) => s.minutes === m);
+    if (!slot || !slot.available) {
+      setSelectedTimeSlot('');
+      return;
+    }
+    const ids = slotInfo.fit.get(m) ?? [];
+    if (ids.length > 0 && !ids.includes(selectedRoomId)) setSelectedRoomId(ids[0]);
+  }, [slotInfo, selectedTimeSlot, selectedRoomId]);
 
-  // Available therapists for chosen time slot
+  // Available therapists for the chosen time slot
   const availableTherapistsForSlot = useMemo<ApiTherapist[]>(() => {
     if (!selectedTimeSlot || !selectedDate || therapists.length === 0) return therapists;
     const slotMin = parseTimeToMinutes(selectedTimeSlot);
@@ -1094,50 +1032,14 @@ function AddVoucherSessionModal({
     }
   }, [availableTherapistsForSlot, selectedTherapistId, isCoupleRoom]);
 
-  // Check overlap with existing sessions
-  const checkOverlap = (startTime: string, dur: number): boolean => {
-    const sStart = parseTimeToMinutes(startTime);
-    const sEnd = sStart + dur;
-    for (const other of existingSessions) {
-      const oStart = parseTimeToMinutes(other.startTime);
-      const oEnd = oStart + other.totalDuration;
-      if (sStart < oEnd && oStart < sEnd) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  // Submit session
-  const handleSaveSession = () => {
-    if (selectedServices.length === 0) {
-      setErrorMsg('Please select at least one service.');
-      return;
-    }
-    if (!selectedRoomId) {
-      setErrorMsg('Please select a room / arrangement.');
-      return;
-    }
-    if (!selectedTimeSlot) {
-      setErrorMsg('Please select a start time slot.');
-      return;
-    }
-    if (!selectedTherapistId) {
-      setErrorMsg('Please select an available therapist.');
-      return;
-    }
-    if (checkOverlap(selectedTimeSlot, totalDuration)) {
-      setErrorMsg('This session overlaps with another scheduled session. Please choose a different time slot.');
-      return;
-    }
-
-    const tName = getTherapistDisplayName(selectedTherapist);
+  // Report this block's session (or what is still missing) to the parent modal
+  const draft = useMemo<VoucherSession | null>(() => {
+    if (!service || !selectedRoomId || !selectedTimeSlot || !selectedTherapistId) return null;
     const secTName = isCoupleRoom && selectedSecondaryTherapist ? getTherapistDisplayName(selectedSecondaryTherapist) : undefined;
-
-    const newSess: VoucherSession = {
+    return {
       id: Math.random().toString(36).slice(2),
       therapistId: selectedTherapistId,
-      therapistName: tName,
+      therapistName: getTherapistDisplayName(selectedTherapist),
       therapistAvatar: selectedTherapist?.avatar || selectedTherapist?.photo_url,
       secondaryTherapistId: selectedSecondaryTherapistId || undefined,
       secondaryTherapistName: secTName,
@@ -1145,32 +1047,411 @@ function AddVoucherSessionModal({
       arrangementId: selectedRoomId,
       arrangementName: selectedArrangement?.name || 'Room',
       arrangementType: selectedArrangement?.arrangement_type || requiredArrType,
-      serviceIds: selectedServiceIds,
-      services: selectedServices,
-      addonIds: selectedAddonIds,
-      arrangementAddonIds: selectedArrAddonIds,
-      allAddons,
-      extraMinutes,
-      extraMinutesPrice,
-      redemptionServices: selectedGifted.map((g) => ({
-        service_id: g.id,
-        service_name: g.name,
-        addon_ids: chosenAddonsOf(g).map((a) => a.id),
-        extra_time: useExtraOf(g).minutes,
-      })),
+      serviceIds: [gid],
+      services: [service],
+      addonIds: [],
+      arrangementAddonIds: [],
+      allAddons: blockAddons.map(({ id, name, price, duration_minutes }) => ({ id, name, price, duration_minutes })),
+      addonUids: blockAddons.map((a) => a.uid),
+      extraMinutes: extra.minutes,
+      extraMinutesPrice: extra.price,
+      redemptionServices: [
+        {
+          service_id: gid,
+          service_name: gifted.name,
+          addon_ids: blockAddons.map((a) => a.id),
+          extra_time: extra.minutes,
+        },
+      ],
       startTime: selectedTimeSlot,
       totalDuration,
       sessionPrice,
     };
+  }, [
+    service, gid, gifted.name, selectedRoomId, selectedTimeSlot, selectedTherapistId, selectedTherapist,
+    selectedSecondaryTherapistId, selectedSecondaryTherapist, isCoupleRoom, selectedArrangement, requiredArrType,
+    blockAddons, extra.minutes, extra.price, totalDuration, sessionPrice,
+  ]);
+  const missing = !service
+    ? 'Not available in this branch.'
+    : !selectedRoomId
+    ? 'Please select a room / arrangement.'
+    : !selectedTimeSlot
+    ? 'Please select a start time slot.'
+    : !selectedTherapistId
+    ? 'Please select an available therapist.'
+    : null;
+  useEffect(() => {
+    onReport(gid, { draft, missing, duration: totalDuration, price: sessionPrice });
+  }, [gid, draft, missing, totalDuration, sessionPrice, onReport]);
 
-    onAdd(newSess);
-    onClose();
+  return (
+    <div className={cn('space-y-5', showTitle && 'rounded-2xl border border-border/70 bg-muted/10 p-4')}>
+      {showTitle && (
+        <p className="text-sm font-extrabold text-foreground flex items-center gap-2">
+          <Scissors className="h-4 w-4 text-emerald-600" />
+          {gifted.name}
+          {gifted.duration > 0 ? ` · ${gifted.duration} min` : ''}
+        </p>
+      )}
+
+      {/* Add-ons (any unused add-on of the voucher can be attached to any service) + extra time */}
+      {(addonPool.length > 0 || gifted.extra.minutes > 0) && (
+        <div className="space-y-1.5">
+          {addonPool.length > 0 && (
+            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Voucher add-ons</p>
+          )}
+          {addonPool.map((a) => {
+            const owner = assignedTo(a.uid);
+            const mine = owner === gid;
+            return (
+              <label key={a.uid} className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={mine}
+                  onChange={() => onAssignAddon(a.uid, mine ? '' : gid)}
+                  className="h-3.5 w-3.5 accent-violet-500"
+                />
+                <Sparkles className="h-3 w-3 text-violet-500" />
+                <span>
+                  {a.name}
+                  {a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}
+                </span>
+                {owner && !mine && (
+                  <span className="text-[10px] text-muted-foreground italic">(attached to {serviceNameOf(owner)})</span>
+                )}
+              </label>
+            );
+          })}
+          {gifted.extra.minutes > 0 && (
+            <label className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!skipExtra}
+                onChange={() => setSkipExtra((v) => !v)}
+                className="h-3.5 w-3.5 accent-amber-500"
+              />
+              <Timer className="h-3 w-3 text-amber-500" />
+              <span>Extra time +{gifted.extra.minutes} min</span>
+            </label>
+          )}
+        </div>
+      )}
+
+      {/* Room / Arrangement Selection (one card per arrangement type) */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Building2 className="h-4 w-4 text-amber-500" />
+            <p className="text-sm font-extrabold text-foreground">Select Room / Arrangement *</p>
+            {arrangementsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+          </div>
+        </div>
+
+        {groups.length > 0 ? (
+          <div className="flex gap-2.5 overflow-x-auto pb-1.5" style={{ scrollbarWidth: 'none' }}>
+            {groups.map((g) => {
+              const rep = g.list.find((a) => a.id === selectedRoomId) ?? g.list[0];
+              const cfg = getArrCfg(rep.arrangement_type);
+              const Icon = cfg.Icon;
+              const isSel = selectedGroup?.key === g.key;
+              const price = rep.arrangement_price ?? rep.base_price;
+              const label = g.list.length > 1 ? (ARRANGEMENT_CFG[g.key]?.label ?? rep.name) : rep.name;
+              return (
+                <button
+                  key={g.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedTypeKey(g.key);
+                    setSelectedRoomId(g.list[0].id);
+                  }}
+                  className={cn(
+                    'relative flex-shrink-0 w-[130px] rounded-2xl overflow-hidden transition-all duration-200 group h-[130px] border cursor-pointer',
+                    isSel ? 'border-amber-500 ring-2 ring-amber-500/50 shadow-md' : 'border-border/70 hover:border-border'
+                  )}
+                >
+                  <div className={cn('absolute inset-0 bg-gradient-to-br', cfg.gradient)}>
+                    <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                      <Icon className={cn('h-16 w-16', cfg.iconColor)} />
+                    </div>
+                  </div>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
+                  {isSel && (
+                    <div className="absolute top-2 right-2 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white">
+                      <Check className="h-3 w-3" />
+                    </div>
+                  )}
+                  <div className="relative z-10 h-full w-full flex flex-col justify-end p-2.5 text-center text-white">
+                    <p className="text-xs font-extrabold truncate">{label}</p>
+                    <p className="text-[10px] font-semibold text-amber-200 mt-0.5">{price ? `${fmt(price)} KWD` : 'Included'}</p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground italic">
+            {arrangementsLoading || servicesLoading ? 'Loading…' : 'No arrangement available for this branch'}
+          </p>
+        )}
+      </div>
+
+      {/* Timeslots */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-emerald-500" />
+            <p className="text-sm font-extrabold text-foreground">Select Start Time *</p>
+          </div>
+          <span className="text-xs text-muted-foreground">{slotInfo.slots.filter((s) => s.available).length} available</span>
+        </div>
+        {slotInfo.slots.length > 0 ? (
+          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-36 overflow-y-auto p-1" style={{ scrollbarWidth: 'none' }}>
+            {slotInfo.slots.map((slot) => {
+              const isSel = slot.time === selectedTimeSlot;
+              return (
+                <button
+                  key={slot.time}
+                  type="button"
+                  disabled={!slot.available}
+                  onClick={() => setSelectedTimeSlot(slot.time)}
+                  className={cn(
+                    'py-2 px-1 text-center rounded-xl text-xs font-bold border transition cursor-pointer',
+                    isSel
+                      ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-500/20'
+                      : slot.available
+                      ? 'border-border/70 bg-card hover:bg-emerald-500/10 text-foreground'
+                      : 'border-border/30 bg-muted/30 text-muted-foreground/40 cursor-not-allowed line-through'
+                  )}
+                >
+                  {slot.time}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground italic">No slots available for this date and room</p>
+        )}
+      </div>
+
+      {/* Therapist Selection */}
+      {selectedTimeSlot && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <User className="h-4 w-4 text-violet-500" />
+            <p className="text-sm font-extrabold text-foreground">{isCoupleRoom ? 'Select Therapists (Primary & Secondary) *' : 'Select Therapist *'}</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {availableTherapistsForSlot.map((t) => {
+              const tId = t.id ?? t.therapist_id ?? '';
+              const isPrimary = tId === selectedTherapistId;
+              const isSecondary = isCoupleRoom && tId === selectedSecondaryTherapistId;
+              const isSel = isPrimary || isSecondary;
+              const tName = getTherapistDisplayName(t);
+              return (
+                <button
+                  key={tId}
+                  type="button"
+                  onClick={() => {
+                    if (!isCoupleRoom) {
+                      setSelectedTherapistId(tId);
+                      setSelectedTherapist(t);
+                      return;
+                    }
+                    if (isPrimary) return;
+                    if (isSecondary) {
+                      const prevId = selectedTherapistId;
+                      const prevObj = selectedTherapist;
+                      setSelectedTherapistId(tId);
+                      setSelectedTherapist(t);
+                      setSelectedSecondaryTherapistId(prevId);
+                      setSelectedSecondaryTherapist(prevObj);
+                    } else {
+                      setSelectedSecondaryTherapistId(tId);
+                      setSelectedSecondaryTherapist(t);
+                    }
+                  }}
+                  className={cn(
+                    'flex items-center gap-2.5 rounded-xl border p-2 text-left transition cursor-pointer',
+                    isSel ? 'border-violet-500 bg-violet-500/10 ring-1 ring-violet-500' : 'border-border/70 bg-card hover:bg-muted/40'
+                  )}
+                >
+                  <div className="h-8 w-8 rounded-full bg-violet-100 text-violet-700 font-bold text-xs flex items-center justify-center shrink-0">
+                    {getInitials(tName)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold truncate text-foreground">{tName}</p>
+                    <p className="text-[10px] text-muted-foreground">{isCoupleRoom && isPrimary ? 'Primary' : isCoupleRoom && isSecondary ? 'Secondary' : 'Available'}</p>
+                  </div>
+                  {isSel && <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Add Session Sub-Popup Window ─────────────────────────────────────────────
+
+interface AddVoucherSessionModalProps {
+  sessionIndex: number;
+  branchId: string;
+  selectedDate: string;
+  voucher: AnyRecord;
+  availabilitiesData: any;
+  authHeader: string;
+  existingSessions: VoucherSession[];
+  /** How many more sessions (= services in this popup) may still be created */
+  maxNewSessions: number;
+  onAdd: (sess: VoucherSession) => void;
+  onClose: () => void;
+}
+
+function AddVoucherSessionModal({
+  sessionIndex,
+  branchId,
+  selectedDate,
+  voucher,
+  availabilitiesData,
+  authHeader,
+  existingSessions,
+  maxNewSessions,
+  onAdd,
+  onClose,
+}: AddVoucherSessionModalProps) {
+  const [services, setServices] = useState<ApiService[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
+  // add-on uid -> service id it is attached to ('' = not used in this booking)
+  const [addonAssign, setAddonAssign] = useState<Record<string, string>>({});
+  const [reports, setReports] = useState<Record<string, SessionReport>>({});
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Package voucher: services are the package's included services (nothing preselected)
+  const isPkg = Boolean(voucher.__package);
+  const pkgId = isPkg && voucher.__package?.id ? String(voucher.__package.id) : '';
+  const sessionLimit = Math.max(1, maxNewSessions);
+
+  // Gifted services of the voucher not yet assigned to another session
+  const giftedServices = useMemo(() => getVoucherServices(voucher), [voucher]);
+  const assignedElsewhere = useMemo(
+    () => new Set(existingSessions.flatMap((x) => x.serviceIds.map(String))),
+    [existingSessions]
+  );
+  const availableGifted = useMemo(
+    () => giftedServices.filter((g) => !assignedElsewhere.has(g.id)),
+    [giftedServices, assignedElsewhere]
+  );
+  const availableGiftedKey = availableGifted.map((g) => g.id).join(',');
+  const voucherServiceName = availableGifted.map((g) => g.name).join(' + ') || 'Spa Service';
+
+  // Voucher add-ons still unused (not consumed earlier, not used by another session of this booking)
+  const fullPool = useMemo(() => getVoucherAddonPool(voucher), [voucher]);
+  const usedHere = useMemo(() => new Set(existingSessions.flatMap((s) => s.addonUids ?? [])), [existingSessions]);
+  const pool = useMemo(() => fullPool.filter((a) => !usedHere.has(a.uid)), [fullPool, usedHere]);
+
+  // 1. Load the voucher services for this branch
+  useEffect(() => {
+    setServicesLoading(true);
+    authedFetch(`/api/v1/services/?branch_id=${branchId}&is_active=true`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        const all: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        const wanted = availableGiftedKey ? availableGiftedKey.split(',') : [];
+        const list = wanted.length > 0
+          ? wanted.map((id) => all.find((s) => String(s.id) === id)).filter((s): s is ApiService => Boolean(s))
+          : all.slice(0, 1);
+        setServices(list);
+        // default: still-unassigned gifted services (up to the remaining session limit) get their own block
+        setSelectedServiceIds(isPkg ? [] : list.slice(0, sessionLimit).map((s) => String(s.id)));
+      })
+      .catch(() => setServices([]))
+      .finally(() => setServicesLoading(false));
+  }, [branchId, authHeader, availableGiftedKey]);
+
+  const toggleService = (sv: ApiService) => {
+    const id = String(sv.id);
+    const order = services.map((x) => String(x.id));
+    setSelectedServiceIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.length > 1 || isPkg ? prev.filter((x) => x !== id) : prev; // keep at least one (not for packages)
+      }
+      if (prev.length >= sessionLimit) return prev;
+      return order.filter((x) => x === id || prev.includes(x)); // keep gifted order
+    });
   };
 
-  const filteredServices = useMemo(() => {
-    if (!serviceSearch) return services;
-    return services.filter((s) => s.name.toLowerCase().includes(serviceSearch.toLowerCase()));
-  }, [services, serviceSearch]);
+  // Which service an add-on is attached to (default: the service it was gifted with; packages: the first service)
+  const assignedTo = useCallback(
+    (uid: string): string => {
+      const explicit = addonAssign[uid];
+      if (explicit !== undefined) return selectedServiceIds.includes(explicit) ? explicit : '';
+      const a = pool.find((x) => x.uid === uid);
+      if (!a) return '';
+      if (isPkg) return selectedServiceIds[0] ?? '';
+      return selectedServiceIds.includes(a.originServiceId) ? a.originServiceId : '';
+    },
+    [addonAssign, selectedServiceIds, pool, isPkg]
+  );
+  const blockAddonsMap = useMemo(() => {
+    const m: Record<string, PoolAddon[]> = {};
+    selectedServiceIds.forEach((id) => {
+      m[id] = pool.filter((a) => assignedTo(a.uid) === id);
+    });
+    return m;
+  }, [pool, assignedTo, selectedServiceIds]);
+  const onAssignAddon = useCallback((uid: string, serviceId: string) => {
+    setAddonAssign((prev) => ({ ...prev, [uid]: serviceId }));
+  }, []);
+  const onReport = useCallback((serviceId: string, report: SessionReport) => {
+    setReports((prev) => ({ ...prev, [serviceId]: report }));
+  }, []);
+  const serviceNameOf = useCallback(
+    (id: string) => giftedServices.find((g) => g.id === id)?.name ?? 'service',
+    [giftedServices]
+  );
+
+  const totalDuration = selectedServiceIds.reduce((s, id) => s + (reports[id]?.duration ?? 0), 0);
+  const sessionPrice = selectedServiceIds.reduce((s, id) => s + (reports[id]?.price ?? 0), 0);
+
+  // Submit: one session per selected service (each with its own room / time / therapist)
+  const handleSaveSession = () => {
+    if (selectedServiceIds.length === 0) {
+      setErrorMsg('Please select at least one service.');
+      return;
+    }
+    const drafts: VoucherSession[] = [];
+    for (const id of selectedServiceIds) {
+      const r = reports[id];
+      if (!r || r.missing || !r.draft) {
+        const msg = r?.missing ?? 'Please complete the session details.';
+        setErrorMsg(selectedServiceIds.length > 1 ? `${serviceNameOf(id)}: ${msg}` : msg);
+        return;
+      }
+      drafts.push(r.draft);
+    }
+    const overlaps = (a: VoucherSession, b: VoucherSession) => {
+      const aStart = parseTimeToMinutes(a.startTime);
+      const bStart = parseTimeToMinutes(b.startTime);
+      return aStart < bStart + b.totalDuration && bStart < aStart + a.totalDuration;
+    };
+    for (let i = 0; i < drafts.length; i++) {
+      const clash = existingSessions.some((o) => overlaps(drafts[i], o)) || drafts.slice(0, i).some((o) => overlaps(drafts[i], o));
+      if (clash) {
+        setErrorMsg(
+          `${serviceNameOf(drafts[i].serviceIds[0])}: this session overlaps with another scheduled session. Please choose a different time slot.`
+        );
+        return;
+      }
+    }
+    drafts.forEach((d) => onAdd(d));
+    onClose();
+  };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -1204,7 +1485,7 @@ function AddVoucherSessionModal({
             </div>
           )}
 
-          {/* 1. Gifted services for this session (fixed by the voucher; split across sessions if several) */}
+          {/* 1. Gifted services for this booking (each selected service gets its own room / time / therapist) */}
           <div>
             <div className="flex items-center gap-2 mb-2">
               <Gift className="h-4 w-4 text-emerald-600" />
@@ -1217,6 +1498,7 @@ function AddVoucherSessionModal({
               {availableGifted.map((g) => {
                 const checked = selectedServiceIds.includes(g.id);
                 const sv = services.find((x) => String(x.id) === g.id);
+                const limitReached = !checked && selectedServiceIds.length >= sessionLimit;
                 return (
                   <div
                     key={g.id}
@@ -1229,7 +1511,7 @@ function AddVoucherSessionModal({
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!sv || (availableGifted.length === 1 && !isPkg) || Boolean(pkgDisabledReason(g.id))}
+                        disabled={!sv || (availableGifted.length === 1 && !isPkg) || limitReached}
                         onChange={() => sv && toggleService(sv)}
                         className="mt-0.5 h-4 w-4 accent-emerald-600"
                       />
@@ -1238,66 +1520,18 @@ function AddVoucherSessionModal({
                         {!sv && !servicesLoading && (
                           <p className="text-[11px] text-destructive italic">Not available in this branch</p>
                         )}
-                        {pkgDisabledReason(g.id) && (
-                          <p className="text-[11px] text-muted-foreground">{pkgDisabledReason(g.id)}</p>
-                        )}
                       </div>
                     </label>
-                    {checked && (g.addons.length > 0 || g.extra.minutes > 0) && (
-                      <div className="mt-2 ml-7 space-y-1.5">
-                        {g.addons.map((a) => {
-                          const key = `${g.id}:${a.id}`;
-                          return (
-                            <label key={key} className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={!excludedAddons.has(key)}
-                                onChange={() =>
-                                  setExcludedAddons((prev) => {
-                                    const next = new Set(prev);
-                                    if (next.has(key)) next.delete(key);
-                                    else next.add(key);
-                                    return next;
-                                  })
-                                }
-                                className="h-3.5 w-3.5 accent-violet-500"
-                              />
-                              <Sparkles className="h-3 w-3 text-violet-500" />
-                              <span>{a.name}{a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}</span>
-                            </label>
-                          );
-                        })}
-                        {g.extra.minutes > 0 && (
-                          <label className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={!skippedExtra.has(g.id)}
-                              onChange={() =>
-                                setSkippedExtra((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(g.id)) next.delete(g.id);
-                                  else next.add(g.id);
-                                  return next;
-                                })
-                              }
-                              className="h-3.5 w-3.5 accent-amber-500"
-                            />
-                            <Timer className="h-3 w-3 text-amber-500" />
-                            <span>Extra time +{g.extra.minutes} min</span>
-                          </label>
-                        )}
-                      </div>
-                    )}
                   </div>
                 );
               })}
               <p className="text-[11px] text-muted-foreground">
                 {availableGifted.length > 1
-                  ? 'Untick a service to leave it for another session or booking. Unticked add-ons / extra time are not used.'
+                  ? 'Untick a service to leave it for another session or booking. Each ticked service gets its own room and time. Unticked add-ons / extra time are not used.'
                   : 'Unticked add-ons / extra time are not used in this booking.'}
               </p>
             </div>
-            {!servicesLoading && selectedServices.length === 0 && (
+            {!servicesLoading && availableGifted.length > 0 && services.length === 0 && (
               <p className="mt-2 text-xs text-destructive italic">{voucherServiceName} is not available in this branch.</p>
             )}
           </div>
@@ -1307,154 +1541,34 @@ function AddVoucherSessionModal({
               Tick one or more services above to choose a room, time slot and therapist.
             </p>
           )}
-          {(!isPkg || selectedServiceIds.length > 0) && (<>
-          {/* 3. Room / Arrangement Selection */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Building2 className="h-4 w-4 text-amber-500" />
-                <p className="text-sm font-extrabold text-foreground">Select Room / Arrangement *</p>
-                {arrangementsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-              </div>
-            </div>
 
-            {arrangements.length > 0 ? (
-              <div className="flex gap-2.5 overflow-x-auto pb-1.5" style={{ scrollbarWidth: 'none' }}>
-                {arrangements.map((arr) => {
-                  const cfg = getArrCfg(arr.arrangement_type);
-                  const Icon = cfg.Icon;
-                  const isSel = selectedRoomId === arr.id;
-                  const price = arr.arrangement_price ?? arr.base_price;
-                  return (
-                    <button
-                      key={arr.id}
-                      type="button"
-                      onClick={() => setSelectedRoomId(arr.id)}
-                      className={cn(
-                        'relative flex-shrink-0 w-[130px] rounded-2xl overflow-hidden transition-all duration-200 group h-[130px] border cursor-pointer',
-                        isSel ? 'border-amber-500 ring-2 ring-amber-500/50 shadow-md' : 'border-border/70 hover:border-border'
-                      )}
-                    >
-                      <div className={cn('absolute inset-0 bg-gradient-to-br', cfg.gradient)}>
-                        <div className="absolute inset-0 flex items-center justify-center opacity-20">
-                          <Icon className={cn('h-16 w-16', cfg.iconColor)} />
-                        </div>
-                      </div>
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
-                      {isSel && (
-                        <div className="absolute top-2 right-2 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white">
-                          <Check className="h-3 w-3" />
-                        </div>
-                      )}
-                      <div className="relative z-10 h-full w-full flex flex-col justify-end p-2.5 text-center text-white">
-                        <p className="text-xs font-extrabold truncate">{arr.name}</p>
-                        <p className="text-[10px] font-semibold text-amber-200 mt-0.5">{price ? `${fmt(price)} KWD` : 'Included'}</p>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">No arrangement available for this branch</p>
-            )}
-
-          </div>
-
-          {/* 4. Timeslots */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-emerald-500" />
-                <p className="text-sm font-extrabold text-foreground">Select Start Time *</p>
-              </div>
-              <span className="text-xs text-muted-foreground">{availableSlots.filter((s) => s.available).length} available</span>
-            </div>
-            {availableSlots.length > 0 ? (
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2 max-h-36 overflow-y-auto p-1" style={{ scrollbarWidth: 'none' }}>
-                {availableSlots.map((slot) => {
-                  const isSel = slot.time === selectedTimeSlot;
-                  return (
-                    <button
-                      key={slot.time}
-                      type="button"
-                      disabled={!slot.available}
-                      onClick={() => setSelectedTimeSlot(slot.time)}
-                      className={cn(
-                        'py-2 px-1 text-center rounded-xl text-xs font-bold border transition cursor-pointer',
-                        isSel
-                          ? 'border-emerald-600 bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-500/20'
-                          : slot.available
-                          ? 'border-border/70 bg-card hover:bg-emerald-500/10 text-foreground'
-                          : 'border-border/30 bg-muted/30 text-muted-foreground/40 cursor-not-allowed line-through'
-                      )}
-                    >
-                      {slot.time}
-                    </button>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">No slots available for this date and room</p>
-            )}
-          </div>
-
-          {/* 5. Therapist Selection */}
-          {selectedTimeSlot && (
-            <div>
-              <div className="flex items-center gap-2 mb-2">
-                <User className="h-4 w-4 text-violet-500" />
-                <p className="text-sm font-extrabold text-foreground">{isCoupleRoom ? 'Select Therapists (Primary & Secondary) *' : 'Select Therapist *'}</p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {availableTherapistsForSlot.map((t) => {
-                  const tId = t.id ?? t.therapist_id ?? '';
-                  const isPrimary = tId === selectedTherapistId;
-                  const isSecondary = isCoupleRoom && tId === selectedSecondaryTherapistId;
-                  const isSel = isPrimary || isSecondary;
-                  const tName = getTherapistDisplayName(t);
-                  return (
-                    <button
-                      key={tId}
-                      type="button"
-                      onClick={() => {
-                        if (!isCoupleRoom) {
-                          setSelectedTherapistId(tId);
-                          setSelectedTherapist(t);
-                          return;
-                        }
-                        if (isPrimary) return;
-                        if (isSecondary) {
-                          const prevId = selectedTherapistId;
-                          const prevObj = selectedTherapist;
-                          setSelectedTherapistId(tId);
-                          setSelectedTherapist(t);
-                          setSelectedSecondaryTherapistId(prevId);
-                          setSelectedSecondaryTherapist(prevObj);
-                        } else {
-                          setSelectedSecondaryTherapistId(tId);
-                          setSelectedSecondaryTherapist(t);
-                        }
-                      }}
-                      className={cn(
-                        'flex items-center gap-2.5 rounded-xl border p-2 text-left transition cursor-pointer',
-                        isSel ? 'border-violet-500 bg-violet-500/10 ring-1 ring-violet-500' : 'border-border/70 bg-card hover:bg-muted/40'
-                      )}
-                    >
-                      <div className="h-8 w-8 rounded-full bg-violet-100 text-violet-700 font-bold text-xs flex items-center justify-center shrink-0">
-                        {getInitials(tName)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-bold truncate text-foreground">{tName}</p>
-                        <p className="text-[10px] text-muted-foreground">{isCoupleRoom && isPrimary ? 'Primary' : isCoupleRoom && isSecondary ? 'Secondary' : 'Available'}</p>
-                      </div>
-                      {isSel && <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          </>)}
+          {selectedServiceIds.map((id) => {
+            const g = availableGifted.find((x) => x.id === id);
+            if (!g) return null;
+            return (
+              <ServiceSessionBlock
+                key={id}
+                gifted={g}
+                service={services.find((x) => String(x.id) === id)}
+                servicesLoading={servicesLoading}
+                showTitle={selectedServiceIds.length > 1}
+                isPkg={isPkg}
+                pkgId={pkgId}
+                giftedCount={giftedServices.length}
+                branchId={branchId}
+                selectedDate={selectedDate}
+                voucher={voucher}
+                availabilitiesData={availabilitiesData}
+                authHeader={authHeader}
+                addonPool={pool}
+                blockAddons={blockAddonsMap[id] ?? []}
+                assignedTo={assignedTo}
+                serviceNameOf={serviceNameOf}
+                onAssignAddon={onAssignAddon}
+                onReport={onReport}
+              />
+            );
+          })}
         </div>
 
         {/* Footer */}
@@ -1513,6 +1627,8 @@ export function RedeemVoucherModal({
     id: string;
     name: string;
     components: { id: string; name: string; duration_minutes: number; base_price: string }[];
+    /** Add-ons covered by the package (redeemed together with its first included service) */
+    addons: { id: string; name: string; price: string | number; duration_minutes: number }[];
   } | null>(null);
   useEffect(() => {
     const list = getVoucherServices(voucherProp);
@@ -1533,6 +1649,12 @@ export function RedeemVoucherModal({
             duration_minutes: Number(c.duration_minutes) || 60,
             base_price: String(c.base_price ?? '0'),
           })),
+          addons: (Array.isArray(svc?.included_addons) ? (svc.included_addons as AnyRecord[]) : []).map((a) => ({
+            id: String(a.id),
+            name: String(a.name ?? 'Add-on'),
+            price: a.price ?? 0,
+            duration_minutes: Number(a.duration_minutes) || 0,
+          })),
         });
       })
       .catch(() => {});
@@ -1547,9 +1669,10 @@ export function RedeemVoucherModal({
         ? voucherProp
         : {
             ...voucherProp,
-            services: pkgInfo.components.map((c) => ({
+            services: pkgInfo.components.map((c, idx) => ({
               service_id: c.id,
               service_data: { id: c.id, name: c.name, duration_minutes: c.duration_minutes, base_price: c.base_price },
+              // package add-ons are covered by the voucher and can be attached to any included service (see the add-on pool)
               addons: [],
               extra_time: 0,
               price_for_extra_time: 0,
@@ -1691,23 +1814,31 @@ export function RedeemVoucherModal({
         const bId = String(b.id ?? b.branch_id ?? '');
         if (!bId) return null;
         try {
-          // For package vouchers, check arrangements of the packaged service itself
-          const ids = isPackageVoucher && pkgInfo?.id ? [String(pkgInfo.id)] : (giftedServiceIds.length > 0 ? giftedServiceIds : [serviceId]);
-          for (const sid of ids) {
-            const r = await authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${bId}`, {
-              headers: authHeader ? { Authorization: authHeader } : undefined,
-            });
-            const d = await r.json();
-            const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
-              (a: ApiArrangement) => a.is_active !== false
-            );
-            if (list.length === 0) return null;
-            if (requiredType) {
-              const matchesReq = list.some((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredType);
-              if (!matchesReq) return null;
+          // For package vouchers, check arrangements of the packaged service itself;
+          // if the package has none at this branch, fall back to its included services.
+          const hasArrangements = async (sids: string[]): Promise<boolean> => {
+            for (const sid of sids) {
+              const r = await authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${bId}`, {
+                headers: authHeader ? { Authorization: authHeader } : undefined,
+              });
+              const d = await r.json();
+              const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
+                (a: ApiArrangement) => a.is_active !== false
+              );
+              if (list.length === 0) return false;
+              if (requiredType) {
+                const matchesReq = list.some((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredType);
+                if (!matchesReq) return false;
+              }
             }
+            return true;
+          };
+          const includedIds = giftedServiceIds.length > 0 ? giftedServiceIds : [serviceId];
+          if (isPackageVoucher && pkgInfo?.id) {
+            if (await hasArrangements([String(pkgInfo.id)])) return bId;
+            return (await hasArrangements(includedIds)) ? bId : null;
           }
-          return bId;
+          return (await hasArrangements(includedIds)) ? bId : null;
         } catch {
           return null;
         }
@@ -1772,8 +1903,65 @@ export function RedeemVoucherModal({
     setSessions((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // When the chosen therapist turns out to be booked, find another therapist free for the whole session
+  const baseSessions = sessions;
+  const findAlternativeTherapist = async (
+    sess: VoucherSession,
+    excluded: Set<string>
+  ): Promise<{ id: string; name: string; avatar?: string } | null> => {
+    try {
+      const r = await authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+        body: JSON.stringify({
+          service_id: sess.serviceIds[0],
+          service_ids: sess.serviceIds,
+          branch_id: selectedBranchId,
+          expire_date: toZonedIsoFromLocal(voucher.expire_date),
+        }),
+      });
+      const d = await r.json();
+      const list: ApiTherapist[] = Array.isArray(d?.therapists)
+        ? d.therapists
+        : Array.isArray(d?.data?.therapists)
+        ? d.data.therapists
+        : [];
+      const start = parseTimeToMinutes(sess.startTime);
+      const steps = Math.max(1, Math.ceil(sess.totalDuration / 30));
+      const busyWithOthers = new Set(
+        [...baseSessions]
+          .filter((o) => o.id !== sess.id)
+          .filter((o) => {
+            const os = parseTimeToMinutes(o.startTime);
+            return start < os + o.totalDuration && os < start + sess.totalDuration;
+          })
+          .flatMap((o) => [o.therapistId, o.secondaryTherapistId ?? ''])
+      );
+      for (const t of list) {
+        const tid = String(t.id ?? t.therapist_id ?? '');
+        if (!tid || excluded.has(tid) || busyWithOthers.has(tid)) continue;
+        const free = new Set<number>(((t.availabilities?.[selectedDate] || []) as string[]).map((x) => parseTimeToMinutes(x)));
+        let ok = true;
+        for (let k = 0; k < steps; k++) {
+          if (!free.has(start + k * 30)) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) return { id: tid, name: getTherapistDisplayName(t), avatar: t.avatar || t.photo_url };
+      }
+    } catch {
+      /* fall through */
+    }
+    return null;
+  };
+
   // Submit handler
-  const handleConfirmRedeem = async () => {
+  const handleConfirmRedeem = async (sessionList?: VoucherSession[], triedTherapists: Set<string> = new Set()): Promise<void> => {
+    const sessions = sessionList ?? baseSessions;
     if (sessions.length === 0) {
       setSubmitError('Please add at least one session.');
       return;
@@ -1955,6 +2143,28 @@ export function RedeemVoucherModal({
             : Array.isArray(v)
             ? v.map((d: any) => d?.msg || d?.message || JSON.stringify(d)).join('; ')
             : '';
+        // Selected therapist is already booked → automatically switch to another available therapist and retry
+        const errText = [pick(errJson?.error?.detail), pick(errJson?.error?.message), pick(errJson?.detail), pick(errJson?.message)].join(' ');
+        const busyId = errText.match(/therapist\s+([0-9a-f]{8}-[0-9a-f-]{27})\s+is already booked/i)?.[1];
+        if (busyId && triedTherapists.size < 10) {
+          const nextTried = new Set(triedTherapists).add(busyId);
+          const target = sessions.find((x) => x.therapistId === busyId || x.secondaryTherapistId === busyId);
+          if (target) {
+            const alt = await findAlternativeTherapist(target, nextTried);
+            if (alt) {
+              const isSecondary = target.secondaryTherapistId === busyId && target.therapistId !== busyId;
+              const updated = sessions.map((x) =>
+                x.id !== target.id
+                  ? x
+                  : isSecondary
+                  ? { ...x, secondaryTherapistId: alt.id, secondaryTherapistName: alt.name, secondaryTherapistAvatar: alt.avatar }
+                  : { ...x, therapistId: alt.id, therapistName: alt.name, therapistAvatar: alt.avatar }
+              );
+              setSessions(updated);
+              return await handleConfirmRedeem(updated, nextTried);
+            }
+          }
+        }
         throw new Error(
           pick(errJson?.error?.detail) ||
             pick(errJson?.error?.message) ||
@@ -1974,7 +2184,7 @@ export function RedeemVoucherModal({
         redemption: {
           booking_number: newBooking?.booking_number || newBooking?.booking_no,
           services: pkgInfo
-            ? [{ service_id: pkgInfo.id, service_name: pkgInfo.name, addon_ids: [], extra_time: 0 }]
+            ? [{ service_id: pkgInfo.id, service_name: pkgInfo.name, addon_ids: pkgInfo.addons.map((a) => a.id), extra_time: 0 }]
             : sessions.flatMap((x) => x.redemptionServices ?? []),
         },
         booking_id: newBookingId,
@@ -2388,7 +2598,7 @@ export function RedeemVoucherModal({
                 <button
                   type="button"
                   disabled={submitting || sessions.length === 0 || (isPackageVoucher && unassignedCount > 0)}
-                  onClick={handleConfirmRedeem}
+                  onClick={() => handleConfirmRedeem()}
                   className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition disabled:opacity-50 cursor-pointer"
                 >
                   {submitting ? (
@@ -2419,6 +2629,7 @@ export function RedeemVoucherModal({
           availabilitiesData={availabilitiesData}
           authHeader={authHeader}
           existingSessions={sessions}
+          maxNewSessions={Math.min(maxSessions - sessions.length, unassignedCount)}
           onAdd={(newSess) => setSessions((prev) => [...prev, newSess])}
           onClose={() => setShowAddSessionModal(false)}
         />

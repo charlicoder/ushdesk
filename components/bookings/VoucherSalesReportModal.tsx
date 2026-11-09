@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   X, Printer, TrendingUp, Building2, CreditCard, Wallet, UserCheck, CalendarDays,
-  CheckCircle2, Clock, Gift, BarChart3, ArrowLeft, Eye,
+  CheckCircle2, Clock, Gift, BarChart3, ArrowLeft, Eye, Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -32,6 +32,8 @@ export interface ReportVoucher {
   recipient_phone?: string | null;
   gift_from?: string | null;
   gift_to?: string | null;
+  referenced_by_name?: string | null;
+  referral_number?: string | null;
 }
 
 interface Props {
@@ -105,6 +107,13 @@ const senderOf = (v: ReportVoucher) =>
   String(v.sender_data?.name || v.sender_details?.name || v.gift_from || '').trim() || '—';
 const recipientOf = (v: ReportVoucher) =>
   String(v.recipient_data?.name || v.recipient_details?.name || v.gift_to || v.recipient_phone || '').trim() || '—';
+
+/** Employee whose affiliate link generated the sale, or a "Direct" bucket when none. */
+const referrerOf = (v: ReportVoucher) => {
+  const name = String(v.referenced_by_name || '').trim();
+  if (name) return v.referral_number ? `${name} (#${v.referral_number})` : name;
+  return 'Direct (no referral)';
+};
 
 const fmtDateTime = (raw: string | null | undefined) => {
   if (!raw) return '—';
@@ -225,6 +234,7 @@ export function VoucherSalesReportModal({
       byThrough: group(list, (v) => throughLabel(v.payment_through)),
       byProvider: group(list, providerOf),
       byCreator: group(list, (v) => getCreatorName(v)),
+      byReferrer: group(list, referrerOf),
     });
     return {
       sales, pending, active, redeemed,
@@ -325,7 +335,7 @@ export function VoucherSalesReportModal({
 
   const Section = ({ heading, note, tables, grand, tone }: {
     heading: string; note: string; grand: number; tone: string;
-    tables: { byBranch: Row[]; byThrough: Row[]; byProvider: Row[]; byCreator: Row[] };
+    tables: { byBranch: Row[]; byThrough: Row[]; byProvider: Row[]; byCreator: Row[]; byReferrer: Row[] };
   }) => (
     <div className="space-y-4">
       <div className={cn('avoid-break rounded-xl border px-4 py-2.5', tone)}>
@@ -336,6 +346,7 @@ export function VoucherSalesReportModal({
       <Table title="By Payment Through" icon={Wallet} rows={tables.byThrough} grand={grand} />
       <Table title="By Payment Provider" icon={CreditCard} rows={tables.byProvider} grand={grand} />
       <Table title="By Created By" icon={UserCheck} rows={tables.byCreator} grand={grand} />
+      <Table title="By Referred By" icon={Link2} rows={tables.byReferrer} grand={grand} />
     </div>
   );
 
@@ -579,6 +590,7 @@ export function VoucherSalesReportModal({
                     <th className="px-2 py-2 text-left">Sender</th>
                     <th className="px-2 py-2 text-left">Recipient</th>
                     <th className="px-2 py-2 text-left">Payment Provider</th>
+                    <th className="px-2 py-2 text-left">Referred By</th>
                     <th className="px-2 py-2 text-left">Status</th>
                     <th className="px-4 py-2 text-right">Amount ({currency})</th>
                   </tr>
@@ -592,6 +604,7 @@ export function VoucherSalesReportModal({
                       <td className="px-2 py-2 whitespace-nowrap">{senderOf(v)}</td>
                       <td className="px-2 py-2 whitespace-nowrap">{recipientOf(v)}</td>
                       <td className="px-2 py-2 whitespace-nowrap">{voucherProvider(v)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{String(v.referenced_by_name || '').trim() ? referrerOf(v) : '—'}</td>
                       <td className="px-2 py-2 capitalize whitespace-nowrap">{String(v.status ?? '').replace(/_/g, ' ')}</td>
                       <td className="px-4 py-2 text-right font-mono font-bold tabular-nums">{kwd(num(v.total_amount))}</td>
                     </tr>
@@ -599,7 +612,7 @@ export function VoucherSalesReportModal({
                 </tbody>
                 <tfoot className="border-t-2 border-border/60 bg-muted/30 font-extrabold">
                   <tr>
-                    <td className="px-4 py-2" colSpan={7}>Total</td>
+                    <td className="px-4 py-2" colSpan={8}>Total</td>
                     <td className="px-4 py-2 text-right font-mono tabular-nums">
                       {kwd(detail.items.reduce((s, v) => s + num(v.total_amount), 0))}
                     </td>

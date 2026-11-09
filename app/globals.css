@@ -6,6 +6,7 @@
 
 @layer base {
   :root {
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
     --background: 28 30% 96%;
     --foreground: 20 25% 15%;
     --card: 0 0% 100%;

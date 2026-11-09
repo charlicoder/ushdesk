@@ -243,17 +243,27 @@ export function EditSessionModal({
       setSessionAddons((prev) => prev.filter((x) => addonKey(x) !== key));
       return;
     }
-    if (selectedCountForPrice(a) >= (giftedLimits.get(priceKey(a)) ?? 0)) return;
-    setSessionAddons((prev) => [
-      ...prev,
-      {
-        id: a.id ?? a.addon_id,
-        addon_id: a.addon_id ?? a.id,
-        name: a.name ?? a.addon_name,
-        price: a.price ?? a.base_price ?? 0,
-        duration_minutes: a.duration_minutes ?? a.duration ?? 0,
-      },
-    ]);
+    const picked = {
+      id: a.id ?? a.addon_id,
+      addon_id: a.addon_id ?? a.id,
+      name: a.name ?? a.addon_name,
+      price: a.price ?? a.base_price ?? 0,
+      duration_minutes: a.duration_minutes ?? a.duration ?? 0,
+    };
+    const limit = giftedLimits.get(priceKey(a)) ?? 0;
+    if (limit <= 0) return;
+    if (selectedCountForPrice(a) >= limit) {
+      // Switch: at the limit for this price → replace one selected add-on of the same price
+      setSessionAddons((prev) => {
+        const idx = prev.findIndex((x) => priceKey(x) === priceKey(a));
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = picked;
+        return next;
+      });
+      return;
+    }
+    setSessionAddons((prev) => [...prev, picked]);
   };
 
   // Filter branch services (only those the session's room offers)
@@ -550,7 +560,7 @@ export function EditSessionModal({
             </div>
           </div>
 
-          {/* Add-ons: choose among same-price add-ons, limited to the gifted count */}
+          {/* Add-ons: switch among same-price add-ons (count per price stays as booked) */}
           {selectableAddons.length > 0 && (
             <div className="space-y-2">
               <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -560,7 +570,7 @@ export function EditSessionModal({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {selectableAddons.map((a) => {
                   const checked = sessionAddons.some((x) => addonKey(x) === addonKey(a));
-                  const full = !checked && selectedCountForPrice(a) >= (giftedLimits.get(priceKey(a)) ?? 0);
+                  const full = false; // at the limit, picking another same-price add-on switches (replaces) it
                   return (
                     <label
                       key={addonKey(a)}
