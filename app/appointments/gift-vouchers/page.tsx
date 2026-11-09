@@ -1512,7 +1512,6 @@ function VoucherDetailModal({
   const handleRedeemClick = () => {
     const serviceId = voucher.service_id || (voucher.service_data as any)?.id;
     const branchId = voucher.branch_id || voucher.branch_data?.branch_id;
-    const arrangementId = voucher.service_arrangement_id || (voucher.service_arrangement_data as any)?.id;
     const expireDateWithTz = toZonedIsoFromLocal(voucher.expire_date);
     // Only services not yet redeemed (partial redemption) take part in availability
     const usedServiceIds = new Set<string>(
@@ -1522,27 +1521,33 @@ function VoucherDetailModal({
       .map((sv) => String(sv.service_id || (sv.service_data as any)?.id || ''))
       .filter((id) => id && !usedServiceIds.has(id));
 
-    const promise = authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({
-        service_id: remainingServiceIds[0] || serviceId,
-        // multi-service vouchers: only therapists / rooms that support every still-redeemable service
-        ...(remainingServiceIds.length > 1 ? { service_ids: remainingServiceIds } : {}),
-        branch_id: branchId,
-        service_arrangement_id: arrangementId || null,
-        expire_date: expireDateWithTz,
-      }),
-    }).then(async (r) => {
-      if (!r.ok) {
-        const err = await r.json().catch(() => ({}));
-        throw new Error(err.detail || err.message || `HTTP ${r.status}`);
-      }
-      return r.json().catch(() => ({}));
-    });
+    const effectiveServiceId = remainingServiceIds[0] || serviceId;
+
+    const promise = (branchId && effectiveServiceId)
+      ? authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            service_id: effectiveServiceId,
+            ...(remainingServiceIds.length > 1 ? { service_ids: remainingServiceIds } : {}),
+            branch_id: branchId,
+            expire_date: expireDateWithTz,
+          }),
+        })
+          .then(async (r) => {
+            if (!r.ok) {
+              return null;
+            }
+            return r.json().catch(() => null);
+          })
+          .catch((err) => {
+            console.warn('Failed to prefetch voucher availabilities:', err);
+            return null;
+          })
+      : null;
 
     onRedeem?.(
       {
@@ -1550,7 +1555,7 @@ function VoucherDetailModal({
         invoice_number: invoiceNumber || voucher.invoice_number,
         payment_number: paymentNumber || voucher.payment_number,
       },
-      promise
+      promise || undefined
     );
   };
 

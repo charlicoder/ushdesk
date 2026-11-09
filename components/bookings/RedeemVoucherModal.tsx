@@ -733,18 +733,45 @@ function AddVoucherSessionModal({
   );
   const availableGiftedKey = availableGifted.map((g) => g.id).join(',');
   const voucherServiceName = availableGifted.map((g) => g.name).join(' + ') || 'Spa Service';
-  const requiredArrType = normalizeArrType(
-    firstTruthy(
-      voucher.service_arrangement_data?.arrangement_type,
-      voucher.service_arrangement_data?.type,
-      voucher.arrangement_type,
-      voucher.room_type,
-      voucher.service_arrangement_data?.room_type,
-      voucher.service_arrangement_data?.arrangement_name,
-      voucher.service_arrangement_data?.room,
-      voucher.arrangement_name
-    )
-  );
+  const requiredArrType = useMemo(() => {
+    // 1. Check if any service in this session has a specific arrangement defined in voucher.services
+    const rawServices: AnyRecord[] = Array.isArray(voucher.services) ? voucher.services : [];
+    const matchedSvc = rawServices.find((s) =>
+      selectedServiceIds.includes(String(s.service_id ?? s.service_data?.id ?? ''))
+    );
+    if (matchedSvc) {
+      const svcType = normalizeArrType(
+        firstTruthy(
+          matchedSvc.service_arrangement_data?.arrangement_type,
+          matchedSvc.service_arrangement_data?.type,
+          matchedSvc.arrangement_type,
+          matchedSvc.room_type,
+          matchedSvc.service_arrangement_data?.room_type,
+          matchedSvc.service_arrangement_data?.arrangement_name,
+          matchedSvc.service_arrangement_data?.room,
+          matchedSvc.arrangement_name
+        )
+      );
+      if (svcType) return svcType;
+    }
+    // 2. If it's a single-service voucher (or not multi-service), check root voucher arrangement
+    const isMultiSvc = rawServices.length > 1;
+    if (!isMultiSvc) {
+      return normalizeArrType(
+        firstTruthy(
+          voucher.service_arrangement_data?.arrangement_type,
+          voucher.service_arrangement_data?.type,
+          voucher.arrangement_type,
+          voucher.room_type,
+          voucher.service_arrangement_data?.room_type,
+          voucher.service_arrangement_data?.arrangement_name,
+          voucher.service_arrangement_data?.room,
+          voucher.arrangement_name
+        )
+      );
+    }
+    return '';
+  }, [voucher, selectedServiceIds]);
 
   // 1. Load the (fixed) voucher service for this branch
   useEffect(() => {
@@ -821,15 +848,14 @@ function AddVoucherSessionModal({
       .then((lists) => {
         if (cancelled) return;
         const [first, ...rest] = lists;
-        const common = (first ?? [])
-          .filter((a) => rest.every((l) => l.some((x) => x.id === a.id)))
-          .filter(
-            (a) => {
-              if (!requiredArrType) return true;
+        const allCommon = (first ?? []).filter((a) => rest.every((l) => l.some((x) => x.id === a.id)));
+        const matched = requiredArrType
+          ? allCommon.filter((a) => {
               const aType = normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name);
               return aType === requiredArrType;
-            }
-          );
+            })
+          : allCommon;
+        const common = matched.length > 0 ? matched : allCommon;
         setArrangements(common);
         setSelectedRoomId(common.length > 0 ? common[0].id : '');
       })
@@ -1612,6 +1638,22 @@ export function RedeemVoucherModal({
   const [availabilitiesData, setAvailabilitiesData] = useState<any>(null);
   const [availabilitiesLoading, setAvailabilitiesLoading] = useState(false);
 
+  // Consume prefetched voucher availabilities if provided
+  useEffect(() => {
+    if (!initialAvailabilitiesPromise) return;
+    let cancelled = false;
+    initialAvailabilitiesPromise
+      .then((data) => {
+        if (!cancelled && data) {
+          setAvailabilitiesData((prev: any) => prev || data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [initialAvailabilitiesPromise]);
+
   // Fetch branches
   useEffect(() => {
     authedFetch('/api/v1/branches/', { headers: authHeader ? { Authorization: authHeader } : undefined })
@@ -1628,18 +1670,22 @@ export function RedeemVoucherModal({
   useEffect(() => {
     if (!serviceId || branches.length === 0) return;
     let cancelled = false;
-    const requiredType = normalizeArrType(
-      firstTruthy(
-        voucher.service_arrangement_data?.arrangement_type,
-        voucher.service_arrangement_data?.type,
-        voucher.arrangement_type,
-        voucher.room_type,
-        voucher.service_arrangement_data?.room_type,
-        voucher.service_arrangement_data?.arrangement_name,
-        voucher.service_arrangement_data?.room,
-        voucher.arrangement_name
-      )
-    );
+    const rawServices: AnyRecord[] = Array.isArray(voucher.services) ? voucher.services : [];
+    const isMultiSvc = rawServices.length > 1;
+    const requiredType = !isMultiSvc
+      ? normalizeArrType(
+          firstTruthy(
+            voucher.service_arrangement_data?.arrangement_type,
+            voucher.service_arrangement_data?.type,
+            voucher.arrangement_type,
+            voucher.room_type,
+            voucher.service_arrangement_data?.room_type,
+            voucher.service_arrangement_data?.arrangement_name,
+            voucher.service_arrangement_data?.room,
+            voucher.arrangement_name
+          )
+        )
+      : '';
     Promise.all(
       branches.map(async (b) => {
         const bId = String(b.id ?? b.branch_id ?? '');
@@ -1655,8 +1701,11 @@ export function RedeemVoucherModal({
             const list: ApiArrangement[] = (Array.isArray(d) ? d : (d.data ?? d.results ?? [])).filter(
               (a: ApiArrangement) => a.is_active !== false
             );
-            const ok = list.some((a) => !requiredType || normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredType);
-            if (!ok) return null;
+            if (list.length === 0) return null;
+            if (requiredType) {
+              const matchesReq = list.some((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredType);
+              if (!matchesReq) return null;
+            }
           }
           return bId;
         } catch {
@@ -1672,7 +1721,7 @@ export function RedeemVoucherModal({
     return () => {
       cancelled = true;
     };
-  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type]);
+  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type, voucher.services]);
 
   // Fetch voucher availabilities for branch
   useEffect(() => {
