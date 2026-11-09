@@ -37,6 +37,19 @@ import {
   type DateRange,
   matchesDateRange,
 } from '@/components/dashboard/date-range-filter';
+import {
+  fetchAllVoucherRows,
+  fetchVoucherCreators,
+  fetchVoucherFull,
+  fetchVoucherPage,
+  fetchVoucherStats,
+  invalidateVoucherCaches,
+  peekVoucherFull,
+  prefetchVoucherPages,
+  type VoucherCreator,
+  type VoucherListFilters,
+  type VoucherStats,
+} from '@/lib/giftVoucherApi';
 
 function getPageNumbers(current: number, total: number): (number | 'ellipsis')[] {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -5004,14 +5017,18 @@ function exportToPdf(
 
 interface VoucherReportModalProps {
   selectedVouchers: Voucher[];
-  allFilteredVouchers: Voucher[];
+  /** Number of vouchers matching the current filters (the rows are loaded only when the report is generated) */
+  allFilteredCount: number;
+  /** Loads every filtered voucher with the report fields, page by page */
+  loadReportRows: () => Promise<Voucher[]>;
   employeeMap: Record<string, string>;
   onClose: () => void;
 }
 
 function VoucherReportModal({
   selectedVouchers,
-  allFilteredVouchers,
+  allFilteredCount,
+  loadReportRows,
   employeeMap,
   onClose,
 }: VoucherReportModalProps) {
@@ -5024,7 +5041,8 @@ function VoucherReportModal({
   });
   const [generating, setGenerating] = useState(false);
 
-  const targetVouchers = scope === 'selected' ? selectedVouchers : allFilteredVouchers;
+  const [reportError, setReportError] = useState<string | null>(null);
+  const targetCount = scope === 'selected' ? selectedVouchers.length : allFilteredCount;
 
   const categories: Array<ReportField['category']> = ['General', 'Service', 'Financial', 'Parties', 'Audit'];
 
@@ -5059,28 +5077,32 @@ function VoucherReportModal({
     });
   };
 
-  const handleGenerate = () => {
-    if (selectedFieldIds.size === 0 || targetVouchers.length === 0) return;
+  const handleGenerate = async () => {
+    if (selectedFieldIds.size === 0 || targetCount === 0) return;
     setGenerating(true);
+    setReportError(null);
 
     const orderedFields = REPORT_FIELDS.filter((f) => selectedFieldIds.has(f.id));
 
-    setTimeout(() => {
-      try {
-        if (format === 'csv') {
-          exportToCsv(targetVouchers, orderedFields, employeeMap);
-        } else if (format === 'xlsx') {
-          exportToXlsx(targetVouchers, orderedFields, employeeMap);
-        } else if (format === 'pdf') {
-          exportToPdf(targetVouchers, orderedFields, employeeMap);
-        }
-        onClose();
-      } catch (err) {
-        console.error('Failed to export report:', err);
-      } finally {
-        setGenerating(false);
+    try {
+      // Report fields are loaded now (100 rows per request); a selection is a subset of the filtered set
+      const rows = await loadReportRows();
+      const ids = new Set(selectedVouchers.map((v) => v.id));
+      const targetVouchers = scope === 'selected' ? rows.filter((v) => ids.has(v.id)) : rows;
+      if (format === 'csv') {
+        exportToCsv(targetVouchers, orderedFields, employeeMap);
+      } else if (format === 'xlsx') {
+        exportToXlsx(targetVouchers, orderedFields, employeeMap);
+      } else if (format === 'pdf') {
+        exportToPdf(targetVouchers, orderedFields, employeeMap);
       }
-    }, 150);
+      onClose();
+    } catch (err) {
+      console.error('Failed to export report:', err);
+      setReportError(err instanceof Error ? err.message : 'Failed to load the report data');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   return (
@@ -5098,7 +5120,7 @@ function VoucherReportModal({
                 Generate Gift Vouchers Report
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Select columns and export format ({targetVouchers.length} record{targetVouchers.length > 1 ? 's' : ''})
+                Select columns and export format ({targetCount} record{targetCount > 1 ? 's' : ''})
               </p>
             </div>
           </div>
@@ -5115,7 +5137,7 @@ function VoucherReportModal({
         {/* Scrollable Content */}
         <div className="p-6 space-y-5 overflow-y-auto flex-1">
           {/* 1. Scope selection (if some selected) */}
-          {selectedVouchers.length > 0 && selectedVouchers.length < allFilteredVouchers.length && (
+          {selectedVouchers.length > 0 && selectedVouchers.length < allFilteredCount && (
             <div className="rounded-2xl border border-border/60 bg-muted/20 p-3 space-y-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
                 Records To Include:
@@ -5145,7 +5167,7 @@ function VoucherReportModal({
                   )}
                 >
                   <span>All Filtered Vouchers</span>
-                  <span className="font-mono font-bold text-foreground">{allFilteredVouchers.length}</span>
+                  <span className="font-mono font-bold text-foreground">{allFilteredCount}</span>
                 </button>
               </div>
             </div>
@@ -5326,8 +5348,9 @@ function VoucherReportModal({
 
         {/* Footer */}
         <div className="flex items-center justify-between border-t border-border/40 px-6 py-4 bg-muted/20 shrink-0">
+          {reportError && <p className="text-xs font-semibold text-destructive">{reportError}</p>}
           <p className="text-xs text-muted-foreground">
-            Target: <strong className="text-foreground">{targetVouchers.length}</strong> vouchers •{' '}
+            Target: <strong className="text-foreground">{targetCount}</strong> vouchers •{' '}
             <strong className="text-foreground">{selectedFieldIds.size}</strong> columns
           </p>
           <div className="flex items-center gap-2">
@@ -5342,7 +5365,7 @@ function VoucherReportModal({
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={generating || selectedFieldIds.size === 0 || targetVouchers.length === 0}
+              disabled={generating || selectedFieldIds.size === 0 || targetCount === 0}
               className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
               {generating ? (
@@ -5713,23 +5736,24 @@ export default function GiftVouchersPage() {
       .catch(() => {});
   }, []);
 
-  const creatorOptions = useMemo(() => {
-    const ids = new Set<string>();
-    vouchers.forEach((v) => {
-      if (v.created_by && v.created_by !== 'online' && v.created_by !== 'web' && v.created_by !== 'customer') {
-        ids.add(v.created_by);
-      }
-    });
-    return Array.from(ids).map((id) => {
-      const sample = vouchers.find((v) => v.created_by === id);
-      const creator = sample ? resolveVoucherCreator(sample, employeeMap) : null;
-      const resolved = employeeMap[id] || (user?.id === id && user?.name ? user.name : creator?.name);
-      return {
-        id,
-        name: resolved || (id.length > 20 ? `Staff (${id.slice(0, 6)})` : id),
-      };
-    });
-  }, [vouchers, employeeMap, user]);
+  // Creators come from the server (distinct created_by), not from a full voucher download
+  const [creatorList, setCreatorList] = useState<VoucherCreator[]>([]);
+  useEffect(() => {
+    fetchVoucherCreators().then(setCreatorList).catch(() => undefined);
+  }, []);
+  const creatorOptions = useMemo(
+    () =>
+      creatorList
+        .filter((c) => c.id && !['online', 'web', 'customer'].includes(c.id))
+        .map((c) => ({
+          id: c.id,
+          name:
+            employeeMap[c.id] ||
+            (user?.id === c.id && user?.name ? user.name : c.name) ||
+            (c.id.length > 20 ? `Staff (${c.id.slice(0, 6)})` : c.id),
+        })),
+    [creatorList, employeeMap, user]
+  );
 
   // Date filters (Created At & Redeemed At) & pagination
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
@@ -5826,193 +5850,113 @@ export default function GiftVouchersPage() {
     setInitialRedeemAvailabilitiesPromise(promise || null);
   }, []);
 
-  const fetchVouchers = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch('/booknpay/api/v1/vouchers/', {
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body as Record<string, string>).detail ?? `Error ${res.status}`);
+  // ── Server-driven list: filters / search / paging run in the database ─────────
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  const listFilters = useMemo<VoucherListFilters>(
+    () => ({
+      statuses: statusFilters,
+      channel: channelFilter,
+      createdBy: createdByFilter,
+      q: debouncedSearch,
+      createdFrom: dateRange.from,
+      createdTo: dateRange.to,
+      redeemedFrom: redeemedDateRange.from,
+      redeemedTo: redeemedDateRange.to,
+    }),
+    [statusFilters, channelFilter, createdByFilter, debouncedSearch, dateRange, redeemedDateRange]
+  );
+  const filtersKey = JSON.stringify(listFilters);
+
+  const [totalCount, setTotalCount] = useState(0);
+  const [serverStats, setServerStats] = useState<VoucherStats | null>(null);
+  const seenRows = React.useRef<Map<string, Voucher>>(new Map());
+  const requestSeq = React.useRef(0);
+
+  const loadPage = useCallback(
+    async (refresh = false) => {
+      const seq = ++requestSeq.current;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetchVoucherPage<Voucher>(listFilters, page, pageSize, { refresh });
+        if (seq !== requestSeq.current) return; // a newer request superseded this one
+        res.items.forEach((v) => seenRows.current.set(v.id, v));
+        setVouchers(res.items);
+        setTotalCount(res.total);
+        // Quietly warm the next two pages so "Next" is instant
+        prefetchVoucherPages(listFilters, [page + 1, page + 2], pageSize, res.totalPages);
+      } catch (err) {
+        if (seq === requestSeq.current) setError(err instanceof Error ? err.message : 'Failed to load vouchers');
+      } finally {
+        if (seq === requestSeq.current) setLoading(false);
       }
-      const data = await res.json();
-      // Handle both array and paginated { results: [] } responses
-      const list: Voucher[] = Array.isArray(data) ? data : (data.results ?? data.data ?? []);
-      setVouchers(list);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load vouchers');
-    } finally {
-      setLoading(false);
+    },
+    [listFilters, page, pageSize]
+  );
+
+  const prevFiltersKey = React.useRef(filtersKey);
+  useEffect(() => {
+    // A filter change also resets the page to 1 (effect above): wait for that instead of loading a stale page
+    if (prevFiltersKey.current !== filtersKey) {
+      prevFiltersKey.current = filtersKey;
+      if (page !== 1) return;
     }
-  }, [token]);
+    void loadPage();
+  }, [loadPage, filtersKey, page]);
 
-  useEffect(() => { fetchVouchers(); }, [fetchVouchers]);
+  useEffect(() => {
+    let active = true;
+    fetchVoucherStats(listFilters)
+      .then((st) => active && setServerStats(st))
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [listFilters]);
 
-  // ── Derived / filtered ──────────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    return vouchers.filter((v) => {
-      // 1. Status multi-select filter
-      if (statusFilters.length > 0 && statusFilters.length < 6) {
-        const s = v.status?.toLowerCase() ?? '';
-        const isPending =
-          s === 'pending' ||
-          s === 'payment_pending' ||
-          s === 'created' ||
-          s.includes('pending');
-        const isRedeemed = s !== 'partially_redeemed' && (s === 'redeemed' || Boolean(v.redeemed_at));
+  /** Reload after any change (drops the client + Next.js caches first). */
+  const fetchVouchers = useCallback(async () => {
+    invalidateVoucherCaches();
+    await Promise.all([
+      loadPage(true),
+      fetchVoucherStats(listFilters, true).then(setServerStats).catch(() => undefined),
+    ]);
+    fetchVoucherCreators().then(setCreatorList).catch(() => undefined);
+  }, [loadPage, listFilters]);
 
-        const matchesAny = statusFilters.some((target) => {
-          if (target === 'scheduled') return s === 'scheduled';
-          if (target === 'pending') return isPending;
-          if (target === 'redeemed') return isRedeemed;
-          if (target === 'partially_redeemed') return s === 'partially_redeemed';
-          if (target === 'active') return s === 'active' && !isRedeemed;
-          if (target === 'expired') return s === 'expired';
-          if (target === 'cancelled') return s === 'cancelled';
-          return s === target;
-        });
+  // Opening a voucher loads its full details (all JSON fields) from the database, then caches them
+  const [openingId, setOpeningId] = useState<string | null>(null);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const handleOpenVoucher = useCallback(async (v: Voucher) => {
+    const hit = peekVoucherFull<Voucher>(v.id);
+    if (hit) {
+      setSelectedVoucher(hit);
+      return;
+    }
+    setOpeningId(v.id);
+    setOpenError(null);
+    try {
+      setSelectedVoucher(await fetchVoucherFull<Voucher>(v.id));
+    } catch (err) {
+      setOpenError(err instanceof Error ? err.message : 'Failed to load voucher details');
+    } finally {
+      setOpeningId(null);
+    }
+  }, []);
 
-        if (!matchesAny) return false;
-      }
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' ||
+      dateFilter !== 'all' || redeemedDateFilter !== 'all'
+  );
 
-      // 1b. Payment through channel filter (ushweb, desk, ushspa)
-      if (channelFilter !== 'all') {
-        const pt = (v.payment_through || (v as any).payment_data?.payment_through || (v as any).channel || '').trim().toLowerCase();
-        if (channelFilter === 'ushweb') {
-          if (pt !== 'ushweb' && pt !== 'web') return false;
-        } else if (channelFilter === 'desk') {
-          if (pt !== 'desk' && pt !== 'ushdesk') return false;
-        } else if (channelFilter === 'ushspa') {
-          if (pt !== 'ushspa' && pt !== 'spa' && pt !== 'app') return false;
-        } else if (pt !== channelFilter.toLowerCase()) {
-          return false;
-        }
-      }
+  const paginatedVouchers = vouchers;
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
-      // 1c. Created By filter
-      if (createdByFilter !== 'all') {
-        if (createdByFilter === '__online__') {
-          const cb = (v.created_by || '').toLowerCase();
-          if (cb && cb !== 'online' && cb !== 'web' && cb !== 'customer') return false;
-        } else {
-          if (v.created_by !== createdByFilter) return false;
-        }
-      }
-
-      // 2. Search box filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const qDigits = q.replace(/\D/g, '');
-        const qCode = q.replace(/[\s\-_]/g, '');
-
-        // Voucher code (secret_code) matching
-        const secretCode = (v.secret_code ?? '').toLowerCase();
-        const secretCodeClean = secretCode.replace(/[\s\-_]/g, '');
-        const matchesSecretCode = secretCode.includes(q) || (qCode.length > 0 && secretCodeClean.includes(qCode));
-
-        const vNum = (v.voucher_number ?? '').toLowerCase();
-        const vNumClean = vNum.replace(/[\s\-_]/g, '');
-        const matchesVNum = vNum.includes(q) || (qCode.length > 0 && vNumClean.includes(qCode));
-
-        // Recipient number matching
-        const recipientPhones = [
-          v.recipient_phone,
-          v.recipient_data?.phone_number,
-          v.recipient_details?.phone_number,
-          (v as any).recipient_number,
-        ].filter(Boolean) as string[];
-
-        const matchesRecipientPhone = recipientPhones.some((phone) => {
-          const phoneLower = phone.toLowerCase();
-          if (phoneLower.includes(q)) return true;
-          if (qDigits.length >= 3) {
-            const phoneDigits = phone.replace(/\D/g, '');
-            if (phoneDigits.includes(qDigits)) return true;
-          }
-          return false;
-        });
-
-        // Sender phone matching
-        const senderPhones = [
-          v.sender_data?.phone_number,
-          v.sender_details?.phone_number,
-          (v as any).sender_phone,
-        ].filter(Boolean) as string[];
-
-        const matchesSenderPhone = senderPhones.some((phone) => {
-          const phoneLower = phone.toLowerCase();
-          if (phoneLower.includes(q)) return true;
-          if (qDigits.length >= 3) {
-            const phoneDigits = phone.replace(/\D/g, '');
-            if (phoneDigits.includes(qDigits)) return true;
-          }
-          return false;
-        });
-
-        const vId = (v.id ?? '').toLowerCase();
-        const recName = (v.recipient_data?.name ?? v.recipient_details?.name ?? '').toLowerCase();
-        const recEmail = (v.recipient_data?.email ?? v.recipient_details?.email ?? '').toLowerCase();
-        const sndName = (v.sender_data?.name ?? v.sender_details?.name ?? '').toLowerCase();
-        const ptName = (v.payment_through ?? '').toLowerCase();
-        const srvName = (v.service_data?.name ?? '').toLowerCase();
-        const brName = (v.branch_data?.name ?? '').toLowerCase();
-
-        const match =
-          matchesSecretCode ||
-          matchesRecipientPhone ||
-          matchesVNum ||
-          matchesSenderPhone ||
-          ptName.includes(q) ||
-          vId.includes(q) ||
-          recName.includes(q) ||
-          recEmail.includes(q) ||
-          sndName.includes(q) ||
-          srvName.includes(q) ||
-          brName.includes(q);
-
-        if (!match) return false;
-      }
-
-      // 3. Created At date filter
-      if (dateRange.from || dateRange.to) {
-        if (!v.created_at) return false;
-        const createdKuwaitDate = kuwaitDateString(v.created_at);
-        if (!matchesDateRange(createdKuwaitDate, dateRange) && !matchesDateRange(v.created_at, dateRange)) {
-          return false;
-        }
-      }
-
-      // 4. Redeemed At date filter
-      if (redeemedDateRange.from || redeemedDateRange.to) {
-        const redeemedCandidates = [
-          v.redeemed_at,
-          ...(Array.isArray(v.redemptions) ? v.redemptions.map((r) => r?.redeemed_at) : []),
-          v.status?.toLowerCase() === 'redeemed' && !v.redeemed_at ? v.booking_data?.created_at : null,
-        ].filter((ts): ts is string => Boolean(ts));
-
-        if (redeemedCandidates.length === 0) return false;
-        const matchesRedeemed = redeemedCandidates.some((ts) => {
-          const redeemedKuwaitDate = kuwaitDateString(ts);
-          return matchesDateRange(redeemedKuwaitDate, redeemedDateRange) || matchesDateRange(ts, redeemedDateRange);
-        });
-        if (!matchesRedeemed) return false;
-      }
-
-      return true;
-    });
-  }, [vouchers, statusFilters, channelFilter, createdByFilter, searchQuery, dateRange, redeemedDateRange]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paginatedVouchers = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return filtered.slice(start, start + pageSize);
-  }, [filtered, page, pageSize]);
 
   // Bulk action helpers
   const handleBulkDelete = async (idsToDelete?: string[]) => {
@@ -6070,7 +6014,7 @@ export default function GiftVouchersPage() {
   };
 
   const handleExportSelectedReport = () => {
-    const selectedVouchers = vouchers.filter((v) => selectedIds.has(v.id));
+    const selectedVouchers = selectedVoucherRows;
     if (selectedVouchers.length === 0) return;
 
     const headers = [
@@ -6148,34 +6092,45 @@ export default function GiftVouchersPage() {
     });
   };
 
-  const handleSelectAllFiltered = () => {
-    setSelectedIds(new Set(filtered.map((v) => v.id)));
+  // "Select all N": every voucher matching the filters, fetched page by page (100 per request)
+  const [selectingAll, setSelectingAll] = useState(false);
+  const handleSelectAllFiltered = async () => {
+    setSelectingAll(true);
+    try {
+      const rows = await fetchAllVoucherRows<Voucher>(listFilters);
+      rows.forEach((v) => seenRows.current.set(v.id, v));
+      setSelectedIds(new Set(rows.map((v) => v.id)));
+    } catch (err) {
+      setOpenError(err instanceof Error ? err.message : 'Failed to select vouchers');
+    } finally {
+      setSelectingAll(false);
+    }
   };
+
+  // Rows of the selection (all of them were loaded when they were selected)
+  const selectedVoucherRows = useMemo(
+    () => Array.from(selectedIds).map((id) => seenRows.current.get(id)).filter((v): v is Voucher => Boolean(v)),
+    [selectedIds]
+  );
 
   const handleClearSelection = () => {
     setSelectedIds(new Set());
   };
 
-  // Aggregate stats across all matching filtered records (not just current page)
-  const stats = useMemo(() => {
-    const target = filtered;
-    return {
-      total:          target.length,
-      active:         target.filter(v => v.status?.toLowerCase() === 'active').length,
-      redeemed:       target.filter(v => v.status?.toLowerCase() !== 'partially_redeemed' && (v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at))).length,
-      expired:        target.filter(v => v.status?.toLowerCase() === 'expired').length,
-      revenue:        target
-                        .filter(v => v.status?.toLowerCase() === 'active' || v.status?.toLowerCase() === 'redeemed')
-                        .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
-      pendingRevenue: target
-                        .filter(v => {
-                          const s = v.status?.toLowerCase() ?? '';
-                          return s === 'pending' || s === 'payment_pending' || s === 'created' || s.includes('pending');
-                        })
-                        .reduce((sum, v) => sum + (parseFloat(v.total_amount) || 0), 0),
-      currency:       target[0]?.currency ?? vouchers[0]?.currency ?? 'KWD',
-    };
-  }, [filtered, vouchers]);
+  // Aggregate stats across ALL matching vouchers (computed by the server, not just the current page)
+  const stats = useMemo(
+    () => ({
+      total:          serverStats?.total ?? totalCount,
+      active:         serverStats?.active ?? 0,
+      redeemed:       serverStats?.redeemed ?? 0,
+      expired:        serverStats?.expired ?? 0,
+      revenue:        serverStats?.revenue ?? 0,
+      pendingRevenue: serverStats?.pending_revenue ?? 0,
+      amountTotal:    serverStats?.amount_total ?? 0,
+      currency:       serverStats?.currency ?? vouchers[0]?.currency ?? 'KWD',
+    }),
+    [serverStats, totalCount, vouchers]
+  );
 
   return (
     <DashboardShell>
@@ -6428,8 +6383,8 @@ export default function GiftVouchersPage() {
         )}
       </div>
 
-      {/* ── Loading ── */}
-      {loading && (
+      {/* ── Loading (first load only; later page changes keep the table visible) ── */}
+      {loading && vouchers.length === 0 && (
         <div className="flex items-center justify-center gap-3 rounded-2xl border border-border/60 bg-card py-20">
           <Loader2 className="h-6 w-6 animate-spin text-primary" />
           <span className="text-sm font-semibold text-muted-foreground">Loading vouchers…</span>
@@ -6451,11 +6406,11 @@ export default function GiftVouchersPage() {
       )}
 
       {/* ── Empty ── */}
-      {!loading && !error && filtered.length === 0 && (
+      {!loading && !error && vouchers.length === 0 && (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-border/60 bg-card py-20 text-center">
           <Gift className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <p className="text-sm font-semibold text-muted-foreground">
-            {vouchers.length === 0
+            {!hasActiveFilters
               ? 'No vouchers found'
               : searchQuery.trim()
               ? `No vouchers match "${searchQuery}"`
@@ -6482,9 +6437,9 @@ export default function GiftVouchersPage() {
       )}
 
       {/* ── Table ── */}
-      {!loading && !error && filtered.length > 0 && (
+      {!error && vouchers.length > 0 && (
         <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-          <div className="overflow-x-auto min-h-[300px] pb-32">
+          <div className={cn('overflow-x-auto min-h-[300px] pb-32 transition-opacity', loading && 'opacity-60')}>
             <table className="w-full min-w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border/60 bg-muted/30">
@@ -6545,8 +6500,9 @@ export default function GiftVouchersPage() {
 
                       {/* Voucher Code */}
                       <td
-                        onClick={() => setSelectedVoucher(v)}
-                        className="px-4 py-3 align-top whitespace-nowrap cursor-pointer group hover:bg-muted/30 transition-colors"
+                        onClick={() => handleOpenVoucher(v)}
+                        onMouseEnter={() => { void fetchVoucherFull<Voucher>(v.id).catch(() => undefined); }}
+                        className={cn('px-4 py-3 align-top whitespace-nowrap cursor-pointer group hover:bg-muted/30 transition-colors', openingId === v.id && 'opacity-50 pointer-events-none')}
                         title="View voucher details"
                       >
                         <div className="flex items-center gap-2">
@@ -6680,13 +6636,13 @@ export default function GiftVouchersPage() {
               <span>
                 Showing{' '}
                 <strong className="text-foreground font-semibold">
-                  {filtered.length === 0 ? 0 : (page - 1) * pageSize + 1}
+                  {totalCount === 0 ? 0 : (page - 1) * pageSize + 1}
                 </strong>
                 –
                 <strong className="text-foreground font-semibold">
-                  {Math.min(page * pageSize, filtered.length)}
+                  {Math.min(page * pageSize, totalCount)}
                 </strong>{' '}
-                of <strong className="text-foreground font-semibold">{filtered.length.toLocaleString()}</strong> vouchers
+                of <strong className="text-foreground font-semibold">{totalCount.toLocaleString()}</strong> vouchers
               </span>
 
               <div className="h-4 w-[1px] bg-border/80 hidden sm:block" />
@@ -6714,7 +6670,7 @@ export default function GiftVouchersPage() {
                 <span>
                   Total value:{' '}
                   <span className="font-bold text-primary">
-                    {filtered.reduce((s, v) => s + (parseFloat(v.total_amount) || 0), 0).toFixed(3)} {stats.currency}
+                    {stats.amountTotal.toFixed(3)} {stats.currency}
                   </span>
                 </span>
               </div>
@@ -6909,6 +6865,17 @@ export default function GiftVouchersPage() {
         />
       )}
 
+      {/* ── Voucher details load error ── */}
+      {openError && (
+        <div className="fixed bottom-6 left-6 z-50 flex items-center gap-3 rounded-2xl border border-destructive/30 bg-card/95 backdrop-blur-md p-4 shadow-2xl max-w-md">
+          <AlertCircle className="h-5 w-5 shrink-0 text-destructive" />
+          <p className="text-xs font-semibold text-destructive">{openError}</p>
+          <button type="button" onClick={() => setOpenError(null)} className="text-muted-foreground hover:text-foreground p-1 rounded-lg hover:bg-muted transition" aria-label="Dismiss">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* ── Copy URL Floating Toast ── */}
       {copyAlert && (
         <div className="fixed bottom-6 left-6 z-50 flex items-center gap-3.5 rounded-2xl border border-primary/30 bg-card/95 backdrop-blur-md p-4 shadow-2xl max-w-md animate-in fade-in slide-in-from-bottom-5 duration-300">
@@ -6966,13 +6933,14 @@ export default function GiftVouchersPage() {
           <div className="flex items-center gap-2 pr-3 border-r border-border/60 text-xs">
             <span className="font-bold text-foreground">{selectedIds.size}</span>
             <span className="text-muted-foreground">selected</span>
-            {selectedIds.size < filtered.length && (
+            {selectedIds.size < totalCount && (
               <button
                 type="button"
                 onClick={handleSelectAllFiltered}
-                className="text-[11px] text-primary hover:underline font-semibold ml-1 cursor-pointer"
+                disabled={selectingAll}
+                className="text-[11px] text-primary hover:underline font-semibold ml-1 cursor-pointer disabled:opacity-60"
               >
-                Select all {filtered.length}
+                {selectingAll ? 'Selecting…' : `Select all ${totalCount}`}
               </button>
             )}
           </div>
@@ -7035,7 +7003,7 @@ export default function GiftVouchersPage() {
       {/* ── Bulk Delete Modal ── */}
       {showBulkDeleteModal && (
         <BulkDeleteModal
-          selectedVouchers={vouchers.filter((v) => selectedIds.has(v.id))}
+          selectedVouchers={selectedVoucherRows}
           onClose={() => setShowBulkDeleteModal(false)}
           onConfirm={handleBulkDelete}
         />
@@ -7044,8 +7012,9 @@ export default function GiftVouchersPage() {
       {/* ── Voucher Report Modal ── */}
       {showReportModal && (
         <VoucherReportModal
-          selectedVouchers={vouchers.filter((v) => selectedIds.has(v.id))}
-          allFilteredVouchers={filtered}
+          selectedVouchers={selectedVoucherRows}
+          allFilteredCount={totalCount}
+          loadReportRows={() => fetchAllVoucherRows<Voucher>(listFilters, { view: 'report' })}
           employeeMap={employeeMap}
           onClose={() => setShowReportModal(false)}
         />
@@ -7055,7 +7024,13 @@ export default function GiftVouchersPage() {
       {salesPeriod && (
         <VoucherSalesReportModal
           period={salesPeriod}
-          vouchers={vouchers}
+          vouchers={[]}
+          loadVouchers={(from, to) =>
+            fetchAllVoucherRows<Voucher>(
+              { statuses: ['pending', 'active', 'scheduled', 'redeemed'], channel: 'all', createdBy: 'all', q: '' },
+              { view: 'report', extra: { period_from: from, period_to: to } }
+            )
+          }
           getCreatorName={(v) => resolveVoucherCreator(v as Voucher, employeeMap).name}
           restrictedBranchId={reportBranchId}
           restrictedBranchName={reportBranchName}

@@ -39,6 +39,11 @@ export interface ReportVoucher {
 interface Props {
   period: VoucherSalesPeriod;
   vouchers: ReportVoucher[];
+  /**
+   * When provided, the report loads its vouchers for the chosen date range (page by page) instead of
+   * using the `vouchers` prop — so the page never has to hold every voucher.
+   */
+  loadVouchers?: (from: string, to: string) => Promise<ReportVoucher[]>;
   /** Resolves the display name of the voucher creator (same logic as the page) */
   getCreatorName: (v: ReportVoucher) => string;
   restrictedBranchId?: string | null;
@@ -139,7 +144,8 @@ interface Row { label: string; count: number; total: number; items: ReportVouche
 
 export function VoucherSalesReportModal({
   period,
-  vouchers,
+  vouchers: vouchersProp,
+  loadVouchers,
   getCreatorName,
   restrictedBranchId,
   restrictedBranchName,
@@ -190,6 +196,26 @@ export function VoucherSalesReportModal({
       if (next.has(k)) next.delete(k); else next.add(k);
       return next;
     });
+
+  // Vouchers of the selected range, loaded on demand (when `loadVouchers` is given)
+  const [remote, setRemote] = useState<ReportVoucher[]>([]);
+  const [loadingData, setLoadingData] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!loadVouchers) return;
+    let active = true;
+    setLoadingData(true);
+    setLoadError(null);
+    loadVouchers(from, to)
+      .then((rows) => active && setRemote(rows))
+      .catch((err) => active && setLoadError(err instanceof Error ? err.message : 'Failed to load vouchers'))
+      .finally(() => active && setLoadingData(false));
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from, to]);
+  const vouchers = loadVouchers ? remote : vouchersProp;
 
   // Voucher set for the selected range / statuses / branch scope
   const scoped = useMemo(() => {
@@ -451,17 +477,18 @@ export function VoucherSalesReportModal({
             </div>
           </div>
 
+          {loadError && <p className="px-5 pb-2 text-xs font-semibold text-destructive">{loadError}</p>}
           <div className="flex items-center justify-end gap-2 border-t border-border/50 px-5 py-3.5">
             <button type="button" onClick={onClose} className="rounded-xl border border-border/60 bg-card px-4 py-2 text-xs font-semibold hover:bg-muted/60 transition cursor-pointer">
               Cancel
             </button>
             <button
               type="button"
-              disabled={statuses.size === 0}
+              disabled={statuses.size === 0 || loadingData}
               onClick={() => setStage('report')}
               className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-primary/90 transition disabled:opacity-50 cursor-pointer"
             >
-              <TrendingUp className="h-3.5 w-3.5" /> Generate Report
+              <TrendingUp className="h-3.5 w-3.5" /> {loadingData ? 'Loading vouchers…' : 'Generate Report'}
             </button>
           </div>
         </div>

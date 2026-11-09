@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getProxyHeaders } from '@/lib/proxy';
+import { cachedVoucherGet } from '@/lib/voucherProxy';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +15,11 @@ const UPSTREAM_URL = `${BASE_URL}/booknpay/api/v1/vouchers/`;
  * Requires employee auth token (Authorization: Bearer <token>).
  */
 export async function GET(req: NextRequest) {
+  // Desk list (`view=list|report`): slim, filtered, paginated rows — served through the Next.js cache.
+  if (req.nextUrl.searchParams.get('view')) {
+    return cachedVoucherGet(req, '/api/v1/vouchers/', 30);
+  }
+
   const qs  = req.nextUrl.searchParams.toString();
   const url = qs ? `${UPSTREAM_URL}?${qs}` : UPSTREAM_URL;
 
