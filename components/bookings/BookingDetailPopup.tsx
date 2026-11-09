@@ -26,8 +26,6 @@ import { BookingReceiptModal } from '@/components/bookings/BookingReceiptModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
 import { PaymentReferenceModal, type PaymentReferenceData, type PaymentProviderOption } from '@/components/bookings/PaymentReferenceModal';
-import { FeedbackLinkModal } from '@/components/bookings/FeedbackLinkModal';
-import type { CreateFeedbackLinkPayload } from '@/lib/feedback';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -758,7 +756,6 @@ function BookingDetailPopupContent({
   const [courseSubscription, setCourseSubscription] = useState<Record<string, any> | null>(null);
   const [loadingCourseSubscription, setLoadingCourseSubscription] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const [showFeedbackPrompt, setShowFeedbackPrompt] = useState(false);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [advancingStep, setAdvancingStep] = useState(false);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
@@ -2335,8 +2332,6 @@ function BookingDetailPopupContent({
 
   const handleAdvanceNextStep = async (targetStatus: string, reason: string | null) => {
     if (!booking || advancingStep) return;
-    // Feedback prompt is offered only for the InProgress → Completed transition.
-    const wasInProgress = normStatus === 'in_progress';
     setAdvancingStep(true);
     setAdvanceError(null);
     try {
@@ -2377,7 +2372,6 @@ function BookingDetailPopupContent({
         setDetail((prev) => (prev ? { ...prev, status: targetStatus } : { ...booking, status: targetStatus }));
       }
       onSuccess?.();
-      if (wasInProgress && targetStatus === 'completed') setShowFeedbackPrompt(true);
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error advancing booking status:', err);
       setAdvanceError(err instanceof Error ? err.message : `Failed to update status to ${targetStatus}`);
@@ -2388,7 +2382,6 @@ function BookingDetailPopupContent({
 
   const handleCompleteBooking = async () => {
     if (!booking || isPaymentPending || completing) return;
-    const wasInProgress = normStatus === 'in_progress';
     setCompleting(true);
     setCompleteError(null);
     try {
@@ -2429,7 +2422,6 @@ function BookingDetailPopupContent({
         setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
       }
       onSuccess?.();
-      if (wasInProgress) setShowFeedbackPrompt(true);
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error completing booking:', err);
       setCompleteError(err instanceof Error ? err.message : 'Failed to update status to completed');
@@ -3033,50 +3025,8 @@ function BookingDetailPopupContent({
     }
   };
 
-  // Snapshot of the completed booking sent to ushanr when a feedback link is generated.
-  const buildFeedbackPayload = (): CreateFeedbackLinkPayload => {
-    const rb = { ...((booking.raw ?? {}) as Record<string, any>), ...((detail ?? {}) as Record<string, any>) };
-    const cd = (rb.customer_data ?? {}) as Record<string, any>;
-    const str = (v: unknown): string | null => {
-      const s = v === undefined || v === null ? '' : String(v).trim();
-      return s || null;
-    };
-    const uuid = (v: unknown): string | null => {
-      const s = str(v);
-      return s && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s) ? s : null;
-    };
-    const langRaw = String(rb.customer_language ?? rb.language_preference ?? cd.language_preference ?? cd.language ?? 'ar');
-    return {
-      booking_id: booking.id,
-      booking_number: str(rb.booking_number ?? booking.booking_number),
-      customer_id: uuid(rb.customer_id ?? cd.id),
-      customer_name: str(booking.customer_name ?? rb.customer_name),
-      customer_phone: str(booking.customer_phone ?? rb.customer_phone ?? cd.phone_number),
-      service_id: uuid(rb.service_id),
-      service_name: str(booking.service_name ?? rb.service_name),
-      services: Array.isArray(rb.services) ? rb.services : null,
-      therapist_id: uuid(primaryTherapistId),
-      therapist_name: str(primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name),
-      secondary_therapist_id: uuid(secondaryTherapistId),
-      secondary_therapist_name: str(secondaryTherapistName),
-      branch_id: uuid(rb.branch_id),
-      branch_name: str(booking.branch_name ?? rb.branch_name),
-      appointment_start: str(booking.appointment_start ?? rb.appointment_start),
-      language: langRaw.toLowerCase().startsWith('en') ? 'en' : 'ar',
-    };
-  };
-
   return (
     <>
-      {/* Feedback link prompt: InProgress → Completed */}
-      {showFeedbackPrompt && (
-        <FeedbackLinkModal
-          isOpen={showFeedbackPrompt}
-          onClose={() => setShowFeedbackPrompt(false)}
-          payload={buildFeedbackPayload()}
-        />
-      )}
-
       {/* Step 1: Payment Provider Modal (nested, z-60) */}
       {showPaymentModal && (
         <PaymentProviderModal
