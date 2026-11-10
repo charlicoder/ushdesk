@@ -1739,6 +1739,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         phone_number: currentUser.phone_number || '',
         email: currentUser.email || '',
       } : {},
+      referenced_by: currentUser?.id ? String(currentUser.id) : null,
+      referenced_by_name: currentUser?.name || '',
       transaction_id: null,
       reference_id: null,
       receipt_image: null,
