@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  X, Printer, TrendingUp, Building2, CreditCard, Wallet, UserCheck, CalendarDays,
+  X, Printer, TrendingUp, Building2, CreditCard, Wallet, CalendarDays,
   CheckCircle2, Clock, Gift, BarChart3, ArrowLeft, Eye, Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -17,6 +17,7 @@ export interface ReportVoucher {
   total_amount: string;
   currency: string;
   created_at: string;
+  activation_datetime?: string | null;
   redeemed_at: string | null;
   branch_id?: string;
   branch_data?: { name?: string } | null;
@@ -44,8 +45,8 @@ interface Props {
    * using the `vouchers` prop — so the page never has to hold every voucher.
    */
   loadVouchers?: (from: string, to: string) => Promise<ReportVoucher[]>;
-  /** Resolves the display name of the voucher creator (same logic as the page) */
-  getCreatorName: (v: ReportVoucher) => string;
+  /** @deprecated No longer used — Referred By replaces Created By in the report. */
+  getCreatorName?: (v: ReportVoucher) => string;
   restrictedBranchId?: string | null;
   restrictedBranchName?: string | null;
   onClose: () => void;
@@ -132,11 +133,11 @@ const fmtDateTime = (raw: string | null | undefined) => {
 function classify(v: ReportVoucher): { key: StatusKey; date: string } | null {
   const s = String(v.status ?? '').toLowerCase().trim();
   if (s === 'pending' || s === 'payment_pending' || s === 'created' || s.includes('pending')) {
-    return { key: 'pending', date: dateKey(v.created_at) };
+    return { key: 'pending', date: dateKey(v.activation_datetime || v.created_at) };
   }
   const isRedeemed = s !== 'partially_redeemed' && (s === 'redeemed' || Boolean(v.redeemed_at));
   if (isRedeemed) return { key: 'redeemed', date: dateKey(v.redeemed_at || v.created_at) };
-  if (s === 'active' || s === 'scheduled') return { key: 'active', date: dateKey(v.created_at) };
+  if (s === 'active' || s === 'scheduled') return { key: 'active', date: dateKey(v.activation_datetime || v.created_at) };
   return null;
 }
 
@@ -146,7 +147,6 @@ export function VoucherSalesReportModal({
   period,
   vouchers: vouchersProp,
   loadVouchers,
-  getCreatorName,
   restrictedBranchId,
   restrictedBranchName,
   onClose,
@@ -259,7 +259,6 @@ export function VoucherSalesReportModal({
       byBranch: group(list, (v) => v.branch_data?.name || 'Unassigned'),
       byThrough: group(list, (v) => throughLabel(v.payment_through)),
       byProvider: group(list, providerOf),
-      byCreator: group(list, (v) => getCreatorName(v)),
       byReferrer: group(list, referrerOf),
     });
     return {
@@ -268,7 +267,7 @@ export function VoucherSalesReportModal({
       activeTotal: sum(active), redeemedTotal: sum(redeemed),
       salesTables: build(sales), pendingTables: build(pending),
     };
-  }, [scoped, getCreatorName]);
+  }, [scoped]);
 
   const currency = scoped[0]?.v.currency || vouchers[0]?.currency || 'KWD';
   const rangeLabel = from === to ? prettyDate(from) : `${prettyDate(from)}  –  ${prettyDate(to)}`;
@@ -361,7 +360,7 @@ export function VoucherSalesReportModal({
 
   const Section = ({ heading, note, tables, grand, tone }: {
     heading: string; note: string; grand: number; tone: string;
-    tables: { byBranch: Row[]; byThrough: Row[]; byProvider: Row[]; byCreator: Row[]; byReferrer: Row[] };
+    tables: { byBranch: Row[]; byThrough: Row[]; byProvider: Row[]; byReferrer: Row[] };
   }) => (
     <div className="space-y-4">
       <div className={cn('avoid-break rounded-xl border px-4 py-2.5', tone)}>
@@ -371,7 +370,6 @@ export function VoucherSalesReportModal({
       <Table title="By Branch" icon={Building2} rows={tables.byBranch} grand={grand} />
       <Table title="By Payment Through" icon={Wallet} rows={tables.byThrough} grand={grand} />
       <Table title="By Payment Provider" icon={CreditCard} rows={tables.byProvider} grand={grand} />
-      <Table title="By Created By" icon={UserCheck} rows={tables.byCreator} grand={grand} />
       <Table title="By Referred By" icon={Link2} rows={tables.byReferrer} grand={grand} />
     </div>
   );
@@ -458,8 +456,8 @@ export function VoucherSalesReportModal({
               <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Status</p>
               <div className="space-y-2">
                 {([
-                  ['pending', 'Pending', 'Awaiting payment · by created date'],
-                  ['active', 'Active (incl. Scheduled)', 'By created date'],
+                  ['pending', 'Pending', 'Awaiting payment · by activation date'],
+                  ['active', 'Active (incl. Scheduled)', 'By activation date'],
                   ['redeemed', 'Redeemed', 'By redeemed date'],
                 ] as [StatusKey, string, string][]).map(([k, label, hint]) => (
                   <label key={k} className={cn(
@@ -566,7 +564,7 @@ export function VoucherSalesReportModal({
             {showSales && (
               <Section
                 heading="Voucher Sales (Active, Scheduled & Redeemed)"
-                note="Active/Scheduled counted on created date · Redeemed counted on redeemed date"
+                note="Active/Scheduled counted on activation date · Redeemed counted on redeemed date"
                 tables={stats.salesTables}
                 grand={stats.salesTotal}
                 tone="border-emerald-200/70 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300"
@@ -576,7 +574,7 @@ export function VoucherSalesReportModal({
             {showPending && (
               <Section
                 heading="Pending Vouchers (Unpaid — not included in sales)"
-                note="Counted on created date"
+                note="Counted on activation date"
                 tables={stats.pendingTables}
                 grand={stats.pendingTotal}
                 tone="border-amber-200/70 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300"
@@ -612,7 +610,7 @@ export function VoucherSalesReportModal({
                 <thead className="sticky top-0 bg-muted/60 text-[10px] uppercase tracking-wider text-muted-foreground">
                   <tr>
                     <th className="px-4 py-2 text-left">Voucher Code</th>
-                    <th className="px-2 py-2 text-left">Created At</th>
+                    <th className="px-2 py-2 text-left">Activation Date</th>
                     <th className="px-2 py-2 text-left">Redeemed At</th>
                     <th className="px-2 py-2 text-left">Sender</th>
                     <th className="px-2 py-2 text-left">Recipient</th>
@@ -626,7 +624,7 @@ export function VoucherSalesReportModal({
                   {detail.items.map((v) => (
                     <tr key={v.id} className="hover:bg-muted/30">
                       <td className="px-4 py-2 font-mono font-bold text-foreground whitespace-nowrap">{v.secret_code || v.voucher_number || v.id.slice(0, 8)}</td>
-                      <td className="px-2 py-2 whitespace-nowrap">{fmtDateTime(v.created_at)}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{fmtDateTime(v.activation_datetime || v.created_at)}</td>
                       <td className="px-2 py-2 whitespace-nowrap">{fmtDateTime(v.redeemed_at)}</td>
                       <td className="px-2 py-2 whitespace-nowrap">{senderOf(v)}</td>
                       <td className="px-2 py-2 whitespace-nowrap">{recipientOf(v)}</td>

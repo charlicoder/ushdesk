@@ -924,6 +924,7 @@ function EditVoucherModal({
           phone_number: senderPhone.trim(),
         },
         recipient_phone: recipientPhone.trim(),
+        gift_to: recipientName.trim() || undefined,
         recipient_data: {
           ...(voucher.recipient_data || {}),
           name: recipientName.trim(),
@@ -7031,7 +7032,6 @@ export default function GiftVouchersPage() {
               { view: 'report', extra: { period_from: from, period_to: to } }
             )
           }
-          getCreatorName={(v) => resolveVoucherCreator(v as Voucher, employeeMap).name}
           restrictedBranchId={reportBranchId}
           restrictedBranchName={reportBranchName}
           onClose={() => setSalesPeriod(null)}

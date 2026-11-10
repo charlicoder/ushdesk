@@ -433,10 +433,13 @@ export function RescheduleBookingModal({
   }, [initialAvailabilitiesPromise, initialRescheduleParams?.branchId, initialBooking, booking]);
 
   // ── Home Service Availabilities: fetch directly from therapists/schedule ──
-  // For home service: no branch room/arrangement needed, only therapist schedule
-  // for the Home Service branch (branch_id=home).
-  const fetchHomeServiceAvailabilities = useCallback(async () => {
-    const cacheKey = 'home_service_schedule';
+  // For home service: no branch room/arrangement needed, only therapist schedule.
+  // Fetches therapists using both:
+  //   1. branch_id=home  → therapists with available_for_home_service=True flag
+  //   2. The booking's actual branch UUID → therapists assigned to the Home Service branch
+  // Results are merged (deduplicated by ID) so therapists from either source are shown.
+  const fetchHomeServiceAvailabilities = useCallback(async (homeBranchId?: string) => {
+    const cacheKey = `home_service_schedule_${todayStr}${homeBranchId ? `_${homeBranchId}` : ''}`;
     if (availabilitiesCache.current[cacheKey]) {
       setAvailabilitiesData(availabilitiesCache.current[cacheKey]);
       setAvailabilitiesError(null);
@@ -453,46 +456,54 @@ export function RescheduleBookingModal({
       toDateObj.setDate(toDateObj.getDate() + 29);
       const toD = kuwaitDateString(toDateObj);
 
-      const endpoint = `/api/v1/therapists/schedule/?branch_id=home&from_date=${fromD}&to_date=${toD}`;
-      const res = await authedFetch(endpoint, {
-        headers: authHeader ? { Authorization: authHeader } : undefined,
-      });
-
-      if (!res.ok) {
-        throw new Error(`Failed to load therapist schedule (${res.status})`);
-      }
-
-      const daysList = await res.json().catch(() => []);
-      if (!Array.isArray(daysList) || daysList.length === 0) {
-        const emptyData = { therapists: [], branch: { id: 'home', name: 'Home Service' } };
-        availabilitiesCache.current[cacheKey] = emptyData;
-        setAvailabilitiesData(emptyData);
-        return;
-      }
-
-      // Aggregate therapists across all days in the range
-      const therapistMap = new Map<string, ApiTherapist>();
-      for (const day of daysList) {
-        const dStr = day.date;
-        for (const t of day.therapists || []) {
-          if (!therapistMap.has(t.id)) {
-            therapistMap.set(t.id, {
-              id: t.id,
-              name: t.name,
-              photo_url: t.photo_url,
-              availabilities: {},
-            });
+      // Helper: fetch schedule for a given branch_id param and aggregate into therapistMap
+      const fetchScheduleForBranch = async (branchParam: string, therapistMap: Map<string, ApiTherapist>) => {
+        const endpoint = `/api/v1/therapists/schedule/?branch_id=${branchParam}&from_date=${fromD}&to_date=${toD}`;
+        const res = await authedFetch(endpoint, {
+          headers: authHeader ? { Authorization: authHeader } : undefined,
+        });
+        if (!res.ok) return;
+        const daysList = await res.json().catch(() => []);
+        if (!Array.isArray(daysList)) return;
+        for (const day of daysList) {
+          const dStr = day.date;
+          for (const t of day.therapists || []) {
+            if (!therapistMap.has(t.id)) {
+              therapistMap.set(t.id, {
+                id: t.id,
+                name: t.name,
+                photo_url: t.photo_url,
+                availabilities: {},
+              });
+            }
+            const item = therapistMap.get(t.id)!;
+            const rawSlots: string[] = t.available_timeslots || t.timeslots || [];
+            // Merge slots for this date (union, deduplicate)
+            const existing = new Set<string>(item.availabilities![dStr] || []);
+            rawSlots.forEach((s) => existing.add(s));
+            item.availabilities![dStr] = Array.from(existing);
           }
-          const item = therapistMap.get(t.id)!;
-          const rawSlots: string[] = t.available_timeslots || t.timeslots || [];
-          item.availabilities![dStr] = rawSlots;
         }
+      };
+
+      const therapistMap = new Map<string, ApiTherapist>();
+
+      // Fetch 1: therapists with available_for_home_service=True flag
+      const fetchPromises: Promise<void>[] = [
+        fetchScheduleForBranch('home', therapistMap),
+      ];
+
+      // Fetch 2: therapists assigned to the actual Home Service branch UUID (if known)
+      if (homeBranchId && isUUID(homeBranchId)) {
+        fetchPromises.push(fetchScheduleForBranch(homeBranchId, therapistMap));
       }
+
+      await Promise.allSettled(fetchPromises);
 
       const therapistsList = Array.from(therapistMap.values());
       const data = {
         therapists: therapistsList,
-        branch: { id: 'home', name: 'Home Service' },
+        branch: { id: homeBranchId || 'home', name: 'Home Service' },
       };
       availabilitiesCache.current[cacheKey] = data;
       setAvailabilitiesData(data);
@@ -574,9 +585,13 @@ export function RescheduleBookingModal({
   }, [serviceId, prevArrType, appointmentDate, todayStr, daysCount, fetchJson]);
 
   useEffect(() => {
-    // For home service: fetch from dedicated home-availability schedule (no branch/arrangement needed)
+    // For home service: fetch therapists from both:
+    //   - branch_id=home  (available_for_home_service=True flag)
+    //   - the booking's actual Home Service branch UUID (therapists assigned to that branch)
+    // Results are merged so therapists visible in either source are shown.
     if (isHomeService) {
-      fetchHomeServiceAvailabilities();
+      const homeBranchId = isUUID(selectedBranchId) ? selectedBranchId : undefined;
+      fetchHomeServiceAvailabilities(homeBranchId);
       return;
     }
 

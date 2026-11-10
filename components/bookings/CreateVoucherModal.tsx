@@ -1697,6 +1697,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       currency,
       recipient_phone: computedRecipientPhone,
       recipient_id: recipient?.id || null,
+      gift_to: recipientName.trim() || null,
       recipient_data: {
         name: recipientName.trim(),
         phone_number: computedRecipientPhone,
