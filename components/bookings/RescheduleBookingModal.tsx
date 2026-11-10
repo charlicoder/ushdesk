@@ -5,7 +5,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   CalendarDays, Clock, Building2, MapPin, Scissors,
   AlertCircle, CheckCircle2, Loader2, X, Hash, CreditCard,
-  User, Sparkles, Crown, Heart, LayoutGrid, Layers, Store, RefreshCw
+  User, Sparkles, Crown, Heart, LayoutGrid, Layers, Store, RefreshCw, Home
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -293,6 +293,14 @@ export function RescheduleBookingModal({
 
   // Derived booking info
   const bk = booking;
+  // Detect home service booking — used throughout to hide branch/room, adapt availability logic
+  const isHomeService = String(
+    booking?.booking_type ??
+    (booking as any)?.raw?.booking_type ??
+    initialBooking?.booking_type ??
+    (initialBooking as any)?.raw?.booking_type ??
+    ''
+  ).toLowerCase().includes('home');
   const status = (bk?.status ?? 'scheduled').toLowerCase();
   const ss = statusStyle(status);
   const bookingNum = firstTruthy(bk?.booking_number, bk?.number);
@@ -385,6 +393,17 @@ export function RescheduleBookingModal({
   // ── Handle initial availabilities promise ───────────────────────────
   useEffect(() => {
     if (!initialAvailabilitiesPromise || !initialRescheduleParams?.branchId) return;
+
+    // For home service bookings the pre-fetched promise used the branch endpoint
+    // which returns no home-service therapists. Skip it.
+    const bookingTypeRaw = String(
+      initialBooking?.booking_type ??
+      (initialBooking as any)?.raw?.booking_type ??
+      booking?.booking_type ??
+      ''
+    ).toLowerCase();
+    if (bookingTypeRaw.includes('home')) return;
+
     const bId = initialRescheduleParams.branchId;
     inFlightRequests.current[bId] = initialAvailabilitiesPromise;
     setAvailabilitiesLoading(true);
@@ -411,12 +430,83 @@ export function RescheduleBookingModal({
       });
 
     return () => { active = false; };
-  }, [initialAvailabilitiesPromise, initialRescheduleParams?.branchId]);
+  }, [initialAvailabilitiesPromise, initialRescheduleParams?.branchId, initialBooking, booking]);
+
+  // ── Home Service Availabilities: fetch directly from therapists/schedule ──
+  // For home service: no branch room/arrangement needed, only therapist schedule
+  // for the Home Service branch (branch_id=home).
+  const fetchHomeServiceAvailabilities = useCallback(async () => {
+    const cacheKey = 'home_service_schedule';
+    if (availabilitiesCache.current[cacheKey]) {
+      setAvailabilitiesData(availabilitiesCache.current[cacheKey]);
+      setAvailabilitiesError(null);
+      setAvailabilitiesLoading(false);
+      return;
+    }
+
+    setAvailabilitiesLoading(true);
+    setAvailabilitiesError(null);
+
+    try {
+      const fromD = todayStr;
+      const toDateObj = new Date(fromD);
+      toDateObj.setDate(toDateObj.getDate() + 29);
+      const toD = kuwaitDateString(toDateObj);
+
+      const endpoint = `/api/v1/therapists/schedule/?branch_id=home&from_date=${fromD}&to_date=${toD}`;
+      const res = await authedFetch(endpoint, {
+        headers: authHeader ? { Authorization: authHeader } : undefined,
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to load therapist schedule (${res.status})`);
+      }
+
+      const daysList = await res.json().catch(() => []);
+      if (!Array.isArray(daysList) || daysList.length === 0) {
+        const emptyData = { therapists: [], branch: { id: 'home', name: 'Home Service' } };
+        availabilitiesCache.current[cacheKey] = emptyData;
+        setAvailabilitiesData(emptyData);
+        return;
+      }
+
+      // Aggregate therapists across all days in the range
+      const therapistMap = new Map<string, ApiTherapist>();
+      for (const day of daysList) {
+        const dStr = day.date;
+        for (const t of day.therapists || []) {
+          if (!therapistMap.has(t.id)) {
+            therapistMap.set(t.id, {
+              id: t.id,
+              name: t.name,
+              photo_url: t.photo_url,
+              availabilities: {},
+            });
+          }
+          const item = therapistMap.get(t.id)!;
+          const rawSlots: string[] = t.available_timeslots || t.timeslots || [];
+          item.availabilities![dStr] = rawSlots;
+        }
+      }
+
+      const therapistsList = Array.from(therapistMap.values());
+      const data = {
+        therapists: therapistsList,
+        branch: { id: 'home', name: 'Home Service' },
+      };
+      availabilitiesCache.current[cacheKey] = data;
+      setAvailabilitiesData(data);
+    } catch (err) {
+      setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load home service availability');
+    } finally {
+      setAvailabilitiesLoading(false);
+    }
+  }, [todayStr, authHeader]);
 
   // ── With change of branch: check cache or send request ──────────────
   const fetchAvailabilitiesForBranch = useCallback(async (branchIdToFetch: string) => {
-    if (!branchIdToFetch || !isUUID(branchIdToFetch)) return;
     if (!serviceId || !isUUID(serviceId)) return;
+    if (!branchIdToFetch || !isUUID(branchIdToFetch)) return;
 
     // 1. Check in-memory cache first!
     if (availabilitiesCache.current[branchIdToFetch]) {
@@ -472,7 +562,7 @@ export function RescheduleBookingModal({
         return data;
       })
       .catch((err) => {
-        setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load branch availability');
+        setAvailabilitiesError(err instanceof Error ? err.message : 'Failed to load availability');
         return null;
       })
       .finally(() => {
@@ -484,6 +574,13 @@ export function RescheduleBookingModal({
   }, [serviceId, prevArrType, appointmentDate, todayStr, daysCount, fetchJson]);
 
   useEffect(() => {
+    // For home service: fetch from dedicated home-availability schedule (no branch/arrangement needed)
+    if (isHomeService) {
+      fetchHomeServiceAvailabilities();
+      return;
+    }
+
+    // Branch booking: need a valid branchId
     if (!selectedBranchId) return;
 
     const initialInFlight = inFlightRequests.current[selectedBranchId];
@@ -498,7 +595,7 @@ export function RescheduleBookingModal({
     }
 
     fetchAvailabilitiesForBranch(selectedBranchId);
-  }, [selectedBranchId, fetchAvailabilitiesForBranch, initialRescheduleParams?.branchId, initialAvailabilitiesPromise]);
+  }, [isHomeService, selectedBranchId, fetchHomeServiceAvailabilities, fetchAvailabilitiesForBranch, initialRescheduleParams?.branchId, initialAvailabilitiesPromise]);
 
   // ── Fetch Branches (for branch dropdown only) ───────────────────────
   useEffect(() => {
@@ -573,12 +670,20 @@ export function RescheduleBookingModal({
   }, [arrangements, bk, selectedRoomId]);
 
   // ── Compute Therapists from availabilitiesData ──────────────────────
+  // Normalizes both the branch-availability format (name) and the
+  // home-availability format (full_name / first_name + last_name).
   const therapists = useMemo<ApiTherapist[]>(() => {
-    return Array.isArray(availabilitiesData?.therapists)
+    const raw: any[] = Array.isArray(availabilitiesData?.therapists)
       ? availabilitiesData.therapists
       : Array.isArray(availabilitiesData?.data?.therapists)
       ? availabilitiesData.data.therapists
       : [];
+    return raw.map((t: any) => ({
+      ...t,
+      // Ensure `name` is always populated regardless of which endpoint was used
+      name: t.name || t.therapist_name || t.full_name ||
+        [t.first_name, t.last_name].filter(Boolean).join(' ') || '',
+    }));
   }, [availabilitiesData]);
 
   const selectedArrangement = arrangements.find((a) => a.id === selectedRoomId);
@@ -598,24 +703,89 @@ export function RescheduleBookingModal({
     );
   }, [selectedArrangement, prevArrType]);
 
-  // Reset timeslot and therapist when room or date changes
+  // ── Home Service: therapist pre-selected before timeslot ──────────────
+  // For home service the UX flow is: select therapist → see their slots → pick slot
+  const [hsTherapistId, setHsTherapistId] = useState<string>('');
+  const selectedHsTherapist = useMemo(() => {
+    return therapists.find((t) => t.id === hsTherapistId) || null;
+  }, [therapists, hsTherapistId]);
+
+  // Auto-select therapist for home service if booking already had one or if only one exists
+  useEffect(() => {
+    if (!isHomeService || therapists.length === 0 || hsTherapistId) return;
+    const prevId = String(initialBooking?.therapist_id || bk?.therapist_id || '');
+    const found = therapists.find((t) => t.id === prevId) || (therapists.length === 1 ? therapists[0] : null);
+    if (found) {
+      setHsTherapistId(found.id);
+    }
+  }, [isHomeService, therapists, hsTherapistId, initialBooking, bk]);
+
+  // Reset timeslot when date, room, or home-service therapist changes
   useEffect(() => {
     setSelectedTimeSlot('');
     setSelectedTherapistId('');
     setSelectedTherapist(null);
     setSelectedSecondaryTherapistId('');
     setSelectedSecondaryTherapist(null);
-  }, [selectedDate, selectedRoomId]);
+  }, [selectedDate, selectedRoomId, hsTherapistId]);
 
   // ── Timeslot Calculation: Merge therapist availabilities by day, then intersect with arrangement ──
   useEffect(() => {
-    if (!selectedDate || arrangements.length === 0) {
+    if (!selectedDate) {
       setAvailableSlots([]);
       return;
     }
 
-    const selArrangement = arrangements.find((a) => a.id === selectedRoomId) || arrangements[0];
-    if (!selArrangement) {
+    // ── HOME SERVICE: use only the selected therapist's availability ──────
+    if (isHomeService) {
+      // No therapist chosen yet → show nothing (prompt user to pick therapist first)
+      if (!selectedHsTherapist) {
+        setAvailableSlots([]);
+        return;
+      }
+
+      const tSlots: string[] = selectedHsTherapist.availabilities?.[selectedDate] || [];
+      if (tSlots.length === 0) {
+        setAvailableSlots([]);
+        return;
+      }
+
+      if (!isAdmin && selectedDate < todayStr) {
+        setAvailableSlots([]);
+        return;
+      }
+
+      // Build a slot list from ONLY this therapist's availability
+      const sortedMins = tSlots
+        .map((s) => parseTimeToMinutes(s))
+        .filter((m, i, arr) => arr.indexOf(m) === i)
+        .sort((a, b) => a - b);
+
+      const slots: { time: string; available: boolean }[] = sortedMins.map((m) => {
+        const h = Math.floor(m / 60);
+        const min = m % 60;
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        const hd = h % 12 === 0 ? 12 : h % 12;
+        const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
+        return { time: timeLabel, available: true };
+      });
+
+      setAvailableSlots(slots);
+      return;
+    }
+
+    // ── BRANCH BOOKING: original logic ───────────────────────────────────
+    // For home service: skip arrangement check (no room needed)
+    if (!isHomeService && arrangements.length === 0) {
+      setAvailableSlots([]);
+      return;
+    }
+
+    const selArrangement = !isHomeService
+      ? (arrangements.find((a) => a.id === selectedRoomId) || arrangements[0])
+      : null;
+
+    if (!isHomeService && !selArrangement) {
       setAvailableSlots([]);
       return;
     }
@@ -636,10 +806,11 @@ export function RescheduleBookingModal({
       }
     }
 
-    // 2. Arrangement availabilities for the selected day
-    const rawArrSlots: string[] = selArrangement.availabilities?.[selectedDate] || [];
+    // 2. Arrangement availabilities for the selected day (branch bookings only)
     const arrangementSlotsForDay = new Set<number>(
-      rawArrSlots.map((s) => parseTimeToMinutes(s))
+      !isHomeService && selArrangement
+        ? (selArrangement.availabilities?.[selectedDate] || []).map((s: string) => parseTimeToMinutes(s))
+        : []
     );
 
     // 3. Grid timeslot bounds: from branch opening/closing or explicit slots
@@ -661,9 +832,11 @@ export function RescheduleBookingModal({
     therapistSlotsForDay.forEach((m) => {
       allKnownMinutes.add(m);
     });
-    arrangementSlotsForDay.forEach((m) => {
-      allKnownMinutes.add(m);
-    });
+    if (!isHomeService) {
+      arrangementSlotsForDay.forEach((m) => {
+        allKnownMinutes.add(m);
+      });
+    }
 
     const sortedMinutes: number[] = [];
     allKnownMinutes.forEach((m) => {
@@ -688,8 +861,10 @@ export function RescheduleBookingModal({
 
       // Intersection: must have required therapists AND arrangement availability
       const isAvailableInTherapists = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists;
-      const isAvailableInArrangement = arrangementSlotsForDay.has(m);
-      const available = isAvailableInTherapists && isAvailableInArrangement;
+      // For home service: no room to check — therapist availability is sufficient
+      const available = isHomeService
+        ? isAvailableInTherapists
+        : isAvailableInTherapists && arrangementSlotsForDay.has(m);
 
       slots.push({ time: timeLabel, available });
     }
@@ -704,6 +879,8 @@ export function RescheduleBookingModal({
     availabilitiesData,
     todayStr,
     isCoupleRoom,
+    isHomeService,
+    selectedHsTherapist,
   ]);
 
   // ── Available Therapists at selected timeslot ────────────────────────
@@ -721,6 +898,17 @@ export function RescheduleBookingModal({
     if (!selectedTimeSlot || therapists.length === 0 || !selectedDate) {
       setSelectedTherapistId('');
       setSelectedTherapist(null);
+      setSelectedSecondaryTherapistId('');
+      setSelectedSecondaryTherapist(null);
+      return;
+    }
+
+    // For home service: therapist was pre-selected before slot — sync it now
+    if (isHomeService) {
+      if (selectedHsTherapist) {
+        setSelectedTherapistId(selectedHsTherapist.id);
+        setSelectedTherapist(selectedHsTherapist);
+      }
       setSelectedSecondaryTherapistId('');
       setSelectedSecondaryTherapist(null);
       return;
@@ -767,12 +955,19 @@ export function RescheduleBookingModal({
       setSelectedSecondaryTherapistId('');
       setSelectedSecondaryTherapist(null);
     }
-  }, [selectedTimeSlot, availableTherapistsAtSlot, isCoupleRoom, selectedTherapistId, selectedSecondaryTherapistId, initialBooking, bk]);
+  }, [selectedTimeSlot, availableTherapistsAtSlot, isCoupleRoom, selectedTherapistId, selectedSecondaryTherapistId, initialBooking, bk, isHomeService, selectedHsTherapist]);
 
   // ── Handle Submit Reschedule ──────────────────────────────────────────
   const handleUpdateBooking = async () => {
-    if (!selectedBranchId || !selectedRoomId || !selectedDate || !selectedTimeSlot || !selectedTherapistId) {
-      setSubmitError('Please complete all fields (Branch, Room, Date, Timeslot, and Therapist)');
+    const missingFields = (!isHomeService && !selectedBranchId) ||
+      (!isHomeService && !selectedRoomId) ||
+      !selectedDate || !selectedTimeSlot || !selectedTherapistId;
+    if (missingFields) {
+      setSubmitError(
+        isHomeService
+          ? 'Please select a date, timeslot and therapist'
+          : 'Please complete all fields (Branch, Room, Date, Timeslot, and Therapist)'
+      );
       return;
     }
 
@@ -851,22 +1046,35 @@ export function RescheduleBookingModal({
     ) => {
       const therapistName = getTherapistDisplayName(therapist);
       const secName = secTherapist ? getTherapistDisplayName(secTherapist) : undefined;
+
+      // For home service: keep existing branch, omit room/arrangement
+      const branchPayload = isHomeService
+        ? {
+            branch_id: bk?.branch_id || selectedBranchId || null,
+            branch_data: bk?.branch_data || { branch_name: 'Home Service' },
+            service_arrangement_id: null,
+            service_arrangement_data: null,
+          }
+        : {
+            branch_id: selectedBranchId,
+            branch_data: {
+              id: selectedBranchId,
+              branch_id: selectedBranchId,
+              branch_name: branchName,
+              name: branchName,
+            },
+            service_arrangement_id: selectedRoomId,
+            service_arrangement_data: {
+              id: selectedRoomId,
+              arrangement_id: selectedRoomId,
+              arrangement_name: roomName,
+              name: roomName,
+              arrangement_type: roomType,
+            },
+          };
+
       return {
-        branch_id: selectedBranchId,
-        branch_data: {
-          id: selectedBranchId,
-          branch_id: selectedBranchId,
-          branch_name: branchName,
-          name: branchName,
-        },
-        service_arrangement_id: selectedRoomId,
-        service_arrangement_data: {
-          id: selectedRoomId,
-          arrangement_id: selectedRoomId,
-          arrangement_name: roomName,
-          name: roomName,
-          arrangement_type: roomType,
-        },
+        ...branchPayload,
         appointment_date: selectedDate,
         appointment_time: formattedTime,
         appointment_start: appointmentStartIso,
@@ -936,7 +1144,7 @@ export function RescheduleBookingModal({
 
   // ── Submit: multi-session reschedule (each session carries its own room/therapist/time) ──
   const handleUpdateMultiSession = async () => {
-    if (!sessionPlan || sessionPlan.length === 0 || !selectedBranchId || !selectedDate) {
+    if (!sessionPlan || sessionPlan.length === 0 || (!isHomeService && !selectedBranchId) || !selectedDate) {
       setSubmitError('Please place every session (room, timeslot and therapist) before saving.');
       return;
     }
@@ -1127,6 +1335,21 @@ export function RescheduleBookingModal({
               </div>
 
               {/* ── Branch Selection (Requirement 1.i.c: below service name, changeable) ── */}
+              {isHomeService ? (
+                /* Home Service: show static info card instead of branch dropdown */
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 flex items-center gap-3">
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary/10">
+                    <Home className="h-4 w-4 text-primary" />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Booking Type</p>
+                    <p className="text-sm font-bold">Home Service</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Rescheduling home service — selecting a therapist available for home visits
+                    </p>
+                  </div>
+                </div>
+              ) : (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1168,9 +1391,10 @@ export function RescheduleBookingModal({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* ── Room / Arrangement Selection (Requirement 1.i.d & 1.i.e) ── */}
-              {!isMultiSession && (
+              {!isMultiSession && !isHomeService && (
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1267,8 +1491,85 @@ export function RescheduleBookingModal({
               )}
 
               {/* ── Date & Timeslot Section (Requirement 1.i.f) ── */}
-              {!isMultiSession && selectedRoomId && (
+              {!isMultiSession && (isHomeService || selectedRoomId) && (
                 <div className="space-y-3 pt-2 border-t border-border/40">
+
+                  {/* ── HOME SERVICE: Therapist Selection (pick before timeslot) ── */}
+                  {isHomeService && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <User className="h-3.5 w-3.5 text-emerald-500" />
+                          Select Therapist
+                        </label>
+                        {availabilitiesLoading && (
+                          <span className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                            <Loader2 className="h-3 w-3 animate-spin text-emerald-500" />
+                            Loading therapists…
+                          </span>
+                        )}
+                      </div>
+
+                      {!availabilitiesLoading && therapists.length === 0 ? (
+                        <div className="rounded-xl border border-amber-300/40 bg-amber-50/50 dark:bg-amber-950/20 p-3 flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300">
+                          <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
+                          No therapists available for home service on this date.
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {therapists.map((t) => {
+                            const tName = getTherapistDisplayName(t);
+                            const isSelected = t.id === hsTherapistId;
+                            // Count available slots for this therapist on selected date
+                            const tDaySlots = t.availabilities?.[selectedDate] || [];
+                            const slotCount = tDaySlots.length;
+                            return (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => {
+                                  setHsTherapistId(t.id);
+                                }}
+                                className={cn(
+                                  'flex items-center gap-3 rounded-2xl border px-4 py-3 text-left transition cursor-pointer',
+                                  isSelected
+                                    ? 'border-emerald-500 bg-emerald-50/60 dark:bg-emerald-950/30'
+                                    : 'border-border/60 bg-card hover:border-emerald-300 hover:bg-emerald-50/20 dark:hover:bg-emerald-950/10'
+                                )}
+                              >
+                                <div className={cn(
+                                  'grid h-10 w-10 shrink-0 place-items-center rounded-xl font-bold text-xs shadow-sm',
+                                  isSelected
+                                    ? 'bg-emerald-500 text-white'
+                                    : 'bg-muted text-muted-foreground'
+                                )}>
+                                  {getInitials(tName)}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-bold text-foreground">{tName}</p>
+                                  <p className="text-[11px] text-muted-foreground">
+                                    {t.specialization || 'Spa Specialist'}
+                                    {slotCount > 0 && (
+                                      <span className="ml-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
+                                        • {slotCount} slot{slotCount !== 1 ? 's' : ''} on {selectedDate}
+                                      </span>
+                                    )}
+                                    {slotCount === 0 && (
+                                      <span className="ml-1.5 text-muted-foreground/60">• No slots on {selectedDate}</span>
+                                    )}
+                                  </p>
+                                </div>
+                                {isSelected && (
+                                  <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Date Picker */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1320,50 +1621,69 @@ export function RescheduleBookingModal({
                     </div>
                   </div>
 
-                  {/* Timeslots */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5 text-indigo-500" />
-                      Available Timeslots
-                    </label>
+                  {/* Timeslots — for home service: shown only after therapist is selected */}
+                  {(!isHomeService || hsTherapistId) && (
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5 text-indigo-500" />
+                        Available Timeslots
+                        {isHomeService && selectedHsTherapist && (
+                          <span className="ml-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 normal-case">
+                            — {getTherapistDisplayName(selectedHsTherapist)}
+                          </span>
+                        )}
+                      </label>
 
-                    {scheduleLoading ? (
-                      <div className="flex items-center justify-center py-6 gap-2 text-xs text-muted-foreground">
-                        <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
-                        Loading available timeslots…
-                      </div>
-                    ) : availableSlots.length === 0 ? (
-                      <p className="text-xs text-muted-foreground py-2">No timeslots found for this date.</p>
-                    ) : (
-                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-48 overflow-y-auto pr-1">
-                        {availableSlots.map(({ time, available }) => {
-                          const isSel = selectedTimeSlot === time;
-                          return (
-                            <button
-                              key={time}
-                              type="button"
-                              disabled={!available}
-                              onClick={() => setSelectedTimeSlot(time)}
-                              className={cn(
-                                'rounded-xl py-2 px-1 text-center text-xs font-bold transition cursor-pointer border',
-                                isSel
-                                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border-transparent shadow-sm'
-                                  : available
-                                    ? 'bg-card text-foreground border-border/80 hover:border-violet-400 hover:bg-violet-50/50 dark:hover:bg-violet-950/20'
-                                    : 'bg-muted/30 text-muted-foreground/40 border-border/30 cursor-not-allowed line-through'
-                              )}
-                            >
-                              {time}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                      {scheduleLoading ? (
+                        <div className="flex items-center justify-center py-6 gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
+                          Loading available timeslots…
+                        </div>
+                      ) : availableSlots.length === 0 ? (
+                        <p className="text-xs text-muted-foreground py-2">
+                          {isHomeService
+                            ? `No available slots for ${getTherapistDisplayName(selectedHsTherapist)} on ${selectedDate}.`
+                            : 'No timeslots found for this date.'}
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 max-h-48 overflow-y-auto pr-1">
+                          {availableSlots.map(({ time, available }) => {
+                            const isSel = selectedTimeSlot === time;
+                            return (
+                              <button
+                                key={time}
+                                type="button"
+                                disabled={!available}
+                                onClick={() => setSelectedTimeSlot(time)}
+                                className={cn(
+                                  'rounded-xl py-2 px-1 text-center text-xs font-bold transition cursor-pointer border',
+                                  isSel
+                                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white border-transparent shadow-sm'
+                                    : available
+                                      ? 'bg-card text-foreground border-border/80 hover:border-violet-400 hover:bg-violet-50/50 dark:hover:bg-violet-950/20'
+                                      : 'bg-muted/30 text-muted-foreground/40 border-border/30 cursor-not-allowed line-through'
+                                )}
+                              >
+                                {time}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Prompt to select therapist first (home service only) */}
+                  {isHomeService && !hsTherapistId && !availabilitiesLoading && therapists.length > 0 && (
+                    <p className="text-[11px] text-muted-foreground italic">
+                      ↑ Select a therapist above to see their available timeslots.
+                    </p>
+                  )}
                 </div>
               )}
 
-              {/* ── Auto-Selected Therapist (Requirement 1.i.g) ── */}
+              {/* ── Assigned Therapist (after timeslot picked) ── */}
+              {/* Home service: therapist already chosen before timeslot — show confirmation card */}
               {!isMultiSession && selectedTimeSlot && (
                 <div className="space-y-1.5 pt-2 border-t border-border/40">
                   <div className="flex items-center justify-between">
@@ -1371,12 +1691,15 @@ export function RescheduleBookingModal({
                       <User className="h-3.5 w-3.5 text-emerald-500" />
                       {isCoupleRoom ? 'Assigned Therapists' : 'Assigned Therapist'}
                     </label>
-                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-                      Auto-Selected by Availability
-                    </span>
+                    {!isHomeService && (
+                      <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                        Auto-Selected by Availability
+                      </span>
+                    )}
                   </div>
 
-                  {availableTherapistsAtSlot.length > 1 && (
+                  {/* Branch booking: allow changing therapist among available */}
+                  {!isHomeService && availableTherapistsAtSlot.length > 1 && (
                     <div className="flex items-center gap-1.5 flex-wrap pt-1 pb-1">
                       <span className="text-[11px] text-muted-foreground font-semibold">Change Therapist:</span>
                       {availableTherapistsAtSlot.map((t) => {
@@ -1493,8 +1816,8 @@ export function RescheduleBookingModal({
           </button>
           {(() => {
             const incomplete = isMultiSession
-              ? !selectedBranchId || !selectedDate || !sessionPlan
-              : !selectedBranchId || !selectedRoomId || !selectedDate || !selectedTimeSlot || !selectedTherapistId;
+              ? (!isHomeService && !selectedBranchId) || !selectedDate || !sessionPlan
+              : (!isHomeService && !selectedBranchId) || (!isHomeService && !selectedRoomId) || !selectedDate || !selectedTimeSlot || !selectedTherapistId;
             const blocked = submitting || submitSuccess || incomplete;
             return (
               <button

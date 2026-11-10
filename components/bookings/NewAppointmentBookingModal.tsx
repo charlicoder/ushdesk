@@ -71,6 +71,10 @@ interface ApiService {
   package_components?: { id: string; name: string }[];
   package_name?: string;
   package_price?: string | number;
+  /** Home service specific pricing fields */
+  home_price_in_points?: number | null;
+  home_loyalty_points?: number | null;
+  home_price_for_extra_minutes?: string | number | null;
   [key: string]: unknown;
 }
 
@@ -223,6 +227,22 @@ function homePriceOf(sv: ApiService): number {
   const hp = parseFloat(String((sv as Record<string, unknown>).home_service_price ?? ''));
   if (!isNaN(hp) && hp > 0) return hp;
   return parseFloat(String(sv.base_price ?? '0')) || 0;
+}
+
+/** Price of an add-on when booked as a home service (falls back to regular price) */
+function homeAddonPriceOf(a: ApiAddOn, homeService?: boolean): number {
+  if (!homeService) return parseFloat(String(a.price ?? '0')) || 0;
+  const raw = a as unknown as Record<string, unknown>;
+  const hp = parseFloat(String(raw.home_service_price ?? ''));
+  if (!isNaN(hp) && hp > 0) return hp;
+  return parseFloat(String(a.price ?? '0')) || 0;
+}
+
+/** Extra-minutes price when booked as home service (falls back to regular price_for_extra_minutes) */
+function homePriceForExtraOf(sv: ApiService): number {
+  const hp = parseFloat(String(sv.home_price_for_extra_minutes ?? ''));
+  if (!isNaN(hp) && hp > 0) return hp;
+  return parseFloat(String(sv.price_for_extra_minutes ?? '0')) || 0;
 }
 
 function therapistDisplayName(t: ApiTherapist | null | undefined): string {
@@ -638,8 +658,17 @@ export function AddSessionSubModal({
     authedFetch(endpoint, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => {
-        let list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
-        if (homeService) list = list.filter((sv: ApiService) => (sv as Record<string, unknown>).is_home_service_eligible !== false);
+        let list: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        if (homeService) {
+          list = list.filter((sv: ApiService) => {
+            const raw = sv as Record<string, unknown>;
+            return (
+              sv.is_home_service_eligible === true ||
+              raw.is_home_service_eligible === true ||
+              String(raw.is_home_service_eligible).toLowerCase() === 'true'
+            );
+          });
+        }
         setServices(list);
       })
       .catch(() => setServices([]))
@@ -738,12 +767,24 @@ export function AddSessionSubModal({
         sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true',
       );
       if (pkg) return;
-      (sv.add_ons ?? []).forEach(a => {
-        if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
+      const rawAddons = sv.add_ons ?? (sv as Record<string, unknown>).addons ?? [];
+      (rawAddons as ApiAddOn[]).forEach(a => {
+        if (!seen.has(a.id)) {
+          if (homeService) {
+            const raw = a as unknown as Record<string, unknown>;
+            const eligible =
+              raw.is_available_for_home_service !== false &&
+              raw.is_home_service_eligible !== false &&
+              raw.is_active !== false;
+            if (!eligible) return;
+          }
+          seen.add(a.id);
+          out.push(a);
+        }
       });
     });
     return out;
-  }, [selectedServices, isPackagedService]);
+  }, [selectedServices, isPackagedService, homeService]);
 
   const selectedArrangement = useMemo(
     () => arrangements.find(a => a.id === arrangementId) ?? null,
@@ -779,11 +820,13 @@ export function AddSessionSubModal({
   const selectedSvcAddons = noAddons ? [] : serviceAddons.filter(a => addonIds.includes(a.id));
   const selectedArrAddons = noAddons ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
   const allSelectedAddons = [...selectedSvcAddons, ...selectedArrAddons];
-  const addonTotal = allSelectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
+  const addonTotal = allSelectedAddons.reduce((s, a) => s + homeAddonPriceOf(a, homeService), 0);
   const addonDuration = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
 
   const extraMinutesUnit = Number(primaryService?.extra_minutes ?? 0);
-  const extraPricePerUnit = parseFloat(String(primaryService?.price_for_extra_minutes ?? '0')) || 0;
+  const extraPricePerUnit = primaryService
+    ? (homeService ? homePriceForExtraOf(primaryService) : (parseFloat(String(primaryService.price_for_extra_minutes ?? '0')) || 0))
+    : 0;
   const hasExtraTime = extraMinutesUnit > 0 && extraPricePerUnit > 0;
   const calcExtraPrice = (mins: number) => {
     if (mins <= 0 || !hasExtraTime) return 0;
@@ -1158,6 +1201,11 @@ export function AddSessionSubModal({
     if (!primaryService) return;
     if (!selectedTherapistId) return;
 
+    const selectedAddonsWithPrice: ApiAddOn[] = allSelectedAddons.map(a => ({
+      ...a,
+      price: homeAddonPriceOf(a, homeService),
+    }));
+
     const newSession: SavedSession = {
       id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).slice(2),
       serviceIds,
@@ -1168,7 +1216,7 @@ export function AddSessionSubModal({
       arrangementPrice: arrPrice,
       addonIds,
       arrangementAddonIds,
-      selectedAddons: allSelectedAddons,
+      selectedAddons: selectedAddonsWithPrice,
       extraMinutes,
       extraPrice: extraMinutesPrice,
       therapistId: isFirstSession ? defaultTherapistId : selectedTherapistId,
@@ -1247,9 +1295,17 @@ export function AddSessionSubModal({
                 {!splitPkg && (<>
                 <FLabel required>Search & Select</FLabel>
                 <MultiSelectDrop<ApiService>
-                  items={services.filter(s =>
-                    !serviceSearch || s.name.toLowerCase().includes(serviceSearch.toLowerCase()),
-                  )}
+                  items={services.filter(s => {
+                    if (homeService) {
+                      const raw = s as Record<string, unknown>;
+                      const el =
+                        s.is_home_service_eligible === true ||
+                        raw.is_home_service_eligible === true ||
+                        String(raw.is_home_service_eligible).toLowerCase() === 'true';
+                      if (!el) return false;
+                    }
+                    return !serviceSearch || s.name.toLowerCase().includes(serviceSearch.toLowerCase());
+                  })}
                   selectedIds={serviceIds}
                   getId={sv => String(sv.id)}
                   search={serviceSearch}
@@ -1265,59 +1321,69 @@ export function AddSessionSubModal({
                   onSearch={setServiceSearch}
                   onToggle={toggleService}
                   getDisabledReason={serviceDisabledReason}
-                  renderItem={(sv, checked) => (
-                    <div className="flex items-start gap-3 py-3 pr-4">
-                      <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                        <Scissors className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold truncate">{sv.name}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {sv.category && <span className="mr-2">{sv.category}</span>}
-                          {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
+                  renderItem={(sv, checked) => {
+                    const priceVal = homeService
+                      ? homePriceOf(sv)
+                      : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+                    return (
+                      <div className="flex items-start gap-3 py-3 pr-4">
+                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                          <Scissors className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold truncate">{sv.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {sv.category && <span className="mr-2">{sv.category}</span>}
+                            {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
+                          {fmt(priceVal)} KWD
                         </p>
+                        {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
                       </div>
-                      <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
-                        {fmt(sv.arrangement_price ?? sv.base_price)} KWD
-                      </p>
-                      {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
-                    </div>
-                  )}
+                    );
+                  }}
                 />
 
                 {/* Selected Services Chips Matching Image 2 */}
-                {selectedServices.map(sv => (
-                  <div
-                    key={sv.id}
-                    className="mt-2.5 flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/[0.04] p-3 shadow-xs"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary shrink-0">
-                        <CheckCircle2 className="h-4 w-4" />
+                {selectedServices.map(sv => {
+                  const priceVal = homeService
+                    ? homePriceOf(sv)
+                    : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+                  return (
+                    <div
+                      key={sv.id}
+                      className="mt-2.5 flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/[0.04] p-3 shadow-xs"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary shrink-0">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-black uppercase tracking-wide text-primary truncate">
+                            {sv.name}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground font-semibold">
+                            {sv.duration_minutes ?? 60} min
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-black uppercase tracking-wide text-primary truncate">
-                          {sv.name}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground font-semibold">
-                          {sv.duration_minutes ?? 60} min
-                        </p>
+                      <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                        <span className="text-sm font-black text-primary">
+                          {fmt(priceVal)} KWD
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleService(sv)}
+                          className="grid h-6 w-6 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2.5 shrink-0 ml-3">
-                      <span className="text-sm font-black text-primary">
-                        {fmt(sv.arrangement_price ?? sv.base_price)} KWD
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleService(sv)}
-                        className="grid h-6 w-6 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition cursor-pointer"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 </>)}
 
                 {/* Package details: included services + guided session builder */}
@@ -1654,7 +1720,7 @@ export function AddSessionSubModal({
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-semibold leading-tight">{addon.name}</p>
                               <div className="flex items-center gap-1.5 mt-0.5">
-                                {addon.price && <span className="text-[10px] font-bold text-primary">+{fmt(addon.price)} KWD</span>}
+                                {addon.price && <span className="text-[10px] font-bold text-primary">+{fmt(homeAddonPriceOf(addon, homeService))} KWD</span>}
                                 {addon.duration_minutes && (
                                   <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                                     <Timer className="h-2.5 w-2.5" />+{addon.duration_minutes}m

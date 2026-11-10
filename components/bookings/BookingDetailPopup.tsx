@@ -1883,6 +1883,49 @@ function BookingDetailPopupContent({
     return displaySessions.length === 1 ? Number(extraMinutes) || 0 : 0;
   };
 
+  const isHomeBooking =
+    booking.booking_type === 'home_service' ||
+    booking.booking_type === 'home' ||
+    detail?.booking_type === 'home_service' ||
+    detail?.booking_type === 'home' ||
+    String(booking.branch_name).toLowerCase().includes('home');
+
+  const resolvedHomeAddress = useMemo(() => {
+    const custData = (detail?.customer_data ?? booking.raw?.customer_data ?? (booking as any).customer_data ?? {}) as Record<string, any>;
+    const branchData = (detail?.branch_data ?? booking.raw?.branch_data ?? (booking as any).branch_data ?? {}) as Record<string, any>;
+    const rawAddr = custData.home_address ?? custData.delivery_address ?? custData.address ?? branchData.home_address ?? detail?.address ?? (booking as any).address;
+
+    if (rawAddr) {
+      if (typeof rawAddr === 'string' && rawAddr.trim()) return rawAddr.trim();
+      if (typeof rawAddr === 'object') {
+        if (rawAddr.formatted_address) return String(rawAddr.formatted_address);
+        const parts = [
+          rawAddr.area ? `Area ${rawAddr.area}` : null,
+          rawAddr.block ? `Block ${rawAddr.block}` : null,
+          rawAddr.street ? `Street ${rawAddr.street}` : null,
+          rawAddr.avenue ? `Avenue ${rawAddr.avenue}` : null,
+          rawAddr.house ? `House/Bldg ${rawAddr.house}` : (rawAddr.building ? `Bldg ${rawAddr.building}` : null),
+          rawAddr.floor ? `Floor ${rawAddr.floor}` : null,
+          rawAddr.apartment ? `Apt ${rawAddr.apartment}` : null,
+          rawAddr.notes || rawAddr.directions ? `(${rawAddr.notes || rawAddr.directions})` : null,
+        ].filter(Boolean);
+        if (parts.length > 0) return parts.join(', ');
+      }
+    }
+
+    // Check customer notes for "[Home Address: ...]"
+    const rawNotes = String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '');
+    const match = rawNotes.match(/\[Home Address:\s*([^\]]+)\]/i);
+    if (match?.[1]) return match[1].trim();
+
+    return null;
+  }, [detail, booking]);
+
+  const cleanCustomerNotes = useMemo(() => {
+    const rawNotes = String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '');
+    return rawNotes.replace(/\[Home Address:\s*[^\]]+\]/gi, '').trim();
+  }, [detail, booking]);
+
   // Detect whether this booking is for a package (multiple services bundled under a package price)
   const packageInfo = useMemo(() => {
     const isTruthyFlag = (v: unknown): boolean =>
@@ -3702,13 +3745,29 @@ function BookingDetailPopupContent({
 
                 {/* Branch and Customer Notes */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <DRow icon={MapPin} label="Branch">{booking.branch_name || '—'}</DRow>
+                  <DRow icon={isHomeBooking ? Home : MapPin} label={isHomeBooking ? 'Service Type' : 'Branch'}>
+                    {isHomeBooking ? (
+                      <span className="inline-flex items-center gap-1.5 font-bold text-primary">
+                        <Home className="h-3.5 w-3.5" /> Home Service
+                      </span>
+                    ) : (
+                      booking.branch_name || '—'
+                    )}
+                  </DRow>
                   <DRow icon={FileText} label="Customer Notes">
                     <span className="text-foreground text-xs break-words">
-                      {String(detail?.customer_notes ?? booking.customer_notes ?? detail?.notes ?? '') || '—'}
+                      {cleanCustomerNotes || '—'}
                     </span>
                   </DRow>
                 </div>
+
+                {resolvedHomeAddress && (
+                  <DRow icon={MapPin} label="Home Destination Address">
+                    <span className="text-foreground text-xs font-semibold leading-relaxed break-words">
+                      {resolvedHomeAddress}
+                    </span>
+                  </DRow>
+                )}
 
                 {/* Pricing Summary (Sum of all items: Service + Addons + Extra Minutes) */}
                 <div className="rounded-2xl border border-border/60 bg-gradient-to-br from-muted/30 to-muted/10 p-4 space-y-3">

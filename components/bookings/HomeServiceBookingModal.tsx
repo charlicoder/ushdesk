@@ -28,7 +28,7 @@ import {
   Timer, Loader2, Scissors, Package, User, Phone, Mail,
   DollarSign, FileText, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
-  CreditCard, Hash, Trash2, Plus, ArrowRight, Lock,
+  CreditCard, Hash, Trash2, Plus, ArrowRight, Lock, MapPin, Home,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -71,6 +71,10 @@ interface ApiService {
   package_components?: { id: string; name: string }[];
   package_name?: string;
   package_price?: string | number;
+  /** Home service specific pricing fields */
+  home_price_in_points?: number | null;
+  home_loyalty_points?: number | null;
+  home_price_for_extra_minutes?: string | number | null;
   [key: string]: unknown;
 }
 
@@ -156,7 +160,10 @@ export interface HomeServiceSavedSession {
   addonIds: string[];
   arrangementAddonIds: string[];
   selectedAddons: ApiAddOn[];
+  /** Total extra minutes across all services in this session */
   extraMinutes: number;
+  /** Per-service extra minutes map: serviceId → minutes chosen */
+  extraMinutesByService?: Record<string, number>;
   extraPrice: number;
   therapistId: string;
   therapistName: string;
@@ -223,6 +230,23 @@ function homePriceOf(sv: ApiService): number {
   const hp = parseFloat(String((sv as Record<string, unknown>).home_service_price ?? ''));
   if (!isNaN(hp) && hp > 0) return hp;
   return parseFloat(String(sv.base_price ?? '0')) || 0;
+}
+
+/** Price of an add-on when booked as a home service (falls back to regular price) */
+function homeAddonPriceOf(a: ApiAddOn, homeService?: boolean): number {
+  if (homeService) {
+    const raw = a as unknown as Record<string, unknown>;
+    const hp = parseFloat(String(raw.home_service_price ?? ''));
+    if (!isNaN(hp) && hp > 0) return hp;
+  }
+  return parseFloat(String(a.price ?? '0')) || 0;
+}
+
+/** Extra-minutes price when booked as home service (falls back to regular price_for_extra_minutes) */
+function homePriceForExtraOf(sv: ApiService): number {
+  const hp = parseFloat(String(sv.home_price_for_extra_minutes ?? ''));
+  if (!isNaN(hp) && hp > 0) return hp;
+  return parseFloat(String(sv.price_for_extra_minutes ?? '0')) || 0;
 }
 
 function therapistDisplayName(t: ApiTherapist | null | undefined): string {
@@ -605,7 +629,8 @@ export function HomeServiceAddSessionModal({
 
   const [addonIds, setAddonIds] = useState<string[]>([]);
   const [arrangementAddonIds, setArrangementAddonIds] = useState<string[]>([]);
-  const [extraMinutes, setExtraMinutes] = useState<number>(0);
+  /** Per-service extra minutes: serviceId → minutes selected (home service: each service has its own extra time) */
+  const [extraMinutesByService, setExtraMinutesByService] = useState<Record<string, number>>({});
 
   // ── Step 2 Form State ──
   // For Session 1: strictly locked to defaultTherapistId and defaultTimeSlot
@@ -629,13 +654,21 @@ export function HomeServiceAddSessionModal({
     const endpoint = isFirstSession
       ? `/api/v1/therapists/${defaultTherapistId}/services/`
       : homeService
-        ? `/api/v1/services/?is_active=true`
+        ? `/api/v1/services/?is_active=true&is_home_service_eligible=true`
         : `/api/v1/services/?branch_id=${branchId}&is_active=true`;
 
     authedFetch(endpoint, { headers: authHeader ? { Authorization: authHeader } : undefined })
       .then(r => r.json())
       .then(d => {
-        const list = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        let list: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
+        if (homeService) {
+          list = list.filter((sv: ApiService) => {
+            const raw = sv as Record<string, unknown>;
+            return sv.is_home_service_eligible === true ||
+              raw.is_home_service_eligible === true ||
+              String(raw.is_home_service_eligible).toLowerCase() === 'true';
+          });
+        }
         setServices(list);
       })
       .catch(() => setServices([]))
@@ -733,12 +766,24 @@ export function HomeServiceAddSessionModal({
         sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true',
       );
       if (pkg) return;
-      (sv.add_ons ?? []).forEach(a => {
-        if (!seen.has(a.id)) { seen.add(a.id); out.push(a); }
+      const rawAddons = sv.add_ons ?? (sv as Record<string, unknown>).addons ?? [];
+      (rawAddons as ApiAddOn[]).forEach(a => {
+        if (!seen.has(a.id)) {
+          if (homeService) {
+            const raw = a as unknown as Record<string, unknown>;
+            // For home service: only show add-ons explicitly marked as available for home service
+            const eligible =
+              raw.is_available_for_home_service === true ||
+              String(raw.is_available_for_home_service).toLowerCase() === 'true';
+            if (!eligible) return;
+          }
+          seen.add(a.id);
+          out.push(a);
+        }
       });
     });
     return out;
-  }, [selectedServices, isPackagedService]);
+  }, [selectedServices, isPackagedService, homeService]);
 
   const selectedArrangement = useMemo(
     () => arrangements.find(a => a.id === arrangementId) ?? null,
@@ -774,17 +819,37 @@ export function HomeServiceAddSessionModal({
   const selectedSvcAddons = noAddons ? [] : serviceAddons.filter(a => addonIds.includes(a.id));
   const selectedArrAddons = noAddons ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
   const allSelectedAddons = [...selectedSvcAddons, ...selectedArrAddons];
-  const addonTotal = allSelectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
+  const addonTotal = allSelectedAddons.reduce((s, a) => s + homeAddonPriceOf(a, homeService), 0);
   const addonDuration = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
 
+  // ── Per-service extra time (home service: each selected service has its own extra time section) ──
+  /** For each service: { unit: minutes-per-step, pricePerUnit: cost-per-step } */
+  const perServiceExtraConfig = useMemo(() =>
+    selectedServices
+      .filter(sv => !sv.package_id) // package components don't get extra time individually
+      .map(sv => {
+        const unit = Number(sv.extra_minutes ?? 0);
+        const pricePerUnit = homeService ? homePriceForExtraOf(sv) : (parseFloat(String(sv.price_for_extra_minutes ?? '0')) || 0);
+        return { id: sv.id, name: sv.name, unit, pricePerUnit, hasExtra: unit > 0 && pricePerUnit > 0 };
+      })
+      .filter(c => c.hasExtra),
+  [selectedServices, homeService]);
+
+  /** Total extra minutes across all services */
+  const extraMinutes = perServiceExtraConfig.reduce((sum, c) => sum + (extraMinutesByService[c.id] ?? 0), 0);
+  /** Total extra price across all services */
+  const extraMinutesPrice = perServiceExtraConfig.reduce((sum, c) => {
+    const mins = extraMinutesByService[c.id] ?? 0;
+    if (mins <= 0) return sum;
+    return sum + (mins / c.unit) * c.pricePerUnit;
+  }, 0);
+
+  // Legacy single-service helpers (kept for non-home / single-service flow)
   const extraMinutesUnit = Number(primaryService?.extra_minutes ?? 0);
-  const extraPricePerUnit = parseFloat(String(primaryService?.price_for_extra_minutes ?? '0')) || 0;
+  const extraPricePerUnit = primaryService
+    ? (homeService ? homePriceForExtraOf(primaryService) : (parseFloat(String(primaryService.price_for_extra_minutes ?? '0')) || 0))
+    : 0;
   const hasExtraTime = extraMinutesUnit > 0 && extraPricePerUnit > 0;
-  const calcExtraPrice = (mins: number) => {
-    if (mins <= 0 || !hasExtraTime) return 0;
-    return (mins / extraMinutesUnit) * extraPricePerUnit;
-  };
-  const extraMinutesPrice = calcExtraPrice(extraMinutes);
 
   const baseDuration = selectedServices.reduce((sum, sv) => sum + (sv.duration_minutes ?? 60), 0);
   const totalDuration = (primaryService ? baseDuration : 0) + addonDuration + extraMinutes;
@@ -1070,6 +1135,11 @@ export function HomeServiceAddSessionModal({
     if (!primaryService) return;
     if (!selectedTherapistId) return;
 
+    const selectedAddonsWithPrice: ApiAddOn[] = allSelectedAddons.map(a => ({
+      ...a,
+      price: homeAddonPriceOf(a, homeService),
+    }));
+
     const newSession: HomeServiceSavedSession = {
       id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : Math.random().toString(36).slice(2),
       serviceIds,
@@ -1080,8 +1150,9 @@ export function HomeServiceAddSessionModal({
       arrangementPrice: arrPrice,
       addonIds,
       arrangementAddonIds,
-      selectedAddons: allSelectedAddons,
+      selectedAddons: selectedAddonsWithPrice,
       extraMinutes,
+      extraMinutesByService: { ...extraMinutesByService },
       extraPrice: extraMinutesPrice,
       therapistId: isFirstSession ? defaultTherapistId : selectedTherapistId,
       therapistName: isFirstSession ? defaultTherapistName : selectedTherapistName,
@@ -1159,9 +1230,16 @@ export function HomeServiceAddSessionModal({
                 {!splitPkg && (<>
                 <FLabel required>Search & Select</FLabel>
                 <MultiSelectDrop<ApiService>
-                  items={services.filter(s =>
-                    !serviceSearch || s.name.toLowerCase().includes(serviceSearch.toLowerCase()),
-                  )}
+                  items={services.filter(s => {
+                    if (homeService) {
+                      const raw = s as Record<string, unknown>;
+                      const el = s.is_home_service_eligible === true ||
+                        raw.is_home_service_eligible === true ||
+                        String(raw.is_home_service_eligible).toLowerCase() === 'true';
+                      if (!el) return false;
+                    }
+                    return !serviceSearch || s.name.toLowerCase().includes(serviceSearch.toLowerCase());
+                  })}
                   selectedIds={serviceIds}
                   getId={sv => String(sv.id)}
                   search={serviceSearch}
@@ -1169,67 +1247,73 @@ export function HomeServiceAddSessionModal({
                     servicesLoading
                       ? 'Loading services…'
                       : isFirstSession
-                      ? `Select service for ${defaultTherapistName}…`
-                      : 'Search & tick one or more branch services…'
+                      ? `Select home service for ${defaultTherapistName}…`
+                      : 'Search & tick one or more home services…'
                   }
                   loading={servicesLoading}
                   icon={Scissors}
                   onSearch={setServiceSearch}
                   onToggle={toggleService}
                   getDisabledReason={serviceDisabledReason}
-                  renderItem={(sv, checked) => (
-                    <div className="flex items-start gap-3 py-3 pr-4">
-                      <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
-                        <Scissors className="h-3.5 w-3.5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-semibold truncate">{sv.name}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {sv.category && <span className="mr-2">{sv.category}</span>}
-                          {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
+                  renderItem={(sv, checked) => {
+                    const priceVal = homeService ? homePriceOf(sv) : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+                    return (
+                      <div className="flex items-start gap-3 py-3 pr-4">
+                        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
+                          <Scissors className="h-3.5 w-3.5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold truncate">{sv.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {sv.category && <span className="mr-2">{sv.category}</span>}
+                            {sv.duration_minutes && <span>{sv.duration_minutes} min</span>}
+                          </p>
+                        </div>
+                        <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
+                          {fmt(priceVal)} KWD
                         </p>
+                        {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
                       </div>
-                      <p className="shrink-0 text-sm font-bold text-primary mt-0.5">
-                        {fmt(sv.arrangement_price ?? sv.base_price)} KWD
-                      </p>
-                      {checked && <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500 mt-1" />}
-                    </div>
-                  )}
+                    );
+                  }}
                 />
 
                 {/* Selected Services Chips Matching Image 2 */}
-                {selectedServices.map(sv => (
-                  <div
-                    key={sv.id}
-                    className="mt-2.5 flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/[0.04] p-3 shadow-xs"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary shrink-0">
-                        <CheckCircle2 className="h-4 w-4" />
+                {selectedServices.map(sv => {
+                  const priceVal = homeService ? homePriceOf(sv) : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+                  return (
+                    <div
+                      key={sv.id}
+                      className="mt-2.5 flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/[0.04] p-3 shadow-xs"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary shrink-0">
+                          <CheckCircle2 className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-black uppercase tracking-wide text-primary truncate">
+                            {sv.name}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground font-semibold">
+                            {sv.duration_minutes ?? 60} min
+                          </p>
+                        </div>
                       </div>
-                      <div className="min-w-0">
-                        <p className="text-xs font-black uppercase tracking-wide text-primary truncate">
-                          {sv.name}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground font-semibold">
-                          {sv.duration_minutes ?? 60} min
-                        </p>
+                      <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                        <span className="text-sm font-black text-primary">
+                          {fmt(priceVal)} KWD
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => toggleService(sv)}
+                          className="grid h-6 w-6 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2.5 shrink-0 ml-3">
-                      <span className="text-sm font-black text-primary">
-                        {fmt(sv.arrangement_price ?? sv.base_price)} KWD
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => toggleService(sv)}
-                        className="grid h-6 w-6 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition cursor-pointer"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
                 </>)}
 
                 {/* Package details: included services + guided session builder */}
@@ -1339,40 +1423,101 @@ export function HomeServiceAddSessionModal({
                 })()}
               </div>
 
-              {/* Extra Time Buttons Matching Image 2 */}
-              {hasExtraTime && !packageGate && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Timer className="h-3.5 w-3.5 text-muted-foreground" />
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                      Extra Time
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {[0, 30, 60].map(mins => {
-                      const active = extraMinutes === mins;
-                      const price = calcExtraPrice(mins);
-                      return (
-                        <button
-                          key={mins}
-                          type="button"
-                          onClick={() => setExtraMinutes(mins)}
-                          className={cn(
-                            'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
-                            active
-                              ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
-                              : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                          )}
-                        >
-                          <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `${mins} min`}</p>
-                          <p className="text-[11px] font-semibold mt-0.5 opacity-85">
-                            {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
+              {/* Extra Time — per-service (home service) or single (branch service) */}
+              {!packageGate && (
+                homeService
+                  ? (
+                    /* Home service: one extra-time selector per service that supports it */
+                    perServiceExtraConfig.length > 0 && (
+                      <div className="space-y-3">
+                        {perServiceExtraConfig.map(cfg => {
+                          const chosenMins = extraMinutesByService[cfg.id] ?? 0;
+                          const extraOptions = [0, cfg.unit, cfg.unit * 2];
+                          return (
+                            <div key={cfg.id}>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Timer className="h-3.5 w-3.5 text-muted-foreground" />
+                                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                                  Extra Time
+                                </p>
+                                <span className="ml-1 text-[10px] font-semibold text-muted-foreground/70 truncate">
+                                  — {cfg.name}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2.5">
+                                {extraOptions.map(mins => {
+                                  const active = chosenMins === mins;
+                                  const price = mins > 0 ? (mins / cfg.unit) * cfg.pricePerUnit : 0;
+                                  return (
+                                    <button
+                                      key={mins}
+                                      type="button"
+                                      onClick={() =>
+                                        setExtraMinutesByService(prev => ({ ...prev, [cfg.id]: mins }))
+                                      }
+                                      className={cn(
+                                        'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
+                                        active
+                                          ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
+                                          : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                                      )}
+                                    >
+                                      <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
+                                      <p className="text-[11px] font-semibold mt-0.5 opacity-85">
+                                        {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
+                                      </p>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                  )
+                  : (
+                    /* Branch service: single extra-time selector for primary service */
+                    hasExtraTime && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Timer className="h-3.5 w-3.5 text-muted-foreground" />
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Extra Time
                           </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2.5">
+                          {[0, extraMinutesUnit, extraMinutesUnit * 2].map(mins => {
+                            const svcMins = extraMinutesByService[primaryService?.id ?? ''] ?? 0;
+                            const active = svcMins === mins;
+                            const price = mins > 0 ? (mins / extraMinutesUnit) * extraPricePerUnit : 0;
+                            return (
+                              <button
+                                key={mins}
+                                type="button"
+                                onClick={() => {
+                                  if (primaryService) {
+                                    setExtraMinutesByService(prev => ({ ...prev, [primaryService.id]: mins }));
+                                  }
+                                }}
+                                className={cn(
+                                  'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
+                                  active
+                                    ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
+                                    : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                                )}
+                              >
+                                <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
+                                <p className="text-[11px] font-semibold mt-0.5 opacity-85">
+                                  {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
+                                </p>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )
+                  )
               )}
 
               {/* Select Room Carousel Matching Image 2 */}
@@ -1572,7 +1717,11 @@ export function HomeServiceAddSessionModal({
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-semibold leading-tight">{addon.name}</p>
                               <div className="flex items-center gap-1.5 mt-0.5">
-                                {addon.price && <span className="text-[10px] font-bold text-primary">+{fmt(addon.price)} KWD</span>}
+                                {homeAddonPriceOf(addon, homeService) > 0 && (
+                                  <span className="text-[10px] font-bold text-primary">
+                                    +{fmt(homeAddonPriceOf(addon, homeService))} KWD
+                                  </span>
+                                )}
                                 {addon.duration_minutes && (
                                   <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
                                     <Timer className="h-2.5 w-2.5" />+{addon.duration_minutes}m
@@ -2083,6 +2232,47 @@ export function HomeServiceBookingModal({
   const [selectedCustomer, setSelectedCustomer] = useState<ApiCustomer | null>(null);
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
 
+  // ── Home Address State ──
+  const [addressArea, setAddressArea] = useState('');
+  const [addressBlock, setAddressBlock] = useState('');
+  const [addressStreet, setAddressStreet] = useState('');
+  const [addressAvenue, setAddressAvenue] = useState('');
+  const [addressHouse, setAddressHouse] = useState('');
+  const [addressFloor, setAddressFloor] = useState('');
+  const [addressDirections, setAddressDirections] = useState('');
+
+  const fullAddressObj = useMemo(() => ({
+    area: addressArea.trim(),
+    block: addressBlock.trim(),
+    street: addressStreet.trim(),
+    avenue: addressAvenue.trim() || undefined,
+    house: addressHouse.trim(),
+    building: addressHouse.trim(),
+    floor: addressFloor.trim() || undefined,
+    apartment: addressFloor.trim() || undefined,
+    directions: addressDirections.trim() || undefined,
+  }), [addressArea, addressBlock, addressStreet, addressAvenue, addressHouse, addressFloor, addressDirections]);
+
+  const formattedAddress = useMemo(() => {
+    const parts = [
+      addressArea.trim() ? `Area: ${addressArea.trim()}` : null,
+      addressBlock.trim() ? `Block: ${addressBlock.trim()}` : null,
+      addressStreet.trim() ? `Street: ${addressStreet.trim()}` : null,
+      addressAvenue.trim() ? `Avenue: ${addressAvenue.trim()}` : null,
+      addressHouse.trim() ? `House/Bldg: ${addressHouse.trim()}` : null,
+      addressFloor.trim() ? `Floor/Apt: ${addressFloor.trim()}` : null,
+      addressDirections.trim() ? `Directions: ${addressDirections.trim()}` : null,
+    ].filter(Boolean);
+    return parts.join(', ');
+  }, [addressArea, addressBlock, addressStreet, addressAvenue, addressHouse, addressFloor, addressDirections]);
+
+  const isAddressComplete = Boolean(
+    addressArea.trim() &&
+    addressBlock.trim() &&
+    addressStreet.trim() &&
+    addressHouse.trim()
+  );
+
   // ── Notes & Payment Option ──
   const [notes, setNotes] = useState('');
   const [discount, setDiscount] = useState<string>('');
@@ -2174,6 +2364,19 @@ export function HomeServiceBookingModal({
     setCustomerSearch(label || name);
     setSelectedCustomer(c);
     setSubmitError(null);
+
+    // If customer has saved address, prefill it
+    const raw = (c as Record<string, any>).raw ?? c;
+    const addr = raw.address ?? raw.customer_address ?? raw.home_address_data ?? (raw.customer_data?.address);
+    if (addr && typeof addr === 'object') {
+      if (addr.area && !addressArea) setAddressArea(String(addr.area));
+      if (addr.block && !addressBlock) setAddressBlock(String(addr.block));
+      if (addr.street && !addressStreet) setAddressStreet(String(addr.street));
+      if (addr.avenue && !addressAvenue) setAddressAvenue(String(addr.avenue));
+      if ((addr.house || addr.building) && !addressHouse) setAddressHouse(String(addr.house || addr.building));
+      if ((addr.floor || addr.apartment) && !addressFloor) setAddressFloor(String(addr.floor || addr.apartment));
+      if ((addr.directions || addr.notes) && !addressDirections) setAddressDirections(String(addr.directions || addr.notes));
+    }
   };
 
   const clearCustomer = () => {
@@ -2273,6 +2476,10 @@ export function HomeServiceBookingModal({
       setSubmitError('Please select a customer.');
       return;
     }
+    if (homeService && !isAddressComplete) {
+      setSubmitError('Please complete the home address fields (Area, Block, Street, House/Building).');
+      return;
+    }
     if (overlapWarning) {
       setSubmitError(overlapWarning);
       return;
@@ -2347,24 +2554,33 @@ export function HomeServiceBookingModal({
       ? ((cust.full_name ?? [cust.first_name, cust.last_name].filter(Boolean).join(' ')) || 'Customer')
       : '';
 
+    const fullNotes = [
+      notes.trim(),
+      formattedAddress ? `[Home Address: ${formattedAddress}]` : '',
+    ].filter(Boolean).join('\n\n');
+
     const body = {
       // Legacy flat fields mirrored from session 0
       service_id: firstSvc?.id ?? '',
       service_name: firstSvc?.name ?? '',
       service_category: firstSvc?.category ?? '',
-      base_price: fmt(firstSvc?.base_price),
+      base_price: homeService ? fmt(homePriceOf(firstSvc)) : fmt(firstSvc?.base_price),
       baseDuration: firstSvc?.duration_minutes ?? 60,
       service_data: {
         service_id: firstSvc?.id ?? '',
         service_name: firstSvc?.name ?? '',
         service_category: firstSvc?.category ?? '',
-        base_price: fmt(firstSvc?.base_price),
-        arrangement_price: fmt(firstSess.arrangementPrice ?? firstSvc?.base_price),
+        base_price: homeService ? fmt(homePriceOf(firstSvc)) : fmt(firstSvc?.base_price),
+        arrangement_price: homeService ? fmt(homePriceOf(firstSvc)) : fmt(firstSess.arrangementPrice ?? firstSvc?.base_price),
         duration_minutes: firstSvc?.duration_minutes ?? 60,
       },
       branch_id: homeService ? null : branchId,
       branch_data: homeService
-        ? { branch_name: 'Home Service', branch_address: 'Home Service' }
+        ? {
+            branch_name: 'Home Service',
+            branch_address: formattedAddress || 'Home Service',
+            home_address: formattedAddress,
+          }
         : { branch_id: branchId, branch_name: branchName, branch_address: branchName },
       service_arrangement_id: homeService ? null : firstSess.arrangementId,
       service_arrangement_data: homeService ? null : {
@@ -2406,8 +2622,11 @@ export function HomeServiceBookingModal({
         customer_name: customerName,
         phone_number: cust?.phone_number ?? null,
         email: cust?.email ?? null,
+        address: fullAddressObj,
+        home_address: formattedAddress,
+        delivery_address: fullAddressObj,
       } : null,
-      customer_notes: notes,
+      customer_notes: fullNotes,
       customerMessage: '',
       booking_type: homeService ? 'home_service' : 'branch_service',
       pricing_details: {
@@ -2589,7 +2808,7 @@ export function HomeServiceBookingModal({
                   </span>
                 ))}
                 <span className="text-[11px] text-muted-foreground font-medium ml-1">
-                  {step === 1 ? 'Service & Add-ons' : step === 2 ? 'Customer & Notes' : 'Payment Option'}
+                  {step === 1 ? 'Service & Add-ons' : step === 2 ? 'Customer & Home Address' : 'Payment Option'}
                 </span>
               </div>
             </div>
@@ -2829,7 +3048,7 @@ export function HomeServiceBookingModal({
             )}
 
             {step === 2 && (
-              /* ── STEP 2: Customer & Notes ── */
+              /* ── STEP 2: Customer, Home Address & Notes ── */
               <div className="space-y-5">
                 <div>
                   <div className="flex items-center gap-2 mb-3">
@@ -2877,6 +3096,128 @@ export function HomeServiceBookingModal({
                     <div className="mt-2.5 flex items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
                       <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                       <span>{customerSearch} selected</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Home Address Section ── */}
+                <div className="rounded-2xl border border-border/80 bg-muted/10 p-4 space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="grid h-7 w-7 place-items-center rounded-xl bg-primary/10 text-primary">
+                        <MapPin className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-black uppercase tracking-wider text-foreground">
+                          Home Address
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">
+                          Service delivery location for therapist dispatch
+                        </p>
+                      </div>
+                    </div>
+                    {isAddressComplete && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Complete
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Area */}
+                    <div>
+                      <FLabel required>Area / City</FLabel>
+                      <input
+                        type="text"
+                        value={addressArea}
+                        onChange={e => setAddressArea(e.target.value)}
+                        placeholder="e.g. Salmiya, Dasman, Hawally…"
+                        className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+
+                    {/* Block */}
+                    <div>
+                      <FLabel required>Block</FLabel>
+                      <input
+                        type="text"
+                        value={addressBlock}
+                        onChange={e => setAddressBlock(e.target.value)}
+                        placeholder="e.g. Block 4"
+                        className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+
+                    {/* Street */}
+                    <div>
+                      <FLabel required>Street</FLabel>
+                      <input
+                        type="text"
+                        value={addressStreet}
+                        onChange={e => setAddressStreet(e.target.value)}
+                        placeholder="e.g. Salem Al Mubarak St / Street 12"
+                        className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+
+                    {/* Avenue (Optional) */}
+                    <div>
+                      <FLabel>Avenue (Optional)</FLabel>
+                      <input
+                        type="text"
+                        value={addressAvenue}
+                        onChange={e => setAddressAvenue(e.target.value)}
+                        placeholder="e.g. Avenue 2"
+                        className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+
+                    {/* House / Building */}
+                    <div>
+                      <FLabel required>House / Building</FLabel>
+                      <input
+                        type="text"
+                        value={addressHouse}
+                        onChange={e => setAddressHouse(e.target.value)}
+                        placeholder="e.g. House 14 / Tower B"
+                        className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+
+                    {/* Floor / Apartment (Optional) */}
+                    <div>
+                      <FLabel>Floor & Apartment (Optional)</FLabel>
+                      <input
+                        type="text"
+                        value={addressFloor}
+                        onChange={e => setAddressFloor(e.target.value)}
+                        placeholder="e.g. Floor 3, Apt 12"
+                        className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Additional Directions / Landmark / PACI No */}
+                  <div>
+                    <FLabel>Directions / PACI / Landmark (Optional)</FLabel>
+                    <input
+                      type="text"
+                      value={addressDirections}
+                      onChange={e => setAddressDirections(e.target.value)}
+                      placeholder="e.g. Near Symphony Mall, PACI 12345678, gate code…"
+                      className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                    />
+                  </div>
+
+                  {formattedAddress && (
+                    <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-2.5 text-xs">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-primary mb-0.5">
+                        Address Preview
+                      </p>
+                      <p className="font-semibold text-foreground leading-snug">
+                        {formattedAddress}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -2937,6 +3278,38 @@ export function HomeServiceBookingModal({
                     </div>
                     <p className="text-[11px] text-muted-foreground">Immediate payment via payment link</p>
                   </label>
+                </div>
+
+                {/* Customer & Address Details */}
+                <div className="rounded-2xl border border-border/80 bg-muted/20 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-extrabold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                      <User className="h-3.5 w-3.5 text-primary" />
+                      Customer & Destination Address
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setStep(2)}
+                      className="text-[11px] font-bold text-primary hover:underline cursor-pointer"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                  <div className="text-xs space-y-1">
+                    <p className="font-bold text-foreground">
+                      {customerSearch || (selectedCustomer ? (selectedCustomer.full_name ?? [selectedCustomer.first_name, selectedCustomer.last_name].filter(Boolean).join(' ')) : 'Selected Customer')}
+                      {selectedCustomer?.phone_number ? ` (${selectedCustomer.phone_number})` : ''}
+                    </p>
+                    <p className="text-muted-foreground flex items-start gap-1.5">
+                      <MapPin className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                      <span>{formattedAddress || 'No address provided'}</span>
+                    </p>
+                    {notes && (
+                      <p className="text-[11px] text-muted-foreground/80 italic pt-1 border-t border-border/30">
+                        Notes: {notes}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {/* Booking Summary Box */}
@@ -3036,7 +3409,7 @@ export function HomeServiceBookingModal({
                       : 'bg-primary hover:bg-primary/90 shadow-primary/20',
                   )}
                 >
-                  Next: Customer
+                  Next: Customer & Address
                   <ChevronRight className="h-4 w-4" />
                 </button>
               )}
@@ -3044,11 +3417,11 @@ export function HomeServiceBookingModal({
               {step === 2 && (
                 <button
                   type="button"
-                  disabled={!customerId}
+                  disabled={!customerId || !isAddressComplete}
                   onClick={() => setStep(3)}
                   className={cn(
                     'flex items-center gap-2 rounded-xl px-7 py-2.5 text-xs font-extrabold text-white transition shadow-md cursor-pointer',
-                    !customerId
+                    !customerId || !isAddressComplete
                       ? 'bg-muted-foreground/30 text-muted-foreground cursor-not-allowed'
                       : 'bg-primary hover:bg-primary/90 shadow-primary/20',
                   )}
