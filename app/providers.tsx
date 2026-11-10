@@ -9,10 +9,14 @@ import { initAuthFromStorage, logout, setToken } from '@/store/slices/authSlice'
 import { getSessionRemainingMs, clearToken } from '@/lib/api';
 import { applyBranchScope } from '@/lib/branchScope';
 import {
+  THERAPIST_ALLOWED_ROUTES,
+  THERAPIST_HOME_ROUTE,
   hasAnyPermission,
   isAdmin,
   isAdministratorRole,
   isRefundsAndFinancePermittedRole,
+  isTherapistRole,
+  type RoleInfoLike,
 } from '@/lib/permissions';
 
 // ── Ensure all client-side fetch requests send Accept-Language header ────────
@@ -67,7 +71,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   const dispatch     = useAppDispatch();
   const router       = useRouter();
   const pathname     = usePathname();
-  const { user, initialized } = useAppSelector((s) => s.auth);
+  const { user, initialized, roleInfo: roleInfoSel } = useAppSelector((s) => s.auth);
 
   // Ref to hold the auto-expire timer so we can clear it on unmount/re-check
   const expireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,6 +108,16 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const isPublic   = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
     const isNoPermPage = NO_PERM_ROUTES.some((r) => pathname.startsWith(r));
 
+    // Therapists: confine to /therapist (login → /therapist, everything else → /therapist).
+    if (user) {
+      const rInfo = (store.getState().auth as { roleInfo: RoleInfoLike | null }).roleInfo;
+      if (isTherapistRole(rInfo, user)) {
+        const allowed = THERAPIST_ALLOWED_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+        if (!allowed || isPublic) router.replace(THERAPIST_HOME_ROUTE);
+        return;
+      }
+    }
+
     if (!user && !isPublic) {
       router.replace('/login');
     } else if (user && isPublic) {
@@ -125,7 +139,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
         router.replace('/no-permission');
       }
     }
-  }, [initialized, user, pathname, router]);
+  }, [initialized, user, roleInfoSel, pathname, router]);
 
   // ── Session expiry: check on every route change and set a precise timer ──
   useEffect(() => {
@@ -161,8 +175,14 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, pathname]);
 
+  // Therapists are confined to their own page: never render any other route for them.
+  const therapistBlocked =
+    !!user &&
+    isTherapistRole(roleInfoSel, user) &&
+    !THERAPIST_ALLOWED_ROUTES.some((r) => pathname === r || pathname.startsWith(`${r}/`));
+
   // While hydrating, show nothing (prevents flash)
-  if (!initialized) {
+  if (!initialized || therapistBlocked) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />

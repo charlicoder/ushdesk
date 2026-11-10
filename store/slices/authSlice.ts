@@ -35,6 +35,8 @@ export interface AuthRoleInfo {
   is_superuser: boolean;
   is_branch_manager: boolean;
   is_therapist_role: boolean;
+  /** Therapist profile id (bookings reference this, not the user id) */
+  therapist_id?: string | null;
 }
 
 export interface AuthState {
@@ -171,6 +173,7 @@ export const loginThunk = createAsyncThunk(
         is_superuser:     (rawPermBlock?.is_superuser     as boolean | undefined) ?? false,
         is_branch_manager:(rawPermBlock?.is_branch_manager as boolean | undefined) ?? false,
         is_therapist_role:(rawPermBlock?.is_therapist_role as boolean | undefined) ?? false,
+        therapist_id:     (rawPermBlock?.therapist_id     as string  | undefined) ?? null,
       };
 
       let branchId = (rawUser.branch_id ?? rawUser.branch ?? payload_data.branch_id ?? null) as string | null;

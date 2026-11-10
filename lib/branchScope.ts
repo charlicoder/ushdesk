@@ -73,6 +73,8 @@ export function applyBranchScope(input: RequestInfo | URL, init?: RequestInit): 
 
   const method = (init?.method ?? (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET')).toUpperCase();
   if (method !== 'GET') return input;
+  // Per-user lists (e.g. the therapist's own bookings) opt out of branch filtering.
+  if (init?.headers && new Headers(init.headers).has('X-Skip-Branch-Scope')) return input;
   if (typeof Request !== 'undefined' && input instanceof Request) return input;
 
   let url: URL;

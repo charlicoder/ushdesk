@@ -284,6 +284,29 @@ export function isCallCenterAgentRole(roleInfo?: RoleInfoLike | null, user?: Use
 }
 
 /**
+ * Checks whether the current user is a Therapist — a restricted role that may only
+ * use the /therapist page. Privileged roles (admin / spa director / branch manager /
+ * finance) are never treated as therapists even if their role name mentions one.
+ */
+export function isTherapistRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  if (roleInfo?.is_superuser === true) return false;
+  if (isAdmin(user?.user_type)) return false;
+  if (roleInfo?.is_therapist_role === true) return true;
+  const candidates = extractRoleCandidates(roleInfo, user);
+  return candidates.some((c) => c.includes('therapist')) &&
+    !isAdministratorRole(roleInfo, user) &&
+    !isSpaDirectorRole(roleInfo, user) &&
+    !isBranchManagerRole(roleInfo, user) &&
+    !isFinanceManagerRole(roleInfo, user);
+}
+
+/** Landing page for therapists. */
+export const THERAPIST_HOME_ROUTE = '/therapist';
+
+/** The only routes a therapist may open. */
+export const THERAPIST_ALLOWED_ROUTES = [THERAPIST_HOME_ROUTE, '/login', '/no-permission'] as const;
+
+/**
  * Checks whether the current user has the Receptionist role.
  */
 export function isReceptionistRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
