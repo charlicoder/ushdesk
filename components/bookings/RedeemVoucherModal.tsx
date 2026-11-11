@@ -160,6 +160,18 @@ function firstTruthy(...args: unknown[]): string {
   return '';
 }
 
+const VALID_ARR_TYPES = new Set([
+  'single_room',
+  'couple_room',
+  'double_room',
+  'open_area',
+  'vip_suite',
+  'private_suite',
+  'thai_room',
+  'japanese_room',
+  'other',
+]);
+
 function normalizeArrType(t: unknown): string {
   const s = String(t ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (s.includes('couple')) return 'couple_room';
@@ -168,7 +180,15 @@ function normalizeArrType(t: unknown): string {
   if (s.includes('vip')) return 'vip_suite';
   if (s.includes('private')) return 'private_suite';
   if (s.includes('open')) return 'open_area';
+  if (s.includes('japanese')) return 'japanese_room';
+  if (s.includes('thai')) return 'thai_room';
   return s;
+}
+
+function isValidArrType(t: unknown): boolean {
+  if (!t) return false;
+  const norm = normalizeArrType(t);
+  return VALID_ARR_TYPES.has(norm);
 }
 
 function fmt(val: unknown): string {
@@ -718,43 +738,39 @@ function computeRequiredArrInfo(voucher: AnyRecord, serviceIds: string[]): { req
       target?.arrangement_id,
       voucher?.service_arrangement_id,
       voucher?.service_arrangement_data?.id
-    )
+    ) || ''
   );
 
-  let requiredArrType = '';
-  if (matchedSvc) {
-    requiredArrType = normalizeArrType(
-      firstTruthy(
-        matchedSvc.service_arrangement_data?.arrangement_type,
-        matchedSvc.service_arrangement_data?.type,
-        matchedSvc.service_arrangement_data?.room_type,
-        matchedSvc.arrangement_type,
-        matchedSvc.arrangementType,
-        matchedSvc.room_type,
-        matchedSvc.roomType,
-        matchedSvc.service_arrangement_data?.arrangement_name,
-        matchedSvc.service_arrangement_data?.name,
-        matchedSvc.service_arrangement_data?.room,
-        matchedSvc.arrangement_name
-      )
+  const extractTypeCandidate = (src: AnyRecord | null | undefined): string => {
+    if (!src) return '';
+    // 1. Explicit arrangement_type fields
+    const directType = firstTruthy(
+      src.service_arrangement_data?.arrangement_type,
+      src.service_arrangement_data?.type,
+      src.service_arrangement_data?.room_type,
+      src.arrangement_type,
+      src.arrangementType,
+      src.room_type,
+      src.roomType
     );
-  }
+    if (directType && isValidArrType(directType)) return normalizeArrType(directType);
+
+    // 2. Name-based fields: only use if they contain a recognized arrangement type keyword
+    const nameCandidate = firstTruthy(
+      src.service_arrangement_data?.arrangement_name,
+      src.service_arrangement_data?.name,
+      src.service_arrangement_data?.room,
+      src.arrangement_name
+    );
+    if (nameCandidate && isValidArrType(nameCandidate)) {
+      return normalizeArrType(nameCandidate);
+    }
+    return '';
+  };
+
+  let requiredArrType = extractTypeCandidate(matchedSvc);
   if (!requiredArrType) {
-    requiredArrType = normalizeArrType(
-      firstTruthy(
-        voucher.service_arrangement_data?.arrangement_type,
-        voucher.service_arrangement_data?.type,
-        voucher.service_arrangement_data?.room_type,
-        voucher.arrangement_type,
-        voucher.arrangementType,
-        voucher.room_type,
-        voucher.roomType,
-        voucher.service_arrangement_data?.arrangement_name,
-        voucher.service_arrangement_data?.name,
-        voucher.service_arrangement_data?.room,
-        voucher.arrangement_name
-      )
-    );
+    requiredArrType = extractTypeCandidate(voucher);
   }
 
   return { requiredArrType, requiredArrId };
@@ -860,11 +876,8 @@ function ServiceSessionBlock({
       .then((all) => {
         if (cancelled) return;
         let matched: ApiArrangement[] = [];
-        if (requiredArrType) {
-          matched = all.filter(
-            (a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredArrType
-          );
-        } else if (requiredArrId) {
+        // 1. If a specific arrangement ID was chosen at purchase, look it up first
+        if (requiredArrId) {
           const byId = all.find((a) => String(a.id) === requiredArrId);
           if (byId) {
             const byIdType = normalizeArrType(byId.arrangement_type || byId.type || byId.name || byId.arrangement_name);
@@ -872,6 +885,12 @@ function ServiceSessionBlock({
               (a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === byIdType
             );
           }
+        }
+        // 2. If no ID match or ID wasn't in this list, filter by required arrangement type
+        if (matched.length === 0 && requiredArrType) {
+          matched = all.filter(
+            (a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredArrType
+          );
         }
         // Strict: ONLY show arrangement type selected at voucher purchase; never show other types
         const hasRequirement = Boolean(requiredArrType || requiredArrId);
@@ -2019,7 +2038,7 @@ export function RedeemVoucherModal({
           // if the package has none at this branch, fall back to its included services.
           const hasArrangements = async (sids: string[]): Promise<boolean> => {
             for (const sid of sids) {
-              const reqType = computeRequiredArrType(voucher, [sid]);
+              const { requiredArrType: reqType, requiredArrId: reqId } = computeRequiredArrInfo(voucher, [sid]);
               const r = await authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${bId}`, {
                 headers: authHeader ? { Authorization: authHeader } : undefined,
               });
@@ -2028,6 +2047,10 @@ export function RedeemVoucherModal({
                 (a: ApiArrangement) => a.is_active !== false
               );
               if (list.length === 0) return false;
+              if (reqId) {
+                const byId = list.find((a) => String(a.id) === reqId);
+                if (byId) continue;
+              }
               if (reqType) {
                 const matchesReq = list.some((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === reqType);
                 if (!matchesReq) return false;

@@ -29,6 +29,7 @@ import { paymentLinksApi, whatsappShareUrl, smsShareUrl, sendPaymentLinkSms, typ
 import { usePermissions } from '@/hooks/use-permissions';
 import { extractRoleCandidates } from '@/lib/permissions';
 import { getAssignedBranchId, getAssignedBranchName } from '@/lib/branchScope';
+import { normalizeBranchName } from '@/lib/branches';
 import { VoucherSalesReportModal, type VoucherSalesPeriod } from '@/components/bookings/VoucherSalesReportModal';
 import {
   DateRangeFilter,
@@ -2356,7 +2357,7 @@ function VoucherDetailModal({
                             {voucher.branch_data?.name && (
                               <span className="flex items-center gap-1">
                                 <Building className="h-3 w-3 text-muted-foreground" />
-                                {voucher.branch_data.name}
+                                {normalizeBranchName(voucher.branch_data.name)}
                               </span>
                             )}
                             {voucher.service_arrangement_data?.arrangement_name && (
@@ -2483,7 +2484,7 @@ function VoucherDetailModal({
                             )}
                             {voucher.branch_data?.name && (
                               <span className="flex items-center gap-1">
-                                <Building className="h-3 w-3 text-muted-foreground" />{voucher.branch_data.name}
+                                <Building className="h-3 w-3 text-muted-foreground" />{normalizeBranchName(voucher.branch_data.name)}
                               </span>
                             )}
                             {voucher.service_arrangement_data?.arrangement_name && (
@@ -4689,7 +4690,7 @@ function getVoucherFieldValue(
     case 'duration':
       return `${getVoucherTotalDuration(voucher)} min`;
     case 'branch_name':
-      return voucher.branch_data?.name || '';
+      return normalizeBranchName(voucher.branch_data?.name) || voucher.branch_data?.name || '';
     case 'arrangement_name':
       return voucher.service_arrangement_data?.arrangement_name || '';
     case 'addons':

@@ -6,6 +6,7 @@ import {
   CheckCircle2, Clock, Gift, BarChart3, ArrowLeft, Eye, Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { voucherBranchName, normalizeBranchName } from '@/lib/branches';
 
 export type VoucherSalesPeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
 type StatusKey = 'pending' | 'active' | 'redeemed';
@@ -20,7 +21,7 @@ export interface ReportVoucher {
   activation_datetime?: string | null;
   redeemed_at: string | null;
   branch_id?: string;
-  branch_data?: { name?: string } | null;
+  branch_data?: { name?: string; name_en?: string; branch_name?: string } | null;
   payment_provider?: string | null;
   payment_through?: string | null;
   payment_data?: any;
@@ -227,9 +228,14 @@ export function VoucherSalesReportModal({
       if (!c || !statuses.has(c.key)) continue;
       if (!c.date || c.date < from || c.date > to) continue;
       if (tId || tName) {
-        const vId = String(v.branch_id ?? '').trim().toLowerCase();
-        const vName = String(v.branch_data?.name ?? '').trim().toLowerCase();
-        const match = Boolean((tId && vId && vId === tId) || (tName && vName && vName === tName));
+        const vId = String(v.branch_id ?? (v.branch_data as any)?.id ?? '').trim().toLowerCase();
+        const vName = voucherBranchName(v).toLowerCase();
+        const normTarget = normalizeBranchName(tName).toLowerCase();
+        const match = Boolean(
+          (tId && vId && vId === tId) ||
+          (normTarget && vName && vName === normTarget) ||
+          (tName && vName && vName === tName)
+        );
         if (!match) continue;
       }
       out.push({ v, key: c.key });
@@ -256,7 +262,7 @@ export function VoucherSalesReportModal({
     };
     const providerOf = voucherProvider;
     const build = (list: ReportVoucher[]) => ({
-      byBranch: group(list, (v) => v.branch_data?.name || 'Unassigned'),
+      byBranch: group(list, voucherBranchName),
       byThrough: group(list, (v) => throughLabel(v.payment_through)),
       byProvider: group(list, providerOf),
       byReferrer: group(list, referrerOf),
