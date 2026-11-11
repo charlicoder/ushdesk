@@ -18,7 +18,7 @@ import {
   DollarSign, FileText, ChevronLeft, ChevronRight, CalendarCheck,
   LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
   CreditCard, Hash, Building2, Trash2, Plus, Users, Receipt, Gift,
-  MapPin, Check, Printer,
+  MapPin, Check, Printer, AlertTriangle,
 } from 'lucide-react';
 import { BookingReceiptModal } from './BookingReceiptModal';
 import { cn } from '@/lib/utils';
@@ -704,40 +704,65 @@ function getVoucherAddonPool(voucher: AnyRecord): PoolAddon[] {
   });
 }
 
-/** Arrangement type required by the voucher for the given service(s), if any. */
-function computeRequiredArrType(voucher: AnyRecord, serviceIds: string[]): string {
+/** Arrangement info required by the voucher for the given service(s), if any. */
+function computeRequiredArrInfo(voucher: AnyRecord, serviceIds: string[]): { requiredArrType: string; requiredArrId: string } {
   const rawServices: AnyRecord[] = Array.isArray(voucher.services) ? voucher.services : [];
   const matchedSvc = rawServices.find((s) => serviceIds.includes(String(s.service_id ?? s.service_data?.id ?? '')));
+  const target = matchedSvc || (rawServices.length <= 1 ? voucher : null);
+
+  const requiredArrId = String(
+    firstTruthy(
+      target?.service_arrangement_id,
+      target?.service_arrangement_data?.id,
+      target?.service_arrangement_data?.arrangement_id,
+      target?.arrangement_id,
+      voucher?.service_arrangement_id,
+      voucher?.service_arrangement_data?.id
+    )
+  );
+
+  let requiredArrType = '';
   if (matchedSvc) {
-    const svcType = normalizeArrType(
+    requiredArrType = normalizeArrType(
       firstTruthy(
         matchedSvc.service_arrangement_data?.arrangement_type,
         matchedSvc.service_arrangement_data?.type,
-        matchedSvc.arrangement_type,
-        matchedSvc.room_type,
         matchedSvc.service_arrangement_data?.room_type,
+        matchedSvc.arrangement_type,
+        matchedSvc.arrangementType,
+        matchedSvc.room_type,
+        matchedSvc.roomType,
         matchedSvc.service_arrangement_data?.arrangement_name,
+        matchedSvc.service_arrangement_data?.name,
         matchedSvc.service_arrangement_data?.room,
         matchedSvc.arrangement_name
       )
     );
-    if (svcType) return svcType;
   }
-  if (rawServices.length <= 1) {
-    return normalizeArrType(
+  if (!requiredArrType) {
+    requiredArrType = normalizeArrType(
       firstTruthy(
         voucher.service_arrangement_data?.arrangement_type,
         voucher.service_arrangement_data?.type,
-        voucher.arrangement_type,
-        voucher.room_type,
         voucher.service_arrangement_data?.room_type,
+        voucher.arrangement_type,
+        voucher.arrangementType,
+        voucher.room_type,
+        voucher.roomType,
         voucher.service_arrangement_data?.arrangement_name,
+        voucher.service_arrangement_data?.name,
         voucher.service_arrangement_data?.room,
         voucher.arrangement_name
       )
     );
   }
-  return '';
+
+  return { requiredArrType, requiredArrId };
+}
+
+/** Arrangement type required by the voucher for the given service(s), if any. */
+function computeRequiredArrType(voucher: AnyRecord, serviceIds: string[]): string {
+  return computeRequiredArrInfo(voucher, serviceIds).requiredArrType;
 }
 
 const arrTypeKey = (a: ApiArrangement) =>
@@ -794,7 +819,10 @@ function ServiceSessionBlock({
   onReport,
 }: ServiceSessionBlockProps) {
   const gid = gifted.id;
-  const requiredArrType = useMemo(() => computeRequiredArrType(voucher, [gid]), [voucher, gid]);
+  const { requiredArrType, requiredArrId } = useMemo(
+    () => computeRequiredArrInfo(voucher, [gid]),
+    [voucher, gid]
+  );
   const [skipExtra, setSkipExtra] = useState(false);
 
   const [arrangements, setArrangements] = useState<ApiArrangement[]>([]);
@@ -831,10 +859,23 @@ function ServiceSessionBlock({
     (pkgId ? load(pkgId).then((l) => (l.length > 0 ? l : load(gid))) : load(gid))
       .then((all) => {
         if (cancelled) return;
-        const matched = requiredArrType
-          ? all.filter((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredArrType)
-          : all;
-        const common = matched.length > 0 ? matched : all;
+        let matched: ApiArrangement[] = [];
+        if (requiredArrType) {
+          matched = all.filter(
+            (a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredArrType
+          );
+        } else if (requiredArrId) {
+          const byId = all.find((a) => String(a.id) === requiredArrId);
+          if (byId) {
+            const byIdType = normalizeArrType(byId.arrangement_type || byId.type || byId.name || byId.arrangement_name);
+            matched = all.filter(
+              (a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === byIdType
+            );
+          }
+        }
+        // Strict: ONLY show arrangement type selected at voucher purchase; never show other types
+        const hasRequirement = Boolean(requiredArrType || requiredArrId);
+        const common = hasRequirement ? matched : all;
         setArrangements(common);
         setSelectedTypeKey(common.length > 0 ? arrTypeKey(common[0]) : '');
         setSelectedRoomId(common.length > 0 ? common[0].id : '');
@@ -846,7 +887,7 @@ function ServiceSessionBlock({
     return () => {
       cancelled = true;
     };
-  }, [gid, pkgId, branchId, authHeader, requiredArrType]);
+  }, [gid, pkgId, branchId, authHeader, requiredArrType, requiredArrId]);
 
   // Arrangements of the same type are shown once; their time slots are combined
   const groups = useMemo(() => {
@@ -1095,34 +1136,17 @@ function ServiceSessionBlock({
         </p>
       )}
 
-      {/* Add-ons (any unused add-on of the voucher can be attached to any service) + extra time */}
-      {(addonPool.length > 0 || gifted.extra.minutes > 0) && (
+      {/* Extra time for this service (if gifted) & attached add-ons preview */}
+      {(gifted.extra.minutes > 0 || blockAddons.length > 0) && (
         <div className="space-y-1.5">
-          {addonPool.length > 0 && (
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Voucher add-ons</p>
+          {blockAddons.length > 0 && (
+            <div className="flex items-center gap-1.5 text-[11px] text-violet-700 dark:text-violet-300 bg-violet-50/80 dark:bg-violet-950/40 px-3 py-1.5 rounded-xl border border-violet-200/60 w-fit">
+              <Sparkles className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+              <span className="font-semibold">
+                Attached Add-ons: {blockAddons.map((a) => `${a.name}${a.duration_minutes ? ` (${a.duration_minutes}m)` : ''}`).join(', ')}
+              </span>
+            </div>
           )}
-          {addonPool.map((a) => {
-            const owner = assignedTo(a.uid);
-            const mine = owner === gid;
-            return (
-              <label key={a.uid} className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={mine}
-                  onChange={() => onAssignAddon(a.uid, mine ? '' : gid)}
-                  className="h-3.5 w-3.5 accent-violet-500"
-                />
-                <Sparkles className="h-3 w-3 text-violet-500" />
-                <span>
-                  {a.name}
-                  {a.duration_minutes ? ` · ${a.duration_minutes} min` : ''}
-                </span>
-                {owner && !mine && (
-                  <span className="text-[10px] text-muted-foreground italic">(attached to {serviceNameOf(owner)})</span>
-                )}
-              </label>
-            );
-          })}
           {gifted.extra.minutes > 0 && (
             <label className="flex items-center gap-2 text-[11px] text-foreground cursor-pointer">
               <input
@@ -1138,7 +1162,7 @@ function ServiceSessionBlock({
         </div>
       )}
 
-      {/* Room / Arrangement Selection (one card per arrangement type) */}
+      {/* Room / Arrangement Selection (only the selected arrangement type from purchase is shown) */}
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
@@ -1191,7 +1215,11 @@ function ServiceSessionBlock({
           </div>
         ) : (
           <p className="text-xs text-muted-foreground italic">
-            {arrangementsLoading || servicesLoading ? 'Loading…' : 'No arrangement available for this branch'}
+            {arrangementsLoading || servicesLoading
+              ? 'Loading…'
+              : (requiredArrType || requiredArrId)
+              ? `No ${requiredArrType ? requiredArrType.replace(/_/g, ' ') : 'selected'} arrangement available in this branch`
+              : 'No arrangement available for this branch'}
           </p>
         )}
       </div>
@@ -1386,17 +1414,14 @@ function AddVoucherSessionModal({
     });
   };
 
-  // Which service an add-on is attached to (default: the service it was gifted with; packages: the first service)
+  // Which service an add-on is attached to (empty string = not used in this session)
   const assignedTo = useCallback(
     (uid: string): string => {
       const explicit = addonAssign[uid];
       if (explicit !== undefined) return selectedServiceIds.includes(explicit) ? explicit : '';
-      const a = pool.find((x) => x.uid === uid);
-      if (!a) return '';
-      if (isPkg) return selectedServiceIds[0] ?? '';
-      return selectedServiceIds.includes(a.originServiceId) ? a.originServiceId : '';
+      return '';
     },
-    [addonAssign, selectedServiceIds, pool, isPkg]
+    [addonAssign, selectedServiceIds]
   );
   const blockAddonsMap = useMemo(() => {
     const m: Record<string, PoolAddon[]> = {};
@@ -1408,6 +1433,29 @@ function AddVoucherSessionModal({
   const onAssignAddon = useCallback((uid: string, serviceId: string) => {
     setAddonAssign((prev) => ({ ...prev, [uid]: serviceId }));
   }, []);
+
+  const handleToggleAddon = (uid: string) => {
+    const current = assignedTo(uid);
+    const target = selectedServiceIds[0] || (services[0]?.id ? String(services[0].id) : '');
+    setAddonAssign((prev) => ({ ...prev, [uid]: current ? '' : target }));
+  };
+
+  const handleSelectAllAddons = () => {
+    const allSelected = pool.length > 0 && pool.every((a) => Boolean(assignedTo(a.uid)));
+    const target = selectedServiceIds[0] || (services[0]?.id ? String(services[0].id) : '');
+    const next: Record<string, string> = { ...addonAssign };
+    if (allSelected) {
+      pool.forEach((a) => {
+        next[a.uid] = '';
+      });
+    } else {
+      pool.forEach((a) => {
+        next[a.uid] = target;
+      });
+    }
+    setAddonAssign(next);
+  };
+
   const onReport = useCallback((serviceId: string, report: SessionReport) => {
     setReports((prev) => ({ ...prev, [serviceId]: report }));
   }, []);
@@ -1419,8 +1467,16 @@ function AddVoucherSessionModal({
   const totalDuration = selectedServiceIds.reduce((s, id) => s + (reports[id]?.duration ?? 0), 0);
   const sessionPrice = selectedServiceIds.reduce((s, id) => s + (reports[id]?.price ?? 0), 0);
 
-  // Submit: one session per selected service (each with its own room / time / therapist)
-  const handleSaveSession = () => {
+  const [showAddonWarning, setShowAddonWarning] = useState<boolean>(false);
+
+  const remainingGiftedAfterThis = availableGifted.length - selectedServiceIds.length;
+  const isLastService = remainingGiftedAfterThis <= 0;
+  const unassignedPoolAddons = useMemo(
+    () => pool.filter((a) => !assignedTo(a.uid) || !selectedServiceIds.includes(assignedTo(a.uid))),
+    [pool, assignedTo, selectedServiceIds]
+  );
+
+  const doSaveDrafts = () => {
     if (selectedServiceIds.length === 0) {
       setErrorMsg('Please select at least one service.');
       return;
@@ -1451,6 +1507,30 @@ function AddVoucherSessionModal({
     }
     drafts.forEach((d) => onAdd(d));
     onClose();
+  };
+
+  // Submit: one session per selected service (each with its own room / time / therapist)
+  const handleSaveSession = () => {
+    if (selectedServiceIds.length === 0) {
+      setErrorMsg('Please select at least one service.');
+      return;
+    }
+    for (const id of selectedServiceIds) {
+      const r = reports[id];
+      if (!r || r.missing || !r.draft) {
+        const msg = r?.missing ?? 'Please complete the session details.';
+        setErrorMsg(selectedServiceIds.length > 1 ? `${serviceNameOf(id)}: ${msg}` : msg);
+        return;
+      }
+    }
+
+    // For the last service when created a session and any addons remain unselected, give a warning
+    if (isLastService && unassignedPoolAddons.length > 0) {
+      setShowAddonWarning(true);
+      return;
+    }
+
+    doSaveDrafts();
   };
 
   return (
@@ -1542,6 +1622,91 @@ function AddVoucherSessionModal({
             </p>
           )}
 
+          {/* ── Global Space Add-ons Section (outside service context) ── */}
+          {pool.length > 0 && selectedServiceIds.length > 0 && (
+            <div className="rounded-2xl border border-violet-500/25 bg-gradient-to-br from-violet-50/80 via-fuchsia-50/40 to-transparent dark:from-violet-950/25 dark:via-fuchsia-950/15 dark:to-transparent p-4 space-y-3 shadow-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                  <p className="text-xs font-extrabold uppercase tracking-wide text-violet-950 dark:text-violet-200">
+                    Gift Voucher Add-ons
+                  </p>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-400/30">
+                    {pool.filter((a) => Boolean(assignedTo(a.uid))).length} of {pool.length} selected
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSelectAllAddons}
+                  className="text-[11px] font-bold text-violet-600 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-200 hover:underline cursor-pointer"
+                >
+                  {pool.every((a) => Boolean(assignedTo(a.uid))) ? 'Deselect All' : 'Select All'}
+                </button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                You can create this session with or without add-ons. Select any or all add-ons and assign them to any service below.
+              </p>
+
+              <div className="space-y-2">
+                {pool.map((a) => {
+                  const currentOwner = assignedTo(a.uid);
+                  const isChecked = Boolean(currentOwner);
+                  return (
+                    <div
+                      key={a.uid}
+                      className={cn(
+                        'flex items-center justify-between p-2.5 rounded-xl border transition',
+                        isChecked
+                          ? 'border-violet-500/50 bg-white/90 dark:bg-card shadow-xs'
+                          : 'border-border/60 bg-white/40 dark:bg-card/40'
+                      )}
+                    >
+                      <label className="flex items-center gap-2.5 cursor-pointer min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleAddon(a.uid)}
+                          className="h-4 w-4 accent-violet-600 rounded cursor-pointer"
+                        />
+                        <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-foreground">{a.name}</span>
+                          {a.duration_minutes ? (
+                            <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
+                              +{a.duration_minutes} min
+                            </span>
+                          ) : null}
+                          {Number(a.price) > 0 && (
+                            <span className="text-[10px] font-semibold text-muted-foreground">
+                              ({fmt(a.price)} KWD)
+                            </span>
+                          )}
+                        </div>
+                      </label>
+
+                      {/* When selected and multiple services exist in this session, allow choosing which service */}
+                      {isChecked && selectedServiceIds.length > 1 && (
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          <span className="text-[10px] text-muted-foreground font-semibold">Service:</span>
+                          <select
+                            value={currentOwner}
+                            onChange={(e) => onAssignAddon(a.uid, e.target.value)}
+                            className="text-[11px] font-bold bg-card px-2.5 py-1 rounded-lg border border-violet-300 dark:border-violet-700 text-foreground cursor-pointer focus:outline-none focus:ring-1 focus:ring-violet-500"
+                          >
+                            {selectedServiceIds.map((sid) => (
+                              <option key={sid} value={sid}>
+                                {serviceNameOf(sid)}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {selectedServiceIds.map((id) => {
             const g = availableGifted.find((x) => x.id === id);
             if (!g) return null;
@@ -1601,6 +1766,58 @@ function AddVoucherSessionModal({
           </div>
         </div>
       </div>
+
+      {/* ── Warning Modal: Unselected Add-ons on Last Service ── */}
+      {showAddonWarning && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md rounded-3xl border border-amber-500/40 bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3.5">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400 shrink-0">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h4 className="text-sm font-extrabold text-foreground">
+                  Unselected Voucher Add-ons
+                </h4>
+                <p className="text-xs text-muted-foreground mt-1">
+                  This is the last service on the gift voucher, but you still have unselected add-on{unassignedPoolAddons.length > 1 ? 's' : ''}:
+                </p>
+                <div className="mt-2.5 p-2.5 rounded-xl bg-muted/40 border border-border/70 space-y-1">
+                  {unassignedPoolAddons.map((a) => (
+                    <p key={a.uid} className="text-xs font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+                      <Sparkles className="h-3 w-3 shrink-0 text-amber-500" />
+                      <span>{a.name}{a.duration_minutes ? ` (+${a.duration_minutes} min)` : ''}</span>
+                    </p>
+                  ))}
+                </div>
+                <p className="text-xs text-amber-600 dark:text-amber-400 font-bold mt-2.5">
+                  ⚠️ You cannot use these add-ons later if you do not attach them to this service now.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-border/60">
+              <button
+                type="button"
+                onClick={() => setShowAddonWarning(false)}
+                className="rounded-xl border border-violet-500/40 bg-violet-500/10 hover:bg-violet-500/20 text-violet-700 dark:text-violet-300 px-4 py-2 text-xs font-bold transition cursor-pointer"
+              >
+                Add Add-ons
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddonWarning(false);
+                  doSaveDrafts();
+                }}
+                className="rounded-xl bg-muted hover:bg-muted/80 text-muted-foreground hover:text-foreground px-4 py-2 text-xs font-semibold transition cursor-pointer"
+              >
+                Proceed Without Add-ons
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1793,22 +2010,6 @@ export function RedeemVoucherModal({
   useEffect(() => {
     if (!serviceId || branches.length === 0) return;
     let cancelled = false;
-    const rawServices: AnyRecord[] = Array.isArray(voucher.services) ? voucher.services : [];
-    const isMultiSvc = rawServices.length > 1;
-    const requiredType = !isMultiSvc
-      ? normalizeArrType(
-          firstTruthy(
-            voucher.service_arrangement_data?.arrangement_type,
-            voucher.service_arrangement_data?.type,
-            voucher.arrangement_type,
-            voucher.room_type,
-            voucher.service_arrangement_data?.room_type,
-            voucher.service_arrangement_data?.arrangement_name,
-            voucher.service_arrangement_data?.room,
-            voucher.arrangement_name
-          )
-        )
-      : '';
     Promise.all(
       branches.map(async (b) => {
         const bId = String(b.id ?? b.branch_id ?? '');
@@ -1818,6 +2019,7 @@ export function RedeemVoucherModal({
           // if the package has none at this branch, fall back to its included services.
           const hasArrangements = async (sids: string[]): Promise<boolean> => {
             for (const sid of sids) {
+              const reqType = computeRequiredArrType(voucher, [sid]);
               const r = await authedFetch(`/api/v1/services/${sid}/arrangements/?branch_id=${bId}`, {
                 headers: authHeader ? { Authorization: authHeader } : undefined,
               });
@@ -1826,8 +2028,8 @@ export function RedeemVoucherModal({
                 (a: ApiArrangement) => a.is_active !== false
               );
               if (list.length === 0) return false;
-              if (requiredType) {
-                const matchesReq = list.some((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === requiredType);
+              if (reqType) {
+                const matchesReq = list.some((a) => normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) === reqType);
                 if (!matchesReq) return false;
               }
             }
@@ -1852,7 +2054,7 @@ export function RedeemVoucherModal({
     return () => {
       cancelled = true;
     };
-  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher.service_arrangement_data, voucher.arrangement_type, voucher.services]);
+  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher]);
 
   // Fetch voucher availabilities for branch
   useEffect(() => {

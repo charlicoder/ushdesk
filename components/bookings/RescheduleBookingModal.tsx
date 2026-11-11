@@ -41,6 +41,7 @@ interface ApiBranch {
 interface ApiArrangement {
   id: string;
   name: string;
+  arrangement_name?: string;
   arrangement_type?: string;
   type?: string;
   capacity?: number;
@@ -135,6 +136,20 @@ function isSimilarArrangementType(typeA: string, typeB: string): boolean {
   return a.includes(b) || b.includes(a);
 }
 
+function normalizeArrType(t: unknown): string {
+  const s = String(t ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (s.includes('couple')) return 'couple_room';
+  if (s.includes('double')) return 'double_room';
+  if (s.includes('single')) return 'single_room';
+  if (s.includes('vip')) return 'vip_suite';
+  if (s.includes('private')) return 'private_suite';
+  if (s.includes('open')) return 'open_area';
+  return s;
+}
+
+const arrTypeKey = (a: ApiArrangement | AnyRecord) =>
+  normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) || `id:${a.id}`;
+
 function toHHMM(label: string): string {
   if (!label) return '10:00:00';
   const clean = label.trim();
@@ -209,6 +224,7 @@ export function RescheduleBookingModal({
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [availableSlots, setAvailableSlots] = useState<{ time: string; available: boolean }[]>([]);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<string>('');
+  const [slotFitMap, setSlotFitMap] = useState<Map<number, string[]>>(new Map());
 
   // Therapists Selection
   const [selectedTherapistId, setSelectedTherapistId] = useState<string>('');
@@ -664,15 +680,49 @@ export function RescheduleBookingModal({
     });
   }, [availabilitiesData, prevArrType]);
 
-  // Pre-select arrangement when arrangements change
+  const [selectedTypeKey, setSelectedTypeKey] = useState<string>('');
+
+  // Group arrangements by type: multiple arrangements of same type show as ONE (same logic as redeem)
+  const groups = useMemo(() => {
+    const m = new Map<string, ApiArrangement[]>();
+    arrangements.forEach((a) => {
+      const k = arrTypeKey(a);
+      m.set(k, [...(m.get(k) ?? []), a]);
+    });
+    return Array.from(m.entries()).map(([key, list]) => ({ key, list }));
+  }, [arrangements]);
+
+  const selectedGroup = groups.find((g) => g.key === selectedTypeKey) ?? groups[0] ?? null;
+  const groupRooms = useMemo(() => selectedGroup?.list ?? [], [selectedGroup]);
+
+  // Representative display rooms (one card per arrangement type)
+  const displayRooms = useMemo<RoomOption[]>(() => {
+    return groups.map((g) => {
+      const rep = g.list.find((a) => a.id === selectedRoomId) ?? g.list[0];
+      const rawType = rep.arrangement_type || rep.type || g.key;
+      const typeLabel = rawType.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+      const label = g.list.length > 1 ? typeLabel : rep.name;
+      return {
+        id: g.key,
+        name: label,
+        arrangement_type: rawType,
+        type: rep.type || rawType,
+        capacity: rep.capacity,
+        image: rep.image,
+      };
+    });
+  }, [groups, selectedRoomId]);
+
+  // Pre-select arrangement and type when arrangements change
   useEffect(() => {
-    if (arrangements.length === 0) {
+    if (groups.length === 0) {
+      setSelectedTypeKey('');
       setSelectedRoomId('');
       return;
     }
-    // If selected room is already in filtered arrangements, keep it
-    if (selectedRoomId && arrangements.some((a) => a.id === selectedRoomId)) {
-      return;
+    const currentGroup = groups.find((g) => g.key === selectedTypeKey) ?? groups[0];
+    if (currentGroup.key !== selectedTypeKey) {
+      setSelectedTypeKey(currentGroup.key);
     }
     const prevArrId = firstTruthy(
       bk?.service_arrangement_id,
@@ -680,9 +730,12 @@ export function RescheduleBookingModal({
       bk?.service_arrangement_data?.arrangement_id,
       bk?.arrangement_id
     );
-    const matchPrev = arrangements.find((a) => a.id === prevArrId);
-    setSelectedRoomId(matchPrev ? matchPrev.id : arrangements[0].id);
-  }, [arrangements, bk, selectedRoomId]);
+    const hasRoom = currentGroup.list.some((a) => a.id === selectedRoomId);
+    if (!hasRoom) {
+      const matchPrev = currentGroup.list.find((a) => a.id === prevArrId);
+      setSelectedRoomId(matchPrev ? matchPrev.id : currentGroup.list[0].id);
+    }
+  }, [groups, bk, selectedTypeKey, selectedRoomId]);
 
   // ── Compute Therapists from availabilitiesData ──────────────────────
   // Normalizes both the branch-availability format (name) and the
@@ -701,11 +754,15 @@ export function RescheduleBookingModal({
     }));
   }, [availabilitiesData]);
 
-  const selectedArrangement = arrangements.find((a) => a.id === selectedRoomId);
+  const selectedArrangement = useMemo(
+    () => groupRooms.find((a) => a.id === selectedRoomId) || groupRooms[0] || null,
+    [groupRooms, selectedRoomId]
+  );
   const isCoupleRoom = useMemo(() => {
     const arrType = String(
       selectedArrangement?.arrangement_type ||
       selectedArrangement?.type ||
+      selectedGroup?.key ||
       prevArrType ||
       ''
     ).toLowerCase();
@@ -716,7 +773,7 @@ export function RescheduleBookingModal({
       arrType.includes('double') ||
       Number((selectedArrangement as any)?.required_therapists ?? 1) > 1
     );
-  }, [selectedArrangement, prevArrType]);
+  }, [selectedArrangement, selectedGroup, prevArrType]);
 
   // ── Home Service: therapist pre-selected before timeslot ──────────────
   // For home service the UX flow is: select therapist → see their slots → pick slot
@@ -791,16 +848,7 @@ export function RescheduleBookingModal({
 
     // ── BRANCH BOOKING: original logic ───────────────────────────────────
     // For home service: skip arrangement check (no room needed)
-    if (!isHomeService && arrangements.length === 0) {
-      setAvailableSlots([]);
-      return;
-    }
-
-    const selArrangement = !isHomeService
-      ? (arrangements.find((a) => a.id === selectedRoomId) || arrangements[0])
-      : null;
-
-    if (!isHomeService && !selArrangement) {
+    if (!isHomeService && groupRooms.length === 0) {
       setAvailableSlots([]);
       return;
     }
@@ -822,11 +870,17 @@ export function RescheduleBookingModal({
     }
 
     // 2. Arrangement availabilities for the selected day (branch bookings only)
-    const arrangementSlotsForDay = new Set<number>(
-      !isHomeService && selArrangement
-        ? (selArrangement.availabilities?.[selectedDate] || []).map((s: string) => parseTimeToMinutes(s))
-        : []
-    );
+    // Combine availabilities over all rooms of the selected arrangement type:
+    const roomData = groupRooms.map((r) => {
+      const raw = r.availabilities?.[selectedDate];
+      return {
+        id: r.id,
+        hasData: Array.isArray(raw),
+        free: new Set<number>((Array.isArray(raw) ? (raw as string[]) : []).map((s: string) => parseTimeToMinutes(s))),
+      };
+    });
+
+    const nextFitMap = new Map<number, string[]>();
 
     // 3. Grid timeslot bounds: from branch opening/closing or explicit slots
     const branchInfo = availabilitiesData?.branch;
@@ -848,19 +902,18 @@ export function RescheduleBookingModal({
       allKnownMinutes.add(m);
     });
     if (!isHomeService) {
-      arrangementSlotsForDay.forEach((m) => {
-        allKnownMinutes.add(m);
+      roomData.forEach((r) => {
+        r.free.forEach((m) => {
+          allKnownMinutes.add(m);
+        });
       });
     }
 
-    const sortedMinutes: number[] = [];
-    allKnownMinutes.forEach((m) => {
-      sortedMinutes.push(m);
-    });
-    sortedMinutes.sort((a, b) => a - b);
+    const sortedMinutes = Array.from(allKnownMinutes).sort((a, b) => a - b);
 
     if (!isAdmin && selectedDate < todayStr) {
       setAvailableSlots([]);
+      setSlotFitMap(new Map());
       return;
     }
 
@@ -876,20 +929,25 @@ export function RescheduleBookingModal({
 
       // Intersection: must have required therapists AND arrangement availability
       const isAvailableInTherapists = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists;
+      const roomsFit = roomData.filter((r) => !r.hasData || r.free.has(m)).map((r) => r.id);
+      nextFitMap.set(m, roomsFit);
+      const isAvailableInRoom = roomsFit.length > 0;
+
       // For home service: no room to check — therapist availability is sufficient
       const available = isHomeService
         ? isAvailableInTherapists
-        : isAvailableInTherapists && arrangementSlotsForDay.has(m);
+        : isAvailableInTherapists && isAvailableInRoom;
 
       slots.push({ time: timeLabel, available });
     }
 
+    setSlotFitMap(nextFitMap);
     setAvailableSlots(slots);
   }, [
     isAdmin,
     selectedDate,
     selectedRoomId,
-    arrangements,
+    groupRooms,
     therapists,
     availabilitiesData,
     todayStr,
@@ -897,6 +955,16 @@ export function RescheduleBookingModal({
     isHomeService,
     selectedHsTherapist,
   ]);
+
+  // Auto-select room from the chosen timeslot (auto from timeslot, same as redeem)
+  useEffect(() => {
+    if (isHomeService || !selectedTimeSlot) return;
+    const m = parseTimeToMinutes(selectedTimeSlot);
+    const fitIds = slotFitMap.get(m) ?? [];
+    if (fitIds.length > 0 && !fitIds.includes(selectedRoomId)) {
+      setSelectedRoomId(fitIds[0]);
+    }
+  }, [slotFitMap, selectedTimeSlot, selectedRoomId, isHomeService]);
 
   // ── Available Therapists at selected timeslot ────────────────────────
   const availableTherapistsAtSlot = useMemo(() => {
@@ -1442,9 +1510,15 @@ export function RescheduleBookingModal({
                   </div>
                 ) : (
                   <RoomCardRow
-                    rooms={arrangements as RoomOption[]}
-                    selectedId={selectedRoomId}
-                    onSelect={setSelectedRoomId}
+                    rooms={displayRooms}
+                    selectedId={selectedGroup?.key ?? ''}
+                    onSelect={(typeKey) => {
+                      setSelectedTypeKey(typeKey);
+                      const grp = groups.find((g) => g.key === typeKey);
+                      if (grp && !grp.list.some((a) => a.id === selectedRoomId)) {
+                        setSelectedRoomId(grp.list[0].id);
+                      }
+                    }}
                   />
                 )}
               </div>

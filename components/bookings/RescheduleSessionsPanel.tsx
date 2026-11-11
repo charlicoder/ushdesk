@@ -63,6 +63,20 @@ function fits(set: Set<number>, start: number, duration: number): boolean {
   return true;
 }
 
+function normalizeArrType(t: unknown): string {
+  const s = String(t ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (s.includes('couple')) return 'couple_room';
+  if (s.includes('double')) return 'double_room';
+  if (s.includes('single')) return 'single_room';
+  if (s.includes('vip')) return 'vip_suite';
+  if (s.includes('private')) return 'private_suite';
+  if (s.includes('open')) return 'open_area';
+  return s;
+}
+
+const arrTypeKey = (a: AnyRecord) =>
+  normalizeArrType(a.arrangement_type || a.type || a.name || a.arrangement_name) || `id:${a.id}`;
+
 // ── Shared design pieces (room cards + therapist thumbnails) ─────────────────
 
 const ROOM_FALLBACKS = [
@@ -366,9 +380,44 @@ export function RescheduleSessionsPanel({ sessions, branchId, date, fetchJson, o
       const data = dataByKey[m.key];
       const arrs = (data?.arrangements ?? []) as AnyRecord[];
       const choice = choices[i];
-      const room = arrs.find((a) => String(a.id) === choice?.roomId);
+
+      // Group arrangements by type so only one card per arrangement type is displayed (same logic as redeem)
+      const arrGroups = new Map<string, AnyRecord[]>();
+      arrs.forEach((a) => {
+        const k = arrTypeKey(a);
+        arrGroups.set(k, [...(arrGroups.get(k) ?? []), a]);
+      });
+      const groupList = Array.from(arrGroups.entries()).map(([key, list]) => ({ key, list }));
+      const activeGroup = groupList.find((g) => g.list.some((a) => String(a.id) === choice?.roomId)) ?? groupList[0];
+      const groupRooms = activeGroup?.list ?? [];
+
+      const displayArrs: RoomOption[] = groupList.map((g) => {
+        const rep = g.list.find((a) => String(a.id) === choice?.roomId) ?? g.list[0];
+        const rawType = rep.arrangement_type || rep.type || g.key;
+        const typeLabel = String(rawType).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+        const label = g.list.length > 1 ? typeLabel : String(rep.name ?? 'Room');
+        return {
+          id: g.key,
+          name: label,
+          arrangement_type: rawType,
+          type: rep.type || rawType,
+          capacity: rep.capacity,
+          image: rep.image,
+        };
+      });
+
+      const room = arrs.find((a) => String(a.id) === choice?.roomId) ?? groupRooms[0];
       const required = Math.max(1, Number(room?.required_therapists ?? 1) || 1);
-      const arrSet = new Set<number>(((room?.availabilities?.[date] ?? []) as string[]).map(toMin));
+
+      // Combine availabilities over all rooms of the selected arrangement type:
+      const roomData = groupRooms.map((r) => ({
+        id: String(r.id),
+        free: new Set<number>(((r.availabilities?.[date] ?? []) as string[]).map(toMin)),
+      }));
+
+      const allRoomMinutes = new Set<number>();
+      roomData.forEach((rd) => rd.free.forEach((mnt) => allRoomMinutes.add(mnt)));
+
       const therapists = ((data?.therapists ?? []) as AnyRecord[]).map((t) => ({
         t,
         set: new Set<number>(((t.availabilities?.[date] ?? []) as string[]).map(toMin)),
@@ -380,18 +429,30 @@ export function RescheduleSessionsPanel({ sessions, branchId, date, fetchJson, o
             ? null
             : (choices[i - 1].startMin as number) + metas[i - 1].duration;
 
-      const starts = Array.from(arrSet).sort((a, b) => a - b);
+      const starts = Array.from(allRoomMinutes).sort((a, b) => a - b);
       const slots = starts.map((mnt) => {
         const eligible = therapists.filter((x) => fits(x.set, mnt, m.duration)).map((x) => x.t);
+        const roomsFit = roomData.filter((r) => fits(r.free, mnt, m.duration)).map((r) => r.id);
         const available =
           prevEnd != null &&
           mnt >= prevEnd &&
-          fits(arrSet, mnt, m.duration) &&
+          roomsFit.length > 0 &&
           eligible.length >= required;
-        return { m: mnt, available, eligible };
+        return { m: mnt, available, eligible, roomsFit };
       });
       const chosenSlot = choice?.startMin != null ? slots.find((s) => s.m === choice.startMin) : undefined;
-      return { arrs, room, required, slots, prevEnd, eligibleAtChosen: chosenSlot?.eligible ?? [] };
+      return {
+        arrs,
+        groupList,
+        groupRooms,
+        displayArrs,
+        selectedTypeKey: activeGroup?.key ?? '',
+        room,
+        required,
+        slots,
+        prevEnd,
+        eligibleAtChosen: chosenSlot?.eligible ?? [],
+      };
     });
   }, [metas, dataByKey, choices, date]);
 
@@ -436,11 +497,31 @@ export function RescheduleSessionsPanel({ sessions, branchId, date, fetchJson, o
     list.map((c, i) => (i >= from ? { ...c, startMin: null, therapistIds: [] } : c));
 
   const pickSlot = (i: number, mnt: number) => {
-    const eligible = computed[i].slots.find((s) => s.m === mnt)?.eligible ?? [];
+    const slotObj = computed[i].slots.find((s) => s.m === mnt);
+    const eligible = slotObj?.eligible ?? [];
+    const roomsFit = slotObj?.roomsFit ?? [];
     const need = computed[i].required;
     setChoices((prev) => {
       const next = resetFrom(prev, i + 1);
-      next[i] = { ...next[i], startMin: mnt, therapistIds: eligible.slice(0, need).map((t) => String(t.id)) };
+      const currentRoomId = next[i].roomId;
+      const fitRoomId = roomsFit.includes(currentRoomId) ? currentRoomId : roomsFit[0] ?? currentRoomId;
+      next[i] = {
+        ...next[i],
+        roomId: fitRoomId,
+        startMin: mnt,
+        therapistIds: eligible.slice(0, need).map((t) => String(t.id)),
+      };
+      return next;
+    });
+  };
+
+  const pickType = (i: number, typeKey: string) => {
+    setChoices((prev) => {
+      const next = resetFrom(prev, i);
+      const comp = computed[i];
+      const targetGroup = comp.groupList.find((g) => g.key === typeKey);
+      const firstRoomId = targetGroup?.list[0] ? String(targetGroup.list[0].id) : '';
+      next[i] = { roomId: firstRoomId, startMin: null, therapistIds: [] };
       return next;
     });
   };
@@ -523,18 +604,18 @@ export function RescheduleSessionsPanel({ sessions, branchId, date, fetchJson, o
               </div>
             ) : (
               <>
-                {comp.arrs.length > 1 && (
+                {comp.displayArrs.length > 1 && (
                   <div className="space-y-1.5">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                       <Building2 className="h-3 w-3 text-amber-500" /> Room / Arrangement
                       <span className="ml-1 normal-case font-semibold">
-                        {comp.arrs.length} options
+                        {comp.displayArrs.length} {comp.displayArrs.length === 1 ? 'option' : 'options'}
                       </span>
                     </p>
                     <RoomCardRow
-                      rooms={comp.arrs as RoomOption[]}
-                      selectedId={choice.roomId}
-                      onSelect={(id) => pickRoom(i, id)}
+                      rooms={comp.displayArrs}
+                      selectedId={comp.selectedTypeKey}
+                      onSelect={(key) => pickType(i, key)}
                     />
                   </div>
                 )}
