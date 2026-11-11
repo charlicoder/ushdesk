@@ -3922,19 +3922,19 @@ function VoucherDetailModal({
   );
 }
 
-// ── Voucher Filter Popover (Multi-Status, Channel, Created By, Created At, Redeemed At) ─────────────────
+// ── Voucher Filter Popover (Multi-Status, Channel, Created At, Activation Date & Time, Redeemed At) ──
 
 interface VoucherFilterPopoverProps {
   statusFilters: string[];
   onStatusChange: (statuses: string[]) => void;
   channelFilter: string;
   onChannelChange: (channel: string) => void;
-  createdByFilter: string;
-  onCreatedByChange: (creator: string) => void;
-  creatorOptions: Array<{ id: string; name: string }>;
   createdDateFilter: DateFilterType;
   createdDateRange: DateRange;
   onCreatedDateChange: (type: DateFilterType, range: DateRange) => void;
+  activatedDateFilter: DateFilterType;
+  activatedDateRange: DateRange;
+  onActivatedDateChange: (type: DateFilterType, range: DateRange) => void;
   redeemedDateFilter: DateFilterType;
   redeemedDateRange: DateRange;
   onRedeemedDateChange: (type: DateFilterType, range: DateRange) => void;
@@ -3946,12 +3946,12 @@ function VoucherFilterPopover({
   onStatusChange,
   channelFilter,
   onChannelChange,
-  createdByFilter,
-  onCreatedByChange,
-  creatorOptions,
   createdDateFilter,
   createdDateRange,
   onCreatedDateChange,
+  activatedDateFilter,
+  activatedDateRange,
+  onActivatedDateChange,
   redeemedDateFilter,
   redeemedDateRange,
   onRedeemedDateChange,
@@ -3997,8 +3997,8 @@ function VoucherFilterPopover({
   const activeCount =
     (statusFilters.length > 0 && statusFilters.length < statusOptions.length ? 1 : 0) +
     (channelFilter !== 'all' ? 1 : 0) +
-    (createdByFilter !== 'all' ? 1 : 0) +
     (createdDateFilter !== 'all' ? 1 : 0) +
+    (activatedDateFilter !== 'all' ? 1 : 0) +
     (redeemedDateFilter !== 'all' ? 1 : 0);
 
   const toggleStatus = (stId: string) => {
@@ -4055,7 +4055,7 @@ function VoucherFilterPopover({
           />
 
           {/* Popup Modal Dialog */}
-          <div className="relative z-10 flex w-full max-w-2xl max-h-[88vh] flex-col overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+          <div className="relative z-10 flex w-full max-w-4xl max-h-[88vh] flex-col overflow-hidden rounded-3xl border border-border/80 bg-card shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-border/50 bg-muted/30 px-6 py-4 shrink-0">
               <div className="flex items-center gap-3">
@@ -4072,7 +4072,7 @@ function VoucherFilterPopover({
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Filter by status, sales channel, creator, created date, and redeemed date
+                    Filter by status, sales channel, created date, activation date &amp; time, and redeemed date
                   </p>
                 </div>
               </div>
@@ -4112,7 +4112,7 @@ function VoucherFilterPopover({
                     </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                   {statusOptions.map((opt) => {
                     const isChecked = statusFilters.includes(opt.id);
                     return (
@@ -4138,55 +4138,32 @@ function VoucherFilterPopover({
                 </div>
               </div>
 
-              {/* 2 & 3. Sales Channel & Created By (2-column responsive grid) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/40">
-                {/* Sales Channel */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
-                    Sales Channel
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {channelOptions.map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => onChannelChange(opt.id)}
-                        className={cn(
-                          'rounded-xl border py-2 px-3 text-xs font-semibold text-center transition cursor-pointer',
-                          channelFilter === opt.id
-                            ? 'border-primary bg-primary text-white shadow-xs'
-                            : 'border-border/70 bg-background/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
-                        )}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Created By */}
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
-                    Created By
-                  </label>
-                  <select
-                    value={createdByFilter}
-                    onChange={(e) => onCreatedByChange(e.target.value)}
-                    className="w-full h-10 rounded-xl border border-border bg-background px-3.5 text-xs font-semibold text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 cursor-pointer"
-                  >
-                    <option value="all">All Creators</option>
-                    <option value="__online__">Online / Self-Service</option>
-                    {creatorOptions.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+              {/* 2. Sales Channel */}
+              <div className="space-y-2 pt-2 border-t border-border/40">
+                <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground block">
+                  Sales Channel
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {channelOptions.map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => onChannelChange(opt.id)}
+                      className={cn(
+                        'rounded-xl border py-2 px-3 text-xs font-semibold text-center transition cursor-pointer',
+                        channelFilter === opt.id
+                          ? 'border-primary bg-primary text-white shadow-xs'
+                          : 'border-border/70 bg-background/60 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* 4 & 5. Created At & Redeemed At Date Ranges (2-column responsive cards) */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/40">
+              {/* 3. Created At, Activation Date & Time, Redeemed At Date Ranges (3-column responsive cards) */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 pt-2 border-t border-border/40">
                 {/* Created At Card */}
                 <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -4205,14 +4182,14 @@ function VoucherFilterPopover({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-4 gap-1.5">
+                  <div className="grid grid-cols-4 gap-1">
                     {datePresetOptions.map((p) => (
                       <button
                         key={p.id}
                         type="button"
                         onClick={() => applyPreset(p.id, onCreatedDateChange)}
                         className={cn(
-                          'rounded-lg border py-1.5 px-2 text-[11px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
+                          'rounded-lg border py-1.5 px-1.5 text-[10px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
                           createdDateFilter === p.id
                             ? 'border-primary bg-primary text-white shadow-2xs'
                             : 'border-border/70 bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
@@ -4253,6 +4230,72 @@ function VoucherFilterPopover({
                   </div>
                 </div>
 
+                {/* Activation Date & Time Card */}
+                <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold uppercase tracking-wider text-foreground flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                      Activation Date & Time
+                    </label>
+                    {activatedDateFilter !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => onActivatedDateChange('all', {})}
+                        className="text-[11px] font-semibold text-rose-500 hover:underline cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-4 gap-1">
+                    {datePresetOptions.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => applyPreset(p.id, onActivatedDateChange)}
+                        className={cn(
+                          'rounded-lg border py-1.5 px-1.5 text-[10px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
+                          activatedDateFilter === p.id
+                            ? 'border-primary bg-primary text-white shadow-2xs'
+                            : 'border-border/70 bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
+                        )}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-2.5 pt-1">
+                    <div>
+                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1">From Date</span>
+                      <input
+                        type="date"
+                        value={activatedDateRange.from || ''}
+                        onChange={(e) => {
+                          const from = e.target.value || undefined;
+                          const to = activatedDateRange.to;
+                          onActivatedDateChange(!from && !to ? 'all' : 'custom', { from, to });
+                        }}
+                        className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] font-semibold text-muted-foreground mb-1">To Date</span>
+                      <input
+                        type="date"
+                        value={activatedDateRange.to || ''}
+                        onChange={(e) => {
+                          const to = e.target.value || undefined;
+                          const from = activatedDateRange.from;
+                          onActivatedDateChange(!from && !to ? 'all' : 'custom', { from, to });
+                        }}
+                        className="w-full h-9 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 {/* Redeemed At Card */}
                 <div className="rounded-2xl border border-border/70 bg-muted/20 p-4 space-y-3">
                   <div className="flex items-center justify-between">
@@ -4271,14 +4314,14 @@ function VoucherFilterPopover({
                     )}
                   </div>
 
-                  <div className="grid grid-cols-4 gap-1.5">
+                  <div className="grid grid-cols-4 gap-1">
                     {datePresetOptions.map((p) => (
                       <button
                         key={p.id}
                         type="button"
                         onClick={() => applyPreset(p.id, onRedeemedDateChange)}
                         className={cn(
-                          'rounded-lg border py-1.5 px-2 text-[11px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
+                          'rounded-lg border py-1.5 px-1.5 text-[10px] font-semibold text-center transition cursor-pointer whitespace-nowrap',
                           redeemedDateFilter === p.id
                             ? 'border-primary bg-primary text-white shadow-2xs'
                             : 'border-border/70 bg-background hover:bg-muted text-muted-foreground hover:text-foreground'
@@ -5756,9 +5799,11 @@ export default function GiftVouchersPage() {
     [creatorList, employeeMap, user]
   );
 
-  // Date filters (Created At & Redeemed At) & pagination
+  // Date filters (Created At, Activation Date & Time, Redeemed At) & pagination
   const [dateFilter, setDateFilter] = useState<DateFilterType>('all');
   const [dateRange,  setDateRange]  = useState<DateRange>({});
+  const [activatedDateFilter, setActivatedDateFilter] = useState<DateFilterType>('all');
+  const [activatedDateRange,  setActivatedDateRange]  = useState<DateRange>({});
   const [redeemedDateFilter, setRedeemedDateFilter] = useState<DateFilterType>('all');
   const [redeemedDateRange,  setRedeemedDateRange]  = useState<DateRange>({});
   const [page,       setPage]       = useState(1);
@@ -5769,7 +5814,7 @@ export default function GiftVouchersPage() {
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
-  }, [searchQuery, statusFilters, channelFilter, createdByFilter, dateFilter, dateRange, redeemedDateFilter, redeemedDateRange]);
+  }, [searchQuery, statusFilters, channelFilter, createdByFilter, dateFilter, dateRange, activatedDateFilter, activatedDateRange, redeemedDateFilter, redeemedDateRange]);
   const [shareVoucher,     setShareVoucher]     = useState<Voucher | null>(null);
   const [shareChannel,     setShareChannel]     = useState<'sms' | 'whatsapp'>('whatsapp');
   const [rescheduleBookingId, setRescheduleBookingId] = useState<string | null>(null);
@@ -5866,10 +5911,12 @@ export default function GiftVouchersPage() {
       q: debouncedSearch,
       createdFrom: dateRange.from,
       createdTo: dateRange.to,
+      activatedFrom: activatedDateRange.from,
+      activatedTo: activatedDateRange.to,
       redeemedFrom: redeemedDateRange.from,
       redeemedTo: redeemedDateRange.to,
     }),
-    [statusFilters, channelFilter, createdByFilter, debouncedSearch, dateRange, redeemedDateRange]
+    [statusFilters, channelFilter, createdByFilter, debouncedSearch, dateRange, activatedDateRange, redeemedDateRange]
   );
   const filtersKey = JSON.stringify(listFilters);
 
@@ -5951,8 +5998,8 @@ export default function GiftVouchersPage() {
   }, []);
 
   const hasActiveFilters = Boolean(
-    searchQuery.trim() || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' ||
-      dateFilter !== 'all' || redeemedDateFilter !== 'all'
+    searchQuery.trim() || statusFilters.length > 0 || channelFilter !== 'all' ||
+      dateFilter !== 'all' || activatedDateFilter !== 'all' || redeemedDateFilter !== 'all'
   );
 
   const paginatedVouchers = vouchers;
@@ -6171,7 +6218,7 @@ export default function GiftVouchersPage() {
       {/* ── Stat cards ── */}
       <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[
-          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || redeemedDateFilter !== 'all' || statusFilters.length > 0 || channelFilter !== 'all' || createdByFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
+          { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || activatedDateFilter !== 'all' || redeemedDateFilter !== 'all' || statusFilters.length > 0 || channelFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
           { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
           { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
@@ -6210,20 +6257,24 @@ export default function GiftVouchersPage() {
             )}
           </div>
 
-          {/* Filter Icon Popover (Status multi-select, Channel, Created By, Created At, Redeemed At) */}
+          {/* Filter Icon Popover (Status multi-select, Channel, Created At, Activation Date & Time, Redeemed At) */}
           <VoucherFilterPopover
             statusFilters={statusFilters}
             onStatusChange={(statuses) => setStatusFilters(statuses)}
             channelFilter={channelFilter}
             onChannelChange={(ch) => setChannelFilter(ch)}
-            createdByFilter={createdByFilter}
-            onCreatedByChange={(cr) => setCreatedByFilter(cr)}
-            creatorOptions={creatorOptions}
             createdDateFilter={dateFilter}
             createdDateRange={dateRange}
             onCreatedDateChange={(type, range) => {
               setDateFilter(type);
               setDateRange(range);
+              setPage(1);
+            }}
+            activatedDateFilter={activatedDateFilter}
+            activatedDateRange={activatedDateRange}
+            onActivatedDateChange={(type, range) => {
+              setActivatedDateFilter(type);
+              setActivatedDateRange(range);
               setPage(1);
             }}
             redeemedDateFilter={redeemedDateFilter}
@@ -6236,35 +6287,15 @@ export default function GiftVouchersPage() {
             onReset={() => {
               setStatusFilters([]);
               setChannelFilter('all');
-              setCreatedByFilter('all');
               setDateFilter('all');
               setDateRange({});
+              setActivatedDateFilter('all');
+              setActivatedDateRange({});
               setRedeemedDateFilter('all');
               setRedeemedDateRange({});
             }}
           />
 
-          <DateRangeFilter
-            buttonLabelPrefix="Created At"
-            dateFilter={dateFilter}
-            dateRange={dateRange}
-            onChange={(type, range) => {
-              setDateFilter(type);
-              setDateRange(range);
-              setPage(1);
-            }}
-          />
-
-          <DateRangeFilter
-            buttonLabelPrefix="Redeemed At"
-            dateFilter={redeemedDateFilter}
-            dateRange={redeemedDateRange}
-            onChange={(type, range) => {
-              setRedeemedDateFilter(type);
-              setRedeemedDateRange(range);
-              setPage(1);
-            }}
-          />
           <button
             onClick={fetchVouchers}
             disabled={loading}
@@ -6315,7 +6346,7 @@ export default function GiftVouchersPage() {
         </button>
       </div>
 
-      {/* ── Active Date / Channel / Status / Created By Filter Badges ── */}
+      {/* ── Active Date / Channel / Status Filter Badges ── */}
       <div className="flex flex-wrap items-center gap-2">
         <DateFilterActiveBadge
           labelPrefix="Created At:"
@@ -6324,6 +6355,16 @@ export default function GiftVouchersPage() {
           onClear={() => {
             setDateFilter('all');
             setDateRange({});
+            setPage(1);
+          }}
+        />
+        <DateFilterActiveBadge
+          labelPrefix="Activation:"
+          dateFilter={activatedDateFilter}
+          dateRange={activatedDateRange}
+          onClear={() => {
+            setActivatedDateFilter('all');
+            setActivatedDateRange({});
             setPage(1);
           }}
         />
@@ -6361,22 +6402,6 @@ export default function GiftVouchersPage() {
               onClick={() => setChannelFilter('all')}
               className="hover:text-primary/70 transition-colors ml-0.5"
               title="Clear channel filter"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
-        {createdByFilter !== 'all' && (
-          <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary animate-in fade-in">
-            <UserCheck className="h-3 w-3" />
-            <span>
-              Created By: {createdByFilter === '__online__' ? 'Online' : (creatorOptions.find((c) => c.id === createdByFilter)?.name || createdByFilter)}
-            </span>
-            <button
-              type="button"
-              onClick={() => setCreatedByFilter('all')}
-              className="hover:text-primary/70 transition-colors ml-0.5"
-              title="Clear created by filter"
             >
               <X className="h-3.5 w-3.5" />
             </button>

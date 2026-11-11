@@ -25,6 +25,8 @@ export interface VoucherListFilters {
   createdTo?: string;
   redeemedFrom?: string;
   redeemedTo?: string;
+  activatedFrom?: string;
+  activatedTo?: string;
 }
 
 export interface VoucherPage<T> {
@@ -122,6 +124,8 @@ function filterParams(f: VoucherListFilters): URLSearchParams {
   if (f.createdTo) p.set('created_to', f.createdTo);
   if (f.redeemedFrom) p.set('redeemed_from', f.redeemedFrom);
   if (f.redeemedTo) p.set('redeemed_to', f.redeemedTo);
+  if (f.activatedFrom) p.set('activated_from', f.activatedFrom);
+  if (f.activatedTo) p.set('activated_to', f.activatedTo);
   return p;
 }
 
