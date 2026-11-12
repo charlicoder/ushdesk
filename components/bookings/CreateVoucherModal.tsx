@@ -28,7 +28,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { CreateCustomerModal, COUNTRY_CODES, type CreatedCustomer } from './CreateCustomerModal';
 import { MakePaymentModal } from './MakePaymentModal';
 import { MultiSelectDrop } from './MultiSelectDrop';
-import { sanitizeLocalPhone, isValidLocalPhone, phoneErrorMessage, toKuwaitLocal, KUWAIT_CODE } from '@/lib/phone';
+import { sanitizeLocalPhone, isValidLocalPhone, phoneErrorMessage, KUWAIT_CODE } from '@/lib/phone';
 
 // ── Brand palette ──────────────────────────────────────────────────────────────
 const B = {
@@ -1019,7 +1019,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [recipientCountryCode, setRecipientCountryCode] = useState('+965');
   const [recipientPhone, setRecipientPhone] = useState('');
   const [senderName, setSenderName] = useState('');
-  const [senderPhone, setSenderPhone] = useState(''); // local Kuwait digits (without +965)
+  const [senderCountryCode, setSenderCountryCode] = useState('+965');
+  const [senderPhone, setSenderPhone] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [giftMessage, setGiftMessage] = useState('');
   const [giftTemplate, setGiftTemplate] = useState(GIFT_TEMPLATES[0]);
@@ -1316,6 +1317,39 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     if (c.email) setRecipientEmail(c.email);
   };
 
+  // Sync sender picker to text inputs
+  const handleSelectSender = (c: Customer) => {
+    setSender(c);
+    setSenderName(customerLabel(c));
+    let rawPhone = (customerPhone(c) || '').trim();
+    if (rawPhone) {
+      const matched = COUNTRY_CODES.find((item) => rawPhone.startsWith(item.code));
+      if (matched) {
+        setSenderCountryCode(matched.code);
+        setSenderPhone(rawPhone.slice(matched.code.length).trim());
+      } else if (rawPhone.startsWith('00')) {
+        const without00 = '+' + rawPhone.slice(2);
+        const matched00 = COUNTRY_CODES.find((item) => without00.startsWith(item.code));
+        if (matched00) {
+          setSenderCountryCode(matched00.code);
+          setSenderPhone(without00.slice(matched00.code.length).trim());
+        } else {
+          setSenderPhone(rawPhone);
+        }
+      } else {
+        const matchedNoPlus = COUNTRY_CODES.find((item) => rawPhone.startsWith(item.code.replace('+', '')));
+        if (matchedNoPlus) {
+          setSenderCountryCode(matchedNoPlus.code);
+          setSenderPhone(rawPhone.slice(matchedNoPlus.code.replace('+', '').length).trim());
+        } else {
+          setSenderPhone(rawPhone);
+        }
+      }
+    } else {
+      setSenderPhone('');
+    }
+  };
+
   // ── Totals Calculation ──
   const isPackagedService = Boolean(
     selectedService?.is_packaged_services === true ||
@@ -1494,7 +1528,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const effectiveRecipientPhone = recipientPhone.trim() || (recipient ? (customerPhone(recipient) || '').trim() : '');
   const recipientLocalPhone = sanitizeLocalPhone(effectiveRecipientPhone, recipientCountryCode);
   const recipientPhoneValid = isValidLocalPhone(recipientLocalPhone, recipientCountryCode);
-  const senderPhoneValid = isValidLocalPhone(senderPhone, KUWAIT_CODE);
+  const effectiveSenderPhone = senderPhone.trim() || (sender ? (customerPhone(sender) || '').trim() : '');
+  const senderLocalPhone = sanitizeLocalPhone(effectiveSenderPhone, senderCountryCode);
+  const senderPhoneValid = !effectiveSenderPhone && !sender ? true : isValidLocalPhone(senderLocalPhone, senderCountryCode);
   const senderNameValid = (senderName.trim() || (sender ? customerLabel(sender) : '')).trim().length > 0;
   const scheduledValid =
     deliveryMode === 'on_activation' ||
@@ -1553,6 +1589,19 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       computedRecipientPhone = `+${cleanPhoneDigits}`;
     } else if (effectiveRecipientPhone) {
       computedRecipientPhone = `${recipientCountryCode}${cleanPhoneDigits}`;
+    }
+  }
+
+  const cleanSenderPhoneDigits = effectiveSenderPhone.replace(/\D/g, '');
+  const cleanSenderCodeDigits = senderCountryCode.replace(/\D/g, '');
+  let computedSenderPhone = effectiveSenderPhone;
+  if (computedSenderPhone) {
+    if (computedSenderPhone.startsWith('+')) {
+      computedSenderPhone = `+${cleanSenderPhoneDigits}`;
+    } else if (cleanSenderCodeDigits && cleanSenderPhoneDigits.startsWith(cleanSenderCodeDigits)) {
+      computedSenderPhone = `+${cleanSenderPhoneDigits}`;
+    } else if (effectiveSenderPhone) {
+      computedSenderPhone = `${senderCountryCode}${cleanSenderPhoneDigits}`;
     }
   }
   const resolvedSenderName = senderName.trim() || (sender ? customerLabel(sender) : '');
@@ -1708,7 +1757,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       sender_data: {
         id: sender?.id ?? '',
         name: resolvedSenderName,
-        phone_number: senderPhone ? `${KUWAIT_CODE}${senderPhone}` : '',
+        phone_number: computedSenderPhone || '',
         email: sender?.email ?? '',
       },
       gift_message: giftMessage,
@@ -2440,16 +2489,20 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       label="Or pick from customer database"
                       value={sender}
                       onSelect={(c) => {
-                        setSender(c);
                         if (c) {
-                          setSenderName(customerLabel(c));
-                          setSenderPhone(toKuwaitLocal(customerPhone(c)));
+                          handleSelectSender(c);
+                        } else {
+                          setSender(null);
+                          setSenderName('');
+                          setSenderPhone('');
+                          setSenderCountryCode('+965');
                         }
                       }}
                       onClear={() => {
                         setSender(null);
                         setSenderName('');
                         setSenderPhone('');
+                        setSenderCountryCode('+965');
                       }}
                       onCreateNew={() => {
                         setCreateForRole('sender');
@@ -2810,7 +2863,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
           amount={totalPrice.toFixed(3)}
           currency={currency}
           customerName={resolvedSenderName || recipientName.trim()}
-          customerPhone={senderPhone ? `${KUWAIT_CODE}${senderPhone}` : computedRecipientPhone}
+          customerPhone={computedSenderPhone || computedRecipientPhone}
           onBeforeNext={handleCreateVoucherForPaymentLink}
           onPaymentSuccess={() => {
             onSuccess?.();
@@ -2826,6 +2879,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       {showCreateCustomer && (
         <CreateCustomerModal
           authHeader={authHeader}
+          initialCountryCode={createForRole === 'sender' ? senderCountryCode : recipientCountryCode}
           onCreated={(created: CreatedCustomer) => {
             const id = String(created.id);
             const fullName = created.full_name || [created.first_name, created.last_name].filter(Boolean).join(' ');
@@ -2841,11 +2895,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               avatar: created.avatar as string | undefined,
             };
             setInjectedCustomer(asCustomer);
-            if (createForRole === 'sender') {
-              setSender(asCustomer);
-              setSenderName(customerLabel(asCustomer));
-              setSenderPhone(toKuwaitLocal(asCustomer.phone_number));
-            }
+            if (createForRole === 'sender') handleSelectSender(asCustomer);
             if (createForRole === 'recipient') handleSelectRecipient(asCustomer);
           }}
           onClose={() => setShowCreateCustomer(false)}

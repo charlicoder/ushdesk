@@ -161,14 +161,15 @@ interface Props {
   authHeader: string;
   onCreated: (customer: CreatedCustomer) => void;
   onClose: () => void;
+  initialCountryCode?: string;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
+export function CreateCustomerModal({ authHeader, onCreated, onClose, initialCountryCode }: Props) {
   const [firstName,   setFirstName]   = useState('');
   const [lastName,    setLastName]    = useState('');
-  const [countryCode, setCountryCode] = useState('+965');
+  const [countryCode, setCountryCode] = useState(initialCountryCode || '+965');
   const [phone,       setPhone]       = useState('');
   const [email,       setEmail]       = useState('');
   const [gender,      setGender]      = useState('');
@@ -300,7 +301,7 @@ export function CreateCustomerModal({ authHeader, onCreated, onClose }: Props) {
                     maxLength={countryCode === '+965' ? 8 : 14}
                     value={phone}
                     onChange={(e) => setPhone(sanitizeLocalPhone(e.target.value, countryCode))}
-                    placeholder="41028983"
+                    placeholder={countryCode === '+965' ? '41028983' : countryCode === '+966' ? '512345678' : '12345678'}
                     required
                     className="w-full h-10 rounded-xl border border-border bg-muted/30 pl-9 pr-3.5 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/40"
                   />
