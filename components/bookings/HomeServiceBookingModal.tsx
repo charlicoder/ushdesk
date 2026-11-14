@@ -27,7 +27,7 @@ import {
   CalendarDays, CheckCircle2, Clock, AlertCircle, X,
   Timer, Loader2, Scissors, Package, User, Phone, Mail,
   DollarSign, FileText, ChevronRight, CalendarCheck,
-  LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus,
+  LayoutGrid, Crown, Heart, Sparkles, Layers, Store, UserPlus, Users,
   CreditCard, Hash, Trash2, Plus, ArrowRight, Lock, MapPin, Home,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -51,6 +51,7 @@ interface ApiService {
   id: string;
   name: string;
   duration_minutes?: number;
+  no_of_therapists_needed?: number;
   base_price?: string | number;
   arrangement_price?: string | number;
   price_for_extra_minutes?: string | number;
@@ -72,9 +73,13 @@ interface ApiService {
   package_name?: string;
   package_price?: string | number;
   /** Home service specific pricing fields */
+  home_service_price?: string | number | null;
   home_price_in_points?: number | null;
   home_loyalty_points?: number | null;
   home_price_for_extra_minutes?: string | number | null;
+  loyalty_points?: number | null;
+  price_in_points?: number | null;
+  included_addons?: ApiAddOn[];
   [key: string]: unknown;
 }
 
@@ -102,7 +107,12 @@ interface IncludedService {
   id: string;
   name: string;
   duration_minutes?: number;
+  no_of_therapists_needed?: number;
   base_price?: string | number;
+  home_service_price?: string | number | null;
+  home_loyalty_points?: number | null;
+  home_price_in_points?: number | null;
+  home_price_for_extra_minutes?: string | number | null;
   extra_minutes?: number;
   price_for_extra_minutes?: string | number | null;
   position?: number;
@@ -171,8 +181,12 @@ export interface HomeServiceSavedSession {
   secondaryTherapistId?: string;
   secondaryTherapistName?: string;
   secondaryTherapistPhoto?: string | null;
+  tertiaryTherapistId?: string;
+  tertiaryTherapistName?: string;
+  tertiaryTherapistPhoto?: string | null;
   startTime: string; // e.g. "09:00 PM"
   totalDuration: number;
+  servicePrice?: number;
   sessionPrice: number;
 }
 
@@ -356,23 +370,20 @@ function isTherapistAvailableForWindow(
   const endMin = startMin + dur;
   const targetId = String(therapistId).toLowerCase().trim();
 
-  // 1. Check schedule grid (if loaded)
+  // 1. Check schedule grid (if loaded and therapist is in the grid)
   if (schedule && Object.keys(schedule).length > 0) {
     const therapistSlots = getTherapistScheduleSlots(therapistId, schedule);
-    if (!therapistSlots) {
-      // If schedule is loaded and therapist is not in it, they are not scheduled at this branch/date
-      return false;
-    }
-
-    for (let m = startMin; m < endMin; m += 30) {
-      const slotLabel = minutesToSlotLabel(m);
-      let slot = therapistSlots[slotLabel];
-      if (!slot) {
-        const noPad = slotLabel.replace(/^0/, '');
-        slot = therapistSlots[noPad];
-      }
-      if (!slot || slot.status !== 'available') {
-        return false;
+    if (therapistSlots) {
+      for (let m = startMin; m < endMin; m += 30) {
+        const slotLabel = minutesToSlotLabel(m);
+        let slot = therapistSlots[slotLabel];
+        if (!slot) {
+          const noPad = slotLabel.replace(/^0/, '');
+          slot = therapistSlots[noPad];
+        }
+        if (slot && slot.status !== 'available') {
+          return false;
+        }
       }
     }
   }
@@ -389,12 +400,14 @@ function isTherapistAvailableForWindow(
 
     const bkTherapistId = String(bk.therapist_id ?? (bk.therapist_data as any)?.id ?? '').toLowerCase().trim();
     const bkSecondaryId = String(bk.secondary_therapist_id ?? '').toLowerCase().trim();
+    const bkTertiaryId = String(bk.tertiary_therapist_id ?? '').toLowerCase().trim();
 
     if (Array.isArray(bk.sessions) && bk.sessions.length > 0) {
       for (const sess of bk.sessions) {
         const sessTId = String(sess.therapist_id || sess.therapist_data?.id || bkTherapistId).toLowerCase().trim();
         const sessSecId = String(sess.secondary_therapist_id ?? '').toLowerCase().trim();
-        if (sessTId === targetId || sessSecId === targetId) {
+        const sessTertId = String(sess.tertiary_therapist_id ?? '').toLowerCase().trim();
+        if (sessTId === targetId || sessSecId === targetId || sessTertId === targetId) {
           const ssm = parseTimeToMinutes(sess.appointment_start || sess.start || bk.appointment_start || bk.start);
           const sem = parseTimeToMinutes(sess.appointment_end || sess.end || bk.appointment_end || bk.end);
           if (ssm !== null && sem !== null) {
@@ -404,7 +417,7 @@ function isTherapistAvailableForWindow(
           }
         }
       }
-    } else if (bkTherapistId === targetId || bkSecondaryId === targetId) {
+    } else if (bkTherapistId === targetId || bkSecondaryId === targetId || bkTertiaryId === targetId) {
       const bsm = parseTimeToMinutes(bk.appointment_start || bk.start);
       const bem = parseTimeToMinutes(bk.appointment_end || bk.end);
       if (bsm !== null && bem !== null) {
@@ -415,38 +428,28 @@ function isTherapistAvailableForWindow(
     }
   }
 
-  // 3. Fallback: If schedule grid is not loaded, verify working hours and breaks from scheduleData
-  if ((!schedule || Object.keys(schedule).length === 0) && scheduleData) {
+  // 3. Optional extra check from scheduleData breaks
+  if (scheduleData) {
     const rawTList: any[] = scheduleData.therapists ?? [];
     const tMatch = rawTList.find(
       (t: any) => String(t.id).toLowerCase().trim() === targetId,
     );
-    if (!tMatch) {
-      return false;
-    }
-
     const availList: any[] = scheduleData.availability ?? [];
     const avMatch = availList.find(
       (av: any) => String(av.therapist_id).toLowerCase().trim() === targetId,
     );
-    if (avMatch && Array.isArray(avMatch.intervals)) {
-      const hasCoverage = avMatch.intervals.some((iv: any) => {
-        const ssm = parseTimeToMinutes(iv.start);
-        const sem = parseTimeToMinutes(iv.end);
-        return ssm !== null && sem !== null && ssm <= startMin && sem >= endMin;
-      });
-      if (!hasCoverage) return false;
-    }
 
-    const rawBreaks = [
-      ...(tMatch.break_intervals ?? tMatch.break_times ?? []),
-      ...(avMatch?.break_intervals ?? avMatch?.break_times ?? []),
-    ];
-    for (const brk of rawBreaks) {
-      const bsm = parseTimeToMinutes(brk.start || brk.start_time);
-      const bem = parseTimeToMinutes(brk.end || brk.end_time);
-      if (bsm !== null && bem !== null && startMin < bem && endMin > bsm) {
-        return false;
+    if (tMatch || avMatch) {
+      const rawBreaks = [
+        ...(tMatch?.break_intervals ?? tMatch?.break_times ?? []),
+        ...(avMatch?.break_intervals ?? avMatch?.break_times ?? []),
+      ];
+      for (const brk of rawBreaks) {
+        const bsm = parseTimeToMinutes(brk.start || brk.start_time);
+        const bem = parseTimeToMinutes(brk.end || brk.end_time);
+        if (bsm !== null && bem !== null && startMin < bem && endMin > bsm) {
+          return false;
+        }
       }
     }
   }
@@ -640,6 +643,9 @@ export function HomeServiceAddSessionModal({
   const [secondaryTherapistId, setSecondaryTherapistId] = useState('');
   const [secondaryTherapistName, setSecondaryTherapistName] = useState('');
   const [secondaryTherapistPhoto, setSecondaryTherapistPhoto] = useState<string | null>(null);
+  const [tertiaryTherapistId, setTertiaryTherapistId] = useState('');
+  const [tertiaryTherapistName, setTertiaryTherapistName] = useState('');
+  const [tertiaryTherapistPhoto, setTertiaryTherapistPhoto] = useState<string | null>(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState(defaultTimeSlot);
 
   const [availableTherapists, setAvailableTherapists] = useState<ApiTherapist[]>([]);
@@ -753,19 +759,75 @@ export function HomeServiceAddSessionModal({
   );
   const primaryService = selectedServices[0] ?? null;
 
+  const neededTherapists = useMemo(() => {
+    if (isDoubleOccupancy(arrangementType)) return 2;
+    const maxNeeded = selectedServices.reduce((max, s) => {
+      const raw = s as Record<string, unknown>;
+      const pkgNeeded = s.package_id
+        ? Number(packageDetails[s.package_id]?.no_of_therapists_needed ?? splitPkg?.no_of_therapists_needed)
+        : 1;
+      const val = Number(s.no_of_therapists_needed ?? raw.no_of_therapists_needed ?? pkgNeeded) || 1;
+      return Math.max(max, val);
+    }, 1);
+    if (splitPkg && Number(splitPkg.no_of_therapists_needed) > 1) {
+      return Math.min(3, Math.max(maxNeeded, Number(splitPkg.no_of_therapists_needed)));
+    }
+    return Math.min(3, Math.max(1, maxNeeded));
+  }, [arrangementType, selectedServices, splitPkg, packageDetails]);
+
   const isPackagedService = Boolean(
     primaryService?.is_packaged_services === true ||
     String(primaryService?.is_packaged_services).toLowerCase() === 'true',
   );
 
+  const isPackage = (sv: ApiService) =>
+    sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true';
+  const componentsOf = (sv: ApiService): IncludedService[] =>
+    sv.included_services ?? packageDetails[sv.id]?.included_services ?? [];
+  const includedAddonsOf = (sv: ApiService): ApiAddOn[] => {
+    const raw = (sv.included_addons as ApiAddOn[]) ?? ((packageDetails[sv.id]?.included_addons ?? []) as ApiAddOn[]) ?? [];
+    return Array.isArray(raw) ? raw : [];
+  };
+
   const serviceAddons = useMemo(() => {
     const seen = new Set<string>();
     const out: ApiAddOn[] = [];
     selectedServices.forEach((sv, i) => {
-      const pkg = i === 0 ? isPackagedService : Boolean(
-        sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true',
-      );
-      if (pkg) return;
+      const pkg = i === 0 ? isPackagedService : isPackage(sv);
+      if (pkg) {
+        const rawAddons = sv.add_ons ?? (sv as Record<string, unknown>).addons ?? [];
+        (rawAddons as ApiAddOn[]).forEach(a => {
+          if (!seen.has(a.id)) {
+            if (homeService) {
+              const raw = a as unknown as Record<string, unknown>;
+              const eligible =
+                raw.is_available_for_home_service === true ||
+                String(raw.is_available_for_home_service).toLowerCase() === 'true';
+              if (!eligible) return;
+            }
+            seen.add(a.id);
+            out.push(a);
+          }
+        });
+        const comps = componentsOf(sv);
+        comps.forEach(c => {
+          const cAddons = (c as unknown as ApiService).add_ons ?? ((c as unknown as Record<string, unknown>).addons as ApiAddOn[]) ?? [];
+          (cAddons as ApiAddOn[]).forEach(a => {
+            if (!seen.has(a.id)) {
+              if (homeService) {
+                const raw = a as unknown as Record<string, unknown>;
+                const eligible =
+                  raw.is_available_for_home_service === true ||
+                  String(raw.is_available_for_home_service).toLowerCase() === 'true';
+                if (!eligible) return;
+              }
+              seen.add(a.id);
+              out.push(a);
+            }
+          });
+        });
+        return;
+      }
       const rawAddons = sv.add_ons ?? (sv as Record<string, unknown>).addons ?? [];
       (rawAddons as ApiAddOn[]).forEach(a => {
         if (!seen.has(a.id)) {
@@ -783,7 +845,7 @@ export function HomeServiceAddSessionModal({
       });
     });
     return out;
-  }, [selectedServices, isPackagedService, homeService]);
+  }, [selectedServices, isPackagedService, homeService, packageDetails]);
 
   const selectedArrangement = useMemo(
     () => arrangements.find(a => a.id === arrangementId) ?? null,
@@ -815,7 +877,7 @@ export function HomeServiceAddSessionModal({
 
   const servicePrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
 
-  const noAddons = isPackagedService || Boolean(splitPkg);
+  const noAddons = Boolean(splitPkg);
   const selectedSvcAddons = noAddons ? [] : serviceAddons.filter(a => addonIds.includes(a.id));
   const selectedArrAddons = noAddons ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
   const allSelectedAddons = [...selectedSvcAddons, ...selectedArrAddons];
@@ -877,10 +939,12 @@ export function HomeServiceAddSessionModal({
     }
   }, [isFirstSession, timeSlots, selectedTimeSlot]);
 
-  // ── Fetch Therapists on SubStep 2 (For subsequent sessions only, or for dual therapist) ──
+  // ── Fetch Therapists on SubStep 2 or when multiple therapists needed in SubStep 1 ──
   useEffect(() => {
-    if (subStep !== 2 || !primaryService) return;
-    if (isFirstSession && !isDoubleOccupancy(arrangementType)) return;
+    const shouldFetchInStep1 = neededTherapists > 1 || isDoubleOccupancy(arrangementType);
+    if (!primaryService) return;
+    if (subStep !== 2 && !shouldFetchInStep1) return;
+    if (isFirstSession && !isDoubleOccupancy(arrangementType) && neededTherapists <= 1) return;
 
     setTherapistsLoading(true);
     const startSlot = isFirstSession ? defaultTimeSlot : selectedTimeSlot;
@@ -893,14 +957,21 @@ export function HomeServiceAddSessionModal({
       appointment_start: toHHMM(startSlot),
       duration: String(dur),
     });
-    const ids = serviceIds.length > 0 ? serviceIds : [primaryService.id];
+
+    // Prioritize services requiring multiple therapists
+    const multiServices = selectedServices.filter(s => (Number(s.no_of_therapists_needed) || 1) > 1);
+    const targetServices = multiServices.length > 0
+      ? multiServices
+      : (selectedServices.length > 0 ? selectedServices : [primaryService]);
+    const ids = targetServices.map(s => s.id);
 
     const fetchTherapists = Promise.all(ids.map(id =>
       authedFetch(`/api/v1/services/${id}/therapists?${qs}`, {
         headers: authHeader ? { Authorization: authHeader } : undefined,
       })
         .then(r => r.json())
-        .then(d => (Array.isArray(d) ? d : (d.data ?? d.results ?? [])) as ApiTherapist[]),
+        .then(d => (Array.isArray(d) ? d : (d.data ?? d.results ?? [])) as ApiTherapist[])
+        .catch(() => [] as ApiTherapist[]),
     ));
 
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(branchId);
@@ -913,36 +984,142 @@ export function HomeServiceAddSessionModal({
       .catch(() => []);
 
     Promise.all([fetchTherapists, fetchLiveBookings])
-      .then(([lists, bpBookings]) => {
+      .then(async ([lists, bpBookings]) => {
         setLiveBookings(bpBookings);
-        let list: ApiTherapist[] = lists[0] ?? [];
-        for (let i = 1; i < lists.length; i++) {
-          const idsI = new Set(lists[i].map(t => t.id));
-          list = list.filter(t => idsI.has(t.id));
+
+        const seenIds = new Set<string>();
+        const combined: ApiTherapist[] = [];
+        for (const subList of lists) {
+          for (const t of subList) {
+            if (!seenIds.has(t.id)) {
+              seenIds.add(t.id);
+              combined.push(t);
+            }
+          }
         }
 
-        // Strictly filter qualified therapists by schedule availability for the full session window
-        list = list.filter(t => isTherapistAvailableForWindow(t.id, startSlot, dur, schedule, scheduleData, bpBookings));
+        // If backend check_for_availability returned <= 1 therapist for home service,
+        // query active home-service therapists for the target services without check_for_availability
+        // to ensure qualified therapists with valid schedules/bookings are not missed
+        if (homeService && combined.length <= 1) {
+          const qsFallback = new URLSearchParams({
+            available_for_home_service: 'true',
+            no_service_list: 'true',
+          });
+          const fallbackLists = await Promise.all(ids.map(id =>
+            authedFetch(`/api/v1/services/${id}/therapists?${qsFallback}`, {
+              headers: authHeader ? { Authorization: authHeader } : undefined,
+            })
+              .then(r => r.json())
+              .then(d => (Array.isArray(d) ? d : (d.data ?? d.results ?? [])) as ApiTherapist[])
+              .catch(() => [] as ApiTherapist[]),
+          ));
+          for (const subList of fallbackLists) {
+            for (const t of subList) {
+              if (!seenIds.has(t.id)) {
+                seenIds.add(t.id);
+                combined.push(t);
+              }
+            }
+          }
+        }
+
+        // Strictly filter qualified therapists by schedule and booking availability for the session window
+        const list = combined.filter(t => isTherapistAvailableForWindow(t.id, startSlot, dur, schedule, scheduleData, bpBookings));
 
         setAvailableTherapists(list);
+
+        let curPrimary = isFirstSession ? defaultTherapistId : selectedTherapistId;
         if (!isFirstSession && list.length > 0) {
-          // If no therapist selected or currently selected isn't in available list, pick first
-          if (!selectedTherapistId || !list.some(t => t.id === selectedTherapistId)) {
+          if (!curPrimary || !list.some(t => t.id === curPrimary)) {
             const first = list[0];
+            curPrimary = first.id;
             setSelectedTherapistId(first.id);
             setSelectedTherapistName(therapistDisplayName(first));
             setSelectedTherapistPhoto(first.avatar ?? first.photo_url ?? null);
           }
         }
+
+        // Auto-select 2nd and 3rd therapists if needed
+        if (isDoubleOccupancy(arrangementType) || neededTherapists >= 2) {
+          const remainingForSec = list.filter(t => t.id !== curPrimary);
+          if (remainingForSec.length > 0) {
+            const currentSecValid = secondaryTherapistId && remainingForSec.some(t => t.id === secondaryTherapistId);
+            const chosenSec = currentSecValid
+              ? remainingForSec.find(t => t.id === secondaryTherapistId)!
+              : remainingForSec[0];
+            if (!currentSecValid) {
+              setSecondaryTherapistId(chosenSec.id);
+              setSecondaryTherapistName(therapistDisplayName(chosenSec));
+              setSecondaryTherapistPhoto(chosenSec.avatar ?? chosenSec.photo_url ?? null);
+            }
+
+            if (neededTherapists === 3) {
+              const remainingForTert = remainingForSec.filter(t => t.id !== chosenSec.id);
+              if (remainingForTert.length > 0) {
+                const currentTertValid = tertiaryTherapistId && remainingForTert.some(t => t.id === tertiaryTherapistId);
+                if (!currentTertValid) {
+                  const chosenTert = remainingForTert[0];
+                  setTertiaryTherapistId(chosenTert.id);
+                  setTertiaryTherapistName(therapistDisplayName(chosenTert));
+                  setTertiaryTherapistPhoto(chosenTert.avatar ?? chosenTert.photo_url ?? null);
+                }
+              }
+            }
+          }
+        }
       })
       .catch(() => setAvailableTherapists([]))
       .finally(() => setTherapistsLoading(false));
-  }, [subStep, isFirstSession, arrangementType, primaryService, serviceIds, branchId, date, defaultTimeSlot, selectedTimeSlot, totalDuration, authHeader, schedule, scheduleData, homeService]);
+  }, [subStep, isFirstSession, arrangementType, neededTherapists, primaryService, serviceIds, branchId, date, defaultTimeSlot, selectedTimeSlot, totalDuration, authHeader, schedule, scheduleData, homeService]);
 
-  // Keep secondary therapist valid when availableTherapists change
+  const autoSelectTherapists = (availList: ApiTherapist[] = availableTherapists) => {
+    const primaryId = isFirstSession ? defaultTherapistId : selectedTherapistId;
+    let curPrimary = primaryId;
+    if (!isFirstSession) {
+      if (!curPrimary || !availList.some(t => t.id === curPrimary)) {
+        if (availList.length > 0) {
+          curPrimary = availList[0].id;
+          setSelectedTherapistId(availList[0].id);
+          setSelectedTherapistName(therapistDisplayName(availList[0]));
+          setSelectedTherapistPhoto(availList[0].avatar ?? availList[0].photo_url ?? null);
+        }
+      }
+    }
+
+    if (isDoubleOccupancy(arrangementType) || neededTherapists >= 2) {
+      const remainingForSec = availList.filter(t => t.id !== curPrimary);
+      if (remainingForSec.length > 0) {
+        const sec = remainingForSec[0];
+        setSecondaryTherapistId(sec.id);
+        setSecondaryTherapistName(therapistDisplayName(sec));
+        setSecondaryTherapistPhoto(sec.avatar ?? sec.photo_url ?? null);
+
+        if (neededTherapists === 3) {
+          const remainingForTert = remainingForSec.filter(t => t.id !== sec.id);
+          if (remainingForTert.length > 0) {
+            const tert = remainingForTert[0];
+            setTertiaryTherapistId(tert.id);
+            setTertiaryTherapistName(therapistDisplayName(tert));
+            setTertiaryTherapistPhoto(tert.avatar ?? tert.photo_url ?? null);
+          } else {
+            setTertiaryTherapistId('');
+            setTertiaryTherapistName('');
+            setTertiaryTherapistPhoto(null);
+          }
+        }
+      } else {
+        setSecondaryTherapistId('');
+        setSecondaryTherapistName('');
+        setSecondaryTherapistPhoto(null);
+      }
+    }
+  };
+
+  // Keep secondary & tertiary therapists valid when availableTherapists change
   useEffect(() => {
-    if (secondaryTherapistId && isDoubleOccupancy(arrangementType)) {
-      const primaryId = isFirstSession ? defaultTherapistId : selectedTherapistId;
+    const primaryId = isFirstSession ? defaultTherapistId : selectedTherapistId;
+    if (secondaryTherapistId && (isDoubleOccupancy(arrangementType) || neededTherapists >= 2)) {
       const isStillAvailable = availableTherapists.some(t => t.id === secondaryTherapistId && t.id !== primaryId);
       if (!isStillAvailable) {
         setSecondaryTherapistId('');
@@ -950,7 +1127,17 @@ export function HomeServiceAddSessionModal({
         setSecondaryTherapistPhoto(null);
       }
     }
-  }, [availableTherapists, secondaryTherapistId, arrangementType, isFirstSession, defaultTherapistId, selectedTherapistId]);
+    if (tertiaryTherapistId && neededTherapists === 3) {
+      const isStillAvailable = availableTherapists.some(
+        t => t.id === tertiaryTherapistId && t.id !== primaryId && t.id !== secondaryTherapistId
+      );
+      if (!isStillAvailable) {
+        setTertiaryTherapistId('');
+        setTertiaryTherapistName('');
+        setTertiaryTherapistPhoto(null);
+      }
+    }
+  }, [availableTherapists, secondaryTherapistId, tertiaryTherapistId, arrangementType, neededTherapists, isFirstSession, defaultTherapistId, selectedTherapistId]);
 
   // Services offered by the selected room (arrangement) of this session
   const arrangementServiceIdSet = useMemo(
@@ -994,38 +1181,53 @@ export function HomeServiceAddSessionModal({
   };
 
   // ── Packages: show included services; book whole, or split across sessions ──
-  const isPackage = (sv: ApiService) =>
-    sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true';
-  const componentsOf = (sv: ApiService): IncludedService[] =>
-    sv.included_services ?? packageDetails[sv.id]?.included_services ?? [];
-
   // Load the component list of any selected package that does not carry it yet
   useEffect(() => {
-    selectedServices.filter(sv => isPackage(sv) && !sv.included_services && !packageDetails[sv.id]).forEach(sv => {
+    selectedServices.filter(sv => isPackage(sv) && (!sv.included_services || !sv.included_addons) && !packageDetails[sv.id]).forEach(sv => {
       authedFetch(`/api/v1/services/${sv.id}/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
         .then(r => r.json())
         .then(d => {
           const detail = (d?.data ?? d) as ApiService;
-          setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: detail?.included_services ?? [] } }));
+          setPackageDetails(prev => ({
+            ...prev,
+            [sv.id]: {
+              ...sv,
+              included_services: detail?.included_services ?? [],
+              included_addons: detail?.included_addons ?? [],
+            },
+          }));
         })
-        .catch(() => setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: [] } })));
+        .catch(() => setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: [], included_addons: [] } })));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedServices]);
 
-  const makeComponent = (pkg: ApiService, c: IncludedService, all: IncludedService[]): ApiService => ({
-    id: c.id,
-    name: c.name,
-    duration_minutes: c.duration_minutes,
-    base_price: c.base_price ?? 0,
-    extra_minutes: c.extra_minutes ?? 0,
-    price_for_extra_minutes: c.price_for_extra_minutes ?? 0,
-    package_id: pkg.id,
-    package_name: pkg.name,
-    package_price: pkg.base_price ?? 0,
-    package_component_ids: all.map(x => x.id),
-    package_components: all.map(x => ({ id: x.id, name: x.name })),
-  });
+  const makeComponent = (pkg: ApiService, c: IncludedService, all: IncludedService[]): ApiService => {
+    const pkgHomePrice = homePriceOf(pkg);
+    const compHomePrice = (c as unknown as ApiService).home_service_price ?? c.base_price;
+    return {
+      id: c.id,
+      name: c.name,
+      duration_minutes: c.duration_minutes,
+      no_of_therapists_needed: Number(c.no_of_therapists_needed ?? pkg.no_of_therapists_needed) || 1,
+      base_price: homeService ? (compHomePrice ?? pkgHomePrice ?? 0) : (c.base_price ?? 0),
+      home_service_price: compHomePrice ?? pkgHomePrice,
+      home_loyalty_points: (c as unknown as ApiService).home_loyalty_points ?? pkg.home_loyalty_points,
+      home_price_in_points: (c as unknown as ApiService).home_price_in_points ?? pkg.home_price_in_points,
+      home_price_for_extra_minutes: (c as unknown as ApiService).home_price_for_extra_minutes ?? pkg.home_price_for_extra_minutes,
+      loyalty_points: (c as unknown as ApiService).home_loyalty_points ?? pkg.home_loyalty_points ?? pkg.loyalty_points,
+      price_in_points: (c as unknown as ApiService).home_price_in_points ?? pkg.home_price_in_points ?? pkg.price_in_points,
+      extra_minutes: c.extra_minutes ?? 0,
+      price_for_extra_minutes: homeService
+        ? ((c as unknown as ApiService).home_price_for_extra_minutes ?? c.price_for_extra_minutes ?? 0)
+        : (c.price_for_extra_minutes ?? 0),
+      package_id: pkg.id,
+      package_name: pkg.name,
+      package_price: homeService ? pkgHomePrice : (pkg.base_price ?? 0),
+      package_component_ids: all.map(x => x.id),
+      package_components: all.map(x => ({ id: x.id, name: x.name })),
+    };
+  };
 
   const usedIds = (pkgId: string) => new Set(usedPackageComponents?.[pkgId] ?? []);
   const therapistOffers = (id: string) => !isFirstSession || services.some(sv => String(sv.id) === String(id));
@@ -1104,9 +1306,10 @@ export function HomeServiceAddSessionModal({
     setArrangementId('');
   };
 
-  // While a package (with included services) is chosen, room / extra time / add-ons wait for "Add session"
+  // While a package (with included services) is chosen, room / extra time / add-ons wait for "Add session" (branch service only; home service books directly)
   const selectedPackage = !splitPkg ? selectedServices.find(isPackage) : undefined;
   const packageGate = Boolean(
+    !homeService &&
     selectedPackage &&
       (componentsOf(selectedPackage).length > 0 || (!selectedPackage.included_services && !packageDetails[selectedPackage.id])),
   );
@@ -1160,8 +1363,12 @@ export function HomeServiceAddSessionModal({
       secondaryTherapistId: secondaryTherapistId || undefined,
       secondaryTherapistName: secondaryTherapistName || undefined,
       secondaryTherapistPhoto: secondaryTherapistPhoto || undefined,
+      tertiaryTherapistId: tertiaryTherapistId || undefined,
+      tertiaryTherapistName: tertiaryTherapistName || undefined,
+      tertiaryTherapistPhoto: tertiaryTherapistPhoto || undefined,
       startTime: isFirstSession ? defaultTimeSlot : selectedTimeSlot,
       totalDuration,
+      servicePrice,
       sessionPrice: totalPrice,
     };
 
@@ -1278,39 +1485,85 @@ export function HomeServiceAddSessionModal({
                   }}
                 />
 
-                {/* Selected Services Chips Matching Image 2 */}
+                {/* Selected Services Chips with inline Extra Time */}
                 {selectedServices.map(sv => {
                   const priceVal = homeService ? homePriceOf(sv) : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+                  const extraCfg = (!packageGate && homeService) ? perServiceExtraConfig.find(c => c.id === sv.id) : null;
+                  const chosenMins = extraCfg ? (extraMinutesByService[extraCfg.id] ?? 0) : 0;
+                  const extraOptions = extraCfg ? [0, extraCfg.unit, extraCfg.unit * 2] : [];
+
                   return (
-                    <div
-                      key={sv.id}
-                      className="mt-2.5 flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/[0.04] p-3 shadow-xs"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary shrink-0">
-                          <CheckCircle2 className="h-4 w-4" />
+                    <div key={sv.id} className="mt-2.5 space-y-2">
+                      <div
+                        className="flex items-center justify-between rounded-2xl border border-primary/20 bg-primary/[0.04] p-3 shadow-xs"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary shrink-0">
+                            <CheckCircle2 className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-xs font-black uppercase tracking-wide text-primary truncate">
+                              {sv.name}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground font-semibold">
+                              {sv.duration_minutes ?? 60} min
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-black uppercase tracking-wide text-primary truncate">
-                            {sv.name}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground font-semibold">
-                            {sv.duration_minutes ?? 60} min
-                          </p>
+                        <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                          <span className="text-sm font-black text-primary">
+                            {fmt(priceVal)} KWD
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleService(sv)}
+                            className="grid h-6 w-6 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2.5 shrink-0 ml-3">
-                        <span className="text-sm font-black text-primary">
-                          {fmt(priceVal)} KWD
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => toggleService(sv)}
-                          className="grid h-6 w-6 place-items-center rounded-full bg-muted/80 text-muted-foreground hover:bg-muted transition cursor-pointer"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
+
+                      {/* Extra time selector directly under each respective service card */}
+                      {extraCfg && (
+                        <div className="pt-0.5 pb-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Timer className="h-3.5 w-3.5 text-muted-foreground" />
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Extra Time
+                            </p>
+                            <span className="ml-1 text-[10px] font-semibold text-muted-foreground/70 truncate">
+                              — {extraCfg.name}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2.5">
+                            {extraOptions.map(mins => {
+                              const active = chosenMins === mins;
+                              const price = mins > 0 ? (mins / extraCfg.unit) * extraCfg.pricePerUnit : 0;
+                              return (
+                                <button
+                                  key={mins}
+                                  type="button"
+                                  onClick={() =>
+                                    setExtraMinutesByService(prev => ({ ...prev, [extraCfg.id]: mins }))
+                                  }
+                                  className={cn(
+                                    'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
+                                    active
+                                      ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
+                                      : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                                  )}
+                                >
+                                  <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
+                                  <p className="text-[11px] font-semibold mt-0.5 opacity-85">
+                                    {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
+                                  </p>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1318,10 +1571,11 @@ export function HomeServiceAddSessionModal({
 
                 {/* Package details: included services + guided session builder */}
                 {(() => {
-                  const pkg = splitPkg ?? selectedServices.find(sv => isPackage(sv) && componentsOf(sv).length > 0) ?? null;
+                  const pkg = splitPkg ?? selectedServices.find(sv => isPackage(sv) && (componentsOf(sv).length > 0 || includedAddonsOf(sv).length > 0)) ?? null;
                   if (!pkg) return null;
                   const comps = splitPkg ? (splitPkg.included_services ?? []) : componentsOf(pkg);
-                  if (comps.length === 0) return null;
+                  const incAddons = includedAddonsOf(pkg);
+                  if (comps.length === 0 && incAddons.length === 0) return null;
                   const used = usedIds(pkg.id);
                   const inThisSession = new Set(serviceIds);
                   const doneCount = comps.filter(c => used.has(c.id)).length;
@@ -1331,18 +1585,22 @@ export function HomeServiceAddSessionModal({
                     <div className="mt-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-[11px] font-black uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                          {pkg.name} — included services
+                          {pkg.name} — included services & add-ons
                         </p>
                         <span className="text-[10px] font-bold text-muted-foreground">
-                          {doneCount + hereCount}/{comps.length} scheduled
+                          {comps.length > 0 ? `${doneCount + hereCount}/${comps.length} scheduled` : ''}
+                          {comps.length > 0 && incAddons.length > 0 ? ' · ' : ''}
+                          {incAddons.length > 0 ? `${incAddons.length} add-on${incAddons.length > 1 ? 's' : ''}` : ''}
                         </span>
                       </div>
-                      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-amber-500/15">
-                        <div
-                          className="h-full rounded-full bg-amber-500 transition-all"
-                          style={{ width: `${Math.round(((doneCount + hereCount) / comps.length) * 100)}%` }}
-                        />
-                      </div>
+                      {comps.length > 0 && (
+                        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-amber-500/15">
+                          <div
+                            className="h-full rounded-full bg-amber-500 transition-all"
+                            style={{ width: `${Math.round(((doneCount + hereCount) / comps.length) * 100)}%` }}
+                          />
+                        </div>
+                      )}
 
                       <ul className="mt-3 space-y-1.5">
                         {comps.filter(c => !splitPkg || !used.has(c.id)).map(c => {
@@ -1361,7 +1619,7 @@ export function HomeServiceAddSessionModal({
                                   onChange={() => toggleComponent(c)}
                                 />
                               ) : (
-                                <CheckCircle2 className="h-4 w-4 text-amber-600" />
+                                <CheckCircle2 className="h-4 w-4 text-amber-600 shrink-0" />
                               )}
                               <span className="min-w-0 flex-1">
                                 <span className={cn('block font-semibold', takenElsewhere && 'line-through text-muted-foreground')}>{c.name}</span>
@@ -1372,6 +1630,20 @@ export function HomeServiceAddSessionModal({
                             </li>
                           );
                         })}
+
+                        {/* Included Add-ons */}
+                        {incAddons.map(a => (
+                          <li key={a.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs bg-amber-500/10 text-amber-900 dark:text-amber-200">
+                            <Sparkles className="h-4 w-4 text-amber-600 shrink-0" />
+                            <span className="min-w-0 flex-1 flex items-center gap-2">
+                              <span className="font-semibold">{a.name}</span>
+                              <span className="rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 dark:text-amber-300 uppercase tracking-wide">
+                                Included Add-on
+                              </span>
+                            </span>
+                            {a.duration_minutes ? <span className="shrink-0 text-muted-foreground">{a.duration_minutes} min</span> : null}
+                          </li>
+                        ))}
                       </ul>
 
                       <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1423,101 +1695,45 @@ export function HomeServiceAddSessionModal({
                 })()}
               </div>
 
-              {/* Extra Time — per-service (home service) or single (branch service) */}
-              {!packageGate && (
-                homeService
-                  ? (
-                    /* Home service: one extra-time selector per service that supports it */
-                    perServiceExtraConfig.length > 0 && (
-                      <div className="space-y-3">
-                        {perServiceExtraConfig.map(cfg => {
-                          const chosenMins = extraMinutesByService[cfg.id] ?? 0;
-                          const extraOptions = [0, cfg.unit, cfg.unit * 2];
-                          return (
-                            <div key={cfg.id}>
-                              <div className="flex items-center gap-2 mb-2">
-                                <Timer className="h-3.5 w-3.5 text-muted-foreground" />
-                                <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                                  Extra Time
-                                </p>
-                                <span className="ml-1 text-[10px] font-semibold text-muted-foreground/70 truncate">
-                                  — {cfg.name}
-                                </span>
-                              </div>
-                              <div className="grid grid-cols-3 gap-2.5">
-                                {extraOptions.map(mins => {
-                                  const active = chosenMins === mins;
-                                  const price = mins > 0 ? (mins / cfg.unit) * cfg.pricePerUnit : 0;
-                                  return (
-                                    <button
-                                      key={mins}
-                                      type="button"
-                                      onClick={() =>
-                                        setExtraMinutesByService(prev => ({ ...prev, [cfg.id]: mins }))
-                                      }
-                                      className={cn(
-                                        'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
-                                        active
-                                          ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
-                                          : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                                      )}
-                                    >
-                                      <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
-                                      <p className="text-[11px] font-semibold mt-0.5 opacity-85">
-                                        {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
-                                      </p>
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )
-                  )
-                  : (
-                    /* Branch service: single extra-time selector for primary service */
-                    hasExtraTime && (
-                      <div>
-                        <div className="flex items-center gap-2 mb-2">
-                          <Timer className="h-3.5 w-3.5 text-muted-foreground" />
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                            Extra Time
+              {/* Extra Time — Branch service single extra-time selector for primary service (for home service, extra time is placed under each service card above) */}
+              {!packageGate && !homeService && hasExtraTime && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Timer className="h-3.5 w-3.5 text-muted-foreground" />
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                      Extra Time
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {[0, extraMinutesUnit, extraMinutesUnit * 2].map(mins => {
+                      const svcMins = extraMinutesByService[primaryService?.id ?? ''] ?? 0;
+                      const active = svcMins === mins;
+                      const price = mins > 0 ? (mins / extraMinutesUnit) * extraPricePerUnit : 0;
+                      return (
+                        <button
+                          key={mins}
+                          type="button"
+                          onClick={() => {
+                            if (primaryService) {
+                              setExtraMinutesByService(prev => ({ ...prev, [primaryService.id]: mins }));
+                            }
+                          }}
+                          className={cn(
+                            'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
+                            active
+                              ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
+                              : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                          )}
+                        >
+                          <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
+                          <p className="text-[11px] font-semibold mt-0.5 opacity-85">
+                            {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
                           </p>
-                        </div>
-                        <div className="grid grid-cols-3 gap-2.5">
-                          {[0, extraMinutesUnit, extraMinutesUnit * 2].map(mins => {
-                            const svcMins = extraMinutesByService[primaryService?.id ?? ''] ?? 0;
-                            const active = svcMins === mins;
-                            const price = mins > 0 ? (mins / extraMinutesUnit) * extraPricePerUnit : 0;
-                            return (
-                              <button
-                                key={mins}
-                                type="button"
-                                onClick={() => {
-                                  if (primaryService) {
-                                    setExtraMinutesByService(prev => ({ ...prev, [primaryService.id]: mins }));
-                                  }
-                                }}
-                                className={cn(
-                                  'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
-                                  active
-                                    ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
-                                    : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                                )}
-                              >
-                                <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `+${mins} min`}</p>
-                                <p className="text-[11px] font-semibold mt-0.5 opacity-85">
-                                  {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
-                                </p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )
-                  )
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
 
               {/* Select Room Carousel Matching Image 2 */}
@@ -1679,8 +1895,171 @@ export function HomeServiceAddSessionModal({
                 </div>
               )}
 
+              {/* Multi-therapist selection directly on Step 1 if service requires >= 2 therapists */}
+              {(isDoubleOccupancy(arrangementType) || neededTherapists >= 2) && (() => {
+                const primaryId = isFirstSession ? defaultTherapistId : selectedTherapistId;
+                const candidates = availableTherapists.filter(
+                  t => t.id !== primaryId && t.id !== tertiaryTherapistId
+                );
+                return (
+                  <div className="rounded-2xl border border-rose-300/60 dark:border-rose-900/60 bg-rose-500/[0.04] p-3.5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Heart className="h-4 w-4 text-rose-500" />
+                        <div>
+                          <p className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
+                            {isDoubleOccupancy(arrangementType)
+                              ? 'Second Therapist (Required for Couple/Double Room)'
+                              : `Second Therapist (Required: 2 of ${neededTherapists})`}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            This service requires {neededTherapists} therapists. Choose second therapist below:
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                        <button
+                          type="button"
+                          onClick={() => autoSelectTherapists()}
+                          className="inline-flex items-center gap-1 rounded-lg bg-rose-500/10 px-2.5 py-1 text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 transition cursor-pointer"
+                        >
+                          <Sparkles className="h-3 w-3" /> Auto-select
+                        </button>
+                      </div>
+                    </div>
+
+                    {therapistsLoading ? (
+                      <div className="flex items-center justify-center p-3 border rounded-xl bg-card">
+                        <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                        <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                      </div>
+                    ) : candidates.length === 0 ? (
+                      <div className="p-3 border border-dashed rounded-xl bg-card text-center">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          No other therapists available for this service on {date} at {defaultTimeSlot}.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1">
+                        {candidates.map(t => {
+                          const sel = secondaryTherapistId === t.id;
+                          const name = therapistDisplayName(t);
+                          const img = t.avatar ?? t.photo_url;
+                          return (
+                            <div
+                              key={t.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => {
+                                if (sel) {
+                                  setSecondaryTherapistId('');
+                                  setSecondaryTherapistName('');
+                                  setSecondaryTherapistPhoto(null);
+                                } else {
+                                  setSecondaryTherapistId(t.id);
+                                  setSecondaryTherapistName(name);
+                                  setSecondaryTherapistPhoto(img ?? null);
+                                }
+                              }}
+                              className={cn(
+                                'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none bg-card',
+                                sel
+                                  ? 'border-rose-400 bg-rose-500/10 text-rose-700 dark:text-rose-300 ring-1 ring-rose-400/50'
+                                  : 'border-border hover:bg-muted/40',
+                              )}
+                            >
+                              <div className="h-8 w-8 shrink-0 rounded-full bg-rose-200 dark:bg-rose-900 grid place-items-center text-xs font-bold overflow-hidden">
+                                {img ? (
+                                  <img src={img} alt={name} className="h-full w-full object-cover" />
+                                ) : (
+                                  name.slice(0, 2).toUpperCase()
+                                )}
+                              </div>
+                              <span className="text-xs font-semibold truncate flex-1">{name}</span>
+                              {sel && <CheckCircle2 className="h-4 w-4 text-rose-500 shrink-0" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Third Therapist if 3 required */}
+                    {neededTherapists === 3 && (() => {
+                      const tertCandidates = availableTherapists.filter(
+                        t => t.id !== primaryId && t.id !== secondaryTherapistId
+                      );
+                      return (
+                        <div className="pt-2 border-t border-rose-300/40 dark:border-rose-900/40 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Users className="h-4 w-4 text-violet-500" />
+                              <p className="text-xs font-bold uppercase tracking-wider text-violet-700 dark:text-violet-400">
+                                Third Therapist (Required: 3 of 3)
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => autoSelectTherapists()}
+                              className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Sparkles className="h-3 w-3" /> Auto-select
+                            </button>
+                          </div>
+                          {tertCandidates.length === 0 ? (
+                            <p className="text-xs text-muted-foreground italic">No other third therapist available</p>
+                          ) : (
+                            <div className="grid grid-cols-2 gap-2 max-h-36 overflow-y-auto p-1">
+                              {tertCandidates.map(t => {
+                                const sel = tertiaryTherapistId === t.id;
+                                const name = therapistDisplayName(t);
+                                const img = t.avatar ?? t.photo_url;
+                                return (
+                                  <div
+                                    key={t.id}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => {
+                                      if (sel) {
+                                        setTertiaryTherapistId('');
+                                        setTertiaryTherapistName('');
+                                        setTertiaryTherapistPhoto(null);
+                                      } else {
+                                        setTertiaryTherapistId(t.id);
+                                        setTertiaryTherapistName(name);
+                                        setTertiaryTherapistPhoto(img ?? null);
+                                      }
+                                    }}
+                                    className={cn(
+                                      'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none bg-card',
+                                      sel
+                                        ? 'border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300 ring-1 ring-violet-400/50'
+                                        : 'border-border hover:bg-muted/40',
+                                    )}
+                                  >
+                                    <div className="h-8 w-8 shrink-0 rounded-full bg-violet-200 dark:bg-violet-900 grid place-items-center text-xs font-bold overflow-hidden">
+                                      {img ? (
+                                        <img src={img} alt={name} className="h-full w-full object-cover" />
+                                      ) : (
+                                        name.slice(0, 2).toUpperCase()
+                                      )}
+                                    </div>
+                                    <span className="text-xs font-semibold truncate flex-1">{name}</span>
+                                    {sel && <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })()}
+
               {/* Add-on Services Matching Image 2 */}
-              {!isPackagedService && (
+              {(!isPackagedService || serviceAddons.length > 0) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Package className="h-3.5 w-3.5 text-muted-foreground" />
@@ -1740,6 +2119,25 @@ export function HomeServiceAddSessionModal({
           ) : (
             /* ── Sub-Step 2: Therapist & Time Slot ── */
             <div className="space-y-6">
+              {/* Multi-therapist requirement banner */}
+              {neededTherapists > 1 && (
+                <div className="flex items-center justify-between p-3 rounded-2xl bg-primary/10 border border-primary/20 text-xs">
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4 text-primary shrink-0" />
+                    <span className="font-semibold text-foreground">
+                      Service requires <strong className="font-extrabold text-primary">{neededTherapists} therapists</strong>.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => autoSelectTherapists()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-primary text-white font-bold text-xs hover:bg-primary/90 transition shadow-sm cursor-pointer"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Auto-select Therapists
+                  </button>
+                </div>
+              )}
               {/* If Session 1: Show Fixed Therapist & Time (Read-only, Not Editable) */}
               {isFirstSession ? (
                 <div className="space-y-5">
@@ -1805,32 +2203,48 @@ export function HomeServiceAddSessionModal({
                     </div>
                   </div>
 
-                  {/* If Couple Room: allow second therapist */}
-                  {isDoubleOccupancy(arrangementType) && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Heart className="h-4 w-4 text-rose-500" />
-                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                          Second Therapist (Required for Couple/Double Room)
-                        </p>
-                        {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                      </div>
-                      {therapistsLoading ? (
-                        <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
-                          <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
-                          <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                  {/* Second Therapist if Couple Room OR Service Requires >= 2 Therapists */}
+                  {(isDoubleOccupancy(arrangementType) || neededTherapists >= 2) && (() => {
+                    const primaryId = defaultTherapistId;
+                    const candidates = availableTherapists.filter(
+                      t => t.id !== primaryId && t.id !== tertiaryTherapistId
+                    );
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Heart className="h-4 w-4 text-rose-500" />
+                            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                              {isDoubleOccupancy(arrangementType)
+                                ? 'Second Therapist (Required for Couple/Double Room)'
+                                : `Second Therapist (Required: 2 of ${neededTherapists})`}
+                            </p>
+                            {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                          </div>
+                          {neededTherapists > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => autoSelectTherapists()}
+                              className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Sparkles className="h-3 w-3" /> Auto-select
+                            </button>
+                          )}
                         </div>
-                      ) : availableTherapists.filter(t => t.id !== defaultTherapistId && isTherapistAvailableForWindow(t.id, defaultTimeSlot, totalDuration, schedule, scheduleData, liveBookings)).length === 0 ? (
-                        <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            No other therapists available for this service on {date} at {defaultTimeSlot} ({totalDuration} min).
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
-                          {availableTherapists
-                            .filter(t => t.id !== defaultTherapistId && isTherapistAvailableForWindow(t.id, defaultTimeSlot, totalDuration, schedule, scheduleData, liveBookings))
-                            .map(t => {
+                        {therapistsLoading ? (
+                          <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
+                            <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                            <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                          </div>
+                        ) : candidates.length === 0 ? (
+                          <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
+                            <p className="text-xs font-medium text-muted-foreground">
+                              No other therapists available for this service on {date} at {defaultTimeSlot} ({totalDuration} min).
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
+                            {candidates.map(t => {
                               const sel = secondaryTherapistId === t.id;
                               const name = therapistDisplayName(t);
                               const img = t.avatar ?? t.photo_url;
@@ -1880,10 +2294,104 @@ export function HomeServiceAddSessionModal({
                                 </div>
                               );
                             })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Third Therapist if Service Requires 3 Therapists */}
+                  {neededTherapists === 3 && (() => {
+                    const primaryId = defaultTherapistId;
+                    const candidates = availableTherapists.filter(
+                      t => t.id !== primaryId && t.id !== secondaryTherapistId
+                    );
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Users className="h-4 w-4 text-violet-500" />
+                            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                              Third Therapist (Required: 3 of 3)
+                            </p>
+                            {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => autoSelectTherapists()}
+                            className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Sparkles className="h-3 w-3" /> Auto-select
+                          </button>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {therapistsLoading ? (
+                          <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
+                            <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                            <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                          </div>
+                        ) : candidates.length === 0 ? (
+                          <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
+                            <p className="text-xs font-medium text-muted-foreground">
+                              No other therapists available for this service on {date} at {defaultTimeSlot} ({totalDuration} min).
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
+                            {candidates.map(t => {
+                              const sel = tertiaryTherapistId === t.id;
+                              const name = therapistDisplayName(t);
+                              const img = t.avatar ?? t.photo_url;
+                              return (
+                                <div
+                                  key={t.id}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    if (sel) {
+                                      setTertiaryTherapistId('');
+                                      setTertiaryTherapistName('');
+                                      setTertiaryTherapistPhoto(null);
+                                    } else {
+                                      setTertiaryTherapistId(t.id);
+                                      setTertiaryTherapistName(name);
+                                      setTertiaryTherapistPhoto(img ?? null);
+                                    }
+                                  }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      if (sel) {
+                                        setTertiaryTherapistId('');
+                                        setTertiaryTherapistName('');
+                                      } else {
+                                        setTertiaryTherapistId(t.id);
+                                        setTertiaryTherapistName(name);
+                                      }
+                                    }
+                                  }}
+                                  className={cn(
+                                    'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none',
+                                    sel
+                                      ? 'border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                                      : 'border-border bg-muted/20 hover:bg-muted/40',
+                                  )}
+                                >
+                                  <div className="h-8 w-8 shrink-0 rounded-full bg-violet-200 dark:bg-violet-900 grid place-items-center text-xs font-bold overflow-hidden">
+                                    {img ? (
+                                      <img src={img} alt={name} className="h-full w-full object-cover" />
+                                    ) : (
+                                      name.slice(0, 2).toUpperCase()
+                                    )}
+                                  </div>
+                                  <span className="text-xs font-semibold truncate flex-1">{name}</span>
+                                  {sel && <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (
                 /* Subsequent Sessions (Session > 1): Select from Available Therapists and Available Time Slots */
@@ -1923,6 +2431,12 @@ export function HomeServiceAddSessionModal({
                                 if (secondaryTherapistId === t.id) {
                                   setSecondaryTherapistId('');
                                   setSecondaryTherapistName('');
+                                  setSecondaryTherapistPhoto(null);
+                                }
+                                if (tertiaryTherapistId === t.id) {
+                                  setTertiaryTherapistId('');
+                                  setTertiaryTherapistName('');
+                                  setTertiaryTherapistPhoto(null);
                                 }
                               }}
                               onKeyDown={e => {
@@ -1962,32 +2476,48 @@ export function HomeServiceAddSessionModal({
                     )}
                   </div>
 
-                  {/* Secondary Therapist if Couple/Double Room */}
-                  {isDoubleOccupancy(arrangementType) && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <Heart className="h-4 w-4 text-rose-500" />
-                        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                          Second Therapist (Required for Couple/Double Room)
-                        </p>
-                        {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-                      </div>
-                      {therapistsLoading ? (
-                        <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
-                          <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
-                          <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                  {/* Secondary Therapist if Couple/Double Room OR Service Requires >= 2 Therapists */}
+                  {(isDoubleOccupancy(arrangementType) || neededTherapists >= 2) && (() => {
+                    const primaryId = selectedTherapistId;
+                    const candidates = availableTherapists.filter(
+                      t => t.id !== primaryId && t.id !== tertiaryTherapistId
+                    );
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Heart className="h-4 w-4 text-rose-500" />
+                            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                              {isDoubleOccupancy(arrangementType)
+                                ? 'Second Therapist (Required for Couple/Double Room)'
+                                : `Second Therapist (Required: 2 of ${neededTherapists})`}
+                            </p>
+                            {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                          </div>
+                          {neededTherapists > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => autoSelectTherapists()}
+                              className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Sparkles className="h-3 w-3" /> Auto-select
+                            </button>
+                          )}
                         </div>
-                      ) : availableTherapists.filter(t => t.id !== selectedTherapistId && isTherapistAvailableForWindow(t.id, selectedTimeSlot, totalDuration, schedule, scheduleData, liveBookings)).length === 0 ? (
-                        <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            No other therapists available for this service on {date} at {selectedTimeSlot} ({totalDuration} min).
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
-                          {availableTherapists
-                            .filter(t => t.id !== selectedTherapistId && isTherapistAvailableForWindow(t.id, selectedTimeSlot, totalDuration, schedule, scheduleData, liveBookings))
-                            .map(t => {
+                        {therapistsLoading ? (
+                          <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
+                            <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                            <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                          </div>
+                        ) : candidates.length === 0 ? (
+                          <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
+                            <p className="text-xs font-medium text-muted-foreground">
+                              No other therapists available for this service on {date} at {selectedTimeSlot} ({totalDuration} min).
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
+                            {candidates.map(t => {
                               const sel = secondaryTherapistId === t.id;
                               const name = therapistDisplayName(t);
                               const img = t.avatar ?? t.photo_url;
@@ -2037,10 +2567,104 @@ export function HomeServiceAddSessionModal({
                                 </div>
                               );
                             })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Third Therapist if Service Requires 3 Therapists */}
+                  {neededTherapists === 3 && (() => {
+                    const primaryId = selectedTherapistId;
+                    const candidates = availableTherapists.filter(
+                      t => t.id !== primaryId && t.id !== secondaryTherapistId
+                    );
+                    return (
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Users className="h-4 w-4 text-violet-500" />
+                            <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                              Third Therapist (Required: 3 of 3)
+                            </p>
+                            {therapistsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => autoSelectTherapists()}
+                            className="text-[11px] font-bold text-primary hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Sparkles className="h-3 w-3" /> Auto-select
+                          </button>
                         </div>
-                      )}
-                    </div>
-                  )}
+                        {therapistsLoading ? (
+                          <div className="flex items-center justify-center p-4 border rounded-xl bg-muted/10">
+                            <Loader2 className="h-4 w-4 animate-spin text-primary mr-2" />
+                            <span className="text-xs text-muted-foreground">Checking therapist availability…</span>
+                          </div>
+                        ) : candidates.length === 0 ? (
+                          <div className="p-3 border border-dashed rounded-xl bg-muted/10 text-center">
+                            <p className="text-xs font-medium text-muted-foreground">
+                              No other therapists available for this service on {date} at {selectedTimeSlot} ({totalDuration} min).
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2.5 max-h-36 overflow-y-auto p-1">
+                            {candidates.map(t => {
+                              const sel = tertiaryTherapistId === t.id;
+                              const name = therapistDisplayName(t);
+                              const img = t.avatar ?? t.photo_url;
+                              return (
+                                <div
+                                  key={t.id}
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() => {
+                                    if (sel) {
+                                      setTertiaryTherapistId('');
+                                      setTertiaryTherapistName('');
+                                      setTertiaryTherapistPhoto(null);
+                                    } else {
+                                      setTertiaryTherapistId(t.id);
+                                      setTertiaryTherapistName(name);
+                                      setTertiaryTherapistPhoto(img ?? null);
+                                    }
+                                  }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      if (sel) {
+                                        setTertiaryTherapistId('');
+                                        setTertiaryTherapistName('');
+                                      } else {
+                                        setTertiaryTherapistId(t.id);
+                                        setTertiaryTherapistName(name);
+                                      }
+                                    }
+                                  }}
+                                  className={cn(
+                                    'flex items-center gap-2.5 rounded-xl border p-2.5 transition cursor-pointer select-none',
+                                    sel
+                                      ? 'border-violet-400 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                                      : 'border-border bg-muted/20 hover:bg-muted/40',
+                                  )}
+                                >
+                                  <div className="h-8 w-8 shrink-0 rounded-full bg-violet-200 dark:bg-violet-900 grid place-items-center text-xs font-bold overflow-hidden">
+                                    {img ? (
+                                      <img src={img} alt={name} className="h-full w-full object-cover" />
+                                    ) : (
+                                      name.slice(0, 2).toUpperCase()
+                                    )}
+                                  </div>
+                                  <span className="text-xs font-semibold truncate flex-1">{name}</span>
+                                  {sel && <CheckCircle2 className="h-4 w-4 text-violet-500 shrink-0" />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {/* Time Slot Selection (Filtered to start after previous session) */}
                   <div>
@@ -2178,7 +2802,9 @@ export function HomeServiceAddSessionModal({
                     !primaryService ||
                     (isFirstSession ? false : !selectedTherapistId) ||
                     !selectedTimeSlot ||
-                    (isDoubleOccupancy(arrangementType) && !secondaryTherapistId)
+                    (isDoubleOccupancy(arrangementType) && !secondaryTherapistId) ||
+                    (neededTherapists >= 2 && !secondaryTherapistId) ||
+                    (neededTherapists === 3 && !tertiaryTherapistId)
                   }
                   onClick={handleFinishAdd}
                   className={cn(
@@ -2186,7 +2812,9 @@ export function HomeServiceAddSessionModal({
                     !primaryService ||
                     (isFirstSession ? false : !selectedTherapistId) ||
                     !selectedTimeSlot ||
-                    (isDoubleOccupancy(arrangementType) && !secondaryTherapistId)
+                    (isDoubleOccupancy(arrangementType) && !secondaryTherapistId) ||
+                    (neededTherapists >= 2 && !secondaryTherapistId) ||
+                    (neededTherapists === 3 && !tertiaryTherapistId)
                       ? 'bg-muted-foreground/30 cursor-not-allowed text-muted-foreground'
                       : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20',
                   )}
@@ -2502,6 +3130,9 @@ export function HomeServiceBookingModal({
           : i === 0
           ? (sess.arrangementPrice != null ? sess.arrangementPrice : parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0)
           : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+        const homeLoyaltyPts = sv.home_loyalty_points ?? (sv as any).home_loyalty_point ?? null;
+        const homePricePts = sv.home_price_in_points ?? null;
+        const homeExtraRate = sv.home_price_for_extra_minutes ?? null;
         return {
           service_id: sv.id,
           service_name: sv.name,
@@ -2510,6 +3141,15 @@ export function HomeServiceBookingModal({
           arrangement_price: fmt(p),
           duration_minutes: sv.duration_minutes ?? 60,
           ...(sv.package_id ? { package_id: sv.package_id } : {}),
+          ...(homeService ? {
+            home_service_price: fmt(p),
+            home_loyalty_points: homeLoyaltyPts,
+            home_price_in_points: homePricePts,
+            home_price_for_extra_minutes: homeExtraRate,
+            loyalty_points: homeLoyaltyPts ?? sv.loyalty_points ?? null,
+            price_in_points: homePricePts ?? sv.price_in_points ?? null,
+            use_home_loyalty_points: true,
+          } : {}),
         };
       });
 
@@ -2523,6 +3163,10 @@ export function HomeServiceBookingModal({
         ...(sess.secondaryTherapistId ? {
           secondary_therapist_id: sess.secondaryTherapistId,
           secondary_therapist_name: sess.secondaryTherapistName,
+        } : {}),
+        ...(sess.tertiaryTherapistId ? {
+          tertiary_therapist_id: sess.tertiaryTherapistId,
+          tertiary_therapist_name: sess.tertiaryTherapistName,
         } : {}),
         service_arrangement_id: homeService ? null : sess.arrangementId,
         service_arrangement_data: homeService ? null : {
@@ -2544,6 +3188,7 @@ export function HomeServiceBookingModal({
         addons_duration: sess.selectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0),
         extra_minutes: sess.extraMinutes,
         extra_price: fmt(sess.extraPrice),
+        services_price: fmt(sess.servicePrice ?? Math.max(0, sess.sessionPrice - sess.selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? 0)) || 0), 0) - sess.extraPrice)),
         session_price: fmt(sess.sessionPrice),
         total_session_duration: sess.totalDuration,
       };
@@ -2565,6 +3210,15 @@ export function HomeServiceBookingModal({
       service_name: firstSvc?.name ?? '',
       service_category: firstSvc?.category ?? '',
       base_price: homeService ? fmt(homePriceOf(firstSvc)) : fmt(firstSvc?.base_price),
+      ...(homeService ? {
+        home_service_price: fmt(homePriceOf(firstSvc)),
+        home_loyalty_points: firstSvc?.home_loyalty_points ?? null,
+        home_price_in_points: firstSvc?.home_price_in_points ?? null,
+        home_price_for_extra_minutes: firstSvc?.home_price_for_extra_minutes ?? null,
+        loyalty_points: firstSvc?.home_loyalty_points ?? firstSvc?.loyalty_points ?? 0,
+        price_in_points: firstSvc?.home_price_in_points ?? firstSvc?.price_in_points ?? 0,
+        use_home_loyalty_points: true,
+      } : {}),
       baseDuration: firstSvc?.duration_minutes ?? 60,
       service_data: {
         service_id: firstSvc?.id ?? '',
@@ -2573,6 +3227,15 @@ export function HomeServiceBookingModal({
         base_price: homeService ? fmt(homePriceOf(firstSvc)) : fmt(firstSvc?.base_price),
         arrangement_price: homeService ? fmt(homePriceOf(firstSvc)) : fmt(firstSess.arrangementPrice ?? firstSvc?.base_price),
         duration_minutes: firstSvc?.duration_minutes ?? 60,
+        ...(homeService ? {
+          home_service_price: fmt(homePriceOf(firstSvc)),
+          home_loyalty_points: firstSvc?.home_loyalty_points ?? null,
+          home_price_in_points: firstSvc?.home_price_in_points ?? null,
+          home_price_for_extra_minutes: firstSvc?.home_price_for_extra_minutes ?? null,
+          loyalty_points: firstSvc?.home_loyalty_points ?? firstSvc?.loyalty_points ?? 0,
+          price_in_points: firstSvc?.home_price_in_points ?? firstSvc?.price_in_points ?? 0,
+          use_home_loyalty_points: true,
+        } : {}),
       },
       branch_id: homeService ? null : branchId,
       branch_data: homeService
@@ -2599,8 +3262,22 @@ export function HomeServiceBookingModal({
         secondary_therapist_data: {
           therapist_id: firstSess.secondaryTherapistId,
           therapist_name: firstSess.secondaryTherapistName,
+          ...(firstSess.secondaryTherapistPhoto ? { photo_url: firstSess.secondaryTherapistPhoto } : {}),
         },
       } : {}),
+      ...(firstSess.tertiaryTherapistId ? {
+        tertiary_therapist_id: firstSess.tertiaryTherapistId,
+        tertiary_therapist_data: {
+          therapist_id: firstSess.tertiaryTherapistId,
+          therapist_name: firstSess.tertiaryTherapistName,
+          ...(firstSess.tertiaryTherapistPhoto ? { photo_url: firstSess.tertiaryTherapistPhoto } : {}),
+        },
+      } : {}),
+      selected_therapist_ids: [
+        firstSess.therapistId,
+        firstSess.secondaryTherapistId,
+        firstSess.tertiaryTherapistId,
+      ].filter(Boolean),
       selected_addons: firstSess.selectedAddons.map(a => ({
         id: a.id,
         name: a.name,
@@ -2630,8 +3307,8 @@ export function HomeServiceBookingModal({
       customerMessage: '',
       booking_type: homeService ? 'home_service' : 'branch_service',
       pricing_details: {
-        base: fmt(firstSess.sessionPrice),
-        base_price: fmt(firstSess.sessionPrice),
+        base: fmt(firstSess.servicePrice ?? Math.max(0, firstSess.sessionPrice - firstSess.selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? 0)) || 0), 0) - firstSess.extraPrice)),
+        base_price: fmt(firstSess.servicePrice ?? Math.max(0, firstSess.sessionPrice - firstSess.selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? 0)) || 0), 0) - firstSess.extraPrice)),
         subtotal: fmt(bookingSubtotalPrice),
         discount: fmt(discountAmount),
         discount_amount: fmt(discountAmount),
@@ -2983,6 +3660,7 @@ export function HomeServiceBookingModal({
                                   <User className="h-3.5 w-3.5 text-muted-foreground" />
                                   {sess.therapistName}
                                   {sess.secondaryTherapistName && ` & ${sess.secondaryTherapistName}`}
+                                  {sess.tertiaryTherapistName && ` & ${sess.tertiaryTherapistName}`}
                                 </span>
                                 <span>·</span>
                                 <span className="flex items-center gap-1">

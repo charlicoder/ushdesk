@@ -113,6 +113,11 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
   const totalAmountNum = parseFloat(String(data.totalAmount ?? '0')) || 0;
   const servicePriceNum = parseFloat(String(data.servicePrice ?? '0')) || 0;
   const extraPriceNum = parseFloat(String(data.extraPrice ?? '0')) || 0;
+  const addonsTotal = (data.addons || []).reduce(
+    (sum, a) => sum + (parseFloat(String(a.price ?? '0')) || 0),
+    0
+  );
+  const packagePriceNum = parseFloat(String(data.packagePrice ?? data.voucherPackagePrice ?? '0')) || 0;
   const isPackageServiceBooking = Boolean(
     data.isPackageBooking ||
     data.isVoucherPackage ||
@@ -591,7 +596,23 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               {data.services && data.services.length > 0 ? (
                 <div className="space-y-1.5">
                   {data.services.map((sv, idx) => {
-                    const p = parseFloat(String(sv.price ?? '0')) || 0;
+                    const rawP = parseFloat(String(sv.price ?? '0')) || 0;
+                    let p = rawP;
+                    const isPkg = Boolean(
+                      data.isPackageBooking ||
+                      data.isVoucherPackage ||
+                      (data.packageName && sv.name && sv.name.toLowerCase().includes(data.packageName.toLowerCase())) ||
+                      (sv.name && sv.name.toLowerCase().includes('package'))
+                    );
+                    if (isPkg && packagePriceNum > 0 && (p === totalAmountNum || p > packagePriceNum)) {
+                      p = packagePriceNum;
+                    } else if ((data.services?.length ?? 1) <= 1 && (addonsTotal > 0 || extraPriceNum > 0)) {
+                      const rawDiscount = parseFloat(String(data.discount ?? '0')) || 0;
+                      const grossTotal = totalAmountNum + rawDiscount;
+                      if (p === totalAmountNum || p === grossTotal) {
+                        p = Math.max(0, p - addonsTotal - extraPriceNum);
+                      }
+                    }
                     const itemTherapist = sv.therapistName || data.therapistName || null;
                     const itemSecTherapist = sv.secondaryTherapistName || (idx === 0 ? data.secondaryTherapistName : null) || null;
                     const itemArrangement = sv.arrangementName || data.arrangementName || null;
@@ -654,11 +675,24 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                       <span className="font-mono">
                         {data.isCourseRedemption
                           ? `0.000 ${currency}`
-                          : servicePriceNum > 0
-                          ? `${servicePriceNum.toFixed(3)} ${currency}`
-                          : totalAmountNum > 0
-                          ? `${totalAmountNum.toFixed(3)} ${currency}`
-                          : `0.000 ${currency}`}
+                          : (() => {
+                              let dispPrice = servicePriceNum > 0 ? servicePriceNum : totalAmountNum;
+                              const isSinglePkg = Boolean(
+                                data.isPackageBooking ||
+                                data.isVoucherPackage ||
+                                (data.serviceName && data.serviceName.toLowerCase().includes('package'))
+                              );
+                              if (isSinglePkg && packagePriceNum > 0 && (dispPrice === totalAmountNum || dispPrice > packagePriceNum)) {
+                                dispPrice = packagePriceNum;
+                              } else if (addonsTotal > 0 || extraPriceNum > 0) {
+                                const rawDiscount = parseFloat(String(data.discount ?? '0')) || 0;
+                                const grossTotal = totalAmountNum + rawDiscount;
+                                if (dispPrice === totalAmountNum || dispPrice === grossTotal) {
+                                  dispPrice = Math.max(0, dispPrice - addonsTotal - extraPriceNum);
+                                }
+                              }
+                              return `${dispPrice.toFixed(3)} ${currency}`;
+                            })()}
                       </span>
                     )}
                   </div>
@@ -718,7 +752,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   {data.isVoucherPackage
                     ? `${(parseFloat(String(data.voucherPackagePrice ?? data.packagePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum).toFixed(3)} ${currency}`
                     : isPackageServiceBooking
-                    ? `${(parseFloat(String(data.packagePrice ?? data.servicePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum).toFixed(3)} ${currency}`
+                    ? `${(packagePriceNum > 0 ? packagePriceNum : (data.packagePrice != null ? parseFloat(String(data.packagePrice)) : (addonsTotal > 0 || extraPriceNum > 0 ? Math.max(0, totalAmountNum - addonsTotal - extraPriceNum) : (parseFloat(String(data.servicePrice ?? data.subtotal ?? totalAmountNum)) || totalAmountNum)))).toFixed(3)} ${currency}`
                     : data.subtotal != null
                     ? `${(parseFloat(String(data.subtotal)) || 0).toFixed(3)} ${currency}`
                     : `${(totalAmountNum + (parseFloat(String(data.discount ?? '0')) || 0)).toFixed(3)} ${currency}`}

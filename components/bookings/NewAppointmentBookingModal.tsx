@@ -170,6 +170,7 @@ export interface SavedSession {
   secondaryTherapistPhoto?: string | null;
   startTime: string; // e.g. "09:00 PM"
   totalDuration: number;
+  servicePrice?: number;
   sessionPrice: number;
 }
 
@@ -1227,6 +1228,7 @@ export function AddSessionSubModal({
       secondaryTherapistPhoto: secondaryTherapistPhoto || undefined,
       startTime: isFirstSession ? defaultTimeSlot : selectedTimeSlot,
       totalDuration,
+      servicePrice,
       sessionPrice: totalPrice,
     };
 
@@ -2490,6 +2492,7 @@ export function NewAppointmentBookingModal({
         addons_duration: sess.selectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0),
         extra_minutes: sess.extraMinutes,
         extra_price: fmt(sess.extraPrice),
+        services_price: fmt(sess.servicePrice ?? Math.max(0, sess.sessionPrice - sess.selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? 0)) || 0), 0) - sess.extraPrice)),
         session_price: fmt(sess.sessionPrice),
         total_session_duration: sess.totalDuration,
       };
@@ -2564,8 +2567,8 @@ export function NewAppointmentBookingModal({
       customerMessage: '',
       booking_type: homeService ? 'home_service' : 'branch_service',
       pricing_details: {
-        base: fmt(firstSess.sessionPrice),
-        base_price: fmt(firstSess.sessionPrice),
+        base: fmt(firstSess.servicePrice ?? Math.max(0, firstSess.sessionPrice - firstSess.selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? 0)) || 0), 0) - firstSess.extraPrice)),
+        base_price: fmt(firstSess.servicePrice ?? Math.max(0, firstSess.sessionPrice - firstSess.selectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? 0)) || 0), 0) - firstSess.extraPrice)),
         subtotal: fmt(bookingSubtotalPrice),
         discount: fmt(discountAmount),
         discount_amount: fmt(discountAmount),

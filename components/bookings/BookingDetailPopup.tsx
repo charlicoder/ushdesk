@@ -1797,14 +1797,25 @@ function BookingDetailPopupContent({
           0
         );
 
+        const sAddonsSum = ((Array.isArray(s.addons) ? s.addons : []) as Array<Record<string, unknown>>)
+          .reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? 0)) || 0), 0);
+        const sExtraSum = parseFloat(String(s.extra_price ?? s.price_for_extra_minutes ?? 0)) || 0;
+
         const sPrice = parseFloat(
           String(
-            s.session_price ??
-            s.services_price ??
             (sServicesPriceSum > 0 ? sServicesPriceSum : null) ??
+            s.services_price ??
             sServices[0]?.base_price ??
             sServices[0]?.arrangement_price ??
+            sServices[0]?.home_service_price ??
             sServices[0]?.price ??
+            (s.service_data as any)?.base_price ??
+            (s.service_data as any)?.arrangement_price ??
+            (s.service_data as any)?.home_service_price ??
+            (s.session_price != null && (sAddonsSum > 0 || sExtraSum > 0)
+              ? Math.max(0, (parseFloat(String(s.session_price)) || 0) - sAddonsSum - sExtraSum)
+              : null) ??
+            s.session_price ??
             '0'
           )
         ) || 0;
@@ -1958,7 +1969,12 @@ function BookingDetailPopupContent({
 
     const detailSd = ((detail?.service_data ?? booking.raw?.service_data) ?? {}) as Record<string, unknown>;
     const voucherData = ((detail?.voucher_data ?? (booking.raw as any)?.voucher_data) ?? {}) as Record<string, unknown>;
+    const isNamePackage = Boolean(
+      String(booking.service_name ?? '').toLowerCase().includes('package') ||
+      String((detail as any)?.service_name ?? '').toLowerCase().includes('package')
+    );
     if (
+      isNamePackage ||
       isTruthyFlag((detail as any)?.is_packaged_services) ||
       isTruthyFlag((booking.raw as any)?.is_packaged_services) ||
       isTruthyFlag(detailSd.is_packaged_services) ||
@@ -1967,6 +1983,9 @@ function BookingDetailPopupContent({
       Boolean((detail as any)?.package_id || (booking.raw as any)?.package_id || detailSd.package_id)
     ) {
       hasPkgMeta = true;
+      if (!pkgName && isNamePackage) {
+        pkgName = String(booking.service_name ?? (detail as any)?.service_name ?? '').trim();
+      }
     }
 
     if (!pkgId) {
@@ -2011,19 +2030,31 @@ function BookingDetailPopupContent({
 
   const isPackageBooking = packageInfo.isPackage;
   const packageName = packageInfo.packageName;
-  const effectivePackagePrice =
-    servicePrice > 0
-      ? servicePrice
-      : parseFloat(
-          String(
-            (detail?.voucher_data as any)?.package_price ??
-            (booking.raw as any)?.voucher_data?.package_price ??
-            (detail?.voucher_data as any)?.total_amount ??
-            detail?.total_amount ??
-            booking.total_amount ??
-            '0'
-          )
-        ) || 0;
+  const effAddonsTotal = effAddons.reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? 0)) || 0), 0);
+  const effectivePackagePrice = (() => {
+    const rawPkgPrice = parseFloat(
+      String(
+        (detail?.service_data as any)?.base_price ??
+        (detail?.service_data as any)?.home_service_price ??
+        (booking.raw?.service_data as any)?.base_price ??
+        (booking.raw?.service_data as any)?.home_service_price ??
+        (detail?.voucher_data as any)?.package_price ??
+        (booking.raw as any)?.voucher_data?.package_price ??
+        (detail?.pricing as any)?.arrangement_price ??
+        '0'
+      )
+    ) || 0;
+    if (rawPkgPrice > 0 && (rawPkgPrice !== computedTotal || effAddonsTotal === 0)) {
+      return rawPkgPrice;
+    }
+    if (servicePrice > 0 && servicePrice !== computedTotal) {
+      return servicePrice;
+    }
+    if (computedTotal > 0 && (effAddonsTotal > 0 || extraPrice > 0)) {
+      return Math.max(0, computedTotal - effAddonsTotal - extraPrice);
+    }
+    return servicePrice > 0 ? servicePrice : computedTotal;
+  })();
 
   const receiptServices = useMemo(() => {
     if (displaySessions.length > 0) {
@@ -2060,10 +2091,17 @@ function BookingDetailPopupContent({
             });
           });
         } else {
+          let cleanPrice = sess.price;
+          if (cleanPrice === computedTotal && (effAddonsTotal > 0 || extraPrice > 0)) {
+            cleanPrice = Math.max(0, cleanPrice - effAddonsTotal - extraPrice);
+          }
+          if (effectivePackagePrice > 0 && cleanPrice > effectivePackagePrice) {
+            cleanPrice = effectivePackagePrice;
+          }
           items.push({
             name: sess.serviceName,
             category: booking.service_category,
-            price: sess.price,
+            price: cleanPrice,
             duration: sess.durationMin,
             therapistName: tName,
             secondaryTherapistName: secTName,
@@ -2074,16 +2112,25 @@ function BookingDetailPopupContent({
       return items;
     }
 
-    return serviceItems.map((it) => ({
-      name: it.name,
-      category: it.category,
-      price: it.price,
-      duration: it.duration,
-      therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
-      secondaryTherapistName: secondaryTherapistName || null,
-      arrangementName: booking.arrangement_name,
-    }));
-  }, [displaySessions, serviceItems, booking.service_category, booking.therapist_name, booking.arrangement_name, primaryTherapistName, secondaryTherapistName]);
+    return serviceItems.map((it) => {
+      let p = it.price;
+      if (p === computedTotal && (effAddonsTotal > 0 || extraPrice > 0)) {
+        p = Math.max(0, p - effAddonsTotal - extraPrice);
+      }
+      if (effectivePackagePrice > 0 && p > effectivePackagePrice) {
+        p = effectivePackagePrice;
+      }
+      return {
+        name: it.name,
+        category: it.category,
+        price: p,
+        duration: it.duration,
+        therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
+        secondaryTherapistName: secondaryTherapistName || null,
+        arrangementName: booking.arrangement_name,
+      };
+    });
+  }, [displaySessions, serviceItems, booking.service_category, booking.therapist_name, booking.arrangement_name, primaryTherapistName, secondaryTherapistName, computedTotal, effAddonsTotal, extraPrice, effectivePackagePrice]);
 
   const canAddSession = !isCancelled && !isCompleted && !isPaymentSuccess && displaySessions.length < 3;
 

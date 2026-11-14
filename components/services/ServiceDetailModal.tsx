@@ -37,6 +37,7 @@ export interface ServiceDetailData {
   name: string;
   category?: string;
   duration_minutes: number;
+  no_of_therapists_needed?: number;
   price: number;
   currency?: string;
   description?: string | null;
@@ -190,6 +191,7 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
   const price = current?.price ?? 0;
   const duration = current?.duration_minutes ?? 60;
   const isHomeEligible = current?.can_do_home_service ?? false;
+  const therapistsNeeded = Number(current?.raw?.no_of_therapists_needed ?? current?.no_of_therapists_needed ?? 1);
 
   return (
     <div
@@ -269,6 +271,12 @@ export function ServiceDetailModal({ serviceId, initialService, onClose }: Props
                   <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 border border-sky-500/20 px-2.5 py-0.5 text-xs font-semibold text-sky-600 dark:text-sky-400">
                     <Home className="h-3 w-3" />
                     Home Service
+                  </span>
+                )}
+                {therapistsNeeded > 1 && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-violet-500/10 border border-violet-500/20 px-2.5 py-0.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
+                    <Users className="h-3 w-3" />
+                    {therapistsNeeded} Therapists Needed
                   </span>
                 )}
                 <span className="inline-flex items-center gap-1 rounded-full bg-muted border border-border/70 px-2.5 py-0.5 text-xs font-medium text-muted-foreground">

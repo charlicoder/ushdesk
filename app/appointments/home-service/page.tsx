@@ -1489,12 +1489,22 @@ function buildScheduleFromApi(
   type BkEntry = { isHome?: boolean; startMin: number; endMin: number; client?: string; service?: string; startLabel: string; endLabel: string; duration: string; reference?: string; status: string };
   const bookingMap: Record<string, BkEntry[]> = {};
   for (const bk of bookings) {
-    if (!bookingMap[bk.therapist_id]) bookingMap[bk.therapist_id] = [];
+    const primaryId = bk.therapist_id ? String(bk.therapist_id).toLowerCase().trim() : '';
     const s = kuwaitWallClockDate(bk.start); const e = kuwaitWallClockDate(bk.end);
     const sm = s.getUTCHours() * 60 + s.getUTCMinutes(); const em = e.getUTCHours() * 60 + e.getUTCMinutes();
     const fmt = (h: number, m: number) => { const ap = h >= 12 ? 'PM' : 'AM'; const hd = h % 12 === 0 ? 12 : h % 12; return `${String(hd).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`; };
     const dur = bk.duration_minutes ?? (em - sm);
-    bookingMap[bk.therapist_id].push({ isHome: String(bk.booking_type ?? '').toLowerCase().startsWith('home'), startMin: sm, endMin: em, client: bk.customer?.name, service: bk.service?.name, startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()), endLabel: fmt(e.getUTCHours(), e.getUTCMinutes()), duration: `${dur}m`, reference: bk.booking_id ?? bk.id, status: bk.status ?? 'scheduled' });
+    const entry: BkEntry = { isHome: String(bk.booking_type ?? '').toLowerCase().startsWith('home'), startMin: sm, endMin: em, client: bk.customer?.name, service: bk.service?.name, startLabel: fmt(s.getUTCHours(), s.getUTCMinutes()), endLabel: fmt(e.getUTCHours(), e.getUTCMinutes()), duration: `${dur}m`, reference: bk.booking_id ?? bk.id, status: bk.status ?? 'scheduled' };
+
+    if (primaryId) {
+      if (!bookingMap[primaryId]) bookingMap[primaryId] = [];
+      bookingMap[primaryId].push(entry);
+    }
+    const secId = (bk as any).secondary_therapist_id ? String((bk as any).secondary_therapist_id).toLowerCase().trim() : '';
+    if (secId && secId !== primaryId) {
+      if (!bookingMap[secId]) bookingMap[secId] = [];
+      bookingMap[secId].push(entry);
+    }
   }
   const fmtLabel = (min: number) => { const h = Math.floor(min / 60); const m = min % 60; const ap = h >= 12 ? 'PM' : 'AM'; const hd = h % 12 === 0 ? 12 : h % 12; return `${String(hd).padStart(2,'0')}:${String(m).padStart(2,'0')} ${ap}`; };
   const TRAVEL_MINUTES = 60;

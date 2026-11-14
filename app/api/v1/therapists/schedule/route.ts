@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
       const payMap = new Map<string, string>();
       const statusMap = new Map<string, string>();
       const sessionsMap = new Map<string, any[]>();
+      const secTherapistMap = new Map<string, string>();
       const bpBookings: any[] = [];
 
       try {
@@ -52,10 +53,12 @@ export async function GET(req: NextRequest) {
                 bpBookings.push(item);
                 const ps = String(item?.payment_status ?? item?.payment_data?.status ?? '').toLowerCase().trim();
                 const st = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
+                const secTid = item?.secondary_therapist_id || (item?.secondary_therapist_data as any)?.id;
                 const ids = [item.id, item.booking_id, item.bookings_id, item.booking_number].filter(Boolean).map(String);
                 for (const id of ids) {
                   if (ps) payMap.set(id, ps);
                   if (st) statusMap.set(id, st);
+                  if (secTid) secTherapistMap.set(id, String(secTid).toLowerCase().trim());
                   if (Array.isArray(item.sessions) && item.sessions.length > 0) {
                     sessionsMap.set(id, item.sessions);
                   }
@@ -112,7 +115,7 @@ export async function GET(req: NextRequest) {
               String(bk.bookings_id ?? ''),
               String(bk.id ?? ''),
               String(bk.reference ?? ''),
-            ].find(id => id && (payMap.has(id) || statusMap.has(id) || sessionsMap.has(id)));
+            ].find(id => id && (payMap.has(id) || statusMap.has(id) || sessionsMap.has(id) || secTherapistMap.has(id)));
 
             if (matchId) {
               if (payMap.has(matchId)) {
@@ -124,6 +127,9 @@ export async function GET(req: NextRequest) {
               if (sessionsMap.has(matchId)) {
                 bk.sessions = sessionsMap.get(matchId);
               }
+              if (secTherapistMap.has(matchId) && !bk.secondary_therapist_id) {
+                bk.secondary_therapist_id = secTherapistMap.get(matchId);
+              }
             }
           }
 
@@ -131,6 +137,16 @@ export async function GET(req: NextRequest) {
           for (const item of bpBookings) {
             const rawStatus = String(item?.status ?? item?.booking_status ?? '').toLowerCase().trim();
             if (rawStatus === 'cancelled' || rawStatus === 'refunded' || rawStatus === 'parked') continue;
+
+            const itemTherapistId = String(item.therapist_id || (item.therapist_data as any)?.id || '').toLowerCase().trim();
+            const itemSecTherapistId = String(item.secondary_therapist_id || (item.secondary_therapist_data as any)?.id || '').toLowerCase().trim();
+            const currentRecordTherapistId = String(record?.therapist?.id || record?.id || '').toLowerCase().trim();
+
+            // A booking belongs to this therapist column if they are primary or secondary therapist
+            const belongsToThisTherapist = currentRecordTherapistId && (
+              currentRecordTherapistId === itemTherapistId || currentRecordTherapistId === itemSecTherapistId
+            );
+            if (!belongsToThisTherapist && currentRecordTherapistId) continue;
 
             const itemIds = [item.id, item.booking_id, item.bookings_id, item.booking_number]
               .filter(Boolean)
@@ -140,11 +156,13 @@ export async function GET(req: NextRequest) {
             if (!alreadyExists) {
               const rawCust = item.customer || item.customer_data;
               const rawSvc = item.service || item.service_data;
+              const isSecondaryForThisTherapist = currentRecordTherapistId === itemSecTherapistId && itemSecTherapistId !== itemTherapistId;
               const newBk: any = {
                 id: String(item.id || item.booking_id || item.bookings_id),
                 booking_id: String(item.id || item.booking_id || item.bookings_id),
-                therapist_id: String(item.therapist_id || (item.therapist_data as any)?.id || ''),
+                therapist_id: currentRecordTherapistId || itemTherapistId,
                 secondary_therapist_id: item.secondary_therapist_id ? String(item.secondary_therapist_id) : undefined,
+                is_secondary_therapist: isSecondaryForThisTherapist,
                 start: item.appointment_start || item.start,
                 end: item.appointment_end || item.end,
                 duration_minutes: item.duration_minutes || item.total_duration,
