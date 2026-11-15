@@ -391,11 +391,11 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   </span>
                 ) : data.isVoucherPackage ? (
                   <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs bg-amber-700">
-                    <Gift className="h-3 w-3 text-white" /> {data.isPartialRedeem ? 'PARTIAL PACKAGE REDEEM' : 'GIFT PACKAGE REDEMPTION'}
+                    <Gift className="h-3 w-3 text-white" /> {data.isPartialRedeem ? 'PARTIAL REDEEM' : 'GIFT PACKAGE REDEEM'}
                   </span>
                 ) : data.isVoucherRedemption ? (
                   <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold text-white shadow-2xs bg-emerald-700">
-                    <Gift className="h-3 w-3 text-white" /> {data.isPartialRedeem ? 'PARTIAL VOUCHER REDEEM' : 'GIFT VOUCHER REDEEM'}
+                    <Gift className="h-3 w-3 text-white" /> {data.isPartialRedeem ? 'PARTIAL REDEEM' : 'GIFT VOUCHER REDEEM'}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 text-blue-800 px-2.5 py-0.5 text-[10px] font-bold">
@@ -521,8 +521,9 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             {(data.isPartialRedeem || (data.remainingServices && data.remainingServices.length > 0)) && (
               <div className="my-3 p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-[11px] space-y-2">
                 <div className="flex items-center justify-between text-amber-900 border-b border-amber-200/70 pb-1.5">
-                  <span className="font-extrabold uppercase tracking-wider text-[10px] text-amber-900">
-                    Partial Voucher Redemption
+                  <span className="font-extrabold uppercase tracking-wider text-[10px] text-amber-900 flex items-center gap-1.5">
+                    <Gift className="h-3.5 w-3.5 text-amber-700" />
+                    Partial Voucher Redemption (Partial Redeem)
                   </span>
                   {data.voucherCode && (
                     <span className="font-mono font-bold text-[10px] text-amber-800">
@@ -546,7 +547,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                       <div key={idx} className="flex items-center justify-between text-slate-800 text-[11px]">
                         <span className="flex items-center gap-1.5 font-semibold">
                           <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 shrink-0" />
-                          <span>{s.name || 'Service'}</span>
+                          <span>{s.name || 'Service'}{s.duration ? ` (${s.duration}m)` : ''}</span>
                         </span>
                         <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
                           Redeemed
@@ -556,18 +557,39 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                   </div>
                 </div>
 
+                {data.addons && data.addons.length > 0 && (
+                  <div className="pt-2 border-t border-dashed border-amber-200">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                      ✓ Add-ons in this booking ({data.addons.length}):
+                    </p>
+                    <div className="mt-1 space-y-1 pl-1">
+                      {data.addons.map((a, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-slate-800 text-[11px]">
+                          <span className="flex items-center gap-1.5 font-semibold">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 shrink-0" />
+                            <span>{a.name || 'Add-on'}{a.duration ? ` (${a.duration}m)` : ''}</span>
+                          </span>
+                          <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
+                            Included
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Services Remaining on Voucher */}
                 {data.remainingServices && data.remainingServices.length > 0 && (
                   <div className="pt-2 border-t border-dashed border-amber-200">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800">
-                      ⏳ Remaining on Voucher ({data.remainingServices.length}):
+                      ⏳ Remaining for Next Booking ({data.remainingServices.length}):
                     </p>
                     <div className="mt-1 space-y-1 pl-1">
                       {data.remainingServices.map((s, idx) => (
                         <div key={idx} className="flex items-center justify-between text-slate-700 text-[11px]">
                           <span className="flex items-center gap-1.5 font-medium">
                             <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
-                            <span>{s.name || 'Service'}</span>
+                            <span>{s.name || 'Service'}{s.duration ? ` (${s.duration}m)` : ''}</span>
                           </span>
                           <span className="text-[10px] font-medium text-amber-700 bg-amber-100/70 px-1.5 py-0.5 rounded">
                             Remaining
@@ -576,8 +598,68 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                       ))}
                     </div>
                     <p className="text-[10px] text-amber-800/80 pt-1 italic">
-                      Remaining services can be redeemed in future visits using voucher code #{data.voucherCode || 'on file'}.
+                      Partial redeem: Remaining services can be redeemed in future visits using voucher code #{data.voucherCode || 'on file'}.
                     </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Full Voucher Redemption Details: All services from gift voucher included in this booking */}
+            {(data.isVoucherRedemption || data.isVoucherPackage) && !data.isPartialRedeem && (!data.remainingServices || data.remainingServices.length === 0) && (
+              <div className="my-3 p-3 rounded-xl bg-emerald-50/70 border border-emerald-200 text-[11px] space-y-2">
+                <div className="flex items-center justify-between text-emerald-900 border-b border-emerald-200/70 pb-1.5">
+                  <span className="font-extrabold uppercase tracking-wider text-[10px] text-emerald-900 flex items-center gap-1.5">
+                    <Gift className="h-3.5 w-3.5 text-emerald-700" />
+                    All Services Included in this Booking
+                  </span>
+                  {data.voucherCode && (
+                    <span className="font-mono font-bold text-[10px] text-emerald-800">
+                      #{data.voucherCode}
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                    ✓ Services from Gift Voucher ({((data.redeemedServices && data.redeemedServices.length > 0) ? data.redeemedServices : (data.services && data.services.length > 0) ? data.services : [{ name: data.serviceName }]).length}):
+                  </p>
+                  <div className="mt-1 space-y-1 pl-1">
+                    {((data.redeemedServices && data.redeemedServices.length > 0)
+                      ? data.redeemedServices
+                      : (data.services && data.services.length > 0)
+                      ? data.services
+                      : [{ name: data.serviceName || 'Spa Service' }]
+                    ).map((s, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-slate-800 text-[11px]">
+                        <span className="flex items-center gap-1.5 font-semibold">
+                          <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 shrink-0" />
+                          <span>{s.name || 'Service'}{s.duration ? ` (${s.duration}m)` : ''}</span>
+                        </span>
+                        <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
+                          Included
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {data.addons && data.addons.length > 0 && (
+                  <div className="pt-2 border-t border-dashed border-emerald-200">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
+                      ✓ Add-ons from Gift Voucher ({data.addons.length}):
+                    </p>
+                    <div className="mt-1 space-y-1 pl-1">
+                      {data.addons.map((a, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-slate-800 text-[11px]">
+                          <span className="flex items-center gap-1.5 font-semibold">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 shrink-0" />
+                            <span>{a.name || 'Add-on'}{a.duration ? ` (${a.duration}m)` : ''}</span>
+                          </span>
+                          <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
+                            Included
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
@@ -587,7 +669,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="py-3 border-b border-dashed border-slate-300 space-y-2">
               <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-400">
                 <span>Description</span>
-                {(!isPackageServiceBooking || (data.addons && data.addons.length > 0) || Number(data.extraMinutes ?? 0) > 0) && (
+                {(!isPackageServiceBooking && !data.isVoucherPackage && !data.isVoucherRedemption) && (
                   <span>Amount</span>
                 )}
               </div>
@@ -722,7 +804,13 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                           + {a.name || `Add-on #${idx + 1}`}
                           {a.duration ? ` (${a.duration}m)` : ''}
                         </span>
-                        <span className="font-mono font-medium">+{aPrice.toFixed(3)} {currency}</span>
+                        {(data.isVoucherPackage || data.isVoucherRedemption) ? (
+                          <span className="text-[10px] font-medium text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
+                            Included
+                          </span>
+                        ) : (
+                          <span className="font-mono font-medium">+{aPrice.toFixed(3)} {currency}</span>
+                        )}
                       </div>
                     );
                   })}
@@ -806,14 +894,22 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="py-3 border-b border-dashed border-slate-300 space-y-1 text-[11px]">
               <div className="flex justify-between">
                 <span className="text-slate-500">Payment Method:</span>
-                <span className="font-semibold text-slate-800 capitalize">
+                <span className="font-semibold text-slate-800">
                   {data.isCourseRedemption
                     ? `Course Package (${data.subscriptionPaymentProvider || data.subscriptionPaymentMethod || 'Prepaid'})`
-                    : data.isVoucherRedemption
-                    ? `Gift Voucher (${data.paymentProvider || 'Prepaid'})`
+                    : (data.isVoucherRedemption || data.isVoucherPackage)
+                    ? 'gift voucher'
                     : data.paymentMethod || data.paymentProvider || 'Desk Payment (Confirmed)'}
                 </span>
               </div>
+              {(data.isVoucherRedemption || data.isVoucherPackage) && (
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Payment Provider:</span>
+                  <span className="font-semibold text-slate-800">
+                    gift voucher
+                  </span>
+                </div>
+              )}
               {data.isCourseRedemption && data.courseSubscriptionNumber && (
                 <div className="flex justify-between">
                   <span className="text-slate-500">Subscription Ref:</span>

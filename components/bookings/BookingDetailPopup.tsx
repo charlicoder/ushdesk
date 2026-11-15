@@ -1533,6 +1533,9 @@ function BookingDetailPopupContent({
   // Bookings using loyalty points cannot be cancelled or refunded
   const isLoyaltyBooking = Boolean(
     String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase() === 'loyalty' ||
+    String(detail?.payment_type ?? (booking.raw as any)?.payment_type ?? (booking as any)?.payment_type ?? '').toLowerCase() === 'rewarded' ||
+    String(detail?.payment_provider ?? (booking.raw as any)?.payment_provider ?? booking.payment_provider ?? '').toLowerCase() === 'loyalty' ||
+    String(detail?.payment_method ?? (booking.raw as any)?.payment_method ?? booking.payment_method ?? '').toLowerCase() === 'loyalty_points' ||
     Boolean(
       (detail?.loyalty_data && Object.keys(detail.loyalty_data).length > 0) ||
       ((booking.raw as any)?.loyalty_data && Object.keys((booking.raw as any).loyalty_data).length > 0) ||
@@ -1616,6 +1619,10 @@ function BookingDetailPopupContent({
   const isGiftVoucherBooking =
     String(detail?.payment_type ?? (booking.raw as any)?.payment_type ?? (booking as any)?.payment_type ?? '').toLowerCase() === 'gift_voucher' ||
     String(detail?.booking_type ?? (booking.raw as any)?.booking_type ?? booking.booking_type ?? '').toLowerCase() === 'gift_voucher' ||
+    String(detail?.payment_method ?? (booking.raw as any)?.payment_method ?? booking.payment_method ?? '').toLowerCase().includes('voucher') ||
+    String(detail?.payment_gateway ?? (booking.raw as any)?.payment_gateway ?? (booking as any)?.payment_gateway ?? '').toLowerCase().includes('voucher') ||
+    String(detail?.payment_provider ?? (booking.raw as any)?.payment_provider ?? (booking as any)?.payment_provider ?? '').toLowerCase().includes('voucher') ||
+    Boolean(detail?.voucher_data || (booking.raw as any)?.voucher_data || (booking as any)?.voucher_data) ||
     Boolean(detail?.voucher_id ?? (booking.raw as any)?.voucher_id ?? (booking as any)?.voucher_id);
   const canShowCancel = !isCancelled && hasCancelPermission && !isGiftVoucherBooking;
 
@@ -1682,11 +1689,62 @@ function BookingDetailPopupContent({
 
   const pricingObj = (detail?.pricing ?? booking.pricing ?? booking.raw?.pricing_details) as Record<string, unknown> | undefined;
 
+  const detailSdEarly = ((detail?.service_data ?? booking.raw?.service_data) ?? {}) as Record<string, unknown>;
+  const voucherDataEarly = ((detail?.voucher_data ?? (booking.raw as any)?.voucher_data) ?? {}) as Record<string, unknown>;
+  const isPackageEarly = Boolean(
+    String(booking.service_name ?? (detail as any)?.service_name ?? '').toLowerCase().includes('package') ||
+    (detail as any)?.is_packaged_services ||
+    (booking.raw as any)?.is_packaged_services ||
+    detailSdEarly.is_packaged_services ||
+    detailSdEarly.is_packaged ||
+    voucherDataEarly.is_package ||
+    (detail as any)?.package_id ||
+    (booking.raw as any)?.package_id ||
+    detailSdEarly.package_id ||
+    voucherDataEarly.package_id
+  );
+  const rawPkgPriceEarly = (() => {
+    // 1. Voucher data explicit package price or total amount
+    const vdPkgPrice = parseFloat(
+      String(
+        voucherDataEarly.package_price ??
+        (booking.raw as any)?.voucher_data?.package_price ??
+        (booking as any)?.voucher_data?.package_price ??
+        voucherDataEarly.total_amount ??
+        (booking.raw as any)?.voucher_data?.total_amount ??
+        (detail as any)?.package_price ??
+        (booking.raw as any)?.package_price ??
+        '0'
+      )
+    ) || 0;
+
+    // 2. Services / sessions package price (e.g. from session services_price or package_price)
+    const s0Early = rawSessions[0] as Record<string, any> | undefined;
+    const sessServicesPriceEarly = parseFloat(String(s0Early?.services_price ?? s0Early?.package_price ?? '0')) || 0;
+    const s0ServicesEarly = (Array.isArray(s0Early?.services) ? (s0Early?.services as Array<Record<string, any>>) : []);
+    const s0PkgPriceEarly = parseFloat(String(s0ServicesEarly[0]?.package_price ?? '0')) || 0;
+
+    // 3. Arrangement price (e.g. Friends Room / Couple Room = 48)
+    const arrPriceEarly = parseFloat(String(pricingObj?.arrangement_price ?? booking.arrangement_price ?? (detail as any)?.arrangement_price ?? (booking.raw as any)?.arrangement_price ?? '0')) || 0;
+
+    // 4. Multi items sum
+    const itemsSum = multiPriceSum > 0 ? multiPriceSum : (stagedPriceSum !== null && stagedPriceSum > 0 ? stagedPriceSum : 0);
+
+    const candidates = [vdPkgPrice, s0PkgPriceEarly, sessServicesPriceEarly, arrPriceEarly, itemsSum].filter((p) => p > 0);
+    if (candidates.length > 0) {
+      return Math.max(...candidates);
+    }
+
+    return parseFloat(String(detailSdEarly.base_price ?? (booking.raw?.service_data as any)?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0;
+  })();
+
   const servicePrice = stagedPriceSum !== null
     ? stagedPriceSum
-    : (isMultiService && multiPriceSum > 0
-        ? multiPriceSum
-        : parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0);
+    : (isPackageEarly && rawPkgPriceEarly > 0
+        ? rawPkgPriceEarly
+        : (isMultiService && multiPriceSum > 0
+            ? multiPriceSum
+            : parseFloat(String(pricingObj?.arrangement_price ?? pricingObj?.base_price ?? detail?.base_price ?? booking.service_price ?? '0')) || 0));
 
   // Aggregate add-ons / extra time across all sessions (fall back to booking-level data)
   const sessionsForTotals = rawSessions as Array<Record<string, any>>;
@@ -2032,29 +2090,82 @@ function BookingDetailPopupContent({
   const packageName = packageInfo.packageName;
   const effAddonsTotal = effAddons.reduce((sum, a) => sum + (parseFloat(String(a.price ?? a.base_price ?? 0)) || 0), 0);
   const effectivePackagePrice = (() => {
-    const rawPkgPrice = parseFloat(
+    if (rawPkgPriceEarly > 0) return rawPkgPriceEarly;
+    if (servicePrice > 0) return servicePrice;
+
+    const vd = ((detail?.voucher_data ?? (booking.raw as any)?.voucher_data ?? (booking as any)?.voucher_data) ?? {}) as Record<string, any>;
+    const explicitPkgPrice = parseFloat(
       String(
-        (detail?.service_data as any)?.base_price ??
-        (detail?.service_data as any)?.home_service_price ??
-        (booking.raw?.service_data as any)?.base_price ??
-        (booking.raw?.service_data as any)?.home_service_price ??
-        (detail?.voucher_data as any)?.package_price ??
-        (booking.raw as any)?.voucher_data?.package_price ??
-        (detail?.pricing as any)?.arrangement_price ??
+        vd?.package_price ??
+        (detail as any)?.package_price ??
+        (booking.raw as any)?.package_price ??
+        vd?.total_amount ??
         '0'
       )
     ) || 0;
-    if (rawPkgPrice > 0 && (rawPkgPrice !== computedTotal || effAddonsTotal === 0)) {
-      return rawPkgPrice;
-    }
-    if (servicePrice > 0 && servicePrice !== computedTotal) {
-      return servicePrice;
-    }
-    if (computedTotal > 0 && (effAddonsTotal > 0 || extraPrice > 0)) {
-      return Math.max(0, computedTotal - effAddonsTotal - extraPrice);
-    }
-    return servicePrice > 0 ? servicePrice : computedTotal;
+    if (explicitPkgPrice > 0) return explicitPkgPrice;
+
+    return computedTotal;
   })();
+
+  const packageServicesList = useMemo(() => {
+    // 1. If displaySessions has services:
+    const sessionServices: Array<{ name: string; duration: number }> = [];
+    displaySessions.forEach((sess) => {
+      const sessRawServices = (sess.raw?.services && Array.isArray(sess.raw.services)) ? (sess.raw.services as Array<Record<string, any>>) : [];
+      if (sessRawServices.length > 0) {
+        sessRawServices.forEach((sv: Record<string, any>) => {
+          const svData = (sv?.service_data || {}) as Record<string, any>;
+          sessionServices.push({
+            name: String(sv?.service_name || sv?.name || svData?.name || svData?.service_name || 'Service'),
+            duration: Number(sv?.duration_minutes || sv?.base_duration || svData?.duration_minutes || 0),
+          });
+        });
+      } else if (sess.serviceName) {
+        sessionServices.push({
+          name: sess.serviceName,
+          duration: sess.durationMin || 0,
+        });
+      }
+    });
+    if (sessionServices.length > 0) return sessionServices;
+
+    // 2. From voucher_data:
+    const vd = (detail?.voucher_data ?? (booking.raw as any)?.voucher_data) as Record<string, any> | undefined;
+    if (vd?.redeemed_services && Array.isArray(vd.redeemed_services) && vd.redeemed_services.length > 0) {
+      return vd.redeemed_services.map((s: any) => ({
+        name: String(s.name || s.service_name || 'Service'),
+        duration: Number(s.duration || s.duration_minutes || 0),
+      }));
+    }
+    if (vd?.all_gifted_services && Array.isArray(vd.all_gifted_services) && vd.all_gifted_services.length > 0) {
+      return vd.all_gifted_services.map((s: any) => ({
+        name: String(s.name || s.service_name || 'Service'),
+        duration: Number(s.duration || s.duration_minutes || 0),
+      }));
+    }
+
+    // 3. From svcEntries:
+    if (svcEntries.length > 0) {
+      return svcEntries.map((e) => {
+        const d = (e.service_data ?? {}) as Record<string, unknown>;
+        return {
+          name: String(d.name ?? d.service_name ?? e.service_name ?? 'Service'),
+          duration: Number(e.duration_minutes ?? e.base_duration ?? d.duration_minutes ?? 0) || 0,
+        };
+      });
+    }
+
+    // 4. Fallback to serviceItems
+    if (serviceItems.length > 0) {
+      return serviceItems.map((it) => ({
+        name: it.name,
+        duration: it.duration,
+      }));
+    }
+
+    return [{ name: booking.service_name, duration: serviceDuration }];
+  }, [displaySessions, detail, booking.raw, svcEntries, serviceItems, booking.service_name, serviceDuration]);
 
   const receiptServices = useMemo(() => {
     if (displaySessions.length > 0) {
@@ -2397,16 +2508,32 @@ function BookingDetailPopupContent({
     ''
   ).trim();
 
+  const rawProvider = (
+    booking.payment_provider ||
+    (detail as any)?.payment_provider ||
+    (paymentDataObj as any)?.payment_provider ||
+    ((paymentDataObj as any)?.payment_url && String((paymentDataObj as any).payment_url).toLowerCase().includes('myfatoorah') ? 'MyFatoorah' : '') ||
+    booking.payment_gateway ||
+    (detail as any)?.payment_gateway ||
+    (paymentDataObj as any)?.payment_gateway ||
+    booking.payment_method ||
+    'Front Desk'
+  );
+  const isLoyaltyOrRewarded = Boolean(
+    isLoyaltyBooking ||
+    isRewarded ||
+    String(booking.payment_provider ?? (detail as any)?.payment_provider ?? '').toLowerCase() === 'loyalty' ||
+    String(booking.payment_method ?? (detail as any)?.payment_method ?? '').toLowerCase() === 'loyalty_points'
+  );
   const paymentProvider = String(
-    isCourseRedemption
+    isGiftVoucherBooking
+      ? 'gift voucher'
+      : isLoyaltyOrRewarded
+      ? 'Loyalty'
+      : isCourseRedemption
       ? (subPaymentProvider ? `${subPaymentProvider} (Course Subscription)` : 'Course Subscription')
       : (
-          booking.payment_provider ||
-          booking.payment_gateway ||
-          (paymentDataObj as any)?.payment_provider ||
-          (paymentDataObj as any)?.payment_gateway ||
-          booking.payment_method ||
-          'Front Desk'
+          String(rawProvider).toLowerCase() === 'myfatoorah' ? 'MyFatoorah' : (String(rawProvider).toLowerCase() === 'loyalty' ? 'Loyalty' : rawProvider)
         )
   ).trim();
 
@@ -3823,9 +3950,37 @@ function BookingDetailPopupContent({
                   </p>
                   <div className="space-y-1.5 text-xs">
                     {isPackageBooking ? (
-                      <div className="flex justify-between text-muted-foreground">
-                        <span className="truncate pr-2">{packageName ? `Package Price (${packageName}):` : 'Package Price:'}</span>
-                        <span className="font-mono font-semibold text-foreground">{effectivePackagePrice.toFixed(3)} {currency}</span>
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-muted-foreground">
+                          <span className="truncate pr-2 font-semibold text-foreground">{packageName ? `Package Price (${packageName}):` : 'Package Price:'}</span>
+                          <span className="font-mono font-bold text-foreground">{effectivePackagePrice.toFixed(3)} {currency}</span>
+                        </div>
+                        {packageServicesList.length > 0 && (
+                          <div className="pl-3 py-1.5 space-y-1 border-l-2 border-primary/40 bg-muted/20 rounded-r-lg">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Included Services:
+                            </p>
+                            {packageServicesList.map((it, i) => (
+                              <div key={i} className="flex justify-between items-center text-[11px] text-muted-foreground">
+                                <span className="truncate pr-2 font-medium text-foreground">#{i + 1} {it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}</span>
+                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">Included</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {effAddons.length > 0 && (
+                          <div className="pl-3 py-1.5 space-y-1 border-l-2 border-primary/40 bg-muted/20 rounded-r-lg">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Included Add-ons:
+                            </p>
+                            {effAddons.map((a, i) => (
+                              <div key={i} className="flex justify-between items-center text-[11px] text-muted-foreground">
+                                <span className="truncate pr-2 font-medium text-foreground">+ {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}{a.duration_minutes ? ` (${a.duration_minutes}m)` : ''}</span>
+                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">Included</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : serviceItems.length > 1 ? serviceItems.map((it, i) => (
                       <div key={i} className="flex justify-between text-muted-foreground">
@@ -3838,7 +3993,7 @@ function BookingDetailPopupContent({
                         <span className="font-mono font-semibold text-foreground">{servicePrice.toFixed(3)} {currency}</span>
                       </div>
                     )}
-                    {(effAddons.length > 0 || addonsPrice > 0) && (
+                    {!isPackageBooking && (effAddons.length > 0 || addonsPrice > 0) && (
                       <div className="flex justify-between text-muted-foreground">
                         <span>Addons ({effAddons.length}):</span>
                         <span className="font-mono font-semibold text-foreground">+{addonsPrice.toFixed(3)} {currency}</span>
@@ -3859,7 +4014,7 @@ function BookingDetailPopupContent({
                     <div className="border-t border-border/50 pt-2 flex justify-between items-baseline">
                       <span className="font-bold text-foreground">Total Amount:</span>
                       <span className="text-base font-extrabold text-primary font-mono">
-                        {computedTotal.toFixed(3)} <span className="text-xs font-normal text-muted-foreground">{currency}</span>
+                        {(isPackageBooking ? effectivePackagePrice : computedTotal).toFixed(3)} <span className="text-xs font-normal text-muted-foreground">{currency}</span>
                       </span>
                     </div>
                   </div>
@@ -4010,7 +4165,7 @@ function BookingDetailPopupContent({
                               title="Click to view full invoice details"
                             >
                               <span className="underline underline-offset-4 decoration-violet-400/60 group-hover/inv:decoration-violet-600">
-                                {invoiceNumber || 'Pending Generation'}
+                                {invoiceNumber || (isLoyaltyOrRewarded ? '—' : 'Pending Generation')}
                               </span>
                               <Eye className="h-3.5 w-3.5 text-violet-500 opacity-75 group-hover/inv:opacity-100 shrink-0" />
                             </button>
@@ -4043,7 +4198,7 @@ function BookingDetailPopupContent({
                           <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Payment Number</p>
                           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <span className="text-sm font-mono font-extrabold text-foreground">
-                              {paymentNumber || (isRewarded || isPaid || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? 'Settled' : 'Generated upon settlement')}
+                              {paymentNumber || (isLoyaltyOrRewarded ? '—' : (isRewarded || isPaid || booking.is_paid || booking.payment_status === 'success' || booking.payment_status === 'paid' ? 'Settled' : 'Generated upon settlement'))}
                             </span>
                             {Boolean(paymentNumber) && (
                               <button
@@ -4116,7 +4271,7 @@ function BookingDetailPopupContent({
                     <div>
                       <p className="text-[10px] text-muted-foreground uppercase font-semibold">Total Amount</p>
                       <p className="font-extrabold text-violet-600 dark:text-violet-400 mt-0.5">
-                        {computedTotal.toFixed(3)} {currency}
+                        {(isPackageBooking ? effectivePackagePrice : computedTotal).toFixed(3)} {currency}
                       </p>
                     </div>
                     <div>
@@ -4138,18 +4293,43 @@ function BookingDetailPopupContent({
                       <span>Amount</span>
                     </div>
                     {isPackageBooking ? (
-                      <div className="space-y-1.5">
+                      <div className="space-y-2">
                         <div className="flex items-center justify-between text-xs">
-                          <span className="font-medium text-foreground">
+                          <span className="font-semibold text-foreground">
                             {packageName ? `Package Price (${packageName})` : 'Package Price'}
                           </span>
-                          <span className="font-semibold font-mono">{effectivePackagePrice.toFixed(3)} {currency}</span>
+                          <span className="font-bold font-mono text-foreground">{effectivePackagePrice.toFixed(3)} {currency}</span>
                         </div>
-                        {serviceItems.length > 1 && (
-                          <div className="pl-2.5 space-y-1 border-l-2 border-border/50">
-                            {serviceItems.map((it, i) => (
-                              <div key={i} className="text-[11px] text-muted-foreground">
-                                #{i + 1} {it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}
+                        {packageServicesList.length > 0 && (
+                          <div className="pl-3 py-1.5 space-y-1 border-l-2 border-primary/40 bg-muted/20 rounded-r-lg">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Included Services:
+                            </p>
+                            {packageServicesList.map((it, i) => (
+                              <div key={i} className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                <span className="truncate pr-2 font-medium text-foreground">
+                                  #{i + 1} {it.name}{it.duration > 0 ? ` (${it.duration}m)` : ''}
+                                </span>
+                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                                  Included
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {effAddons.length > 0 && (
+                          <div className="pl-3 py-1.5 space-y-1 border-l-2 border-primary/40 bg-muted/20 rounded-r-lg">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Included Add-ons:
+                            </p>
+                            {effAddons.map((a, i) => (
+                              <div key={i} className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                <span className="truncate pr-2 font-medium text-foreground">
+                                  + {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}{a.duration_minutes ? ` (${a.duration_minutes}m)` : ''}
+                                </span>
+                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                                  Included
+                                </span>
                               </div>
                             ))}
                           </div>
@@ -4163,7 +4343,7 @@ function BookingDetailPopupContent({
                         </div>
                       ))
                     )}
-                    {effAddons.map((a, i) => (
+                    {!isPackageBooking && effAddons.map((a, i) => (
                       <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
                         <span>+ Add-on: {String(a.name ?? a.addon_name ?? `Addon #${i + 1}`)}</span>
                         <span>+{parseFloat(String(a.price ?? a.base_price ?? '0')).toFixed(3)} {currency}</span>
@@ -4201,24 +4381,30 @@ function BookingDetailPopupContent({
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Provider / Gateway</p>
-                      <p className="font-semibold text-foreground mt-0.5">{paymentProvider}</p>
+                      <p className="font-semibold text-foreground mt-0.5">{isGiftVoucherBooking ? 'gift voucher' : paymentProvider}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Payment Method</p>
-                      <p className="font-semibold text-foreground mt-0.5 capitalize">{subPaymentMethod || booking.payment_method || (detail as any)?.payment_method || (detail?.voucher_data as any)?.payment_method || '—'}</p>
+                      <p className="font-semibold text-foreground mt-0.5">{isGiftVoucherBooking ? 'gift voucher' : isLoyaltyOrRewarded ? 'loyalty_points' : (subPaymentMethod || booking.payment_method || (detail as any)?.payment_method || (paymentDataObj as any)?.payment_method || (detail?.voucher_data as any)?.payment_method || '—')}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Payment Number</p>
-                      <p className="font-semibold font-mono text-foreground mt-0.5 truncate">{paymentNumber || (isRewarded || isPaid || booking.is_paid ? 'Settled' : 'Generated upon settlement')}</p>
+                      <p className="font-semibold font-mono text-foreground mt-0.5 truncate">{paymentNumber || (isLoyaltyOrRewarded ? '—' : (isRewarded || isPaid || booking.is_paid ? 'Settled' : 'Generated upon settlement'))}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">Channel / Source</p>
-                      <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking.raw as any)?.payment_through ?? (isLoyaltyBooking ? 'ushspa' : 'ushdesk'))}</p>
+                      <p className="font-semibold text-foreground mt-0.5 uppercase font-mono">{String(detail?.payment_through ?? (booking as any)?.payment_through ?? (booking.raw as any)?.payment_through ?? ((detail as any)?.booking_type === 'home' || (booking as any)?.booking_type === 'home' ? 'ushspa' : (isLoyaltyBooking ? 'ushspa' : 'ushdesk')))}</p>
                     </div>
                     <div className="rounded-xl bg-card border border-border/40 p-2.5">
                       <p className="text-[10px] text-muted-foreground font-medium">{isCourseRedemption ? 'Session Balance' : 'Amount'}</p>
                       <p className="font-bold text-primary mt-0.5 font-mono">
-                        {isCourseRedemption ? `0.000 ${currency} (Covered)` : `${computedTotal.toFixed(3)} ${currency}`}
+                        {isCourseRedemption
+                          ? `0.000 ${currency} (Covered)`
+                          : isGiftVoucherBooking && isPackageBooking
+                          ? `${effectivePackagePrice.toFixed(3)} ${currency}`
+                          : isGiftVoucherBooking
+                          ? `${(parseFloat(String(booking.total_price ?? detail?.total_price ?? computedTotal)) || computedTotal).toFixed(3)} ${currency}`
+                          : `${computedTotal.toFixed(3)} ${currency}`}
                       </p>
                     </div>
                     {isCourseRedemption && Boolean(subPrice) && (
@@ -4946,11 +5132,11 @@ function BookingDetailPopupContent({
             currency: currency,
             subtotal: subtotalPrice,
             discount: discountAmount,
-            totalAmount: computedTotal,
+            totalAmount: isPackageBooking ? effectivePackagePrice : computedTotal,
             status: 'completed',
             paymentStatus: String(detail?.payment_status ?? booking.payment_status ?? 'success'),
-            paymentMethod: isCourseRedemption ? (subPaymentMethod || 'Course Package') : (booking.payment_method || booking.payment_provider || 'Desk Payment'),
-            paymentProvider: isCourseRedemption ? (subPaymentProvider || 'Course Package') : (booking.payment_provider || booking.payment_gateway),
+            paymentMethod: isCourseRedemption ? (subPaymentMethod || 'Course Package') : (isGiftVoucherBooking ? 'gift voucher' : (booking.payment_method || booking.payment_provider || 'Desk Payment')),
+            paymentProvider: isCourseRedemption ? (subPaymentProvider || 'Course Package') : (isGiftVoucherBooking ? 'gift voucher' : (booking.payment_provider || booking.payment_gateway)),
             transactionId: String(paymentDataObj?.transaction_id ?? (isCourseRedemption ? subTxRef : '')),
             referenceId: String(paymentDataObj?.reference_id ?? (isCourseRedemption ? (subPaymentNumber || courseSubNumber) : '')),
             paidAt: String(paymentDataObj?.paid_at ?? (isCourseRedemption ? subPaidAt : '')),
@@ -4967,19 +5153,21 @@ function BookingDetailPopupContent({
             subscriptionInvoiceNumber: subInvoiceNumber || null,
             isVoucherRedemption: isGiftVoucherBooking || Boolean(detail?.voucher_id || (booking.raw as any)?.voucher_id),
             isVoucherPackage: Boolean(
+              isPackageBooking ||
               (detail?.voucher_data as any)?.is_package ||
               (booking.raw as any)?.voucher_data?.is_package ||
               (detail as any)?.is_packaged_services ||
               (booking.raw as any)?.is_packaged_services
             ),
             voucherPackageName: String(
+              packageName ||
               (detail?.voucher_data as any)?.package_name ||
               (booking.raw as any)?.voucher_data?.package_name ||
               (detail as any)?.package_name ||
               (booking.raw as any)?.package_name ||
               ''
             ).trim() || null,
-            voucherPackagePrice: (detail?.voucher_data as any)?.package_price ?? (booking.raw as any)?.voucher_data?.package_price ?? null,
+            voucherPackagePrice: effectivePackagePrice > 0 ? effectivePackagePrice : ((detail?.voucher_data as any)?.package_price ?? (booking.raw as any)?.voucher_data?.package_price ?? null),
             voucherCode: (detail?.voucher_data as any)?.voucher_number || (detail?.voucher_data as any)?.secret_code || (booking.raw as any)?.voucher_data?.voucher_number || null,
             isPartialRedeem: Boolean(
               (detail?.voucher_data as any)?.is_partial ||
@@ -4987,7 +5175,7 @@ function BookingDetailPopupContent({
               ((detail?.voucher_data as any)?.remaining_services && (detail?.voucher_data as any).remaining_services.length > 0) ||
               ((booking.raw as any)?.voucher_data?.remaining_services && (booking.raw as any).voucher_data.remaining_services.length > 0)
             ),
-            redeemedServices: (detail?.voucher_data as any)?.redeemed_services || (booking.raw as any)?.voucher_data?.redeemed_services || null,
+            redeemedServices: (detail?.voucher_data as any)?.redeemed_services || (booking.raw as any)?.voucher_data?.redeemed_services || packageServicesList.map((s) => ({ name: s.name, duration: s.duration })),
             remainingServices: (detail?.voucher_data as any)?.remaining_services || (booking.raw as any)?.voucher_data?.remaining_services || null,
           }}
           onClose={() => setShowReceiptModal(false)}

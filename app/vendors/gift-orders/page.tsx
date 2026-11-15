@@ -51,6 +51,7 @@ interface ServiceData {
   image?: string;
   currency?: string;
   base_price?: string;
+  price?: string | number;
   duration_minutes?: number;
   service_types?: { id?: string; name: string }[];
 }
@@ -600,9 +601,9 @@ function GiftDetailsModal({
                           </div>
                           <p className="font-bold text-sm text-foreground">{order.service_data?.name || 'Service'}</p>
                         </div>
-                        {order.service_data?.base_price && (
+                        {(order.service_data?.base_price || order.service_data?.price) && (
                           <span className="text-xs font-bold text-foreground shrink-0">
-                            {formatAmount(order.service_data.base_price, order.service_data.currency || order.currency)}
+                            {formatAmount(order.service_data.base_price || order.service_data.price, order.service_data.currency || order.currency)}
                           </span>
                         )}
                       </div>
@@ -635,6 +636,22 @@ function GiftDetailsModal({
                         </div>
                       )}
 
+                      {/* Extra Time */}
+                      {Boolean(order.extra_time && Number(order.extra_time) > 0) && (
+                        <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5 text-muted-foreground">
+                            <Timer className="h-3.5 w-3.5 text-amber-500" />
+                            <span className="font-medium text-foreground">Extra Time:</span>
+                            <span className="font-semibold text-foreground">+{order.extra_time} min</span>
+                          </div>
+                          {order.price_for_extra_time && Number(order.price_for_extra_time) > 0 ? (
+                            <span className="font-semibold text-foreground">
+                              {formatAmount(order.price_for_extra_time, order.currency)}
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
+
                       {/* Add-ons */}
                       {order.addons && order.addons.length > 0 && (
                         <div className="pt-2.5 border-t border-border/50">
@@ -654,22 +671,6 @@ function GiftDetailsModal({
                               </div>
                             ))}
                           </div>
-                        </div>
-                      )}
-
-                      {/* Extra Time */}
-                      {Boolean(order.extra_time && Number(order.extra_time) > 0) && (
-                        <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-1.5 text-muted-foreground">
-                            <Timer className="h-3.5 w-3.5 text-amber-500" />
-                            <span className="font-medium text-foreground">Extra Time:</span>
-                            <span className="font-semibold text-foreground">+{order.extra_time} min</span>
-                          </div>
-                          {order.price_for_extra_time && Number(order.price_for_extra_time) > 0 ? (
-                            <span className="font-semibold text-foreground">
-                              {formatAmount(order.price_for_extra_time, order.currency)}
-                            </span>
-                          ) : null}
                         </div>
                       )}
                     </div>

@@ -70,7 +70,8 @@ interface ServiceData {
   name: string;
   image: string | null;
   currency: string;
-  base_price: string;
+  base_price?: string | number;
+  price?: string | number;
   service_types: ServiceType[];
   duration_minutes: number;
 }
@@ -214,9 +215,13 @@ interface DeliveryAddress {
 interface VoucherServiceEntry {
   service_id?: string | null;
   service_data?: ServiceData;
+  service_arrangement_id?: string | null;
+  service_arrangement_data?: any;
   addons?: Addon[];
   extra_time?: number | string | null;
   price_for_extra_time?: string | number | null;
+  base_price?: string | number | null;
+  price?: string | number | null;
 }
 
 interface Voucher {
@@ -555,6 +560,29 @@ function getVoucherTotalDuration(v: Voucher): number {
   const addons = (v.addons ?? []).reduce((s: number, a: any) => s + (num(a.duration_minutes) || num(a.duration)), 0);
   const computed = base + addons + num(v.extra_time);
   return Math.max(computed, num(v.total_duration));
+}
+
+/**
+ * Resolves the service price for a service entry on a voucher.
+ * Handles both legacy single-service and multi-service entries where the price may be
+ * recorded as base_price, price, effective_price, or within service_arrangement_data.
+ */
+function getVoucherServicePrice(sv?: VoucherServiceEntry | null): number {
+  if (!sv) return 0;
+  const sd: any = sv.service_data ?? {};
+  const arr: any = (sv as any).service_arrangement_data ?? {};
+  const val =
+    sd.base_price ??
+    sd.price ??
+    sd.current_price ??
+    sd.effective_price ??
+    arr.effective_price ??
+    arr.price ??
+    (sv as any).base_price ??
+    (sv as any).price ??
+    0;
+  const num = parseFloat(String(val ?? ''));
+  return !isNaN(num) && num > 0 ? num : 0;
 }
 
 function getCategoryConfig(category?: string | null, voucher?: Voucher) {
@@ -1521,9 +1549,16 @@ function VoucherDetailModal({
     'Spa Package';
 
   const packageOrServicePrice = useMemo(() => {
-    const fromSvcEntry = parseFloat(String(voucher.services?.[0]?.service_data?.base_price ?? '')) || 0;
+    const fromSvcEntry = getVoucherServicePrice(voucher.services?.[0]);
     if (fromSvcEntry > 0) return fromSvcEntry;
-    const fromSvcData = parseFloat(String(voucher.service_data?.base_price ?? '')) || 0;
+    const fromSvcData =
+      parseFloat(
+        String(
+          voucher.service_data?.base_price ??
+          voucher.service_data?.price ??
+          ''
+        )
+      ) || 0;
     if (fromSvcData > 0) return fromSvcData;
     const fromPkgDetail = parseFloat(String(fetchedPackageDetail?.base_price ?? '')) || 0;
     if (fromPkgDetail > 0) return fromPkgDetail;
@@ -2412,9 +2447,9 @@ function VoucherDetailModal({
                                 </div>
                                 <p className="font-bold text-sm text-foreground">{sv.service_data?.name || 'Service'}</p>
                               </div>
-                              {sv.service_data?.base_price ? (
+                              {getVoucherServicePrice(sv) > 0 ? (
                                 <span className="text-xs font-bold text-foreground shrink-0">
-                                  {formatAmount(sv.service_data.base_price, sv.service_data?.currency || voucher.currency)}
+                                  {formatAmount(getVoucherServicePrice(sv), sv.service_data?.currency || voucher.currency)}
                                 </span>
                               ) : null}
                             </div>
@@ -2422,6 +2457,18 @@ function VoucherDetailModal({
                               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                                 <Clock className="h-3 w-3 text-primary" />{(sv.service_data as any).duration_minutes} min
                               </span>
+                            )}
+                            {Number(sv.extra_time) > 0 && (
+                              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                                <span className="flex items-center gap-1.5 text-muted-foreground">
+                                  <Timer className="h-3.5 w-3.5 text-amber-500" />
+                                  <span className="font-medium text-foreground">Extra Time:</span>
+                                  <span className="font-semibold text-foreground">+{sv.extra_time} min</span>
+                                </span>
+                                {Number(sv.price_for_extra_time) > 0 && (
+                                  <span className="font-semibold text-foreground">{formatAmount(sv.price_for_extra_time as any, voucher.currency)}</span>
+                                )}
+                              </div>
                             )}
                             {(sv.addons?.length ?? 0) > 0 && (
                               <div className="space-y-1.5 pt-2 border-t border-border/50">
@@ -2436,18 +2483,6 @@ function VoucherDetailModal({
                                     </span>
                                   </div>
                                 ))}
-                              </div>
-                            )}
-                            {Number(sv.extra_time) > 0 && (
-                              <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
-                                <span className="flex items-center gap-1.5 text-muted-foreground">
-                                  <Timer className="h-3.5 w-3.5 text-amber-500" />
-                                  <span className="font-medium text-foreground">Extra Time:</span>
-                                  <span className="font-semibold text-foreground">+{sv.extra_time} min</span>
-                                </span>
-                                {Number(sv.price_for_extra_time) > 0 && (
-                                  <span className="font-semibold text-foreground">{formatAmount(sv.price_for_extra_time as any, voucher.currency)}</span>
-                                )}
                               </div>
                             )}
                           </div>
@@ -2469,9 +2504,9 @@ function VoucherDetailModal({
                               </div>
                               <p className="font-bold text-sm text-foreground">{voucher.service_data?.name || 'Service'}</p>
                             </div>
-                            {(packageOrServicePrice > 0 || voucher.service_data?.base_price || voucher.total_amount) && (
+                            {(packageOrServicePrice > 0 || voucher.service_data?.base_price || voucher.service_data?.price || voucher.total_amount) && (
                               <span className="text-xs font-bold text-foreground shrink-0">
-                                {formatAmount(packageOrServicePrice || voucher.service_data?.base_price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
+                                {formatAmount(packageOrServicePrice || voucher.service_data?.base_price || voucher.service_data?.price || voucher.total_amount, voucher.service_data?.currency || voucher.currency)}
                               </span>
                             )}
                           </div>
@@ -2504,6 +2539,22 @@ function VoucherDetailModal({
                             </div>
                           )}
 
+                          {/* Extra Time */}
+                          {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
+                            <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
+                              <div className="flex items-center gap-1.5 text-muted-foreground">
+                                <Timer className="h-3.5 w-3.5 text-amber-500" />
+                                <span className="font-medium text-foreground">Extra Time:</span>
+                                <span className="font-semibold text-foreground">+{voucher.extra_time} min</span>
+                              </div>
+                              {voucher.price_for_extra_time && Number(voucher.price_for_extra_time) > 0 ? (
+                                <span className="font-semibold text-foreground">
+                                  {formatAmount(voucher.price_for_extra_time, voucher.currency)}
+                                </span>
+                              ) : null}
+                            </div>
+                          )}
+
                           {/* Add-ons */}
                           {voucher.addons && voucher.addons.length > 0 && (
                             <div className="pt-2.5 border-t border-border/50">
@@ -2525,22 +2576,6 @@ function VoucherDetailModal({
                                   </div>
                                 ))}
                               </div>
-                            </div>
-                          )}
-
-                          {/* Extra Time */}
-                          {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
-                            <div className="pt-2 border-t border-border/50 flex items-center justify-between text-xs">
-                              <div className="flex items-center gap-1.5 text-muted-foreground">
-                                <Timer className="h-3.5 w-3.5 text-amber-500" />
-                                <span className="font-medium text-foreground">Extra Time:</span>
-                                <span className="font-semibold text-foreground">+{voucher.extra_time} min</span>
-                              </div>
-                              {voucher.price_for_extra_time && Number(voucher.price_for_extra_time) > 0 ? (
-                                <span className="font-semibold text-foreground">
-                                  {formatAmount(voucher.price_for_extra_time, voucher.currency)}
-                                </span>
-                              ) : null}
                             </div>
                           )}
                         </div>
@@ -3192,20 +3227,20 @@ function VoucherDetailModal({
                       <React.Fragment key={`inv-${si}`}>
                         <div className="flex items-center justify-between text-xs">
                           <span className="font-medium text-foreground">{sv.service_data?.name || `Service ${si + 1}`}</span>
-                          <span className="font-semibold">{formatAmount(sv.service_data?.base_price || 0, voucher.currency)}</span>
+                          <span className="font-semibold">{formatAmount(getVoucherServicePrice(sv), voucher.currency)}</span>
                         </div>
-                        {(sv.addons ?? []).map((a, i) => (
-                          <div key={`inv-${si}-a${i}`} className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>+ Add-on: {a.name}</span>
-                            <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
-                          </div>
-                        ))}
                         {Number(sv.extra_time) > 0 && (
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
                             <span>+ Extra Minutes (+{sv.extra_time}m)</span>
                             <span>+{formatAmount(sv.price_for_extra_time || 0, voucher.currency)}</span>
                           </div>
                         )}
+                        {(sv.addons ?? []).map((a, i) => (
+                          <div key={`inv-${si}-a${i}`} className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>+ Add-on: {a.name}</span>
+                            <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
+                          </div>
+                        ))}
                       </React.Fragment>
                     ))
                   ) : (voucher.service_data?.name || voucher.service_id || physicalItems.length === 0) ? (
@@ -3215,21 +3250,21 @@ function VoucherDetailModal({
                           {voucher.service_data?.name || (isDigital ? (voucher.digital_product_data?.title || 'Digital Gift Item') : (isPhysical ? 'Gift Voucher / Physical Products' : 'Gift Voucher'))}
                         </span>
                         <span className="font-semibold">
-                          {formatAmount(packageOrServicePrice || voucher.service_data?.base_price || voucher.total_amount, voucher.currency)}
+                          {formatAmount(packageOrServicePrice || voucher.service_data?.base_price || voucher.service_data?.price || voucher.total_amount, voucher.currency)}
                         </span>
                       </div>
-                      {voucher.addons && voucher.addons.map((a, i) => (
-                        <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>+ Add-on: {a.name}</span>
-                          <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
-                        </div>
-                      ))}
                       {Boolean(voucher.extra_time && Number(voucher.extra_time) > 0) && (
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <span>+ Extra Minutes (+{voucher.extra_time}m)</span>
                           <span>+{formatAmount(voucher.price_for_extra_time || 0, voucher.currency)}</span>
                         </div>
                       )}
+                      {voucher.addons && voucher.addons.map((a, i) => (
+                        <div key={i} className="flex items-center justify-between text-xs text-muted-foreground">
+                          <span>+ Add-on: {a.name}</span>
+                          <span>+{formatAmount(a.price, a.currency || voucher.currency)}</span>
+                        </div>
+                      ))}
                     </>
                   ) : null}
 
@@ -3842,13 +3877,20 @@ function VoucherDetailModal({
             customerPhone: voucher.sender_data?.phone_number || voucher.sender_details?.phone_number,
             customerEmail: voucher.sender_data?.email || voucher.sender_details?.email,
             serviceName: voucher.service_data?.name || (isPhysical ? 'Gift Voucher / Physical Items' : 'Gift Voucher'),
-            servicePrice: packageOrServicePrice || voucher.service_data?.base_price || voucher.total_amount,
+            servicePrice: packageOrServicePrice || voucher.service_data?.base_price || voucher.service_data?.price || voucher.total_amount,
             isPackage: isPackageVoucher,
             packageName: isPackageVoucher ? packageName : null,
             packagePrice: isPackageVoucher ? packageOrServicePrice : null,
             includedServices: isPackageVoucher ? packageIncludedServices : undefined,
             orderedItems: physicalItems,
             addons: voucher.addons,
+            services: (voucher.services ?? []).map((sv) => ({
+              name: sv.service_data?.name || 'Spa Service',
+              price: getVoucherServicePrice(sv),
+              addons: sv.addons ?? [],
+              extraMinutes: Number(sv.extra_time) > 0 ? Number(sv.extra_time) : 0,
+              extraPrice: sv.price_for_extra_time ? parseFloat(String(sv.price_for_extra_time)) : 0,
+            })),
             extraMinutes: voucher.extra_time,
             extraPrice: voucher.price_for_extra_time ? parseFloat(voucher.price_for_extra_time) : 0,
             totalPrice: voucher.total_amount,

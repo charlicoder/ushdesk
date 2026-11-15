@@ -598,7 +598,15 @@ function getVoucherServices(voucher: AnyRecord): GiftedService[] {
     id: String(e.service_id ?? e.service_data?.id ?? `svc-${i}`),
     name: firstTruthy(e.service_data?.name, e.service_data?.service_name, 'Spa Service'),
     duration: parseInt(String(e.service_data?.duration_minutes ?? 0), 10) || 0,
-    price: e.service_data?.base_price ?? (single ? voucher?.total_amount : undefined),
+    price:
+      e.service_data?.base_price ??
+      e.service_data?.price ??
+      e.service_data?.current_price ??
+      e.service_arrangement_data?.effective_price ??
+      e.service_arrangement_data?.price ??
+      e.base_price ??
+      e.price ??
+      (single ? voucher?.total_amount : undefined),
     addons: mapAddons(e.addons),
     extra: {
       minutes: Number(e.extra_time) > 0 ? Number(e.extra_time) : 0,
@@ -911,7 +919,15 @@ function ServiceSessionBlock({
   // Arrangements of the same type are shown once; their time slots are combined
   const groups = useMemo(() => {
     const m = new Map<string, ApiArrangement[]>();
-    arrangements.forEach((a) => {
+    const sorted = [...arrangements].sort((a, b) => {
+      const orderA = typeof (a as any).sort_order === 'number' ? (a as any).sort_order : 9999;
+      const orderB = typeof (b as any).sort_order === 'number' ? (b as any).sort_order : 9999;
+      if (orderA !== orderB) return orderA - orderB;
+      const nameA = String(a.name || a.arrangement_name || 'Room');
+      const nameB = String(b.name || b.arrangement_name || 'Room');
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    sorted.forEach((a) => {
       const k = arrTypeKey(a);
       m.set(k, [...(m.get(k) ?? []), a]);
     });
@@ -1954,7 +1970,14 @@ export function RedeemVoucherModal({
   const maxSessions = isPackageVoucher ? Math.min(5, giftedList.length) : Math.min(3, giftedList.length);
   const serviceName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
   const originalDuration = parseInt(String(voucher.total_duration ?? voucher.service_data?.duration_minutes ?? 60), 10) || 60;
-  const voucherAmount = parseFloat(String(voucher.total_amount ?? voucher.service_data?.base_price ?? '0')) || 0;
+  const voucherAmount = (() => {
+    const totalAmt = parseFloat(String(voucher.total_amount ?? voucher.package_price ?? '0')) || 0;
+    const componentsSum = pkgInfo?.components ? pkgInfo.components.reduce((sum, c) => sum + (parseFloat(c.base_price) || 0), 0) : 0;
+    const giftedSum = giftedList.reduce((sum, g) => sum + (parseFloat(String(g.price)) || 0), 0);
+    const candidates = [totalAmt, componentsSum, giftedSum].filter((p) => p > 0);
+    if (candidates.length > 0) return Math.max(...candidates);
+    return parseFloat(String(voucher.service_data?.base_price ?? voucher.service_data?.price ?? '0')) || 0;
+  })();
   const currency = firstTruthy(voucher.currency, 'KWD');
 
   // Customer & Notes state (Step 2)
@@ -1987,9 +2010,9 @@ export function RedeemVoucherModal({
     voucher.payment_number,
     voucher.payment_data?.payment_number
   );
-  const resolvedPaymentGateway = firstTruthy(voucher.payment_gateway, voucher.payment_data?.payment_gateway, 'KNET');
-  const resolvedPaymentProvider = firstTruthy(voucher.payment_provider, voucher.payment_data?.payment_provider, 'MyFatoorah');
-  const resolvedPaymentMethod = firstTruthy(voucher.payment_method, voucher.payment_data?.payment_method, 'voucher');
+  const resolvedPaymentGateway = 'gift_voucher';
+  const resolvedPaymentProvider = 'gift_voucher';
+  const resolvedPaymentMethod = 'gift_voucher';
   const resolvedPaymentThrough = firstTruthy(voucher.payment_through, voucher.payment_data?.payment_through, 'ushdesk');
   const resolvedPaymentId = firstTruthy(voucher.payment_id, voucher.payment_data?.payment_id);
 
@@ -2264,13 +2287,19 @@ export function RedeemVoucherModal({
       service_id: firstSess.services[0]?.id || serviceId,
       service_name: firstSess.services[0]?.name || serviceName,
       service_data: firstSess.services[0] || voucher.service_data,
-      services: firstSess.services.map((sv) => ({
+      services: orderedSessions.flatMap((s) => s.services).map((sv) => ({
         service_id: sv.id,
         service_name: sv.name,
         service_category: sv.category ?? '',
         base_price: fmt(sv.base_price),
         base_duration: sv.duration_minutes ?? 60,
         ...(pkgInfo ? { package_id: pkgInfo.id } : {}),
+      })),
+      addons: orderedSessions.flatMap((s) => s.allAddons).map((a) => ({
+        id: a.id,
+        name: a.name,
+        price: fmt(a.price),
+        duration_minutes: a.duration_minutes ?? 0,
       })),
       branch_id: selectedBranchId,
       branch_name: selectedBranchName,
@@ -2307,14 +2336,14 @@ export function RedeemVoucherModal({
       payment_type: 'gift_voucher',
       status: 'confirmed',
       payment_status: 'paid',
-      payment_method: 'voucher',
-      payment_gateway: resolvedPaymentGateway,
-      payment_provider: resolvedPaymentProvider,
+      payment_method: 'gift_voucher',
+      payment_gateway: 'gift_voucher',
+      payment_provider: 'gift_voucher',
       payment_through: resolvedPaymentThrough,
       payment_id: resolvedPaymentId,
       payment_number: resolvedPaymentNumber,
       invoice_number: resolvedInvoiceNumber,
-      total_price: fmt(netPayablePrice),
+      total_price: fmt(isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : netPayablePrice),
       currency,
       total_duration: totalBookingDuration,
       customer_notes: notes,
@@ -2328,9 +2357,9 @@ export function RedeemVoucherModal({
         expire_date: voucher.expire_date,
         invoice_number: resolvedInvoiceNumber,
         payment_number: resolvedPaymentNumber,
-        payment_gateway: resolvedPaymentGateway,
-        payment_provider: resolvedPaymentProvider,
-        payment_method: resolvedPaymentMethod,
+        payment_gateway: 'gift_voucher',
+        payment_provider: 'gift_voucher',
+        payment_method: 'gift_voucher',
         payment_through: resolvedPaymentThrough,
         payment_id: resolvedPaymentId,
         is_package: isPackageVoucher,
@@ -2894,8 +2923,8 @@ export function RedeemVoucherModal({
             subtotal: isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : totalBookingPrice,
             totalAmount: isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : netPayablePrice,
             paymentStatus: 'paid',
-            paymentMethod: `Gift Voucher (${resolvedPaymentProvider || 'Prepaid'})`,
-            paymentProvider: resolvedPaymentProvider || 'Gift Voucher',
+            paymentMethod: 'gift_voucher',
+            paymentProvider: 'gift_voucher',
             isVoucherRedemption: true,
             isVoucherPackage: isPackageVoucher,
             voucherPackageName: pkgInfo?.name || null,

@@ -102,6 +102,9 @@ interface Arrangement {
   id: string;
   arrangement_name: string;
   arrangement_type?: string;
+  name?: string;
+  name_en?: string;
+  sort_order?: number | null;
   image?: string | null;
   arrangement_price?: string | number | null;
   price?: string | number | null;
@@ -217,6 +220,17 @@ interface Props {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+function getArrangementSortOrder(a: unknown): number {
+  if (!a || typeof a !== 'object') return 9999;
+  const raw = a as Record<string, unknown>;
+  const val = raw.sort_order ?? raw.order ?? raw.display_order ?? raw.arrangement_order;
+  if (val !== undefined && val !== null && val !== '') {
+    const num = Number(val);
+    if (!isNaN(num)) return num;
+  }
+  return 9999;
+}
 
 function customerLabel(c: Customer): string {
   if (c.name) return c.name;
@@ -844,8 +858,12 @@ function AddonCheckbox({
   currency: string;
 }) {
   return (
-    <label
-      className="flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all"
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all text-left w-full select-none"
       style={{
         borderColor: checked ? B.espresso : B.lineMuted,
         background: checked ? B.blush : B.cardBg,
@@ -859,19 +877,13 @@ function AddonCheckbox({
         }}
       >
         {checked && <Check className="h-2.5 w-2.5 text-white" />}
-        <input
-          type="checkbox"
-          className="sr-only"
-          checked={checked}
-          onChange={(e) => onChange(e.target.checked)}
-        />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-xs font-bold leading-tight" style={{ color: B.textMain }}>
           {addon.name}
         </p>
         {addon.description && (
-          <p className="text-[10px] mt-0.5 leading-snug" style={{ color: B.textMuted }}>
+          <p className="text-[10px] mt-0.5 leading-snug line-clamp-3" style={{ color: B.textMuted }}>
             {addon.description}
           </p>
         )}
@@ -887,7 +899,7 @@ function AddonCheckbox({
           </span>
         </div>
       </div>
-    </label>
+    </button>
   );
 }
 
@@ -1200,7 +1212,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         if (detail.branches && detail.branches.length > 0) {
           const firstB = detail.branches[0];
           setSelectedBranch(firstB);
-          const arrs = firstB.service_arrangements ?? detail.service_arrangements ?? [];
+          const rawArrs = firstB.service_arrangements ?? detail.service_arrangements ?? [];
+          const arrs = [...rawArrs].sort((a, b) => getArrangementSortOrder(a) - getArrangementSortOrder(b));
           if (arrs.length > 0) {
             setSelectedArrangt(arrs[0]);
           }
@@ -1487,15 +1500,47 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     return result;
   }, [selectedBranch, fullDetail, extraServices, extraDetails]);
 
-  // Rooms of the same arrangement type are offered as a single choice
+  // Rooms of the same arrangement type are offered as a single choice, sorted in order
   const arrangementGroups = useMemo(() => {
     const m = new Map<string, Arrangement[]>();
-    arrangements.forEach((a) => {
+    // Sort individual arrangements first by sort_order (if present) then natural alphanumeric order
+    const sortedArrs = [...arrangements].sort((a, b) => {
+      const orderA = getArrangementSortOrder(a);
+      const orderB = getArrangementSortOrder(b);
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      const rawA = a as unknown as Record<string, unknown>;
+      const rawB = b as unknown as Record<string, unknown>;
+      const nameA = String(a.arrangement_name ?? rawA.name ?? rawA.title ?? 'Room');
+      const nameB = String(b.arrangement_name ?? rawB.name ?? rawB.title ?? 'Room');
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+
+    sortedArrs.forEach((a) => {
       const raw = a as unknown as Record<string, unknown>;
       const k = String(a.arrangement_type ?? raw.type ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_') || `id:${a.id}`;
       m.set(k, [...(m.get(k) ?? []), a]);
     });
-    return Array.from(m.entries()).map(([key, list]) => ({ key, list }));
+
+    return Array.from(m.entries())
+      .map(([key, list]) => ({ key, list }))
+      .sort((gA, gB) => {
+        const orderA = Math.min(...gA.list.map(getArrangementSortOrder));
+        const orderB = Math.min(...gB.list.map(getArrangementSortOrder));
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+        const rawA0 = gA.list[0] as unknown as Record<string, unknown>;
+        const rawB0 = gB.list[0] as unknown as Record<string, unknown>;
+        const nameA = gA.list.length > 1
+          ? (gA.key.startsWith('id:') ? (gA.list[0].arrangement_name ?? '') : gA.key.replace(/_/g, ' '))
+          : String(gA.list[0].arrangement_name ?? rawA0.name ?? 'Room');
+        const nameB = gB.list.length > 1
+          ? (gB.key.startsWith('id:') ? (gB.list[0].arrangement_name ?? '') : gB.key.replace(/_/g, ' '))
+          : String(gB.list[0].arrangement_name ?? rawB0.name ?? 'Room');
+        return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+      });
   }, [arrangements]);
 
   const addons: AddonItem[] = isPackagedService ? [] : (selectedArrangt?.addons ?? []);
@@ -1879,6 +1924,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
         {/* Modal shell */}
         <div
+          onScroll={(e) => {
+            if (e.currentTarget.scrollTop !== 0) {
+              e.currentTarget.scrollTop = 0;
+            }
+          }}
           className="relative z-10 flex flex-col w-full max-w-2xl rounded-3xl overflow-hidden shadow-2xl transition-all duration-200"
           style={{
             height: 'min(92vh, 820px)',
@@ -1917,7 +1967,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
           {/* ── Scrollable body ── */}
           <div
-            className="flex-1 overflow-y-auto px-6 py-5 space-y-6"
+            className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-6"
             style={{ background: B.bg, scrollbarWidth: 'thin', scrollbarColor: `${B.linen} transparent` }}
           >
             {/* ══ STEP 1: CHOOSE GIFT CATEGORY (Requirement 1.i) ══ */}
@@ -2276,26 +2326,121 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   </div>
                 )}
 
-                {/* Add-ons */}
-                {!isPackagedService && selectedArrangt && addons.length > 0 && (
-                  <div>
-                    <SectionLabel icon={Package} label="Add-ons (optional)" />
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {addons.map((addon) => (
-                        <AddonCheckbox
-                          key={addon.id}
-                          addon={addon}
-                          checked={selectedAddons.some((a) => a.id === addon.id)}
-                          onChange={(checked) => toggleAddon(addon, checked)}
-                          currency={currency}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Extra time for Services */}
+                {selectedArrangt && extraBreakdown.length > 0 ? (
+                  <div className="space-y-4">
+                    <SectionLabel icon={Timer} label="Services & Extra Time" />
 
-                {/* Extra time */}
-                {selectedArrangt && hasExtraTime && (
+                    {/* Primary Service (1) */}
+                    <div
+                      className="rounded-2xl border p-4 space-y-3"
+                      style={{ borderColor: B.linen, background: B.cardBg }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-extrabold" style={{ color: B.textMain }}>
+                          1. {selectedService?.name || 'Primary Service'}
+                        </p>
+                        <span className="text-xs font-bold" style={{ color: B.espresso }}>
+                          {fmtPrice(arrangPrice || basePrice, currency)} • {baseDuration || 60} min
+                        </span>
+                      </div>
+                      {hasExtraTime ? (
+                        <div>
+                          <div className="flex items-center gap-2 mb-2">
+                            <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                              Extra time
+                            </span>
+                            <span className="text-[11px] text-muted-foreground/75">
+                              ({svcExtraPrice.toFixed(3)} {currency} / {svcExtraMinutes} min)
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            {[0, 30, 60].map((mins) => {
+                              const active = extraTime === mins;
+                              return (
+                                <button
+                                  key={mins}
+                                  type="button"
+                                  onClick={() => setExtraTime(mins)}
+                                  className={cn(
+                                    'rounded-2xl border py-2.5 px-3 text-center text-sm font-extrabold transition cursor-pointer',
+                                    active
+                                      ? 'border-[#7C3AED] bg-[#F5F3FF] text-[#7C3AED] ring-1 ring-[#7C3AED]/25'
+                                      : 'border-border/80 bg-card hover:bg-muted/30 text-foreground'
+                                  )}
+                                >
+                                  {mins === 0 ? 'None' : `+${mins} min`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">No extra time options available for this service</p>
+                      )}
+                    </div>
+
+                    {/* Additional Services (2, 3, ...) */}
+                    {extraBreakdown.map((e, idx) => {
+                      const sel = extraSel[e.svc.id] ?? { addons: [], extraTime: 0 };
+                      return (
+                        <div
+                          key={e.svc.id}
+                          className="rounded-2xl border p-4 space-y-3"
+                          style={{ borderColor: B.linen, background: B.cardBg }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-extrabold" style={{ color: B.textMain }}>
+                              {idx + 2}. {e.svc.name}
+                            </p>
+                            <span className="text-xs font-bold" style={{ color: B.espresso }}>
+                              {fmtPrice(e.total, currency)} • {e.duration} min
+                            </span>
+                          </div>
+                          {e.rates.has && (
+                            <div>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                                  Extra time
+                                </span>
+                                <span className="text-[11px] text-muted-foreground/75">
+                                  ({e.rates.price.toFixed(3)} {currency} / {e.rates.mins} min)
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-3">
+                                {[0, 30, 60].map((mins) => {
+                                  const active = sel.extraTime === mins;
+                                  return (
+                                    <button
+                                      key={mins}
+                                      type="button"
+                                      onClick={() =>
+                                        setExtraSel((m) => ({
+                                          ...m,
+                                          [e.svc.id]: { ...(m[e.svc.id] ?? { addons: [], extraTime: 0 }), extraTime: mins },
+                                        }))
+                                      }
+                                      className={cn(
+                                        'rounded-2xl border py-2.5 px-3 text-center text-sm font-extrabold transition cursor-pointer',
+                                        active
+                                          ? 'border-[#7C3AED] bg-[#F5F3FF] text-[#7C3AED] ring-1 ring-[#7C3AED]/25'
+                                          : 'border-border/80 bg-card hover:bg-muted/30 text-foreground'
+                                      )}
+                                    >
+                                      {mins === 0 ? 'None' : `+${mins} min`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : selectedArrangt && hasExtraTime ? (
                   <div>
                     <div className="flex items-center gap-2 mb-2.5">
                       <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
@@ -2356,68 +2501,23 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       })}
                     </div>
                   </div>
-                )}
+                ) : null}
 
-                {/* Additional services: each with its own extra time (no add-ons) */}
-                {selectedArrangt && extraBreakdown.length > 0 && (
-                  <div className="space-y-4">
-                    {extraBreakdown.map((e, idx) => {
-                      const sel = extraSel[e.svc.id] ?? { addons: [], extraTime: 0 };
-                      return (
-                        <div
-                          key={e.svc.id}
-                          className="rounded-2xl border p-4 space-y-3"
-                          style={{ borderColor: B.linen, background: B.cardBg }}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="text-sm font-extrabold" style={{ color: B.textMain }}>
-                              {idx + 2}. {e.svc.name}
-                            </p>
-                            <span className="text-xs font-bold" style={{ color: B.espresso }}>
-                              {fmtPrice(e.total, currency)} • {e.duration} min
-                            </span>
-                          </div>
-                          {e.rates.has && (
-                            <div>
-                              <div className="flex items-center gap-2 mb-2">
-                                <Timer className="h-4 w-4 text-muted-foreground/80 shrink-0" />
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                                  Extra time
-                                </span>
-                                <span className="text-[11px] text-muted-foreground/75">
-                                  ({e.rates.price.toFixed(3)} {currency} / {e.rates.mins} min)
-                                </span>
-                              </div>
-                              <div className="grid grid-cols-3 gap-3">
-                                {[0, 30, 60].map((mins) => {
-                                  const active = sel.extraTime === mins;
-                                  return (
-                                    <button
-                                      key={mins}
-                                      type="button"
-                                      onClick={() =>
-                                        setExtraSel((m) => ({
-                                          ...m,
-                                          [e.svc.id]: { ...(m[e.svc.id] ?? { addons: [], extraTime: 0 }), extraTime: mins },
-                                        }))
-                                      }
-                                      className={cn(
-                                        'rounded-2xl border py-2.5 px-3 text-center text-sm font-extrabold transition cursor-pointer',
-                                        active
-                                          ? 'border-[#7C3AED] bg-[#F5F3FF] text-[#7C3AED] ring-1 ring-[#7C3AED]/25'
-                                          : 'border-border/80 bg-card hover:bg-muted/30 text-foreground'
-                                      )}
-                                    >
-                                      {mins === 0 ? 'None' : `+${mins} min`}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
+                {/* Add-ons (optional) — shown at the last of each services extra time */}
+                {!isPackagedService && selectedArrangt && addons.length > 0 && (
+                  <div>
+                    <SectionLabel icon={Package} label="Add-ons (optional)" />
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {addons.map((addon) => (
+                        <AddonCheckbox
+                          key={addon.id}
+                          addon={addon}
+                          checked={selectedAddons.some((a) => a.id === addon.id)}
+                          onChange={(checked) => toggleAddon(addon, checked)}
+                          currency={currency}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>

@@ -43,6 +43,13 @@ export interface InvoiceDetailModalProps {
     packageName?: string | null;
     packagePrice?: string | number | null;
     includedServices?: Array<{ id?: string; name: string; duration_minutes?: number }>;
+    services?: Array<{
+      name: string;
+      price: number;
+      addons?: Array<AnyRecord>;
+      extraMinutes?: number;
+      extraPrice?: string | number;
+    }>;
     orderedItems?: Array<{
       product_id?: string;
       name?: string;
@@ -282,8 +289,16 @@ export function InvoiceDetailModal({
     (Array.isArray(invoice?.lines) && invoice?.lines) ||
     null;
 
+  const hasMultipleServices = Boolean(
+    !bookingData?.isPackage &&
+    Array.isArray(bookingData?.services) &&
+    bookingData!.services!.length > 1
+  );
+
   const hasCustomVoucherBreakdown = Boolean(
-    bookingData?.isPackage || (Array.isArray(bookingData?.orderedItems) && bookingData!.orderedItems!.length > 0)
+    bookingData?.isPackage ||
+    hasMultipleServices ||
+    (Array.isArray(bookingData?.orderedItems) && bookingData!.orderedItems!.length > 0)
   );
 
   const invoiceLines = hasCustomVoucherBreakdown
@@ -299,6 +314,34 @@ export function InvoiceDetailModal({
                 includedServices: bookingData.includedServices ?? [],
               },
             ]
+          : hasMultipleServices
+          ? bookingData!.services!.flatMap((s) => [
+              {
+                name: s.name,
+                description: '',
+                quantity: 1,
+                price_unit: s.price,
+                price_subtotal: s.price,
+              },
+              ...(s.addons ?? []).map((addon) => ({
+                name: addon.name || addon.addon_name || 'Add-on Treatment',
+                description: 'Appointment Enhancement',
+                quantity: 1,
+                price_unit: parseFloat(String(addon.price ?? addon.base_price ?? 0)) || 0,
+                price_subtotal: parseFloat(String(addon.price ?? addon.base_price ?? 0)) || 0,
+              })),
+              ...(Number(s.extraMinutes ?? 0) > 0
+                ? [
+                    {
+                      name: `Extra Session Time (+${s.extraMinutes} min)`,
+                      description: 'Extended appointment duration',
+                      quantity: 1,
+                      price_unit: parseFloat(String(s.extraPrice ?? 0)) || 0,
+                      price_subtotal: parseFloat(String(s.extraPrice ?? 0)) || 0,
+                    },
+                  ]
+                : []),
+            ])
           : bookingData?.serviceName
           ? [
               {
