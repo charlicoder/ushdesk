@@ -116,7 +116,7 @@ export function invalidateVoucherCaches(): void {
 
 function filterParams(f: VoucherListFilters): URLSearchParams {
   const p = new URLSearchParams();
-  if (f.statuses.length > 0 && f.statuses.length < 6) p.set('statuses', f.statuses.join(','));
+  if (f.statuses.length > 0 && f.statuses.length < 7) p.set('statuses', f.statuses.join(','));
   if (f.channel && f.channel !== 'all') p.set('channel', f.channel);
   if (f.createdBy && f.createdBy !== 'all') p.set('created_by', f.createdBy);
   if (f.q.trim()) p.set('q', f.q.trim());

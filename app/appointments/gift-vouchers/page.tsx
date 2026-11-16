@@ -6264,7 +6264,7 @@ export default function GiftVouchersPage() {
           { label: 'Total Vouchers',  value: stats.total,                                      sub: (dateFilter !== 'all' || activatedDateFilter !== 'all' || redeemedDateFilter !== 'all' || statusFilters.length > 0 || channelFilter !== 'all' || searchQuery.trim()) ? `${stats.total} filtered` : 'all time', grad: 'from-primary to-accent',         bg: 'bg-primary/5 dark:bg-primary/10',       border: 'border-primary/20' },
           { label: 'Active',          value: stats.active,                                     sub: 'ready to redeem',        grad: 'from-emerald-500 to-teal-500',    bg: 'bg-emerald-50 dark:bg-emerald-950/30',  border: 'border-emerald-200/80 dark:border-emerald-800/40' },
           { label: 'Redeemed',        value: stats.redeemed,                                   sub: 'used vouchers',          grad: 'from-blue-500 to-sky-500',        bg: 'bg-blue-50 dark:bg-blue-950/30',        border: 'border-blue-200/80 dark:border-blue-800/40' },
-          { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active & redeemed',     grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
+          { label: 'Total Revenue',   value: `${stats.revenue.toFixed(3)} ${stats.currency}`,         sub: 'active, scheduled & redeemed', grad: 'from-amber-500 to-orange-500',    bg: 'bg-amber-50 dark:bg-amber-950/30',      border: 'border-amber-200/80 dark:border-amber-800/40' },
           { label: 'Pending Revenue', value: `${stats.pendingRevenue.toFixed(3)} ${stats.currency}`, sub: 'awaiting confirmation', grad: 'from-violet-500 to-purple-500',   bg: 'bg-violet-50 dark:bg-violet-950/30',    border: 'border-violet-200/80 dark:border-violet-800/40' },
         ].map(k => (
           <div key={k.label} className={cn('relative overflow-hidden rounded-2xl border p-4 shadow-sm transition hover:shadow-md hover:-translate-y-0.5', k.bg, k.border)}>
@@ -6421,7 +6421,7 @@ export default function GiftVouchersPage() {
             setPage(1);
           }}
         />
-        {statusFilters.length > 0 && statusFilters.length < 6 && (
+        {statusFilters.length > 0 && statusFilters.length < 7 && (
           <div className="flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary animate-in fade-in">
             <span>Status: {statusFilters.join(', ')}</span>
             <button
@@ -6505,10 +6505,11 @@ export default function GiftVouchersPage() {
         </div>
       )}
 
-      {/* ── Table ── */}
+      {/* ── Table (Responsive: Desktop / Tab-iPad / Mobile) ── */}
       {!error && vouchers.length > 0 && (
         <div className="rounded-2xl border border-border/80 bg-card shadow-sm overflow-hidden">
-          <div className={cn('overflow-x-auto min-h-[300px] pb-32 transition-opacity', loading && 'opacity-60')}>
+          {/* ── 1. Desktop View (hidden xl:block): voucher code/number in one column, creation date, activation date, expire date, sender name, recipient name, Payment Through, amount, status ── */}
+          <div className={cn('hidden xl:block overflow-x-auto min-h-[300px] pb-32 transition-opacity', loading && 'opacity-60')}>
             <table className="w-full min-w-full border-collapse text-sm">
               <thead>
                 <tr className="border-b border-border/60 bg-muted/30">
@@ -6525,8 +6526,8 @@ export default function GiftVouchersPage() {
                     />
                   </th>
                   {[
-                    'Voucher Code', 'Sender → Recipient', 'Service',
-                    'Price & Duration', 'Payment Through', 'Expires', 'Status',
+                    'Voucher Code / Number', 'Creation Date', 'Activation Date', 'Expire Date',
+                    'Sender Name', 'Recipient Name', 'Payment Through', 'Amount', 'Status',
                   ].map(col => (
                     <th
                       key={col}
@@ -6551,6 +6552,377 @@ export default function GiftVouchersPage() {
                     v.status?.toLowerCase() === 'created' ||
                     v.status?.toLowerCase().includes('pending');
                   const canShare = !isRedeemed && !isPending;
+                  const activationDate = v.activation_datetime || (v as any).activated_at || (v as any).activation_date;
+
+                  return (
+                    <tr
+                      key={v.id}
+                      className={cn('transition hover:bg-muted/20', selectedIds.has(v.id) && 'bg-primary/5 hover:bg-primary/10')}
+                    >
+                      {/* Selection Checkbox */}
+                      <td className="w-10 px-3 py-3 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(v.id)}
+                          onChange={(e) => handleToggleSelect(v.id, e)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                        />
+                      </td>
+
+                      {/* Voucher Code / Number */}
+                      <td
+                        onClick={() => handleOpenVoucher(v)}
+                        onMouseEnter={() => { void fetchVoucherFull<Voucher>(v.id).catch(() => undefined); }}
+                        className={cn('px-4 py-3 align-top whitespace-nowrap cursor-pointer group hover:bg-muted/30 transition-colors', openingId === v.id && 'opacity-50 pointer-events-none')}
+                        title="View voucher details"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="inline-flex items-center gap-1.5 font-bold text-foreground group-hover:text-primary font-mono text-[12px] transition-colors">
+                            <Eye className="h-3.5 w-3.5 text-primary group-hover:scale-110 transition-transform shrink-0" />
+                            <span className="group-hover:underline underline-offset-2">
+                              {v.secret_code || v.voucher_number || '—'}
+                            </span>
+                          </div>
+                          {canShare && (
+                            <VoucherShareDropdown
+                              voucher={v}
+                              iconOnly
+                              onSelectChannel={(voucher, channel) => {
+                                setShareChannel(channel);
+                                setShareVoucher(voucher);
+                              }}
+                              onCopyUrl={handleCopyPublicUrl}
+                            />
+                          )}
+                        </div>
+                        {canViewVoucherNumber && Boolean(v.voucher_number) && v.voucher_number !== v.secret_code && (
+                          <p className="text-[11px] font-mono font-semibold text-primary/80 mt-0.5 tracking-tight" title="Voucher Number">
+                            {v.voucher_number}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Creation Date */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <p className="text-[12px] font-medium tabular-nums text-foreground">
+                          {v.created_at ? formatDateTime(v.created_at) : '—'}
+                        </p>
+                      </td>
+
+                      {/* Activation Date */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <p className="text-[12px] font-medium tabular-nums text-foreground">
+                          {activationDate ? formatDateTime(activationDate) : '—'}
+                        </p>
+                      </td>
+
+                      {/* Expire Date */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        {v.status?.toLowerCase() === 'scheduled' && v.scheduled_delivery_at ? (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Deliver At
+                            </span>
+                            <p className="text-[12px] font-bold text-sky-700 dark:text-sky-300 tabular-nums">
+                              {new Date(v.scheduled_delivery_at).toLocaleString('en-GB', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                                timeZone: 'Asia/Kuwait',
+                              })}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
+                            {fmtDate(v.expire_date)}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Sender Name */}
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary font-bold text-[10px] shrink-0">
+                            {initials(senderName)}
+                          </div>
+                          <p className="font-semibold text-foreground text-xs truncate max-w-[130px]">{senderName || '—'}</p>
+                        </div>
+                      </td>
+
+                      {/* Recipient Name */}
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-1.5">
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-violet-500/10 text-violet-600 font-bold text-[10px] shrink-0">
+                            {initials(recipientName)}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-foreground text-xs truncate max-w-[130px]">{recipientName || '—'}</p>
+                            {recipientPhone && (
+                              <p className="text-[11px] text-muted-foreground">{recipientPhone}</p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+
+                      {/* Payment Through */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        {(() => {
+                          const ptCfg = getPaymentThroughConfig(v.payment_through);
+                          if (!ptCfg) {
+                            return <span className="text-muted-foreground text-xs font-medium">—</span>;
+                          }
+                          return (
+                            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap border', ptCfg.badgeClass)}>
+                              <span className={cn('h-1.5 w-1.5 rounded-full', ptCfg.dotClass)} />
+                              {ptCfg.label}
+                            </span>
+                          );
+                        })()}
+                      </td>
+
+                      {/* Amount */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <p className="text-[13px] font-extrabold text-primary tabular-nums leading-snug">
+                          {fmtMoney(v.total_amount, v.currency)}
+                        </p>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap', cfg.pill)}>
+                          <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
+                          {cfg.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="h-28 pointer-events-none" aria-hidden="true" />
+          </div>
+
+          {/* ── 2. Tab/iPad View (hidden md:block xl:hidden): existing page with Payment Through removed & activation date in voucher code column ── */}
+          <div className={cn('hidden md:block xl:hidden overflow-x-auto min-h-[300px] pb-32 transition-opacity', loading && 'opacity-60')}>
+            <table className="w-full min-w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border/60 bg-muted/30">
+                  <th className="w-10 px-3 py-3 text-center align-middle first:rounded-tl-2xl">
+                    <input
+                      type="checkbox"
+                      checked={isAllPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = isSomePageSelected;
+                      }}
+                      onChange={handleToggleSelectAllPage}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                      title="Select all on page"
+                    />
+                  </th>
+                  {[
+                    'Voucher Code', 'Sender → Recipient', 'Service',
+                    'Price & Duration', 'Expires', 'Status',
+                  ].map(col => (
+                    <th
+                      key={col}
+                      className="whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground last:rounded-tr-2xl text-left"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {paginatedVouchers.map(v => {
+                  const cfg = statusCfg(v.status);
+                  const expired = v.expire_date && new Date(v.expire_date) < new Date();
+                  const senderName = v.sender_data?.name || v.sender_details?.name;
+                  const recipientName = v.recipient_data?.name || v.recipient_details?.name;
+                  const recipientPhone = v.recipient_phone || v.recipient_data?.phone_number || v.recipient_details?.phone_number;
+                  const isRedeemed = v.status?.toLowerCase() !== 'partially_redeemed' && (v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at));
+                  const isPending =
+                    v.status?.toLowerCase() === 'pending' ||
+                    v.status?.toLowerCase() === 'payment_pending' ||
+                    v.status?.toLowerCase() === 'created' ||
+                    v.status?.toLowerCase().includes('pending');
+                  const canShare = !isRedeemed && !isPending;
+                  const activationDate = v.activation_datetime || (v as any).activated_at || (v as any).activation_date;
+
+                  return (
+                    <tr
+                      key={v.id}
+                      className={cn('transition hover:bg-muted/20', selectedIds.has(v.id) && 'bg-primary/5 hover:bg-primary/10')}
+                    >
+                      {/* Selection Checkbox */}
+                      <td className="w-10 px-3 py-3 text-center align-middle" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(v.id)}
+                          onChange={(e) => handleToggleSelect(v.id, e)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                        />
+                      </td>
+
+                      {/* Voucher Code (with activation date in place of creation date) */}
+                      <td
+                        onClick={() => handleOpenVoucher(v)}
+                        onMouseEnter={() => { void fetchVoucherFull<Voucher>(v.id).catch(() => undefined); }}
+                        className={cn('px-4 py-3 align-top whitespace-nowrap cursor-pointer group hover:bg-muted/30 transition-colors', openingId === v.id && 'opacity-50 pointer-events-none')}
+                        title="View voucher details"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="inline-flex items-center gap-1.5 font-bold text-foreground group-hover:text-primary font-mono text-[12px] transition-colors">
+                            <Eye className="h-3.5 w-3.5 text-primary group-hover:scale-110 transition-transform shrink-0" />
+                            <span className="group-hover:underline underline-offset-2">
+                              {v.secret_code || v.voucher_number || '—'}
+                            </span>
+                          </div>
+                          {canShare && (
+                            <VoucherShareDropdown
+                              voucher={v}
+                              iconOnly
+                              onSelectChannel={(voucher, channel) => {
+                                setShareChannel(channel);
+                                setShareVoucher(voucher);
+                              }}
+                              onCopyUrl={handleCopyPublicUrl}
+                            />
+                          )}
+                        </div>
+                        {canViewVoucherNumber && Boolean(v.voucher_number) && v.voucher_number !== v.secret_code && (
+                          <p className="text-[11px] font-mono font-semibold text-primary/80 mt-0.5 tracking-tight" title="Voucher Number">
+                            {v.voucher_number}
+                          </p>
+                        )}
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          {activationDate ? formatDateTime(activationDate) : '—'}
+                        </p>
+                      </td>
+
+                      {/* Sender → Recipient */}
+                      <td className="px-4 py-3 align-top">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary font-bold text-[10px] shrink-0">
+                            {initials(senderName)}
+                          </div>
+                          <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{senderName || '—'}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <ArrowRight className="h-3 w-3 text-muted-foreground ml-0.5" />
+                          <div className="grid h-6 w-6 place-items-center rounded-full bg-violet-500/10 text-violet-600 font-bold text-[10px] shrink-0">
+                            {initials(recipientName)}
+                          </div>
+                          <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{recipientName || '—'}</p>
+                        </div>
+                        {recipientPhone && (
+                          <p className="text-[11px] text-muted-foreground ml-7">{recipientPhone}</p>
+                        )}
+                      </td>
+
+                      {/* Service */}
+                      <td className="px-4 py-3 align-top min-w-[150px]">
+                        <p className="font-semibold text-[13px] line-clamp-2 leading-snug">
+                          {(v.services?.length ?? 0) > 1
+                            ? v.services!.map((sv) => sv.service_data?.name).filter(Boolean).join(' + ')
+                            : (v.service_data?.name ?? '—')}
+                        </p>
+                        {v.service_data?.service_types?.[0]?.name && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5">{v.service_data.service_types[0].name}</p>
+                        )}
+                      </td>
+
+                      {/* Price & Duration */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <p className="text-[13px] font-extrabold text-primary tabular-nums leading-snug">
+                          {fmtMoney(v.total_amount, v.currency)}
+                        </p>
+                        <div className="flex items-center gap-1 mt-0.5 text-[11px] font-semibold text-muted-foreground">
+                          <Timer className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <span>{getVoucherTotalDuration(v)} min</span>
+                        </div>
+                      </td>
+
+                      {/* Expires */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        {v.status?.toLowerCase() === 'scheduled' && v.scheduled_delivery_at ? (
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1">
+                              <Calendar className="h-3 w-3" /> Deliver At
+                            </span>
+                            <p className="text-[12px] font-bold text-sky-700 dark:text-sky-300 tabular-nums">
+                              {new Date(v.scheduled_delivery_at).toLocaleString('en-GB', {
+                                dateStyle: 'short',
+                                timeStyle: 'short',
+                                timeZone: 'Asia/Kuwait',
+                              })}
+                            </p>
+                          </div>
+                        ) : (
+                          <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
+                            {fmtDate(v.expire_date)}
+                          </p>
+                        )}
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap', cfg.pill)}>
+                          <span className={cn('h-1.5 w-1.5 rounded-full', cfg.dot)} />
+                          {cfg.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="h-28 pointer-events-none" aria-hidden="true" />
+          </div>
+
+          {/* ── 3. Mobile View (block md:hidden): voucher code, activation date, expire date, sender name, recipient name, amount, status only ── */}
+          <div className={cn('block md:hidden overflow-x-auto min-h-[300px] pb-32 transition-opacity', loading && 'opacity-60')}>
+            <table className="w-full min-w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border/60 bg-muted/30">
+                  <th className="w-10 px-3 py-3 text-center align-middle first:rounded-tl-2xl">
+                    <input
+                      type="checkbox"
+                      checked={isAllPageSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = isSomePageSelected;
+                      }}
+                      onChange={handleToggleSelectAllPage}
+                      className="h-4 w-4 rounded border-border text-primary focus:ring-primary/20 cursor-pointer"
+                      title="Select all on page"
+                    />
+                  </th>
+                  {[
+                    'Voucher Code', 'Activation Date', 'Expire Date',
+                    'Sender Name', 'Recipient Name', 'Amount', 'Status',
+                  ].map(col => (
+                    <th
+                      key={col}
+                      className="whitespace-nowrap py-3 pl-4 pr-5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground last:rounded-tr-2xl text-left"
+                    >
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40">
+                {paginatedVouchers.map(v => {
+                  const cfg = statusCfg(v.status);
+                  const expired = v.expire_date && new Date(v.expire_date) < new Date();
+                  const senderName = v.sender_data?.name || v.sender_details?.name;
+                  const recipientName = v.recipient_data?.name || v.recipient_details?.name;
+                  const recipientPhone = v.recipient_phone || v.recipient_data?.phone_number || v.recipient_details?.phone_number;
+                  const isRedeemed = v.status?.toLowerCase() !== 'partially_redeemed' && (v.status?.toLowerCase() === 'redeemed' || Boolean(v.redeemed_at));
+                  const isPending =
+                    v.status?.toLowerCase() === 'pending' ||
+                    v.status?.toLowerCase() === 'payment_pending' ||
+                    v.status?.toLowerCase() === 'created' ||
+                    v.status?.toLowerCase().includes('pending');
+                  const canShare = !isRedeemed && !isPending;
+                  const activationDate = v.activation_datetime || (v as any).activated_at || (v as any).activation_date;
 
                   return (
                     <tr
@@ -6598,88 +6970,52 @@ export default function GiftVouchersPage() {
                             {v.voucher_number}
                           </p>
                         )}
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{formatDateTime(v.created_at)}</p>
                       </td>
 
-                      {/* Sender → Recipient */}
+                      {/* Activation Date */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <p className="text-[12px] font-medium tabular-nums text-foreground">
+                          {activationDate ? fmtDate(activationDate) : '—'}
+                        </p>
+                      </td>
+
+                      {/* Expire Date */}
+                      <td className="px-4 py-3 align-top whitespace-nowrap">
+                        <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
+                          {fmtDate(v.expire_date)}
+                        </p>
+                      </td>
+
+                      {/* Sender Name */}
                       <td className="px-4 py-3 align-top">
-                        <div className="flex items-center gap-1.5 mb-1">
+                        <div className="flex items-center gap-1.5">
                           <div className="grid h-6 w-6 place-items-center rounded-full bg-primary/10 text-primary font-bold text-[10px] shrink-0">
                             {initials(senderName)}
                           </div>
                           <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{senderName || '—'}</p>
                         </div>
+                      </td>
+
+                      {/* Recipient Name */}
+                      <td className="px-4 py-3 align-top">
                         <div className="flex items-center gap-1.5">
-                          <ArrowRight className="h-3 w-3 text-muted-foreground ml-0.5" />
                           <div className="grid h-6 w-6 place-items-center rounded-full bg-violet-500/10 text-violet-600 font-bold text-[10px] shrink-0">
                             {initials(recipientName)}
                           </div>
-                          <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{recipientName || '—'}</p>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-foreground text-xs truncate max-w-[120px]">{recipientName || '—'}</p>
+                            {recipientPhone && (
+                              <p className="text-[11px] text-muted-foreground">{recipientPhone}</p>
+                            )}
+                          </div>
                         </div>
-                        {recipientPhone && (
-                          <p className="text-[11px] text-muted-foreground ml-7">{recipientPhone}</p>
-                        )}
                       </td>
 
-                      {/* Service */}
-                      <td className="px-4 py-3 align-top min-w-[150px]">
-                        <p className="font-semibold text-[13px] line-clamp-2 leading-snug">
-                          {(v.services?.length ?? 0) > 1
-                            ? v.services!.map((sv) => sv.service_data?.name).filter(Boolean).join(' + ')
-                            : (v.service_data?.name ?? '—')}
-                        </p>
-                        {v.service_data?.service_types?.[0]?.name && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5">{v.service_data.service_types[0].name}</p>
-                        )}
-                      </td>
-
-                      {/* Price & Duration */}
+                      {/* Amount */}
                       <td className="px-4 py-3 align-top whitespace-nowrap">
                         <p className="text-[13px] font-extrabold text-primary tabular-nums leading-snug">
                           {fmtMoney(v.total_amount, v.currency)}
                         </p>
-                        <div className="flex items-center gap-1 mt-0.5 text-[11px] font-semibold text-muted-foreground">
-                          <Timer className="h-3 w-3 text-muted-foreground shrink-0" />
-                          <span>{getVoucherTotalDuration(v)} min</span>
-                        </div>
-                      </td>
-
-                      {/* Payment Through */}
-                      <td className="px-4 py-3 align-top whitespace-nowrap">
-                        {(() => {
-                          const ptCfg = getPaymentThroughConfig(v.payment_through);
-                          if (!ptCfg) {
-                            return <span className="text-muted-foreground text-xs font-medium">—</span>;
-                          }
-                          return (
-                            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold whitespace-nowrap border', ptCfg.badgeClass)}>
-                              <span className={cn('h-1.5 w-1.5 rounded-full', ptCfg.dotClass)} />
-                              {ptCfg.label}
-                            </span>
-                          );
-                        })()}
-                      </td>
-
-                      {/* Expires */}
-                      <td className="px-4 py-3 align-top whitespace-nowrap">
-                        {v.status?.toLowerCase() === 'scheduled' && v.scheduled_delivery_at ? (
-                          <div>
-                            <span className="text-[10px] uppercase font-bold text-sky-600 dark:text-sky-400 flex items-center gap-1">
-                              <Calendar className="h-3 w-3" /> Deliver At
-                            </span>
-                            <p className="text-[12px] font-bold text-sky-700 dark:text-sky-300 tabular-nums">
-                              {new Date(v.scheduled_delivery_at).toLocaleString('en-GB', {
-                                dateStyle: 'short',
-                                timeStyle: 'short',
-                                timeZone: 'Asia/Kuwait',
-                              })}
-                            </p>
-                          </div>
-                        ) : (
-                          <p className={cn('text-[12px] font-medium tabular-nums whitespace-nowrap', expired && v.status !== 'redeemed' ? 'text-rose-600 dark:text-rose-400' : '')}>
-                            {fmtDate(v.expire_date)}
-                          </p>
-                        )}
                       </td>
 
                       {/* Status */}
@@ -6694,7 +7030,6 @@ export default function GiftVouchersPage() {
                 })}
               </tbody>
             </table>
-            {/* Spacing to ensure action dropdowns have ample room above footer */}
             <div className="h-28 pointer-events-none" aria-hidden="true" />
           </div>
 
@@ -7096,7 +7431,7 @@ export default function GiftVouchersPage() {
           vouchers={[]}
           loadVouchers={(from, to) =>
             fetchAllVoucherRows<Voucher>(
-              { statuses: ['pending', 'active', 'scheduled', 'redeemed'], channel: 'all', createdBy: 'all', q: '' },
+              { statuses: [], channel: 'all', createdBy: 'all', q: '' },
               { view: 'report', extra: { period_from: from, period_to: to } }
             )
           }

@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
 import { voucherBranchName, normalizeBranchName } from '@/lib/branches';
 
 export type VoucherSalesPeriod = 'daily' | 'weekly' | 'monthly' | 'custom';
-type StatusKey = 'pending' | 'active' | 'redeemed';
+type StatusKey = 'active' | 'redeemed' | 'scheduled';
 
 /** Minimal voucher shape needed by the report (compatible with the page's Voucher). */
 export interface ReportVoucher {
@@ -20,6 +20,8 @@ export interface ReportVoucher {
   created_at: string;
   activation_datetime?: string | null;
   redeemed_at: string | null;
+  scheduled_delivery_at?: string | null;
+  delivery_mode?: string | null;
   branch_id?: string;
   branch_data?: { name?: string; name_en?: string; branch_name?: string } | null;
   payment_provider?: string | null;
@@ -63,7 +65,7 @@ const PERIOD_LABEL: Record<VoucherSalesPeriod, string> = {
 const STATUS_LABEL: Record<StatusKey, string> = {
   active: 'By Activation Date',
   redeemed: 'By Redeemed Date',
-  pending: 'Pending (Unpaid)',
+  scheduled: 'By Scheduled date',
 };
 
 // ── Date helpers (YYYY-MM-DD strings, Kuwait wall-clock) ─────────────────────
@@ -132,12 +134,10 @@ const fmtDateTime = (raw: string | null | undefined) => {
 
 /**
  * Classifies a voucher according to user status selection and date range:
- * - If 'pending' is selected: unpaid vouchers matching activation/created date in range are included.
- * - If 'active' (By Activation Date) is selected: vouchers matching activation date (or created_at)
- *   in range are included, even if their current status is redeemed or scheduled.
- * - If 'redeemed' (By Redeemed Date) is selected: redeemed vouchers matching redeemed date in range are included.
- * - If both 'active' AND 'redeemed' are selected: vouchers whose activation date OR redeemed date falls
- *   in range are included.
+ * - Unpaid / pending vouchers are excluded.
+ * - "By Activation Date": checks ONLY if activation date falls in range (regardless of status).
+ * - "By Redeemed Date": checks ONLY if redeemed datetime falls in range (regardless of status).
+ * - "By Scheduled date": checks ONLY if scheduled delivery datetime falls in range (regardless of status).
  */
 function classify(
   v: ReportVoucher,
@@ -147,39 +147,27 @@ function classify(
 ): { key: StatusKey } | null {
   const s = String(v.status ?? '').toLowerCase().trim();
   const isPending = s === 'pending' || s === 'payment_pending' || s === 'created' || s.includes('pending');
-
-  if (isPending) {
-    if (!statuses.has('pending')) return null;
-    const actDate = dateKey(v.activation_datetime || v.created_at);
-    if (!actDate || actDate < from || actDate > to) return null;
-    return { key: 'pending' };
-  }
+  if (isPending) return null;
 
   const hasActive = statuses.has('active');
   const hasRedeemed = statuses.has('redeemed');
-  if (!hasActive && !hasRedeemed) return null;
+  const hasScheduled = statuses.has('scheduled');
+  if (!hasActive && !hasRedeemed && !hasScheduled) return null;
 
-  const isRedeemed = s !== 'partially_redeemed' && (s === 'redeemed' || Boolean(v.redeemed_at));
   const actDate = dateKey(v.activation_datetime || v.created_at);
-  const redDate = dateKey(v.redeemed_at || v.created_at);
+  const redDate = dateKey(v.redeemed_at);
+  const schedDate = dateKey(v.scheduled_delivery_at);
 
-  const actInRange = Boolean(actDate && actDate >= from && actDate <= to);
-  const redInRange = Boolean(isRedeemed && redDate && redDate >= from && redDate <= to);
+  const actInRange = Boolean(hasActive && actDate && actDate >= from && actDate <= to);
+  const redInRange = Boolean(hasRedeemed && redDate && redDate >= from && redDate <= to);
+  const schedInRange = Boolean(hasScheduled && schedDate && schedDate >= from && schedDate <= to);
 
-  if (hasActive && hasRedeemed) {
-    if (!actInRange && !redInRange) return null;
-    return { key: isRedeemed ? 'redeemed' : 'active' };
-  }
+  if (!actInRange && !redInRange && !schedInRange) return null;
 
-  if (hasActive) {
-    if (!actInRange) return null;
-    return { key: isRedeemed ? 'redeemed' : 'active' };
-  }
-
-  if (hasRedeemed) {
-    if (!redInRange) return null;
-    return { key: 'redeemed' };
-  }
+  if (redInRange) return { key: 'redeemed' };
+  if (schedInRange && !actInRange) return { key: 'scheduled' };
+  if (actInRange) return { key: 'active' };
+  if (schedInRange) return { key: 'scheduled' };
 
   return null;
 }
@@ -198,7 +186,7 @@ export function VoucherSalesReportModal({
   const today = todayKw();
 
   const [stage, setStage] = useState<'configure' | 'report'>('configure');
-  const [statuses, setStatuses] = useState<Set<StatusKey>>(new Set<StatusKey>(['pending', 'active', 'redeemed']));
+  const [statuses, setStatuses] = useState<Set<StatusKey>>(new Set<StatusKey>(['active', 'redeemed']));
   const [dailyDate, setDailyDate] = useState(today);
   const [weekEnding, setWeekEnding] = useState(today);
   const [month, setMonth] = useState(today.slice(0, 7));
@@ -285,11 +273,11 @@ export function VoucherSalesReportModal({
   }, [vouchers, statuses, from, to, restrictedBranchId, restrictedBranchName]);
 
   const stats = useMemo(() => {
-    const sales = scoped.filter((x) => x.key !== 'pending').map((x) => x.v);
-    const pending = scoped.filter((x) => x.key === 'pending').map((x) => x.v);
+    const sales = scoped.map((x) => x.v);
     const sum = (list: ReportVoucher[]) => list.reduce((s, v) => s + num(v.total_amount), 0);
     const active = scoped.filter((x) => x.key === 'active').map((x) => x.v);
     const redeemed = scoped.filter((x) => x.key === 'redeemed').map((x) => x.v);
+    const scheduled = scoped.filter((x) => x.key === 'scheduled').map((x) => x.v);
 
     const group = (list: ReportVoucher[], keyFn: (v: ReportVoucher) => string): Row[] => {
       const m = new Map<string, Row>();
@@ -309,10 +297,12 @@ export function VoucherSalesReportModal({
       byReferrer: group(list, referrerOf),
     });
     return {
-      sales, pending, active, redeemed,
-      salesTotal: sum(sales), pendingTotal: sum(pending),
-      activeTotal: sum(active), redeemedTotal: sum(redeemed),
-      salesTables: build(sales), pendingTables: build(pending),
+      sales, active, redeemed, scheduled,
+      salesTotal: sum(sales),
+      activeTotal: sum(active),
+      redeemedTotal: sum(redeemed),
+      scheduledTotal: sum(scheduled),
+      salesTables: build(sales),
     };
   }, [scoped]);
 
@@ -432,7 +422,7 @@ export function VoucherSalesReportModal({
               <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary"><BarChart3 className="h-4 w-4" /></div>
               <div>
                 <p className="text-sm font-extrabold text-foreground">{PERIOD_LABEL[period]}</p>
-                <p className="text-[11px] text-muted-foreground">Choose the date and voucher status</p>
+                <p className="text-[11px] text-muted-foreground">Choose the date and voucher dates</p>
               </div>
             </div>
             <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-muted/60 hover:bg-muted transition cursor-pointer" aria-label="Close">
@@ -463,6 +453,44 @@ export function VoucherSalesReportModal({
                       )}
                     </button>
                   ))}
+
+                  {/* 12th slot: Custom Date Picker */}
+                  {(() => {
+                    const isCustom = !dailyChoices.some((c) => c.value === dailyDate);
+                    return (
+                      <label
+                        className={cn(
+                          'relative flex flex-col justify-center rounded-xl border px-3 py-2 text-left text-xs font-semibold transition cursor-pointer',
+                          isCustom
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-border/60 bg-card text-foreground hover:bg-muted/60',
+                        )}
+                      >
+                        <span className="flex items-center justify-between">
+                          <span>Custom Date</span>
+                          <CalendarDays className="h-3.5 w-3.5 opacity-70" />
+                        </span>
+                        <span className="block text-[10px] font-normal text-muted-foreground truncate">
+                          {isCustom ? prettyDate(dailyDate) : 'Choose date'}
+                        </span>
+                        <input
+                          type="date"
+                          max={today}
+                          value={dailyDate}
+                          onClick={(e) => {
+                            try {
+                              (e.currentTarget as any).showPicker?.();
+                            } catch {}
+                          }}
+                          onChange={(e) => {
+                            if (e.target.value) setDailyDate(e.target.value);
+                          }}
+                          className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                          aria-label="Choose custom date"
+                        />
+                      </label>
+                    );
+                  })()}
                 </div>
               </div>
             )}
@@ -500,12 +528,12 @@ export function VoucherSalesReportModal({
             )}
 
             <div>
-              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Status</p>
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Voucher Dates</p>
               <div className="space-y-2">
                 {([
-                  ['active', 'By Activation Date', 'Filter vouchers by activation date (includes active, scheduled & redeemed)'],
+                  ['active', 'By Activation Date', 'Filter vouchers by activation date'],
                   ['redeemed', 'By Redeemed Date', 'Filter vouchers by redeemed date'],
-                  ['pending', 'Pending (Unpaid)', 'Awaiting payment · by created / activation date'],
+                  ['scheduled', 'By Scheduled date', 'Filter vouchers by scheduled delivery date'],
                 ] as [StatusKey, string, string][]).map(([k, label, hint]) => (
                   <label key={k} className={cn(
                     'flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5 transition',
@@ -542,8 +570,7 @@ export function VoucherSalesReportModal({
   }
 
   // ── Stage 2: report ─────────────────────────────────────────────────────────
-  const showSales = statuses.has('active') || statuses.has('redeemed');
-  const showPending = statuses.has('pending');
+  const showSales = statuses.size > 0;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -592,12 +619,23 @@ export function VoucherSalesReportModal({
             </div>
 
             {/* KPIs */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className={cn(
+              'grid grid-cols-2 gap-3',
+              statuses.has('scheduled') ? 'sm:grid-cols-4' : 'sm:grid-cols-3'
+            )}>
               {[
                 { label: 'Total Sales', value: kwd(stats.salesTotal), sub: `${stats.sales.length} vouchers`, items: stats.sales, icon: Gift, tone: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200/70' },
-                { label: 'Active / Scheduled', value: kwd(stats.activeTotal), sub: `${stats.active.length} vouchers`, items: stats.active, icon: CheckCircle2, tone: 'text-sky-600', bg: 'bg-sky-50 dark:bg-sky-950/30 border-sky-200/70' },
+                { label: 'Active', value: kwd(stats.activeTotal), sub: `${stats.active.length} vouchers`, items: stats.active, icon: CheckCircle2, tone: 'text-sky-600', bg: 'bg-sky-50 dark:bg-sky-950/30 border-sky-200/70' },
                 { label: 'Redeemed', value: kwd(stats.redeemedTotal), sub: `${stats.redeemed.length} vouchers`, items: stats.redeemed, icon: TrendingUp, tone: 'text-violet-600', bg: 'bg-violet-50 dark:bg-violet-950/30 border-violet-200/70' },
-                { label: 'Pending (unpaid)', value: kwd(stats.pendingTotal), sub: `${stats.pending.length} vouchers`, items: stats.pending, icon: Clock, tone: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/30 border-amber-200/70' },
+                ...(statuses.has('scheduled') ? [{
+                  label: 'Scheduled',
+                  value: kwd(stats.scheduledTotal),
+                  sub: `${stats.scheduled.length} vouchers`,
+                  items: stats.scheduled,
+                  icon: CalendarDays,
+                  tone: 'text-amber-600',
+                  bg: 'bg-amber-50 dark:bg-amber-950/30 border-amber-200/70',
+                }] : []),
               ].map((k) => (
                 <div
                   key={k.label}
@@ -618,27 +656,17 @@ export function VoucherSalesReportModal({
 
             {showSales && (
               <Section
-                heading="Voucher Sales (Active, Scheduled & Redeemed)"
+                heading="Voucher Sales Breakdown"
                 note={
-                  statuses.has('active') && statuses.has('redeemed')
-                    ? 'Counted on activation date or redeemed date'
-                    : statuses.has('active')
-                    ? 'Counted on activation date (includes active, scheduled & redeemed)'
-                    : 'Counted on redeemed date'
+                  [
+                    statuses.has('active') && 'Active (by activation date)',
+                    statuses.has('redeemed') && 'Redeemed (by redeemed date)',
+                    statuses.has('scheduled') && 'Scheduled (by scheduled date)',
+                  ].filter(Boolean).join(' · ')
                 }
                 tables={stats.salesTables}
                 grand={stats.salesTotal}
                 tone="border-emerald-200/70 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-300"
-              />
-            )}
-
-            {showPending && (
-              <Section
-                heading="Pending Vouchers (Unpaid — not included in sales)"
-                note="Counted on activation date"
-                tables={stats.pendingTables}
-                grand={stats.pendingTotal}
-                tone="border-amber-200/70 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300"
               />
             )}
 
