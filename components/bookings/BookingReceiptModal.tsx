@@ -195,21 +195,49 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
   const totalAmountNum = parseFloat(String(data.totalAmount ?? '0')) || 0;
   const servicePriceNum = parseFloat(String(data.servicePrice ?? '0')) || 0;
   const extraPriceNum = parseFloat(String(data.extraPrice ?? '0')) || 0;
-  const packagePriceNum = parseFloat(String(data.packagePrice ?? data.voucherPackagePrice ?? '0')) || 0;
+  const rawPackagePriceNum = parseFloat(String(data.packagePrice ?? data.voucherPackagePrice ?? '0')) || 0;
   const discountNum = parseFloat(String(data.discount ?? '0')) || 0;
+
+  const resolvedPackageName = String(
+    data.packageName ||
+    data.voucherPackageName ||
+    (data.isPackageBooking && data.serviceName) ||
+    (data.isVoucherPackage && data.serviceName) ||
+    ''
+  ).trim();
+
+  const isPackageServiceBooking = Boolean(
+    data.isPackageBooking ||
+    data.isVoucherPackage ||
+    (resolvedPackageName && (rawPackagePriceNum > 0 || (data.services && data.services.length > 1))) ||
+    (data.serviceName && data.serviceName.toLowerCase().includes('package'))
+  );
+
+  const resolvedPackagePrice =
+    rawPackagePriceNum > 0
+      ? rawPackagePriceNum
+      : (totalAmountNum > 0
+          ? totalAmountNum
+          : servicePriceNum > 0
+          ? servicePriceNum
+          : 0);
 
   const addonsTotal = (data.addons || []).reduce(
     (sum, a) => sum + (parseFloat(String(a.price ?? '0')) || 0),
     0
   );
 
-  const subtotalNum =
-    data.subtotal != null
-      ? (parseFloat(String(data.subtotal)) || 0)
-      : (totalAmountNum + discountNum);
+  const subtotalNum = isPackageServiceBooking && resolvedPackagePrice > 0
+    ? resolvedPackagePrice
+    : data.subtotal != null
+    ? (parseFloat(String(data.subtotal)) || 0)
+    : (totalAmountNum + discountNum);
 
-  const totalNum = Math.max(0, subtotalNum - discountNum);
-  const finalTotalNum = (data.isCourseRedemption || data.isVoucherRedemption) ? 0 : (totalAmountNum > 0 ? totalAmountNum : totalNum);
+  const totalNum = isPackageServiceBooking && resolvedPackagePrice > 0
+    ? resolvedPackagePrice
+    : Math.max(0, subtotalNum - discountNum);
+
+  const finalTotalNum = totalNum;
 
   const receiptRefNumber = data.invoiceNumber || data.bookingNumber || data.reference || 'RECEIPT';
   const customerLine = `${data.customerName || 'Valued Guest'}${data.customerPhone ? `, ${data.customerPhone}` : ''}`;
@@ -227,19 +255,12 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
     data.isVoucherRedemption || data.isVoucherPackage
   );
 
+  // For regular services: compute individual service prices
   const itemsList = useMemo(() => {
     if (data.services && data.services.length > 0) {
       return data.services.map((sv) => {
         let p = parseFloat(String(sv.price ?? '0')) || 0;
-        const isPkg = Boolean(
-          data.isPackageBooking ||
-          data.isVoucherPackage ||
-          (data.packageName && sv.name && sv.name.toLowerCase().includes(data.packageName.toLowerCase())) ||
-          (sv.name && sv.name.toLowerCase().includes('package'))
-        );
-        if (isPkg && packagePriceNum > 0 && (p === totalAmountNum || p > packagePriceNum)) {
-          p = packagePriceNum;
-        } else if ((data.services?.length ?? 1) <= 1 && (addonsTotal > 0 || extraPriceNum > 0)) {
+        if ((data.services?.length ?? 1) <= 1 && (addonsTotal > 0 || extraPriceNum > 0)) {
           const grossTotal = totalAmountNum + discountNum;
           if (p === totalAmountNum || p === grossTotal) {
             p = Math.max(0, p - addonsTotal - extraPriceNum);
@@ -255,14 +276,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
     }
 
     let dispPrice = servicePriceNum > 0 ? servicePriceNum : totalAmountNum;
-    const isSinglePkg = Boolean(
-      data.isPackageBooking ||
-      data.isVoucherPackage ||
-      (data.serviceName && data.serviceName.toLowerCase().includes('package'))
-    );
-    if (isSinglePkg && packagePriceNum > 0 && (dispPrice === totalAmountNum || dispPrice > packagePriceNum)) {
-      dispPrice = packagePriceNum;
-    } else if (addonsTotal > 0 || extraPriceNum > 0) {
+    if (addonsTotal > 0 || extraPriceNum > 0) {
       const grossTotal = totalAmountNum + discountNum;
       if (dispPrice === totalAmountNum || dispPrice === grossTotal) {
         dispPrice = Math.max(0, dispPrice - addonsTotal - extraPriceNum);
@@ -284,12 +298,8 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
     data.totalDuration,
     servicePriceNum,
     totalAmountNum,
-    packagePriceNum,
     addonsTotal,
     extraPriceNum,
-    data.isPackageBooking,
-    data.isVoucherPackage,
-    data.packageName,
     discountNum,
   ]);
 
@@ -502,50 +512,114 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="border-t border-dashed border-black my-2.5" />
 
             {/* Items List */}
-            <div className="space-y-1">
-              {itemsList.map((item, idx) => (
-                <div key={idx} className="my-1.5 text-xs font-bold text-black">
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="flex items-start gap-2 min-w-0 flex-1">
-                      <span className="shrink-0 font-bold">{idx + 1}</span>
-                      <span className="font-bold text-left break-words">
-                        {item.name}
-                        {Number(item.duration ?? 0) > 0 && !item.name.toLowerCase().includes(String(item.duration)) ? ` ${item.duration}` : ''}
+            {isPackageServiceBooking ? (
+              <div className="my-1.5 text-xs font-bold text-black">
+                {/* 1. Package Name and Package Price */}
+                <div className="flex justify-between items-start gap-2">
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    <span className="shrink-0 font-bold">1</span>
+                    <span className="font-bold text-left break-words uppercase">
+                      {resolvedPackageName || data.serviceName || 'Spa Package'}
+                    </span>
+                  </div>
+                  <span className="font-mono shrink-0 font-bold text-right pl-2">
+                    {resolvedPackagePrice.toFixed(2)}
+                  </span>
+                </div>
+
+                {/* 2. Included Services List */}
+                {data.services && data.services.length > 0 && (
+                  <div className="pl-5 mt-1 space-y-0.5 text-[11px] text-black">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-black pt-0.5">
+                      Included Services:
+                    </p>
+                    {data.services.map((svc, sIdx) => (
+                      <div key={`pkg-svc-${sIdx}`} className="flex justify-between items-center text-black">
+                        <span className="font-medium text-black truncate">
+                          #{sIdx + 1} {svc.name}
+                          {Number(svc.duration ?? 0) > 0 && !String(svc.name).includes(String(svc.duration)) ? ` (${svc.duration}m)` : ''}
+                        </span>
+                        <span className="text-[10px] font-bold text-black">Included</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 3. Included Add-ons */}
+                {data.addons && data.addons.length > 0 && (
+                  <div className="pl-5 mt-1 space-y-0.5 text-[11px] text-black">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-black pt-0.5">
+                      Included Add-ons:
+                    </p>
+                    {data.addons.map((addon, aIdx) => (
+                      <div key={`pkg-addon-${aIdx}`} className="flex justify-between items-center text-black">
+                        <span className="font-medium text-black truncate">
+                          + {addon.name}
+                          {Number(addon.duration ?? 0) > 0 ? ` (${addon.duration}m)` : ''}
+                        </span>
+                        <span className="text-[10px] font-bold text-black">Included</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 4. Extra Time if any */}
+                {Number(data.extraMinutes ?? 0) > 0 && (
+                  <div className="pl-5 mt-0.5 text-[11px] text-black flex justify-between items-center">
+                    <span className="font-medium text-black">
+                      + Extra Time ({data.extraMinutes}m)
+                    </span>
+                    <span className="text-[10px] font-bold text-black">Included</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Regular Services (show each service with its price) */
+              <div className="space-y-1">
+                {itemsList.map((item, idx) => (
+                  <div key={idx} className="my-1.5 text-xs font-bold text-black">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex items-start gap-2 min-w-0 flex-1">
+                        <span className="shrink-0 font-bold">{idx + 1}</span>
+                        <span className="font-bold text-left break-words">
+                          {item.name}
+                          {Number(item.duration ?? 0) > 0 && !item.name.toLowerCase().includes(String(item.duration)) ? ` ${item.duration}` : ''}
+                        </span>
+                      </div>
+                      <span className="font-mono shrink-0 font-bold text-right pl-2">
+                        {item.price.toFixed(2)}
                       </span>
                     </div>
-                    <span className="font-mono shrink-0 font-bold text-right pl-2">
-                      {data.isCourseRedemption || data.isVoucherRedemption ? '0.00' : item.price.toFixed(2)}
-                    </span>
+                    {item.nameAr && (
+                      <div className="text-[11px] text-black pr-2 text-right font-bold mt-0.5" dir="rtl">
+                        {item.nameAr}
+                      </div>
+                    )}
                   </div>
-                  {item.nameAr && (
-                    <div className="text-[11px] text-black pr-2 text-right font-bold mt-0.5" dir="rtl">
-                      {item.nameAr}
+                ))}
+
+                {/* Add-ons for regular services */}
+                {data.addons && data.addons.length > 0 && data.addons.map((addon, aIdx) => {
+                  const aPrice = parseFloat(String(addon.price ?? 0)) || 0;
+                  return (
+                    <div key={`addon-${aIdx}`} className="my-1 text-xs font-bold text-black flex justify-between items-start pl-4 gap-2">
+                      <span className="truncate">+ {addon.name}{addon.duration ? ` (${addon.duration}m)` : ''}</span>
+                      <span className="font-mono shrink-0 text-right">
+                        {aPrice.toFixed(2)}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
+                  );
+                })}
 
-              {/* Add-ons */}
-              {data.addons && data.addons.length > 0 && data.addons.map((addon, aIdx) => {
-                const aPrice = parseFloat(String(addon.price ?? 0)) || 0;
-                return (
-                  <div key={`addon-${aIdx}`} className="my-1 text-xs font-bold text-black flex justify-between items-start pl-4 gap-2">
-                    <span className="truncate">+ {addon.name}{addon.duration ? ` (${addon.duration}m)` : ''}</span>
-                    <span className="font-mono shrink-0 text-right">
-                      {data.isVoucherPackage || data.isVoucherRedemption ? '0.00' : aPrice.toFixed(2)}
-                    </span>
+                {/* Extra Time for regular services */}
+                {Number(data.extraMinutes ?? 0) > 0 && (
+                  <div className="my-1 text-xs font-bold text-black flex justify-between items-start pl-4 gap-2">
+                    <span className="truncate">+ Extra Time ({data.extraMinutes}m)</span>
+                    <span className="font-mono shrink-0 text-right">{extraPriceNum.toFixed(2)}</span>
                   </div>
-                );
-              })}
-
-              {/* Extra Time */}
-              {Number(data.extraMinutes ?? 0) > 0 && (
-                <div className="my-1 text-xs font-bold text-black flex justify-between items-start pl-4 gap-2">
-                  <span className="truncate">+ Extra Time ({data.extraMinutes}m)</span>
-                  <span className="font-mono shrink-0 text-right">{extraPriceNum.toFixed(2)}</span>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+            )}
 
             {/* Dashed line */}
             <div className="border-t border-dashed border-black my-2.5" />
