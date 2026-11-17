@@ -2171,6 +2171,7 @@ function BookingDetailPopupContent({
     if (displaySessions.length > 0) {
       const items: Array<{
         name: string;
+        nameAr?: string | null;
         category?: string | null;
         price: number;
         duration: number;
@@ -2193,6 +2194,7 @@ function BookingDetailPopupContent({
             const svDur = Number(sv.duration_minutes ?? sv.base_duration ?? sd.duration_minutes ?? 0) || 0;
             items.push({
               name: svName,
+              nameAr: String(sd.name_ar ?? sv.name_ar ?? '').trim() || null,
               category: String(sd.category ?? sv.service_category ?? ''),
               price: svPrice,
               duration: svDur,
@@ -2209,8 +2211,10 @@ function BookingDetailPopupContent({
           if (effectivePackagePrice > 0 && cleanPrice > effectivePackagePrice) {
             cleanPrice = effectivePackagePrice;
           }
+          const sessRawSd = (sess.raw?.service_data ?? {}) as Record<string, any>;
           items.push({
             name: sess.serviceName,
+            nameAr: String(sessRawSd.name_ar ?? sess.raw?.name_ar ?? (booking.raw as any)?.service_data?.name_ar ?? '').trim() || null,
             category: booking.service_category,
             price: cleanPrice,
             duration: sess.durationMin,
@@ -2231,8 +2235,10 @@ function BookingDetailPopupContent({
       if (effectivePackagePrice > 0 && p > effectivePackagePrice) {
         p = effectivePackagePrice;
       }
+      const rawSd = ((it as any).raw?.service_data ?? (detail?.service_data as any) ?? (booking.raw as any)?.service_data ?? {}) as Record<string, any>;
       return {
         name: it.name,
+        nameAr: String(rawSd.name_ar ?? (it as any).raw?.name_ar ?? (detail as any)?.name_ar ?? '').trim() || null,
         category: it.category,
         price: p,
         duration: it.duration,
@@ -2241,7 +2247,7 @@ function BookingDetailPopupContent({
         arrangementName: booking.arrangement_name,
       };
     });
-  }, [displaySessions, serviceItems, booking.service_category, booking.therapist_name, booking.arrangement_name, primaryTherapistName, secondaryTherapistName, computedTotal, effAddonsTotal, extraPrice, effectivePackagePrice]);
+  }, [displaySessions, serviceItems, booking.service_category, booking.therapist_name, booking.arrangement_name, primaryTherapistName, secondaryTherapistName, computedTotal, effAddonsTotal, extraPrice, effectivePackagePrice, detail, booking.raw]);
 
   const canAddSession = !isCancelled && !isCompleted && !isPaymentSuccess && displaySessions.length < 3;
 
@@ -5105,10 +5111,22 @@ function BookingDetailPopupContent({
             customerPhone: booking.customer_phone,
             customerEmail: booking.customer_email,
             branchName: booking.branch_name,
+            branchAddress: (() => {
+              const bd = (detail?.branch_data ?? booking.raw?.branch_data ?? (booking as any).branch_data ?? {}) as Record<string, any>;
+              if (bd.address) return String(bd.address);
+              if (bd.address_line1 || bd.address_line2) {
+                return [bd.address_line1, bd.address_line2, bd.city].filter(Boolean).join(', ');
+              }
+              return null;
+            })(),
             arrangementName: booking.arrangement_name,
             therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
             secondaryTherapistName: secondaryTherapistName || null,
             serviceName: booking.service_name,
+            serviceNameAr: (() => {
+              const sd = (detail?.service_data ?? (booking.raw as any)?.service_data ?? {}) as Record<string, any>;
+              return String(sd.name_ar ?? (booking.raw as any)?.name_ar ?? (detail as any)?.name_ar ?? '').trim() || null;
+            })(),
             serviceCategory: booking.service_category,
             servicePrice: servicePrice,
             services: receiptServices,
