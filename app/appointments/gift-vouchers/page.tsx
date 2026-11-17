@@ -1430,6 +1430,7 @@ function VoucherDetailModal({
     base_price?: string | number;
     duration_minutes?: number;
     included_services: Array<{ id: string; name: string; duration_minutes: number }>;
+    included_addons?: Array<{ id: string; name: string; duration_minutes: number; price?: string | number }>;
   } | null>(null);
 
   const primaryVoucherServiceId = String(
@@ -1452,12 +1453,18 @@ function VoucherDetailModal({
         if (cancelled || !d) return;
         const svc = (d?.data ?? d) as Record<string, any>;
         const inc = Array.isArray(svc?.included_services) ? svc.included_services : [];
+        const incAddons = Array.isArray(svc?.included_addons)
+          ? svc.included_addons
+          : Array.isArray(svc?.package_addons)
+          ? svc.package_addons
+          : [];
         const isPkg = Boolean(
           svc?.is_packaged_services === true ||
           String(svc?.is_packaged_services).toLowerCase() === 'true' ||
           svc?.is_packaged === true ||
           String(svc?.is_packaged).toLowerCase() === 'true' ||
-          inc.length > 0
+          inc.length > 0 ||
+          incAddons.length > 0
         );
         if (!isPkg) return;
         setFetchedPackageDetail({
@@ -1469,6 +1476,12 @@ function VoucherDetailModal({
             id: String(c.id ?? c.service_id ?? ''),
             name: String(c.name ?? c.service_name ?? 'Service'),
             duration_minutes: Number(c.duration_minutes ?? c.duration ?? 0) || 0,
+          })),
+          included_addons: incAddons.map((a: any) => ({
+            id: String(a.id ?? a.addon_id ?? ''),
+            name: String(a.name ?? a.addon_name ?? 'Add-on'),
+            duration_minutes: Number(a.duration_minutes ?? a.addon_duration ?? a.duration ?? 0) || 0,
+            price: a.price ?? a.addon_price ?? 0,
           })),
         });
       })
@@ -1530,6 +1543,37 @@ function VoucherDetailModal({
     return [];
   }, [fetchedPackageDetail, inlineIncludedServices]);
 
+  const inlineIncludedAddons: Array<{ id: string; name: string; duration_minutes: number; price?: string | number }> = useMemo(() => {
+    const rawSd = (voucher.service_data ?? voucher.services?.[0]?.service_data ?? {}) as Record<string, any>;
+    const rawAddons = Array.isArray(rawSd.included_addons)
+      ? rawSd.included_addons
+      : Array.isArray(rawSd.package_addons)
+      ? rawSd.package_addons
+      : Array.isArray(rawSd.addons)
+      ? rawSd.addons
+      : Array.isArray(voucher.addons) && voucher.addons.length > 0
+      ? voucher.addons
+      : Array.isArray(voucher.services?.[0]?.addons) && (voucher.services?.[0]?.addons?.length ?? 0) > 0
+      ? (voucher.services?.[0]?.addons ?? [])
+      : [];
+    return rawAddons.map((a: any) => ({
+      id: String(a.id ?? a.addon_id ?? ''),
+      name: String(a.name ?? a.addon_name ?? 'Add-on'),
+      duration_minutes: Number(a.duration_minutes ?? a.addon_duration ?? a.duration ?? 0) || 0,
+      price: a.price ?? a.addon_price ?? 0,
+    }));
+  }, [voucher.service_data, voucher.services, voucher.addons]);
+
+  const packageIncludedAddons = useMemo(() => {
+    if (fetchedPackageDetail && (fetchedPackageDetail.included_addons?.length ?? 0) > 0) {
+      return fetchedPackageDetail.included_addons!;
+    }
+    if (inlineIncludedAddons.length > 0) {
+      return inlineIncludedAddons;
+    }
+    return [];
+  }, [fetchedPackageDetail, inlineIncludedAddons]);
+
   const isPackageVoucher = useMemo(() => {
     const rawSd = (voucher.service_data ?? voucher.services?.[0]?.service_data ?? {}) as Record<string, any>;
     return Boolean(
@@ -1538,9 +1582,10 @@ function VoucherDetailModal({
       String(rawSd.is_packaged_services ?? '').toLowerCase() === 'true' ||
       rawSd.is_packaged === true ||
       String(rawSd.is_packaged ?? '').toLowerCase() === 'true' ||
-      packageIncludedServices.length > 0
+      packageIncludedServices.length > 0 ||
+      packageIncludedAddons.length > 0
     );
-  }, [fetchedPackageDetail, voucher.service_data, voucher.services, packageIncludedServices.length]);
+  }, [fetchedPackageDetail, voucher.service_data, voucher.services, packageIncludedServices.length, packageIncludedAddons.length]);
 
   const packageName =
     voucher.service_data?.name ||
@@ -2431,6 +2476,36 @@ function VoucherDetailModal({
                               </div>
                             </div>
                           )}
+
+                          {packageIncludedAddons.length > 0 && (
+                            <div className="pt-2.5 border-t border-border/50">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-violet-500" />
+                                Included Add-ons ({packageIncludedAddons.length})
+                              </p>
+                              <div className="space-y-1.5">
+                                {packageIncludedAddons.map((addon, idx) => (
+                                  <div
+                                    key={addon.id || `inc-addon-${idx}`}
+                                    className="flex items-center justify-between rounded-lg border border-border/40 bg-muted/20 px-2.5 py-1.5 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-violet-500/10 text-[10px] font-bold text-violet-600 dark:text-violet-400">
+                                        {idx + 1}
+                                      </span>
+                                      <span className="font-medium text-foreground truncate">{addon.name}</span>
+                                    </div>
+                                    {addon.duration_minutes > 0 && (
+                                      <span className="text-[11px] text-muted-foreground shrink-0 ml-2 flex items-center gap-1">
+                                        <Clock className="h-3 w-3 text-primary/70" />
+                                        {addon.duration_minutes} min
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     ) : (
@@ -3215,6 +3290,29 @@ function VoucherDetailModal({
                               {inc.duration_minutes > 0 && (
                                 <span className="text-[11px] text-muted-foreground shrink-0">
                                   {inc.duration_minutes} min
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {packageIncludedAddons.length > 0 && (
+                        <div className="ml-1 pl-3 border-l-2 border-violet-500/30 space-y-1 mt-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                            Included Add-ons ({packageIncludedAddons.length})
+                          </p>
+                          {packageIncludedAddons.map((addon, aIdx) => (
+                            <div
+                              key={addon.id || `pay-inc-addon-${aIdx}`}
+                              className="flex items-center justify-between text-xs text-foreground/85"
+                            >
+                              <span className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-violet-500/60 shrink-0" />
+                                <span>{addon.name}</span>
+                              </span>
+                              {addon.duration_minutes > 0 && (
+                                <span className="text-[11px] text-muted-foreground shrink-0">
+                                  {addon.duration_minutes} min
                                 </span>
                               )}
                             </div>
