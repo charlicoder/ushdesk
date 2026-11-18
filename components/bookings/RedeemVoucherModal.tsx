@@ -2903,6 +2903,7 @@ export function RedeemVoucherModal({
             arrangementName: sessions[0]?.arrangementName || null,
             therapistName: sessions[0]?.therapistName || null,
             secondaryTherapistName: sessions[0]?.secondaryTherapistName || null,
+            therapistNames: sessions.flatMap((s) => [s.therapistName, s.secondaryTherapistName]).filter(Boolean) as string[],
             serviceName: isPackageVoucher ? (pkgInfo?.name || 'Spa Package') : sessions[0]?.services[0]?.name || 'Spa Service',
             services: sessions.flatMap((s) =>
               s.services.map((sv) => ({

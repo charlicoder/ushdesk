@@ -5122,6 +5122,21 @@ function BookingDetailPopupContent({
             arrangementName: booking.arrangement_name,
             therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
             secondaryTherapistName: secondaryTherapistName || null,
+            therapistNames: (() => {
+              const list: string[] = [];
+              if (displaySessions.length > 0) {
+                displaySessions.forEach((s) => {
+                  if (s.therapistName && s.therapistName !== '—') list.push(s.therapistName);
+                  if (s.secondaryTherapistName && s.secondaryTherapistName !== '—') list.push(s.secondaryTherapistName);
+                });
+              }
+              if (list.length === 0) {
+                if (primaryTherapistName && primaryTherapistName !== '—') list.push(primaryTherapistName);
+                if (booking.therapist_name && booking.therapist_name !== '—') list.push(booking.therapist_name);
+                if (secondaryTherapistName && secondaryTherapistName !== '—') list.push(secondaryTherapistName);
+              }
+              return list;
+            })(),
             serviceName: booking.service_name,
             serviceNameAr: (() => {
               const sd = (detail?.service_data ?? (booking.raw as any)?.service_data ?? {}) as Record<string, any>;

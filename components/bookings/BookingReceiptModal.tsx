@@ -17,6 +17,7 @@ export interface BookingReceiptData {
   arrangementName?: string | null;
   therapistName?: string | null;
   secondaryTherapistName?: string | null;
+  therapistNames?: Array<string | null | undefined> | null;
   serviceName?: string | null;
   serviceNameAr?: string | null;
   serviceCategory?: string | null;
@@ -180,6 +181,87 @@ const getNormalizedPaymentMethod = (
   return 'Knet Card';
 };
 
+const getFirstName = (name?: string | null): string => {
+  if (!name) return '';
+  const clean = name.trim();
+  if (!clean || clean === '—' || clean.toLowerCase() === 'none' || clean.toLowerCase() === 'n/a') return '';
+  return clean.split(/\s+/)[0];
+};
+
+const extractFirstNames = (raw?: string | null): string[] => {
+  if (!raw) return [];
+  const clean = raw.trim();
+  if (!clean || clean === '—' || clean.toLowerCase() === 'none' || clean.toLowerCase() === 'n/a') return [];
+  // If the string contains separators like '+', '&', ',', or '/', split by them
+  const parts = clean.split(/[+&,/]/);
+  const result: string[] = [];
+  for (const part of parts) {
+    const fn = getFirstName(part);
+    if (fn) {
+      result.push(fn);
+    }
+  }
+  return result;
+};
+
+const formatAllTherapistNames = (data: {
+  therapistName?: string | null;
+  secondaryTherapistName?: string | null;
+  therapistNames?: Array<string | null | undefined> | null;
+  services?: Array<{
+    therapistName?: string | null;
+    secondaryTherapistName?: string | null;
+  }>;
+}): string => {
+  const rawList: Array<string | null | undefined> = [];
+
+  // 1. Explicit therapistNames array if provided
+  if (Array.isArray(data.therapistNames)) {
+    rawList.push(...data.therapistNames);
+  }
+
+  // 2. Services array (per session / service therapists)
+  if (Array.isArray(data.services)) {
+    for (const svc of data.services) {
+      if (svc.therapistName) rawList.push(svc.therapistName);
+      if (svc.secondaryTherapistName) rawList.push(svc.secondaryTherapistName);
+    }
+  }
+
+  // 3. Top-level primary and secondary therapist names
+  if (data.therapistName) rawList.push(data.therapistName);
+  if (data.secondaryTherapistName) rawList.push(data.secondaryTherapistName);
+
+  // Extract first names and deduplicate preserving appearance order
+  const uniqueFirstNames: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of rawList) {
+    const names = extractFirstNames(item);
+    for (const name of names) {
+      const lower = name.toLowerCase();
+      if (!seen.has(lower)) {
+        seen.add(lower);
+        uniqueFirstNames.push(name);
+      }
+    }
+  }
+
+  return uniqueFirstNames.join(' + ');
+};
+
+const formatTherapistNames = (primary?: string | null, secondary?: string | null): string => {
+  return formatAllTherapistNames({ therapistName: primary, secondaryTherapistName: secondary });
+};
+
+const toTitleCase = (str?: string | null): string => {
+  if (!str) return '';
+  return str
+    .trim()
+    .toLowerCase()
+    .replace(/(?:^|\s|-|\/|\()\S/g, (match) => match.toUpperCase());
+};
+
 export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps) {
   const receiptRef = useRef<HTMLDivElement>(null);
 
@@ -244,9 +326,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
   const formattedBranch = formatBranchName(data.branchName);
   const branchAddress = getBranchAddress(data.branchName, data.branchAddress);
   const dateTimeLine = formatReceiptDateTime(data.appointmentStart, data.appointmentDate, data.timeSlot);
-  const therapistLine = data.therapistName
-    ? `${data.therapistName}${data.secondaryTherapistName && data.secondaryTherapistName !== '—' ? ` + ${data.secondaryTherapistName}` : ''}`
-    : '';
+  const therapistLine = formatAllTherapistNames(data);
 
   const normalizedPaymentMethod = getNormalizedPaymentMethod(
     data.paymentMethod,
@@ -349,7 +429,6 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             }
             * {
               color: #000000 !important;
-              font-weight: 700 !important;
               -webkit-print-color-adjust: exact !important;
               print-color-adjust: exact !important;
             }
@@ -365,26 +444,29 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             background: #ffffff;
             font-size: 11px;
             line-height: 1.35;
-            font-weight: 700 !important;
+            font-weight: 400;
           }
           * { 
             box-sizing: border-box; 
             color: #000000 !important;
-            font-weight: 700 !important;
           }
           .receipt-box {
             max-width: 300px;
             margin: 0 auto;
             background: #ffffff;
             color: #000000 !important;
+            font-weight: 400;
           }
           .text-center { text-align: center; }
           .text-right { text-align: right; }
           .text-left { text-align: left; }
+          .font-normal { font-weight: 400 !important; }
+          .font-medium { font-weight: 500 !important; }
+          .font-semibold { font-weight: 600 !important; }
           .font-bold { font-weight: 700 !important; }
           .font-extrabold { font-weight: 800 !important; }
           .font-black { font-weight: 900 !important; }
-          .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700 !important; }
+          .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
           .border-t { border-top: 1px solid #000000 !important; }
           .border-b { border-bottom: 1px solid #000000 !important; }
           .border-dashed { border-style: dashed !important; }
@@ -481,7 +563,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
           <div
             ref={receiptRef}
             id="ush-printable-receipt"
-            className="mx-auto w-full max-w-[320px] bg-white text-black font-bold rounded-2xl shadow-lg border border-black p-5 font-sans text-xs select-text"
+            className="mx-auto w-full max-w-[320px] bg-white text-black font-normal rounded-2xl shadow-lg border border-black p-5 font-sans text-xs select-text"
           >
             {/* Header: Zen Stones Icon & Spa Name */}
             <div className="text-center">
@@ -490,18 +572,18 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 <ellipse cx="18" cy="11.5" rx="8" ry="3.5" />
                 <ellipse cx="18" cy="19" rx="12" ry="4" />
               </svg>
-              <p className="text-sm font-black tracking-widest uppercase text-black text-center mt-1">USH SPA</p>
-              <h2 className="text-xs font-black text-black text-center mt-1">Client Invoice</h2>
+              <p className="text-sm font-semibold tracking-widest text-black text-center mt-1">USH SPA</p>
+              <h2 className="text-xs font-semibold text-black text-center mt-1">Client Invoice</h2>
             </div>
 
             {/* Branch Details */}
-            <div className="text-center mt-2.5 space-y-0.5 text-xs font-bold text-black">
-              <p className="font-extrabold text-black">{formattedBranch}</p>
+            <div className="text-center mt-2.5 space-y-0.5 text-xs text-black">
+              <p className="font-semibold text-black">{formattedBranch}</p>
               <p className="text-[11px] text-black whitespace-pre-line leading-snug">{branchAddress}</p>
             </div>
 
             {/* Client, Invoice, DateTime & Staff */}
-            <div className="text-center mt-2.5 space-y-0.5 text-xs font-bold text-black">
+            <div className="text-center mt-2.5 space-y-0.5 text-xs text-black">
               <p className="text-black">{customerLine}</p>
               <p className="font-mono text-black">{receiptRefNumber}</p>
               <p className="text-black">{dateTimeLine}</p>
@@ -513,16 +595,16 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
 
             {/* Items List */}
             {isPackageServiceBooking ? (
-              <div className="my-1.5 text-xs font-bold text-black">
+              <div className="my-1.5 text-xs text-black">
                 {/* 1. Package Name and Package Price */}
                 <div className="flex justify-between items-start gap-2">
                   <div className="flex items-start gap-2 min-w-0 flex-1">
-                    <span className="shrink-0 font-bold">1</span>
-                    <span className="font-bold text-left break-words uppercase">
-                      {resolvedPackageName || data.serviceName || 'Spa Package'}
+                    <span className="shrink-0">1</span>
+                    <span className="text-left break-words">
+                      {toTitleCase(resolvedPackageName || data.serviceName || 'Spa Package')}
                     </span>
                   </div>
-                  <span className="font-mono shrink-0 font-bold text-right pl-2">
+                  <span className="font-mono shrink-0 text-right pl-2">
                     {resolvedPackagePrice.toFixed(2)}
                   </span>
                 </div>
@@ -530,16 +612,16 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 {/* 2. Included Services List */}
                 {data.services && data.services.length > 0 && (
                   <div className="pl-5 mt-1 space-y-0.5 text-[11px] text-black">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-black pt-0.5">
+                    <p className="text-[10px] font-semibold tracking-wider text-black pt-0.5">
                       Included Services:
                     </p>
                     {data.services.map((svc, sIdx) => (
                       <div key={`pkg-svc-${sIdx}`} className="flex justify-between items-center text-black">
-                        <span className="font-medium text-black truncate">
-                          #{sIdx + 1} {svc.name}
+                        <span className="text-black truncate">
+                          #{sIdx + 1} {toTitleCase(svc.name)}
                           {Number(svc.duration ?? 0) > 0 && !String(svc.name).includes(String(svc.duration)) ? ` (${svc.duration}m)` : ''}
                         </span>
-                        <span className="text-[10px] font-bold text-black">Included</span>
+                        <span className="text-[10px] text-black">Included</span>
                       </div>
                     ))}
                   </div>
@@ -548,16 +630,16 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 {/* 3. Included Add-ons */}
                 {data.addons && data.addons.length > 0 && (
                   <div className="pl-5 mt-1 space-y-0.5 text-[11px] text-black">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-black pt-0.5">
+                    <p className="text-[10px] font-semibold tracking-wider text-black pt-0.5">
                       Included Add-ons:
                     </p>
                     {data.addons.map((addon, aIdx) => (
                       <div key={`pkg-addon-${aIdx}`} className="flex justify-between items-center text-black">
-                        <span className="font-medium text-black truncate">
-                          + {addon.name}
+                        <span className="text-black truncate">
+                          + {toTitleCase(addon.name)}
                           {Number(addon.duration ?? 0) > 0 ? ` (${addon.duration}m)` : ''}
                         </span>
-                        <span className="text-[10px] font-bold text-black">Included</span>
+                        <span className="text-[10px] text-black">Included</span>
                       </div>
                     ))}
                   </div>
@@ -566,10 +648,10 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 {/* 4. Extra Time if any */}
                 {Number(data.extraMinutes ?? 0) > 0 && (
                   <div className="pl-5 mt-0.5 text-[11px] text-black flex justify-between items-center">
-                    <span className="font-medium text-black">
+                    <span className="text-black">
                       + Extra Time ({data.extraMinutes}m)
                     </span>
-                    <span className="text-[10px] font-bold text-black">Included</span>
+                    <span className="text-[10px] text-black">Included</span>
                   </div>
                 )}
               </div>
@@ -577,21 +659,21 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
               /* Regular Services (show each service with its price) */
               <div className="space-y-1">
                 {itemsList.map((item, idx) => (
-                  <div key={idx} className="my-1.5 text-xs font-bold text-black">
+                  <div key={idx} className="my-1.5 text-xs text-black">
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex items-start gap-2 min-w-0 flex-1">
-                        <span className="shrink-0 font-bold">{idx + 1}</span>
-                        <span className="font-bold text-left break-words">
-                          {item.name}
+                        <span className="shrink-0">{idx + 1}</span>
+                        <span className="text-left break-words">
+                          {toTitleCase(item.name)}
                           {Number(item.duration ?? 0) > 0 && !item.name.toLowerCase().includes(String(item.duration)) ? ` ${item.duration}` : ''}
                         </span>
                       </div>
-                      <span className="font-mono shrink-0 font-bold text-right pl-2">
+                      <span className="font-mono shrink-0 text-right pl-2">
                         {item.price.toFixed(2)}
                       </span>
                     </div>
                     {item.nameAr && (
-                      <div className="text-[11px] text-black pr-2 text-right font-bold mt-0.5" dir="rtl">
+                      <div className="text-[11px] text-black pr-2 text-right mt-0.5" dir="rtl">
                         {item.nameAr}
                       </div>
                     )}
@@ -602,8 +684,8 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 {data.addons && data.addons.length > 0 && data.addons.map((addon, aIdx) => {
                   const aPrice = parseFloat(String(addon.price ?? 0)) || 0;
                   return (
-                    <div key={`addon-${aIdx}`} className="my-1 text-xs font-bold text-black flex justify-between items-start pl-4 gap-2">
-                      <span className="truncate">+ {addon.name}{addon.duration ? ` (${addon.duration}m)` : ''}</span>
+                    <div key={`addon-${aIdx}`} className="my-1 text-xs text-black flex justify-between items-start pl-4 gap-2">
+                      <span className="truncate">+ {toTitleCase(addon.name)}{addon.duration ? ` (${addon.duration}m)` : ''}</span>
                       <span className="font-mono shrink-0 text-right">
                         {aPrice.toFixed(2)}
                       </span>
@@ -613,7 +695,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
 
                 {/* Extra Time for regular services */}
                 {Number(data.extraMinutes ?? 0) > 0 && (
-                  <div className="my-1 text-xs font-bold text-black flex justify-between items-start pl-4 gap-2">
+                  <div className="my-1 text-xs text-black flex justify-between items-start pl-4 gap-2">
                     <span className="truncate">+ Extra Time ({data.extraMinutes}m)</span>
                     <span className="font-mono shrink-0 text-right">{extraPriceNum.toFixed(2)}</span>
                   </div>
@@ -625,26 +707,26 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="border-t border-dashed border-black my-2.5" />
 
             {/* Subtotal, Tax, Discount, Total, Gratuity */}
-            <div className="space-y-1 text-xs font-bold text-black">
+            <div className="space-y-1 text-xs text-black">
               <div className="flex justify-between items-center">
-                <span className="w-1/2 text-right pr-4 font-bold">Sub total</span>
-                <span className="font-mono text-right w-1/2 font-bold">{subtotalNum.toFixed(2)}</span>
+                <span className="w-1/2 text-right pr-4">Sub total</span>
+                <span className="font-mono text-right w-1/2">{subtotalNum.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="w-1/2 text-right pr-4 font-bold">Tax (None 0%)</span>
-                <span className="font-mono text-right w-1/2 font-bold">0.00</span>
+                <span className="w-1/2 text-right pr-4">Tax (None 0%)</span>
+                <span className="font-mono text-right w-1/2">0.00</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="w-1/2 text-right pr-4 font-bold">Discount</span>
-                <span className="font-mono text-right w-1/2 font-bold">{discountNum > 0 ? `-${discountNum.toFixed(2)}` : '0.00'}</span>
+                <span className="w-1/2 text-right pr-4">Discount</span>
+                <span className="font-mono text-right w-1/2">{discountNum > 0 ? `-${discountNum.toFixed(2)}` : '0.00'}</span>
               </div>
-              <div className="flex justify-between items-center font-extrabold">
+              <div className="flex justify-between items-center font-bold">
                 <span className="w-1/2 text-right pr-4 font-bold">Total</span>
                 <span className="font-mono text-right w-1/2 font-bold">{totalNum.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center pt-0.5">
-                <span className="w-1/2 text-right pr-4 font-bold">Gratuity</span>
-                <span className="font-mono text-right w-1/2 font-bold">0.00</span>
+                <span className="w-1/2 text-right pr-4">Gratuity</span>
+                <span className="font-mono text-right w-1/2">0.00</span>
               </div>
             </div>
 
@@ -652,17 +734,17 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="border-t border-dashed border-black my-1.5" />
 
             {/* Final Total */}
-            <div className="flex justify-between items-center text-xs font-black text-black">
-              <span className="w-1/2 text-right pr-4 text-sm font-black">Final Total</span>
-              <span className="font-mono text-right w-1/2 text-sm font-black">{finalTotalNum.toFixed(2)}</span>
+            <div className="flex justify-between items-center text-xs font-bold text-black">
+              <span className="w-1/2 text-right pr-4 text-sm font-bold">Final Total</span>
+              <span className="font-mono text-right w-1/2 text-sm font-bold">{finalTotalNum.toFixed(2)}</span>
             </div>
 
             {/* Dashed line */}
             <div className="border-t border-dashed border-black my-1.5" />
 
             {/* Signature */}
-            <div className="flex justify-between items-center text-xs font-bold text-black py-0.5">
-              <span className="w-1/2 text-right pr-4 font-bold">Signature</span>
+            <div className="flex justify-between items-center text-xs text-black py-0.5">
+              <span className="w-1/2 text-right pr-4">Signature</span>
               <span className="w-1/2 text-right border-b border-black inline-block h-3" />
             </div>
 
@@ -670,14 +752,14 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="border-t border-dashed border-black my-1.5" />
 
             {/* Payment & Change */}
-            <div className="space-y-1 text-xs font-bold text-black">
+            <div className="space-y-1 text-xs text-black">
               <div className="flex justify-between items-center">
-                <span className="font-bold">{normalizedPaymentMethod}</span>
-                <span className="font-mono font-bold">{finalTotalNum.toFixed(2)}</span>
+                <span>{normalizedPaymentMethod}</span>
+                <span className="font-mono">{finalTotalNum.toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="font-bold">Change</span>
-                <span className="font-mono font-bold">0.00</span>
+                <span>Change</span>
+                <span className="font-mono">0.00</span>
               </div>
             </div>
 
@@ -685,10 +767,10 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
             <div className="border-t border-dashed border-black my-2" />
 
             {/* Arabic Footer Notices */}
-            <div className="text-center space-y-2 pt-1 text-xs font-bold text-black" dir="rtl">
-              <p className="leading-snug font-bold">يرجى الحفاظ على أغراضك الشخصية ونحن غير مسؤولين عن فقدانها</p>
-              <p className="font-black">** نتمنى لك وقت ممتع **</p>
-              <p className="tracking-widest font-black text-sm">*******</p>
+            <div className="text-center space-y-2 pt-1 text-xs text-black" dir="rtl">
+              <p className="leading-snug">يرجى الحفاظ على أغراضك الشخصية ونحن غير مسؤولين عن فقدانها</p>
+              <p>** نتمنى لك وقت ممتع **</p>
+              <p className="tracking-widest text-sm">*******</p>
             </div>
           </div>
         </div>
