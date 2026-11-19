@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
   FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
-  Trash2, Pencil, Lock,
+  Trash2, Pencil, Lock, MessageSquare, Send,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -27,6 +27,8 @@ import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
 import { BookingCancellationModal } from '@/components/bookings/BookingCancellationModal';
 import { PaymentReferenceModal, type PaymentReferenceData, type PaymentProviderOption } from '@/components/bookings/PaymentReferenceModal';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
+import { feedbackApi, type FeedbackLink, feedbackShareText } from '@/lib/feedback';
+import { sendPaymentLinkSms } from '@/lib/paymentLinks';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface Booking {
@@ -763,6 +765,18 @@ function BookingDetailPopupContent({
   const [noShowError, setNoShowError] = useState<string | null>(null);
   const [parking, setParking] = useState(false);
   const [parkError, setParkError] = useState<string | null>(null);
+
+  // ── Feedback link & SMS prompt modal state ──
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackLink, setFeedbackLink] = useState<FeedbackLink | null>(null);
+  const [creatingFeedbackLink, setCreatingFeedbackLink] = useState(false);
+  const [feedbackLinkError, setFeedbackLinkError] = useState<string | null>(null);
+  const [feedbackLang, setFeedbackLang] = useState<'ar' | 'en'>('ar');
+  const [sendingFeedbackSms, setSendingFeedbackSms] = useState(false);
+  const [feedbackSmsSent, setFeedbackSmsSent] = useState(false);
+  const [feedbackSmsError, setFeedbackSmsError] = useState<string | null>(null);
+  const [feedbackPhone, setFeedbackPhone] = useState<string>('');
+  const [copiedFeedbackLink, setCopiedFeedbackLink] = useState(false);
 
   const user = useAppSelector((s) => s.auth.user);
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
@@ -2595,6 +2609,15 @@ function BookingDetailPopupContent({
         setDetail((prev) => (prev ? { ...prev, status: targetStatus } : { ...booking, status: targetStatus }));
       }
       onSuccess?.();
+      if (targetStatus === 'completed') {
+        const phone = (detail as any)?.customer_phone || (booking as any)?.customer_phone || (booking as any)?.customer_data?.mobile || '';
+        setFeedbackPhone(phone);
+        setFeedbackLink(null);
+        setFeedbackSmsSent(false);
+        setFeedbackSmsError(null);
+        setFeedbackLinkError(null);
+        setShowFeedbackModal(true);
+      }
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error advancing booking status:', err);
       setAdvanceError(err instanceof Error ? err.message : `Failed to update status to ${targetStatus}`);
@@ -2645,11 +2668,78 @@ function BookingDetailPopupContent({
         setDetail((prev) => (prev ? { ...prev, status: 'completed' } : { ...booking, status: 'completed' }));
       }
       onSuccess?.();
+      const phone = (detail as any)?.customer_phone || (booking as any)?.customer_phone || (booking as any)?.customer_data?.mobile || '';
+      setFeedbackPhone(phone);
+      setFeedbackLink(null);
+      setFeedbackSmsSent(false);
+      setFeedbackSmsError(null);
+      setFeedbackLinkError(null);
+      setShowFeedbackModal(true);
     } catch (err: unknown) {
       console.error('[BookingDetailModal] Error completing booking:', err);
       setCompleteError(err instanceof Error ? err.message : 'Failed to update status to completed');
     } finally {
       setCompleting(false);
+    }
+  };
+
+  const handleCreateFeedbackLink = async () => {
+    if (!booking) return;
+    setCreatingFeedbackLink(true);
+    setFeedbackLinkError(null);
+    try {
+      const activeData = (detail || booking) as Record<string, any>;
+      const res = await feedbackApi.createLink({
+        booking_id: String(activeData.id || ''),
+        booking_number: activeData.booking_number ? String(activeData.booking_number) : null,
+        customer_id: activeData.customer_id ? String(activeData.customer_id) : null,
+        customer_name: activeData.customer_name ? String(activeData.customer_name) : null,
+        customer_phone: feedbackPhone ? String(feedbackPhone) : (activeData.customer_phone ? String(activeData.customer_phone) : null),
+        service_id: activeData.service_id ? String(activeData.service_id) : null,
+        service_name: activeData.service_name ? String(activeData.service_name) : null,
+        services: (activeData.services || activeData.sessions || null) as Array<Record<string, unknown>> | null,
+        therapist_id: activeData.therapist_id ? String(activeData.therapist_id) : null,
+        therapist_name: activeData.therapist_name ? String(activeData.therapist_name) : null,
+        secondary_therapist_id: activeData.secondary_therapist_id ? String(activeData.secondary_therapist_id) : null,
+        secondary_therapist_name: activeData.secondary_therapist_name ? String(activeData.secondary_therapist_name) : null,
+        branch_id: activeData.branch_id ? String(activeData.branch_id) : null,
+        branch_name: activeData.branch_name ? String(activeData.branch_name) : null,
+        appointment_start: activeData.appointment_start ? String(activeData.appointment_start) : null,
+        language: feedbackLang,
+      });
+      setFeedbackLink(res);
+    } catch (err: unknown) {
+      console.error('[BookingDetailModal] Error creating feedback link:', err);
+      setFeedbackLinkError(err instanceof Error ? err.message : 'Failed to create feedback link');
+    } finally {
+      setCreatingFeedbackLink(false);
+    }
+  };
+
+  const handleSendFeedbackSms = async () => {
+    if (!feedbackLink?.feedback_url) return;
+    const phone = feedbackPhone.trim();
+    if (!phone) {
+      setFeedbackSmsError('Customer phone number is required to send SMS');
+      return;
+    }
+    setSendingFeedbackSms(true);
+    setFeedbackSmsError(null);
+    try {
+      const activeData = (detail || booking) as Record<string, any>;
+      const customerName = activeData.customer_name ? String(activeData.customer_name) : null;
+      const content = feedbackShareText(feedbackLink.feedback_url, customerName, feedbackLang);
+      await sendPaymentLinkSms({
+        phone_number: phone,
+        content,
+        language: feedbackLang,
+      });
+      setFeedbackSmsSent(true);
+    } catch (err: unknown) {
+      console.error('[BookingDetailModal] Error sending feedback SMS:', err);
+      setFeedbackSmsError(err instanceof Error ? err.message : 'Failed to send SMS');
+    } finally {
+      setSendingFeedbackSms(false);
     }
   };
 
@@ -4889,6 +4979,31 @@ function BookingDetailPopupContent({
                   );
                 })()}
 
+                {/* Feedback Link: available when booking is completed */}
+                {isCompleted && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const phone = (detail as any)?.customer_phone || (booking as any)?.customer_phone || (booking as any)?.customer_data?.mobile || '';
+                      setFeedbackPhone(phone);
+                      setFeedbackLink(null);
+                      setFeedbackSmsSent(false);
+                      setFeedbackSmsError(null);
+                      setFeedbackLinkError(null);
+                      setShowFeedbackModal(true);
+                    }}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2.5 text-xs font-bold shadow-sm transition active:scale-[0.98] cursor-pointer whitespace-nowrap',
+                      isCompleted
+                        ? 'border border-[#B8A394] bg-[#F7F4F0] hover:bg-[#EFE9E2] text-[#2D241E]'
+                        : 'border border-primary/30 bg-primary/10 hover:bg-primary/20 text-primary'
+                    )}
+                  >
+                    <MessageSquare className="h-4 w-4" />
+                    Feedback Link
+                  </button>
+                )}
+
                 <button
                   onClick={onClose}
                   className={cn(
@@ -5333,6 +5448,257 @@ function BookingDetailPopupContent({
             onClose();
           }}
         />
+      )}
+
+      {/* ── Booking Completed Feedback Prompt Modal ── */}
+      {showFeedbackModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !creatingFeedbackLink && !sendingFeedbackSms) {
+              setShowFeedbackModal(false);
+            }
+          }}
+        >
+          <div className="relative w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl text-card-foreground">
+            {/* Close Button */}
+            <button
+              type="button"
+              onClick={() => setShowFeedbackModal(false)}
+              disabled={creatingFeedbackLink || sendingFeedbackSms}
+              className="absolute top-4 right-4 rounded-lg p-1.5 text-muted-foreground hover:bg-muted transition cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+
+            {/* Header */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="h-10 w-10 rounded-full bg-emerald-500/10 text-emerald-600 flex items-center justify-center shrink-0">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-foreground">Booking Completed</h3>
+                <p className="text-xs text-muted-foreground">
+                  {booking.customer_name || 'Customer'} • {booking.booking_number || 'Booking'}
+                </p>
+              </div>
+            </div>
+
+            {/* Step 1: Create Feedback Link */}
+            {!feedbackLink ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-border/60 bg-muted/30 p-3.5 text-xs text-muted-foreground leading-relaxed">
+                  The booking is completed. Automatic SMS has been turned off. Would you like to create a feedback link to collect feedback from the customer?
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-foreground">Language</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFeedbackLang('ar')}
+                      className={cn(
+                        'rounded-xl border px-3 py-2 text-xs font-bold transition text-center cursor-pointer',
+                        feedbackLang === 'ar'
+                          ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                          : 'border-border/60 bg-background text-foreground hover:bg-muted'
+                      )}
+                    >
+                      العربية (Arabic)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFeedbackLang('en')}
+                      className={cn(
+                        'rounded-xl border px-3 py-2 text-xs font-bold transition text-center cursor-pointer',
+                        feedbackLang === 'en'
+                          ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                          : 'border-border/60 bg-background text-foreground hover:bg-muted'
+                      )}
+                    >
+                      English
+                    </button>
+                  </div>
+                </div>
+
+                {feedbackLinkError && (
+                  <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                    <AlertCircle className="h-4 w-4 shrink-0" />
+                    <span>{feedbackLinkError}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowFeedbackModal(false)}
+                    className="rounded-xl border border-border/80 bg-background px-4 py-2.5 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+                  >
+                    Skip
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateFeedbackLink}
+                    disabled={creatingFeedbackLink}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground shadow-sm hover:bg-primary/90 transition cursor-pointer disabled:opacity-50"
+                  >
+                    {creatingFeedbackLink ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Creating Link…</span>
+                      </>
+                    ) : (
+                      <>
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        <span>Create Feedback Link</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* Step 2: Feedback Link Ready & Send SMS prompt */
+              <div className="space-y-4">
+                <div className="rounded-xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 text-xs text-emerald-700 dark:text-emerald-300 font-medium">
+                  ✓ Feedback link created successfully.
+                </div>
+
+                {/* Feedback URL Box */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-foreground">Feedback URL</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={feedbackLink.feedback_url}
+                      className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs font-mono text-foreground focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof navigator !== 'undefined' && navigator.clipboard) {
+                          navigator.clipboard.writeText(feedbackLink.feedback_url);
+                        }
+                        setCopiedFeedbackLink(true);
+                        setTimeout(() => setCopiedFeedbackLink(false), 2000);
+                      }}
+                      className="inline-flex items-center gap-1 shrink-0 rounded-xl border border-border px-3 py-2 text-xs font-bold hover:bg-muted transition cursor-pointer"
+                    >
+                      {copiedFeedbackLink ? (
+                        <>
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                          <span>Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Send SMS Section */}
+                <div className="space-y-3 pt-2 border-t border-border/60">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-foreground">Send SMS to Customer?</span>
+                    <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/50">
+                      <button
+                        type="button"
+                        onClick={() => setFeedbackLang('ar')}
+                        className={cn(
+                          'px-2 py-0.5 text-[11px] font-bold rounded transition cursor-pointer',
+                          feedbackLang === 'ar' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
+                        )}
+                      >
+                        العربية
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFeedbackLang('en')}
+                        className={cn(
+                          'px-2 py-0.5 text-[11px] font-bold rounded transition cursor-pointer',
+                          feedbackLang === 'en' ? 'bg-card text-foreground shadow-xs' : 'text-muted-foreground'
+                        )}
+                      >
+                        English
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-muted-foreground">Customer Phone Number</label>
+                    <input
+                      type="tel"
+                      value={feedbackPhone}
+                      onChange={(e) => setFeedbackPhone(e.target.value)}
+                      placeholder="+965..."
+                      className="w-full rounded-xl border border-border bg-background px-3 py-2 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-muted-foreground">Message Preview</label>
+                    <div className="rounded-xl border border-border/60 bg-muted/30 p-2.5 text-xs text-foreground font-sans leading-relaxed whitespace-pre-wrap" dir={feedbackLang === 'ar' ? 'rtl' : 'ltr'}>
+                      {feedbackShareText(
+                        feedbackLink.feedback_url,
+                        String(((detail || booking) as Record<string, any>)?.customer_name || ''),
+                        feedbackLang
+                      )}
+                    </div>
+                  </div>
+
+                  {feedbackSmsSent && (
+                    <div className="flex items-center gap-2 rounded-xl border border-emerald-300/40 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">
+                      <CheckCircle2 className="h-4 w-4 shrink-0" />
+                      <span>Feedback SMS sent successfully to {feedbackPhone}!</span>
+                    </div>
+                  )}
+
+                  {feedbackSmsError && (
+                    <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
+                      <AlertCircle className="h-4 w-4 shrink-0" />
+                      <span>{feedbackSmsError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowFeedbackModal(false)}
+                      className="rounded-xl border border-border/80 bg-background px-4 py-2 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+                    >
+                      {feedbackSmsSent ? 'Close' : 'Skip SMS'}
+                    </button>
+                    {!feedbackSmsSent && (
+                      <button
+                        type="button"
+                        onClick={handleSendFeedbackSms}
+                        disabled={sendingFeedbackSms || !feedbackPhone.trim()}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 text-xs font-bold shadow-sm transition cursor-pointer disabled:opacity-50"
+                      >
+                        {sendingFeedbackSms ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            <span>Sending…</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5" />
+                            <span>Send SMS</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   );
