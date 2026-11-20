@@ -1856,6 +1856,8 @@ export default function TherapistSchedulePage() {
     ? buildScheduleFromApi(scheduleData.therapists, scheduleData.availability, scheduleData.bookings, timeSlots, grid.slot_duration_minutes, selectedDate, isAdmin)
     : {};
 
+  const currentTherapistId = roleInfo?.therapist_id ?? (user as unknown as { therapist_id?: number | string })?.therapist_id;
+
   const filteredTherapists = search
     ? therapists.filter(t => t.name.toLowerCase().includes(search.toLowerCase()))
     : therapists;
@@ -2985,21 +2987,33 @@ export default function TherapistSchedulePage() {
                 {/* Therapist header columns — overflow-hidden, synced with body scroll */}
                 <div ref={headerScrollRef} className="flex-1 overflow-hidden" style={{ scrollbarGutter: 'stable' }}>
                   <div style={{ display: 'grid', gridTemplateColumns: `repeat(${filteredTherapists.length}, 80px)`, width: `${filteredTherapists.length * 80}px` }}>
-                    {filteredTherapists.map((t, tIdx) => (
-                      <div key={t.id} className={cn('flex flex-col items-center justify-center gap-1 py-2 px-1 border-l border-border/30 first:border-l-0 min-w-0 h-[108px]', COL_TINTS[tIdx % COL_TINTS.length])}>
-                        <p className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums text-center leading-none">{formatHeaderDate(selectedDate)}</p>
-                        <div className="relative flex items-center justify-center p-0.5 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-sm ring-1 ring-border/50 shrink-0">
-                          <div className="relative h-9 w-9 rounded-full overflow-hidden ring-2 ring-background shrink-0">
-                            {t.photoUrl && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img src={t.photoUrl} alt={t.name} className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
-                            )}
-                            <div className={cn('absolute inset-0 grid place-items-center text-white text-[10px] font-bold bg-gradient-to-br -z-10', t.color)}>{t.initials}</div>
+                    {filteredTherapists.map((t, tIdx) => {
+                      const isCurrentUser = Boolean(currentTherapistId && String(t.id) === String(currentTherapistId));
+                      return (
+                        <div key={t.id} className={cn('flex flex-col items-center justify-center gap-1 py-2 px-1 border-l border-border/30 first:border-l-0 min-w-0 h-[108px]', COL_TINTS[tIdx % COL_TINTS.length], isCurrentUser && 'bg-primary/5 dark:bg-primary/10')}>
+                          {isCurrentUser ? (
+                            <span className="rounded-full bg-primary/20 text-primary px-1.5 py-0.5 text-[8px] font-extrabold border border-primary/30 uppercase tracking-wider">
+                              You
+                            </span>
+                          ) : (
+                            <p className="text-[9px] font-semibold text-emerald-600 dark:text-emerald-400 tabular-nums text-center leading-none">{formatHeaderDate(selectedDate)}</p>
+                          )}
+                          <div className={cn(
+                            'relative flex items-center justify-center p-0.5 rounded-full bg-gradient-to-b from-card to-muted/70 shadow-sm shrink-0',
+                            isCurrentUser ? 'ring-2 ring-primary ring-offset-1 ring-offset-background' : 'ring-1 ring-border/50'
+                          )}>
+                            <div className="relative h-9 w-9 rounded-full overflow-hidden ring-2 ring-background shrink-0">
+                              {t.photoUrl && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={t.photoUrl} alt={t.name} className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+                              )}
+                              <div className={cn('absolute inset-0 grid place-items-center text-white text-[10px] font-bold bg-gradient-to-br -z-10', t.color)}>{t.initials}</div>
+                            </div>
                           </div>
+                          <p className={cn('text-[10px] select-none text-center leading-tight truncate w-full px-0.5', isCurrentUser ? 'font-extrabold text-primary' : 'font-bold text-foreground')} title={t.name}>{t.name.split(' ')[0]}</p>
                         </div>
-                        <p className="text-[10px] font-bold text-foreground select-none text-center leading-tight truncate w-full px-0.5" title={t.name}>{t.name.split(' ')[0]}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </div>

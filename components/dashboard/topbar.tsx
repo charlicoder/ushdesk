@@ -1,12 +1,13 @@
 'use client';
 
-import { Menu, Moon, Sun, Languages, Bell, Search, LogOut } from 'lucide-react';
+import { Menu, Moon, Sun, Languages, Bell, Search, LogOut, Sparkles } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { toggleSidebar, toggleTheme, toggleLocale } from '@/store/slices/uiSlice';
 import { setSearch } from '@/store/slices/filtersSlice';
 import { logout } from '@/store/slices/authSlice';
+import { isDualRoleTherapist } from '@/lib/permissions';
 
 export function Topbar() {
   const { t, locale } = useI18n();
@@ -15,6 +16,8 @@ export function Topbar() {
   const theme    = useAppSelector((s) => s.ui.theme);
   const search   = useAppSelector((s) => s.filters.search);
   const user     = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
+  const isDualRole = isDualRoleTherapist(roleInfo, user);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -54,6 +57,18 @@ export function Topbar() {
         </div>
 
         <div className="flex flex-1 items-center justify-end gap-2 sm:flex-none">
+          {/* Dual-role therapist switch to personal appointments */}
+          {isDualRole && (
+            <button
+              onClick={() => router.push('/therapist')}
+              className="flex h-10 items-center gap-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary px-3 text-xs sm:text-sm font-semibold transition"
+              title="Switch to My Appointments (Therapist View)"
+            >
+              <Sparkles className="h-4 w-4" />
+              <span className="hidden md:inline">My Appointments</span>
+            </button>
+          )}
+
           {/* language toggle */}
           <button
             onClick={() => dispatch(toggleLocale())}

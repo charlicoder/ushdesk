@@ -1,20 +1,24 @@
 'use client';
 
-import { LogOut, Moon, Sun, Sparkles } from 'lucide-react';
+import { LogOut, Moon, Sun, Sparkles, CalendarDays } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { toggleTheme } from '@/store/slices/uiSlice';
 import { logout } from '@/store/slices/authSlice';
+import { isDualRoleTherapist } from '@/lib/permissions';
 
 /**
- * Minimal layout for the therapist portal: no sidebar, no navigation links —
- * only the therapist's name, a theme toggle and logout.
+ * Minimal layout for the therapist portal.
+ * For dual-role therapists (e.g. Therapist + Branch Manager / Therapists Manager),
+ * displays a role badge and navigation button to switch to the branch schedule.
  */
 export function TherapistShell({ children }: { children: React.ReactNode }) {
   const dispatch = useAppDispatch();
   const router = useRouter();
   const user = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const theme = useAppSelector((s) => s.ui.theme);
+  const isDualRole = isDualRoleTherapist(roleInfo, user);
 
   const handleLogout = () => {
     dispatch(logout());
@@ -31,11 +35,29 @@ export function TherapistShell({ children }: { children: React.ReactNode }) {
               <Sparkles className="h-5 w-5" />
             </span>
             <div className="leading-tight">
-              <p className="text-sm font-bold text-foreground">My Appointments</p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-bold text-foreground">My Appointments</p>
+                {isDualRole && (
+                  <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    {roleInfo?.is_branch_manager ? 'Branch Manager' : 'Therapists Manager'}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">{user?.name || 'Therapist'}</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {isDualRole && (
+              <button
+                onClick={() => router.push('/appointments/therapist-schedule')}
+                className="flex h-10 items-center gap-2 rounded-xl bg-primary text-primary-foreground px-3.5 text-xs sm:text-sm font-semibold shadow-sm transition hover:bg-primary/90"
+                title="Switch to Branch Schedule (All Therapists)"
+              >
+                <CalendarDays className="h-4 w-4" />
+                <span className="hidden sm:inline">All Therapists Schedule</span>
+                <span className="sm:hidden">All Schedule</span>
+              </button>
+            )}
             <button
               onClick={() => dispatch(toggleTheme())}
               className="grid h-10 w-10 place-items-center rounded-xl bg-muted/60 transition hover:bg-muted"

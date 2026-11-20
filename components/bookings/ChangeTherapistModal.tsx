@@ -225,6 +225,17 @@ export function ChangeTherapistModal({
     );
   }, [raw, sad, initialBooking]);
 
+  const branchId = useMemo(() => {
+    return (
+      raw.branch_id ||
+      sad.branch_id ||
+      (raw.branch as AnyRecord)?.id ||
+      initialBooking?.branch_id ||
+      (initialBooking as AnyRecord)?.branch?.id ||
+      ''
+    );
+  }, [raw, sad, initialBooking]);
+
   const appointmentDate = useMemo(() => {
     const apptStart = raw.appointment_start || initialBooking?.appointment_start;
     if (apptStart && typeof apptStart === 'string') {
@@ -300,8 +311,8 @@ export function ChangeTherapistModal({
 
   // Fetch available therapists from availability-for-arragement endpoint
   const fetchTherapists = useCallback(async () => {
-    if (!serviceId || !serviceArrangementId) {
-      setError('Service ID or Service Arrangement ID not found for this booking.');
+    if (!serviceId) {
+      setError('Service ID not found for this booking.');
       setLoading(false);
       return;
     }
@@ -311,18 +322,36 @@ export function ChangeTherapistModal({
     setSubmitError(null);
 
     try {
-      const qs = new URLSearchParams({
-        service_arrangement_id: serviceArrangementId,
-        date: appointmentDate,
-        timeslots: timeslotsQueryParam,
-      });
+      let res: Response | null = null;
 
-      const endpoint = `/uauth/api/v1/services/${serviceId}/availability-for-arragement/?${qs.toString()}`;
-      const res = await authedFetch(endpoint);
+      if (serviceArrangementId) {
+        const qs = new URLSearchParams({
+          service_arrangement_id: serviceArrangementId,
+          date: appointmentDate,
+          timeslots: timeslotsQueryParam,
+        });
+        const endpoint = `/uauth/api/v1/services/${serviceId}/availability-for-arragement/?${qs.toString()}`;
+        res = await authedFetch(endpoint);
+      }
 
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson.detail || errJson.message || `Failed to fetch availability (${res.status})`);
+      // Fallback: If arrangement-specific availability returned 404 or wasn't available,
+      // fallback to branch-level availability for the service so therapists can still be fetched.
+      if ((!res || (!res.ok && res.status === 404)) && branchId) {
+        const branchQs = new URLSearchParams({
+          branch_id: branchId,
+          date: appointmentDate,
+          timeslots: timeslotsQueryParam,
+        });
+        const branchEndpoint = `/uauth/api/v1/services/${serviceId}/availability-for-branch/?${branchQs.toString()}`;
+        const branchRes = await authedFetch(branchEndpoint);
+        if (branchRes.ok) {
+          res = branchRes;
+        }
+      }
+
+      if (!res || !res.ok) {
+        const errJson = res ? await res.json().catch(() => ({})) : {};
+        throw new Error(errJson.detail || errJson.message || `Failed to fetch availability (${res?.status ?? 400})`);
       }
 
       const data = await res.json().catch(() => ({}));
@@ -346,7 +375,7 @@ export function ChangeTherapistModal({
     } finally {
       setLoading(false);
     }
-  }, [serviceId, serviceArrangementId, appointmentDate, timeslotsQueryParam, activeSlot, secondaryTherapistId, primaryTherapistId]);
+  }, [serviceId, serviceArrangementId, branchId, appointmentDate, timeslotsQueryParam, activeSlot, secondaryTherapistId, primaryTherapistId]);
 
   useEffect(() => {
     fetchTherapists();

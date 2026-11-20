@@ -48,7 +48,7 @@ import { useAppDispatch, useAppSelector } from '@/store/hooks';
 import { setSidebarOpen } from '@/store/slices/uiSlice';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
-import { PERMISSIONS } from '@/lib/permissions';
+import { PERMISSIONS, isDualRoleTherapist } from '@/lib/permissions';
 
 interface NavItem {
   href: string;
@@ -71,7 +71,10 @@ export function Sidebar() {
   const pathname = usePathname();
   const dispatch = useAppDispatch();
   const open = useAppSelector((s) => s.ui.sidebarOpen);
+  const user = useAppSelector((s) => s.auth.user);
+  const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const { can, isAdmin } = usePermissions();
+  const isDualRole = isDualRoleTherapist(roleInfo, user);
 
   // Track which collapsible groups are expanded
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
@@ -91,6 +94,7 @@ export function Sidebar() {
       permission: PERMISSIONS.APPOINTMENTS,
       children: [
         { href: '/appointments/therapist-schedule', label: 'Therapist Schedule',  icon: Clock,      permission: PERMISSIONS.APPOINTMENTS_THERAPIST_SCHEDULE },
+        ...(isDualRole ? [{ href: '/therapist', label: 'My Appointments', icon: Sparkles }] : []),
         { href: '/appointments/branch',             label: 'Room Schedule',       icon: LayoutGrid, permission: PERMISSIONS.APPOINTMENTS_BRANCH_APPOINTMENTS },
         { href: '/appointments/home-service',       label: 'Home Service',        icon: HomeIcon,   permission: PERMISSIONS.APPOINTMENTS_HOME_SERVICE },
         { href: '/appointments/gift-vouchers',      label: 'Gift Vouchers',       icon: Gift,       permission: PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER },

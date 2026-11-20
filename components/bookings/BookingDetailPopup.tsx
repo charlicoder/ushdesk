@@ -786,6 +786,7 @@ function BookingDetailPopupContent({
   const authHeader = cleanToken ? `Bearer ${cleanToken}` : '';
 
   const {
+    isAdmin,
     canRescheduleBooking: hasReschedulePermission,
     canCancelBooking: hasCancelPermission,
     canMakePayment: hasPaymentPermission,
@@ -1521,19 +1522,8 @@ function BookingDetailPopupContent({
     curStatus === 'refunded' ||
     String(booking.status ?? '').toLowerCase() === 'cancelled' ||
     String(booking.status ?? '').toLowerCase() === 'refunded';
-  const canChangeTherapist =
-    !isParked &&
-    !isPastApptEnd &&
-    !isNoShow &&
-    curStatus !== 'completed' &&
-    curStatus !== 'no_show' &&
-    curStatus !== 'cancelled' &&
-    curStatus !== 'refunded' &&
-    booking.status !== 'completed' &&
-    booking.status !== 'no_show' &&
-    booking.status !== 'cancelled' &&
-    booking.status !== 'refunded' &&
-    !isCompleted;
+  const isUserAdmin = Boolean(isAdmin || isSuperuserOrAdmin);
+  const canChangeTherapist = !isCancelled && (!isCompleted || isUserAdmin);
   const accentBar = isCompleted ? 'bg-[#7D6453]' : (STATUS_BAR[booking.status] ?? 'bg-slate-400');
 
   // Normalized payment status & isPaid determination
@@ -3809,16 +3799,30 @@ function BookingDetailPopupContent({
                       return (
                       <div
                         key={sess.id}
-                        role={!isSessionLocked && sess.raw?.session_id ? 'button' : undefined}
-                        tabIndex={!isSessionLocked && sess.raw?.session_id ? 0 : undefined}
-                        onClick={() => { if (!isSessionLocked && sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
-                        onKeyDown={(e) => { if (!isSessionLocked && e.key === 'Enter' && sess.raw?.session_id) setActiveSessionId(String(sess.raw.session_id)); }}
+                        role={!isSessionLocked && (sess.raw?.session_id || canChangeTherapist) ? 'button' : undefined}
+                        tabIndex={!isSessionLocked && (sess.raw?.session_id || canChangeTherapist) ? 0 : undefined}
+                        onClick={() => {
+                          if (isSessionLocked) return;
+                          if (sess.raw?.session_id) {
+                            setActiveSessionId(String(sess.raw.session_id));
+                          } else if (canChangeTherapist) {
+                            openChangeTherapist('primary');
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (isSessionLocked || e.key !== 'Enter') return;
+                          if (sess.raw?.session_id) {
+                            setActiveSessionId(String(sess.raw.session_id));
+                          } else if (canChangeTherapist) {
+                            openChangeTherapist('primary');
+                          }
+                        }}
                         title={isSessionLocked ? `Locked — open from ${sess.therapistName}'s schedule block to manage this session` : undefined}
                         className={cn(
                           'flex items-center justify-between gap-3 rounded-2xl border p-3.5 sm:p-4 shadow-xs transition-colors',
                           isSessionLocked
                             ? 'border-border/60 bg-muted/40 opacity-60 cursor-not-allowed select-none'
-                            : cn('border-[#f4cfd3] bg-white hover:border-[#e8b5bb]', Boolean(sess.raw?.session_id) && 'cursor-pointer')
+                            : cn('border-[#f4cfd3] bg-white hover:border-[#e8b5bb]', (Boolean(sess.raw?.session_id) || canChangeTherapist) && 'cursor-pointer')
                         )}
                       >
                         {/* Left: Number circle + Info */}
@@ -3865,6 +3869,26 @@ function BookingDetailPopupContent({
                                 {sess.therapistName}
                                 {sess.secondaryTherapistName ? ` + ${sess.secondaryTherapistName}` : ''}
                               </span>
+                              {canChangeTherapist && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (isSessionLocked) return;
+                                    if (sess.raw?.session_id) {
+                                      setActiveSessionId(String(sess.raw.session_id));
+                                      setShowSessionTherapistModal(true);
+                                    } else {
+                                      openChangeTherapist('primary');
+                                    }
+                                  }}
+                                  title={isCompleted ? "Change Therapist (Admin)" : "Change Therapist"}
+                                  className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/20 transition cursor-pointer ml-1"
+                                >
+                                  <UserCog className="h-3 w-3" />
+                                  <span>Change</span>
+                                </button>
+                              )}
                               <span className="font-bold text-muted-foreground/60 mx-1">·</span>
                               <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                               <span className="font-medium text-foreground/80">{sess.timeLabel}</span>
@@ -5084,7 +5108,7 @@ function BookingDetailPopupContent({
           ? displaySessions.find((x) => String(x.raw?.session_id ?? '') === activeSessionId)
           : null;
         if (!activeSess || showSessionTherapistModal) return null;
-        const canChange = !isCancelled && !isCompleted;
+        const canChange = canChangeTherapist;
         return (
           <div className="fixed inset-0 z-[65] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" onClick={() => setActiveSessionId(null)}>
             <div className="w-full max-w-md rounded-3xl border border-border/60 bg-card shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>

@@ -107,7 +107,12 @@ export interface RoleInfoLike {
   role_code?: string | null;
   is_superuser?: boolean;
   is_branch_manager?: boolean;
+  is_therapists_manager?: boolean;
   is_therapist_role?: boolean;
+  has_dual_role?: boolean;
+  therapist_id?: string | null;
+  branch_id?: string | null;
+  branch_name?: string | null;
 }
 
 export interface UserLike {
@@ -284,19 +289,58 @@ export function isCallCenterAgentRole(roleInfo?: RoleInfoLike | null, user?: Use
 }
 
 /**
+ * Checks whether the current user has the Therapists Manager role.
+ */
+export function isTherapistsManagerRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  if (roleInfo?.is_therapists_manager === true) return true;
+  const candidates = extractRoleCandidates(roleInfo, user);
+  const patterns = ['therapists manager', 'therapist manager', 'lead therapist', 'senior therapist'];
+  return candidates.some((c) => {
+    const norm = c.toLowerCase().replace(/[-_]/g, ' ').replace(/\s+/g, ' ').trim();
+    return patterns.some((p) => norm === p || norm.includes(p));
+  });
+}
+
+/**
+ * Checks whether the current user has dual capabilities: both a practicing therapist AND a manager
+ * (Branch Manager or Therapists Manager).
+ */
+export function isDualRoleTherapist(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
+  if (!roleInfo && !user) return false;
+  const isTherapist = Boolean(
+    roleInfo?.is_therapist_role === true ||
+    roleInfo?.has_dual_role === true ||
+    Boolean(roleInfo?.therapist_id) ||
+    (user?.role && String(user.role).toLowerCase().includes('therapist'))
+  );
+  const isManager = Boolean(
+    roleInfo?.is_superuser === true ||
+    roleInfo?.is_branch_manager === true ||
+    roleInfo?.is_therapists_manager === true ||
+    isBranchManagerRole(roleInfo, user) ||
+    isTherapistsManagerRole(roleInfo, user)
+  );
+  return isTherapist && isManager;
+}
+
+/**
  * Checks whether the current user is a Therapist — a restricted role that may only
  * use the /therapist page. Privileged roles (admin / spa director / branch manager /
- * finance) are never treated as therapists even if their role name mentions one.
+ * therapists manager / finance) are never treated as restricted therapists.
  */
 export function isTherapistRole(roleInfo?: RoleInfoLike | null, user?: UserLike | null): boolean {
   if (roleInfo?.is_superuser === true) return false;
   if (isAdmin(user?.user_type)) return false;
+  // If the user has branch manager or therapists manager privileges, they have full manager access
+  if (roleInfo?.is_branch_manager === true || roleInfo?.is_therapists_manager === true) return false;
+  if (isBranchManagerRole(roleInfo, user) || isTherapistsManagerRole(roleInfo, user)) return false;
   if (roleInfo?.is_therapist_role === true) return true;
   const candidates = extractRoleCandidates(roleInfo, user);
   return candidates.some((c) => c.includes('therapist')) &&
     !isAdministratorRole(roleInfo, user) &&
     !isSpaDirectorRole(roleInfo, user) &&
     !isBranchManagerRole(roleInfo, user) &&
+    !isTherapistsManagerRole(roleInfo, user) &&
     !isFinanceManagerRole(roleInfo, user);
 }
 
