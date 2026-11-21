@@ -1431,7 +1431,7 @@ function AddVoucherSessionModal({
           : all.slice(0, 1);
         setServices(list);
         // default: still-unassigned gifted services (up to the remaining session limit) get their own block
-        setSelectedServiceIds(isPkg ? [] : list.slice(0, sessionLimit).map((s) => String(s.id)));
+        setSelectedServiceIds(isPkg && list.length > 1 ? [] : list.slice(0, sessionLimit).map((s) => String(s.id)));
       })
       .catch(() => setServices([]))
       .finally(() => setServicesLoading(false));
@@ -1641,7 +1641,9 @@ function AddVoucherSessionModal({
                 );
               })}
               <p className="text-[11px] text-muted-foreground">
-                {availableGifted.length > 1
+                {isPkg
+                  ? 'All package services must be scheduled in this booking. If you do not select all services for this session, please add another session for the remaining service(s).'
+                  : availableGifted.length > 1
                   ? 'Untick a service to leave it for another session or booking. Each ticked service gets its own room and time. Unticked add-ons / extra time are not used.'
                   : 'Unticked add-ons / extra time are not used in this booking.'}
               </p>
@@ -1878,11 +1880,52 @@ export function RedeemVoucherModal({
   const [pkgInfo, setPkgInfo] = useState<{
     id: string;
     name: string;
+    package_price?: number;
     components: { id: string; name: string; duration_minutes: number; base_price: string }[];
     /** Add-ons covered by the package (redeemed together with its first included service) */
     addons: { id: string; name: string; price: string | number; duration_minutes: number }[];
   } | null>(null);
+
   useEffect(() => {
+    // If the voucher already has package info in service_data or services[0]
+    const rawSvc = voucherProp.service_data || voucherProp.services?.[0]?.service_data || voucherProp.services?.[0];
+    const rawInc: AnyRecord[] = Array.isArray(rawSvc?.included_services)
+      ? rawSvc.included_services
+      : Array.isArray(voucherProp.services?.[0]?.included_services)
+      ? voucherProp.services[0].included_services
+      : [];
+
+    const extractedPrice = parseFloat(
+      String(
+        rawSvc?.price ??
+        rawSvc?.base_price ??
+        voucherProp.services?.[0]?.price ??
+        voucherProp.services?.[0]?.base_price ??
+        0
+      )
+    ) || 0;
+
+    if (rawSvc?.is_packaged_services && rawInc.length > 0) {
+      setPkgInfo({
+        id: String(rawSvc.id ?? voucherProp.service_id ?? voucherProp.services?.[0]?.service_id),
+        name: String(rawSvc.name ?? 'Spa Package'),
+        package_price: extractedPrice,
+        components: rawInc.map((c) => ({
+          id: String(c.id ?? c.service_id),
+          name: String(c.name ?? c.service_name),
+          duration_minutes: Number(c.duration_minutes ?? c.duration) || 60,
+          base_price: String(c.base_price ?? c.price ?? '0'),
+        })),
+        addons: (Array.isArray(rawSvc?.included_addons) ? rawSvc.included_addons : []).map((a: AnyRecord) => ({
+          id: String(a.id),
+          name: String(a.name ?? 'Add-on'),
+          price: a.price ?? 0,
+          duration_minutes: Number(a.duration_minutes) || 0,
+        })),
+      });
+      return;
+    }
+
     const list = getVoucherServices(voucherProp);
     if (list.length !== 1) return;
     let cancelled = false;
@@ -1895,6 +1938,7 @@ export function RedeemVoucherModal({
         setPkgInfo({
           id: String(svc.id ?? list[0].id),
           name: String(svc.name ?? list[0].name),
+          package_price: parseFloat(String(svc.base_price ?? svc.price ?? extractedPrice ?? 0)) || 0,
           components: inc.map((c) => ({
             id: String(c.id),
             name: String(c.name),
@@ -1938,7 +1982,7 @@ export function RedeemVoucherModal({
           },
     [voucherProp, pkgInfo],
   );
-  const isPackageVoucher = Boolean(pkgInfo);
+  const isPackageVoucher = Boolean(pkgInfo || voucherProp.service_data?.is_packaged_services || voucherProp.services?.[0]?.service_data?.is_packaged_services);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [sessions, setSessions] = useState<VoucherSession[]>([]);
@@ -1967,10 +2011,47 @@ export function RedeemVoucherModal({
   const giftedServiceIds = useMemo(() => giftedList.map((g) => g.id), [giftedList]);
   const assignedCount = new Set(sessions.flatMap((x) => x.serviceIds.map(String))).size;
   const unassignedCount = Math.max(0, giftedList.length - assignedCount);
+  const unassignedServices = useMemo(() => {
+    const assigned = new Set(sessions.flatMap((x) => x.serviceIds.map(String)));
+    return giftedList.filter((g) => !assigned.has(g.id));
+  }, [sessions, giftedList]);
   const maxSessions = isPackageVoucher ? Math.min(5, giftedList.length) : Math.min(3, giftedList.length);
   const serviceName = firstTruthy(voucher.service_data?.name, voucher.service_data?.service_name, 'Spa Service');
   const originalDuration = parseInt(String(voucher.total_duration ?? voucher.service_data?.duration_minutes ?? 60), 10) || 60;
+
+  // Calculate package price cleanly: exclude any physical product prices from total_amount
+  const packagePrice = useMemo(() => {
+    const rawSvc = voucherProp.service_data || voucherProp.services?.[0]?.service_data || voucherProp.services?.[0];
+    const svcPrice = parseFloat(
+      String(
+        rawSvc?.price ??
+        rawSvc?.base_price ??
+        voucherProp.services?.[0]?.price ??
+        voucherProp.services?.[0]?.base_price ??
+        pkgInfo?.package_price ??
+        '0'
+      )
+    );
+    if (svcPrice > 0) return svcPrice;
+
+    const totalAmt = parseFloat(String(voucherProp.total_amount ?? '0')) || 0;
+    const productsTotal = (Array.isArray(voucherProp.ordered_items) ? voucherProp.ordered_items : [])
+      .filter((it: any) => it.item_type === 'product' || it.product_id)
+      .reduce((sum: number, it: any) => sum + ((parseFloat(it.price) || 0) * (it.quantity || 1)), 0);
+    if (totalAmt > 0 && productsTotal > 0 && totalAmt > productsTotal) {
+      return totalAmt - productsTotal;
+    }
+    if (voucherProp.package_price != null) {
+      const pp = parseFloat(String(voucherProp.package_price));
+      if (pp > 0) return pp;
+    }
+    return totalAmt || 0;
+  }, [voucherProp, pkgInfo]);
+
   const voucherAmount = (() => {
+    if (isPackageVoucher) {
+      return packagePrice;
+    }
     const totalAmt = parseFloat(String(voucher.total_amount ?? voucher.package_price ?? '0')) || 0;
     const componentsSum = pkgInfo?.components ? pkgInfo.components.reduce((sum, c) => sum + (parseFloat(c.base_price) || 0), 0) : 0;
     const giftedSum = giftedList.reduce((sum, g) => sum + (parseFloat(String(g.price)) || 0), 0);
@@ -2214,6 +2295,12 @@ export function RedeemVoucherModal({
       setSubmitError('Please add at least one session.');
       return;
     }
+    if (isPackageVoucher && unassignedCount > 0) {
+      setSubmitError(
+        `Partial redemption is not allowed for packaged services. Please add another session to schedule all ${giftedList.length} package services: ${unassignedServices.map((s) => s.name).join(', ')}.`
+      );
+      return;
+    }
     if (!selectedBranchId || !selectedDate) {
       setSubmitError('Please select branch and appointment date.');
       return;
@@ -2343,7 +2430,7 @@ export function RedeemVoucherModal({
       payment_id: resolvedPaymentId,
       payment_number: resolvedPaymentNumber,
       invoice_number: resolvedInvoiceNumber,
-      total_price: fmt(isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : netPayablePrice),
+      total_price: fmt(isPackageVoucher ? (unassignedCount === 0 ? voucherAmount : (netPayablePrice || voucherAmount)) : netPayablePrice),
       currency,
       total_duration: totalBookingDuration,
       customer_notes: notes,
@@ -2437,9 +2524,7 @@ export function RedeemVoucherModal({
       const voucherUpdatePayload = {
         redemption: {
           booking_number: newBooking?.booking_number || newBooking?.booking_no,
-          services: pkgInfo
-            ? [{ service_id: pkgInfo.id, service_name: pkgInfo.name, addon_ids: pkgInfo.addons.map((a) => a.id), extra_time: 0 }]
-            : sessions.flatMap((x) => x.redemptionServices ?? []),
+          services: sessions.flatMap((x) => x.redemptionServices ?? []),
         },
         booking_id: newBookingId,
         booking_data: {
@@ -2638,7 +2723,7 @@ export function RedeemVoucherModal({
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Package Total Price:</span>
                     <span className="font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                      {fmt(voucher.total_amount ?? voucherAmount)} {currency} (Covered)
+                      {fmt(voucherAmount)} {currency} (Covered)
                     </span>
                   </div>
                 )}
@@ -2711,20 +2796,42 @@ export function RedeemVoucherModal({
                       <p className="text-xs font-bold text-foreground">Covered by Voucher</p>
                     </div>
                     {pkgInfo && (
-                      <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3.5">
+                      <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3.5 space-y-2">
                         <div className="flex items-center justify-between">
-                          <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">{pkgInfo.name} · package</p>
-                          <span className="text-xs font-bold text-amber-900 dark:text-amber-100 bg-amber-500/20 px-2 py-0.5 rounded-full">
-                            Package Price: {fmt(voucher.total_amount ?? voucherAmount)} {currency}
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-300">
+                              <Package className="h-3.5 w-3.5" />
+                            </span>
+                            <p className="text-xs font-extrabold text-amber-800 dark:text-amber-200">{pkgInfo.name} · package</p>
+                          </div>
+                          <span className="text-xs font-bold text-amber-900 dark:text-amber-100 bg-amber-500/20 px-2.5 py-0.5 rounded-full font-mono">
+                            Package Price: {fmt(voucherAmount)} {currency}
                           </span>
                         </div>
-                        <p className="mt-0.5 text-[11px] text-muted-foreground">
-                          {assignedCount}/{giftedList.length} included services scheduled. Add a session, choose the services
-                          for it, then its room, time and therapist. Every service must be scheduled before you can confirm.
-                        </p>
+                        {unassignedCount === 0 ? (
+                          <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-200">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                            <span>All {giftedList.length} package services scheduled ({assignedCount}/{giftedList.length}). Ready to redeem.</span>
+                          </div>
+                        ) : (
+                          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 space-y-1.5">
+                            <div className="flex items-center gap-2 text-xs font-bold text-amber-900 dark:text-amber-200">
+                              <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                              <span>All Package Services Required ({assignedCount}/{giftedList.length} scheduled)</span>
+                            </div>
+                            <p className="text-[11px] leading-relaxed text-amber-800/90 dark:text-amber-300/90 pl-6">
+                              Packaged services cannot be redeemed partially. All included services must be scheduled together in this booking.
+                              {sessions.length > 0 && unassignedServices.length > 0 && (
+                                <>
+                                  {' '}Please click <strong className="font-extrabold">&quot;Add Session&quot;</strong> below to schedule the remaining service{unassignedServices.length > 1 ? 's' : ''}: <span className="font-bold underline">{unassignedServices.map((s) => s.name).join(', ')}</span>.
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        )}
                       </div>
                     )}
-                    <VoucherCoverageList voucher={voucher} currency={currency} isPackage={isPackageVoucher} packagePrice={voucher.total_amount ?? voucherAmount} />
+                    <VoucherCoverageList voucher={voucher} currency={currency} isPackage={isPackageVoucher} packagePrice={voucherAmount} />
                   </div>
 
                   {/* Sessions Header */}
@@ -2809,6 +2916,42 @@ export function RedeemVoucherModal({
                       ))}
                     </div>
                   )}
+
+                  {/* Warning message for package voucher when not all services are scheduled */}
+                  {isPackageVoucher && sessions.length > 0 && unassignedCount > 0 && (
+                    <div className="rounded-2xl border-2 border-amber-500/50 bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-amber-500/5 p-4 shadow-sm space-y-3">
+                      <div className="flex items-start gap-3">
+                        <div className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/20 text-amber-700 dark:text-amber-300 shrink-0 mt-0.5">
+                          <AlertTriangle className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <h4 className="text-xs font-black uppercase tracking-wider text-amber-900 dark:text-amber-200">
+                            Package Redemption Incomplete ({assignedCount}/{giftedList.length} services scheduled)
+                          </h4>
+                          <p className="text-xs text-amber-900/95 dark:text-amber-200/95 mt-1 font-medium">
+                            Packaged services cannot be redeemed partially. All <strong className="font-extrabold">{giftedList.length} package services</strong> must be included in this booking before you can confirm redemption.
+                          </p>
+                          <div className="mt-2 text-xs text-amber-900 dark:text-amber-200 bg-amber-500/15 border border-amber-500/30 rounded-xl px-3 py-2">
+                            <span className="font-semibold">Remaining service{unassignedServices.length > 1 ? 's' : ''} to schedule:</span>{' '}
+                            <strong className="font-extrabold">{unassignedServices.map((s) => s.name).join(', ')}</strong>
+                          </div>
+                          <p className="text-[11px] text-amber-800/90 dark:text-amber-300/90 mt-1.5">
+                            Please add another session to include the remaining service{unassignedServices.length > 1 ? 's' : ''}.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setShowAddSessionModal(true)}
+                          className="inline-flex items-center gap-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 text-xs font-extrabold shadow-sm transition cursor-pointer"
+                        >
+                          <Plus className="h-4 w-4" />
+                          <span>Add Session for Remaining Service{unassignedServices.length > 1 ? 's' : ''}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2843,30 +2986,37 @@ export function RedeemVoucherModal({
                   {isPackageVoucher ? 'Package Total Price' : `Total (${sessions.length} session${sessions.length > 1 ? 's' : ''})`}
                 </span>
                 <span className="text-sm font-extrabold text-foreground">
-                  {isPackageVoucher ? `${fmt(voucher.total_amount ?? voucherAmount)} KWD` : `${fmt(netPayablePrice)} KWD`}
+                  {isPackageVoucher ? `${fmt(voucherAmount)} KWD` : `${fmt(netPayablePrice)} KWD`}
                 </span>
                 <span className="text-xs text-muted-foreground ml-1.5">({totalBookingDuration} min)</span>
               </div>
 
               {(
-                <button
-                  type="button"
-                  disabled={submitting || sessions.length === 0 || (isPackageVoucher && unassignedCount > 0)}
-                  onClick={() => handleConfirmRedeem()}
-                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition disabled:opacity-50 cursor-pointer"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      <span>Confirming Booking…</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span>Confirm Booking & Redeem</span>
-                    </>
+                <div className="flex flex-col items-end gap-1">
+                  <button
+                    type="button"
+                    disabled={submitting || sessions.length === 0 || (isPackageVoucher && unassignedCount > 0)}
+                    onClick={() => handleConfirmRedeem()}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 text-xs font-bold text-white shadow-md hover:bg-emerald-700 transition disabled:opacity-50 cursor-pointer"
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span>Confirming Booking…</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>Confirm Booking & Redeem</span>
+                      </>
+                    )}
+                  </button>
+                  {isPackageVoucher && unassignedCount > 0 && sessions.length > 0 && (
+                    <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                      Include all {giftedList.length} services to redeem package
+                    </span>
                   )}
-                </button>
+                </div>
               )}
             </div>
           </div>
@@ -2921,15 +3071,15 @@ export function RedeemVoucherModal({
             timeSlot: sessions.map((s) => s.startTime).filter(Boolean).join(', ') || null,
             totalDuration: totalBookingDuration,
             currency,
-            subtotal: isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : totalBookingPrice,
-            totalAmount: isPackageVoucher ? (voucher.total_amount ?? voucherAmount) : netPayablePrice,
+            subtotal: isPackageVoucher ? voucherAmount : totalBookingPrice,
+            totalAmount: isPackageVoucher ? voucherAmount : netPayablePrice,
             paymentStatus: 'paid',
             paymentMethod: 'gift_voucher',
             paymentProvider: 'gift_voucher',
             isVoucherRedemption: true,
             isVoucherPackage: isPackageVoucher,
             voucherPackageName: pkgInfo?.name || null,
-            voucherPackagePrice: voucher.total_amount ?? voucherAmount,
+            voucherPackagePrice: voucherAmount,
             voucherCode: voucher.voucher_number || voucherCode,
             isPartialRedeem: unassignedCount > 0 || redeemOutcome?.status === 'partially_redeemed',
             redeemedServices: sessions.flatMap((s) =>

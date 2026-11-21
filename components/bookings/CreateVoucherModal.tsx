@@ -21,6 +21,7 @@ import {
   Sparkles, ChevronRight, ChevronLeft, AlertCircle,
   CreditCard, Calendar, Hash, Banknote, ArrowRight,
   CheckCircle2, ShoppingBag, Phone, FileText, DollarSign, Clock,
+  Home, Store,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { authedFetch } from '@/lib/authedFetch';
@@ -87,6 +88,10 @@ interface SlimService {
   is_packaged?: boolean | string | number;
   extra_minutes?: number | string | null;
   price_for_extra_minutes?: number | string | null;
+  branches?: Branch[];
+  is_home_service_eligible?: boolean;
+  home_service_price?: string | number | null;
+  home_price_for_extra_minutes?: string | number | null;
 }
 
 interface AddonItem {
@@ -96,6 +101,7 @@ interface AddonItem {
   currency: string;
   duration_minutes: number;
   description?: string;
+  is_available_for_home_service?: boolean;
 }
 
 interface Arrangement {
@@ -122,7 +128,11 @@ interface Branch {
   branch_id?: string;
   name: string;
   branch_name?: string;
+  city?: string;
+  address?: string;
+  image1?: string | null;
   service_arrangements?: Arrangement[];
+  is_home_service?: boolean;
 }
 
 interface ServiceFullDetail {
@@ -141,6 +151,10 @@ interface ServiceFullDetail {
   is_packaged?: boolean | string | number;
   extra_minutes?: number | string | null;
   price_for_extra_minutes?: number | string | null;
+  is_home_service_eligible?: boolean;
+  home_service_price?: string | number | null;
+  home_price_for_extra_minutes?: string | number | null;
+  addons?: AddonItem[];
 }
 
 interface Customer {
@@ -248,11 +262,18 @@ function fmtPrice(val: string | number | null | undefined, currency = 'KWD'): st
   return `${isNaN(n) ? '0.000' : n.toFixed(3)} ${currency}`;
 }
 
-function isHomeServiceBranch(b: { id?: string; branch_id?: string; name?: string; branch_name?: string } | null | undefined): boolean {
+function isHomeServiceBranch(b: { id?: string; branch_id?: string; name?: string; branch_name?: string; is_home_service?: boolean } | null | undefined): boolean {
   if (!b) return false;
+  if (b.is_home_service) return true;
   const rawName = String(b.name ?? b.branch_name ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
   const rawId = String(b.id ?? b.branch_id ?? '').trim().toLowerCase();
-  return rawName === 'home service' || rawName === 'home' || rawId === 'home_service' || rawId === 'home';
+  return (
+    rawName === 'home service' ||
+    rawName === 'home' ||
+    rawId === 'home_service' ||
+    rawId === 'home' ||
+    rawId === '1896a1ca-66bc-4f06-9a0d-cef30fa8293c'
+  );
 }
 
 const GIFT_TEMPLATES = ['Classic Gold', 'Elegant Rose', 'Midnight Blue', 'Floral Bliss', 'Luxury Black', 'Spring Breeze'];
@@ -916,13 +937,15 @@ function StepBar({
     ? [
         { n: 1, label: 'Gift Category' },
         { n: 2, label: 'Choose Product' },
-        { n: 3, label: 'Service & Room' },
-        { n: 4, label: 'Recipients' },
+        { n: 3, label: 'Choose Branch' },
+        { n: 4, label: 'Service & Details' },
+        { n: 5, label: 'Recipients' },
       ]
     : [
         { n: 1, label: 'Gift Category' },
-        { n: 2, label: 'Service & Room' },
-        { n: 3, label: 'Recipients' },
+        { n: 2, label: 'Choose Branch' },
+        { n: 3, label: 'Service & Details' },
+        { n: 4, label: 'Recipients' },
       ];
 
   return (
@@ -993,10 +1016,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const isPhysical = selectedCategory?.code?.toUpperCase() === 'PHYSICAL';
 
   // Current logical step number:
-  // Step 1: Category
-  // If Physical: Step 2 = Product, Step 3 = Service, Step 4 = Recipient
-  // If Digital:  Step 2 = Service, Step 3 = Recipient
+  // If Physical: Step 1 = Category, Step 2 = Product, Step 3 = Branch, Step 4 = Service, Step 5 = Recipient
+  // If Digital:  Step 1 = Category, Step 2 = Branch, Step 3 = Service, Step 4 = Recipient
   const [step, setStep] = useState<number>(1);
+  const productStepNumber = 2; // only used if isPhysical
+  const branchStepNumber = isPhysical ? 3 : 2;
+  const serviceStepNumber = isPhysical ? 4 : 3;
+  const recipientStepNumber = isPhysical ? 5 : 4;
 
   // ── Products State (Step 2 if Physical) ──
   const [products, setProducts] = useState<ProductItem[]>([]);
@@ -1005,6 +1031,12 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [productSearch, setProductSearch] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<ProductItem | null>(null);
 
+  // ── Branches State (Active Branches List) ──
+  const [allBranches, setAllBranches] = useState<Branch[]>([]);
+  const [branchesLoading, setBranchesLoading] = useState(false);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
+
   // ── Service & Arrangement State ──
   const [services, setServices] = useState<SlimService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
@@ -1012,7 +1044,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [fullDetail, setFullDetail] = useState<ServiceFullDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
-  const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [selectedArrangt, setSelectedArrangt] = useState<Arrangement | null>(null);
   const [selectedAddons, setSelectedAddons] = useState<AddonItem[]>([]);
   const [extraTime, setExtraTime] = useState<number>(0);
@@ -1025,6 +1056,16 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const [extraSel, setExtraSel] = useState<Record<string, { addons: AddonItem[]; extraTime: number }>>({});
   const [extraLoading, setExtraLoading] = useState<Record<string, boolean>>({});
   const [serviceSearch, setServiceSearch] = useState('');
+
+  const isServiceCompatibleWithBranch = useCallback((svc: SlimService, br: Branch | null): boolean => {
+    if (!br) return true;
+    if (isHomeServiceBranch(br)) {
+      return Boolean(svc.is_home_service_eligible);
+    }
+    const brId = String(br.id || br.branch_id || '');
+    if (!Array.isArray(svc.branches) || svc.branches.length === 0) return true;
+    return svc.branches.some((b) => String(b.branch_id || b.id || '') === brId);
+  }, []);
 
   // ── Recipient & Sender State ──
   const [recipientName, setRecipientName] = useState('');
@@ -1143,6 +1184,44 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       .finally(() => setProductsLoading(false));
   }, [isPhysical, authHeader]);
 
+  // ── 2b. Fetch Active Branches (all active branches including home service) ──
+  useEffect(() => {
+    setBranchesLoading(true);
+    setBranchesError(null);
+    authedFetch('/api/v1/branches?page_size=200', {
+      headers: { Authorization: authHeader, Accept: 'application/json' },
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json().catch(() => ({}));
+        let list: any[] = [];
+        if (Array.isArray(data)) list = data;
+        else if (Array.isArray(data.data)) list = data.data;
+        else if (Array.isArray(data.results)) list = data.results;
+
+        const norm: Branch[] = list
+          .filter((b) => b.status === 'active' || b.status === undefined || b.is_active !== false)
+          .map((b) => ({
+            id: String(b.id ?? b.branch_id ?? ''),
+            branch_id: String(b.id ?? b.branch_id ?? ''),
+            name: String(b.name ?? b.branch_name ?? ''),
+            branch_name: String(b.name ?? b.branch_name ?? ''),
+            city: b.city ?? '',
+            address: b.address ?? '',
+            image1: b.image1 ?? null,
+            is_home_service: isHomeServiceBranch(b),
+          }));
+        setAllBranches(norm);
+        if (norm.length > 0 && !selectedBranch) {
+          setSelectedBranch(norm[0]);
+        }
+      })
+      .catch((err) => {
+        setBranchesError(err instanceof Error ? err.message : 'Failed to load branches');
+      })
+      .finally(() => setBranchesLoading(false));
+  }, [authHeader]);
+
   // ── 3. Fetch Services (slim) ──
   useEffect(() => {
     setServicesLoading(true);
@@ -1163,7 +1242,6 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       setDetailLoading(true);
       setDetailError(null);
       setFullDetail(null);
-      setSelectedBranch(null);
       setSelectedArrangt(null);
       setSelectedAddons([]);
       setExtraTime(0);
@@ -1175,44 +1253,13 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         const data = await res.json().catch(() => ({}));
         const detail = (data.data ?? data) as ServiceFullDetail;
 
-        // Only list active branches (GET /api/v1/branches returns active branches only).
-        // If the active list can't be loaded, leave the branches unfiltered.
-        try {
-          const bRes = await authedFetch('/api/v1/branches?page_size=200', {
-            headers: { Authorization: authHeader, Accept: 'application/json' },
-          });
-          if (bRes.ok) {
-            const bJson = await bRes.json().catch(() => ({}));
-            const rawList: any[] = Array.isArray(bJson)
-              ? bJson
-              : (bJson?.results ?? bJson?.data?.results ?? bJson?.data ?? bJson?.branches ?? []);
-            const activeIds = new Set(
-              (Array.isArray(rawList) ? rawList : [])
-                .filter((b) => !isHomeServiceBranch(b))
-                .map((b) => String(b?.id ?? b?.branch_id ?? ''))
-                .filter(Boolean),
-            );
-            if (activeIds.size > 0 && Array.isArray(detail.branches)) {
-              detail.branches = detail.branches.filter((b) =>
-                !isHomeServiceBranch(b) && activeIds.has(String(b.id ?? b.branch_id ?? '')),
-              );
-            }
-          }
-        } catch {
-          /* keep unfiltered branches */
-        }
-
-        if (Array.isArray(detail.branches)) {
-          detail.branches = detail.branches.filter((b) => !isHomeServiceBranch(b));
-        }
-
         setFullDetail(detail);
 
-        // Pre-select first branch & arrangement if available
-        if (detail.branches && detail.branches.length > 0) {
-          const firstB = detail.branches[0];
-          setSelectedBranch(firstB);
-          const rawArrs = firstB.service_arrangements ?? detail.service_arrangements ?? [];
+        // Pre-select arrangement if available for the currently selected branch
+        if (selectedBranch && !isHomeServiceBranch(selectedBranch)) {
+          const bId = selectedBranch.id ?? selectedBranch.branch_id;
+          const matchB = (detail.branches ?? []).find((b) => (b.id ?? b.branch_id) === bId);
+          const rawArrs = matchB?.service_arrangements ?? detail.service_arrangements ?? [];
           const arrs = [...rawArrs].sort((a, b) => getArrangementSortOrder(a) - getArrangementSortOrder(b));
           if (arrs.length > 0) {
             setSelectedArrangt(arrs[0]);
@@ -1224,7 +1271,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
         setDetailLoading(false);
       }
     },
-    [authHeader]
+    [authHeader, selectedBranch]
   );
 
   const handleServiceSelect = useCallback(
@@ -1381,21 +1428,43 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     }
   }, [isPackagedService, selectedAddons.length]);
 
+  const isHome = isHomeServiceBranch(selectedBranch);
   const currency = fullDetail?.currency ?? selectedService?.currency ?? 'KWD';
   const productPrice = isPhysical && selectedProduct ? parseFloat(String(selectedProduct.price)) || 0 : 0;
-  const basePrice =
-    parseFloat(
-      fullDetail?.base_price ?? fullDetail?.price ?? selectedService?.base_price ?? selectedService?.price ?? '0'
-    ) || 0;
+  const basePrice = isHome
+    ? parseFloat(
+        String(
+          fullDetail?.home_service_price ??
+          selectedService?.home_service_price ??
+          fullDetail?.base_price ??
+          fullDetail?.price ??
+          selectedService?.base_price ??
+          selectedService?.price ??
+          '0'
+        )
+      ) || 0
+    : parseFloat(
+        String(
+          fullDetail?.base_price ?? fullDetail?.price ?? selectedService?.base_price ?? selectedService?.price ?? '0'
+        )
+      ) || 0;
   const baseDuration = fullDetail?.duration_minutes ?? selectedService?.duration_minutes ?? 60;
   const addonPrice = isPackagedService ? 0 : selectedAddons.reduce((s, a) => s + (parseFloat(a.price) || 0), 0);
   const addonDur = isPackagedService ? 0 : selectedAddons.reduce((s, a) => s + (a.duration_minutes || 0), 0);
-  const arrangPriceRaw = selectedArrangt?.arrangement_price ?? selectedArrangt?.price;
+  const arrangPriceRaw = isHome ? null : (selectedArrangt?.arrangement_price ?? selectedArrangt?.price);
   const arrangPrice = parseFloat(String(arrangPriceRaw ?? '')) || 0;
 
   // Only offer extra time when the service defines both extra_minutes and price_for_extra_minutes (> 0)
   const svcExtraMinutes = Number(fullDetail?.extra_minutes ?? selectedService?.extra_minutes ?? 0) || 0;
-  const svcExtraPrice = Number(fullDetail?.price_for_extra_minutes ?? selectedService?.price_for_extra_minutes ?? 0) || 0;
+  const svcExtraPrice = isHome
+    ? Number(
+        fullDetail?.home_price_for_extra_minutes ??
+        selectedService?.home_price_for_extra_minutes ??
+        fullDetail?.price_for_extra_minutes ??
+        selectedService?.price_for_extra_minutes ??
+        0
+      ) || 0
+    : Number(fullDetail?.price_for_extra_minutes ?? selectedService?.price_for_extra_minutes ?? 0) || 0;
   const hasExtraTime = svcExtraMinutes > 0 && svcExtraPrice > 0;
 
   // Extra time price = (requested minutes / service extra_minutes) * service price_for_extra_minutes
@@ -1417,6 +1486,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     );
   const extraArrangementPrice = (svc: SlimService): number => {
     const d = extraDetails[svc.id];
+    if (isHome) {
+      return parseFloat(String(d?.home_service_price ?? svc.home_service_price ?? d?.base_price ?? d?.price ?? svc.base_price ?? svc.price ?? '0')) || 0;
+    }
     const branchId = selectedBranch?.id ?? selectedBranch?.branch_id;
     const dBranch = d?.branches?.find((b) => (b.id ?? b.branch_id) === branchId);
     const arrs = dBranch?.service_arrangements ?? d?.service_arrangements ?? [];
@@ -1427,7 +1499,9 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const extraRates = (svc: SlimService) => {
     const d = extraDetails[svc.id];
     const mins = Number(d?.extra_minutes ?? svc.extra_minutes ?? 0) || 0;
-    const price = Number(d?.price_for_extra_minutes ?? svc.price_for_extra_minutes ?? 0) || 0;
+    const price = isHome
+      ? Number(d?.home_price_for_extra_minutes ?? svc.home_price_for_extra_minutes ?? d?.price_for_extra_minutes ?? svc.price_for_extra_minutes ?? 0) || 0
+      : Number(d?.price_for_extra_minutes ?? svc.price_for_extra_minutes ?? 0) || 0;
     return { mins, price, has: mins > 0 && price > 0 };
   };
   const extraBreakdown = extraServices.map((svc) => {
@@ -1543,7 +1617,16 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       });
   }, [arrangements]);
 
-  const addons: AddonItem[] = isPackagedService ? [] : (selectedArrangt?.addons ?? []);
+  const addons: AddonItem[] = useMemo(() => {
+    if (isPackagedService) return [];
+    const rawList = selectedArrangt?.addons?.length
+      ? selectedArrangt.addons
+      : ((fullDetail as any)?.addons ?? (selectedService as any)?.addons ?? []);
+    if (isHome) {
+      return rawList.filter((a: any) => a.is_available_for_home_service !== false);
+    }
+    return rawList;
+  }, [isPackagedService, isHome, selectedArrangt, fullDetail, selectedService]);
 
   const toggleAddon = (addon: AddonItem, checked: boolean) =>
     setSelectedAddons((prev) => (checked ? [...prev, addon] : prev.filter((a) => a.id !== addon.id)));
@@ -1555,6 +1638,19 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     const q = productSearch.toLowerCase();
     return eligible.filter((p) => p.name.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q)));
   }, [products, productSearch]);
+
+  // Available services filtered by selected branch
+  const availableServices = useMemo(() => {
+    let list = services;
+    if (selectedBranch) {
+      list = list.filter((s) => isServiceCompatibleWithBranch(s, selectedBranch));
+    }
+    if (serviceSearch.trim()) {
+      const q = serviceSearch.trim().toLowerCase();
+      list = list.filter((s) => s.name.toLowerCase().includes(q));
+    }
+    return list;
+  }, [services, selectedBranch, serviceSearch, isServiceCompatibleWithBranch]);
 
   // Validation
   const stepCategoryValid = !!selectedCategory;
@@ -1569,7 +1665,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   }, [selectedArrangt?.id]);
 
   const extraStillLoading = extraServices.some((e) => extraLoading[e.id] || !extraDetails[e.id]);
-  const stepServiceValid = !!selectedService && !!selectedBranch && !!selectedArrangt && !detailLoading && !extraStillLoading;
+  const stepServiceValid = !!selectedService && !!selectedBranch && (isHome || !!selectedArrangt) && !detailLoading && !extraStillLoading;
   const effectiveRecipientPhone = recipientPhone.trim() || (recipient ? (customerPhone(recipient) || '').trim() : '');
   const recipientLocalPhone = sanitizeLocalPhone(effectiveRecipientPhone, recipientCountryCode);
   const recipientPhoneValid = isValidLocalPhone(recipientLocalPhone, recipientCountryCode);
@@ -1591,36 +1687,50 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
     scheduledValid;
 
   // ── Navigation Logic ──
-  const serviceStepNumber = isPhysical ? 3 : 2;
-  const recipientStepNumber = isPhysical ? 4 : 3;
-
   const handleNextFromCategory = () => {
     if (!selectedCategory) return;
     if (isPhysical) {
-      setStep(2); // Go to Product
+      setStep(productStepNumber); // 2: Product
     } else {
-      setStep(2); // Go directly to Service
+      setStep(branchStepNumber); // 2: Branch
     }
   };
 
   const handleNextFromProduct = () => {
     if (!selectedProduct) return;
-    setStep(3); // Go to Service
+    setStep(branchStepNumber); // 3: Branch
+  };
+
+  const handleSelectBranchInStep = (b: Branch) => {
+    setSelectedBranch(b);
+    if (selectedService && !isServiceCompatibleWithBranch(selectedService, b)) {
+      setSelectedService(null);
+      setSelectedArrangt(null);
+      setSelectedAddons([]);
+    }
+    setStep(serviceStepNumber);
+  };
+
+  const handleNextFromBranch = () => {
+    if (!selectedBranch) return;
+    setStep(serviceStepNumber);
   };
 
   const handleNextFromService = () => {
     if (!stepServiceValid) return;
-    setStep(recipientStepNumber); // Go to Recipient
+    setStep(recipientStepNumber);
   };
 
   const handleBack = () => {
-    if (step === 2) {
-      setStep(1);
-    } else if (step === 3) {
-      if (isPhysical) setStep(2);
+    if (step === recipientStepNumber) {
+      setStep(serviceStepNumber);
+    } else if (step === serviceStepNumber) {
+      setStep(branchStepNumber);
+    } else if (step === branchStepNumber) {
+      if (isPhysical) setStep(productStepNumber);
       else setStep(1);
-    } else if (step === 4) {
-      setStep(3);
+    } else if (step === productStepNumber) {
+      setStep(1);
     }
   };
 
@@ -2160,18 +2270,184 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
               </div>
             )}
 
+            {/* ══ STEP: CHOOSE BRANCH (Step 2 for Digital, Step 3 for Physical) ══ */}
+            {step === branchStepNumber && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <SectionLabel icon={MapPin} label="Choose Branch" />
+                  <span className="text-[11px] text-muted-foreground">{allBranches.length} locations available</span>
+                </div>
+                <p className="text-xs text-muted-foreground -mt-2">
+                  Select a spa branch or Home Service to view available treatments and experiences.
+                </p>
+
+                {/* Selected Product Banner if Physical */}
+                {isPhysical && selectedProduct && (
+                  <div
+                    className="rounded-2xl border p-3 flex items-center justify-between gap-3 shadow-xs"
+                    style={{ borderColor: B.linen, background: B.cardBg }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="h-12 w-12 rounded-xl overflow-hidden bg-muted shrink-0 border" style={{ borderColor: B.linen }}>
+                        {selectedProduct.image ? (
+                          <img src={selectedProduct.image} alt={selectedProduct.name} className="h-full w-full object-cover" />
+                        ) : (
+                          <div className="h-full w-full grid place-items-center text-muted-foreground">
+                            <Package className="h-5 w-5" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-bold tracking-wider block" style={{ color: B.textMuted }}>
+                          Selected Packaging
+                        </span>
+                        <h4 className="text-xs font-bold truncate" style={{ color: B.textMain }}>
+                          {selectedProduct.name}
+                        </h4>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-extrabold" style={{ color: B.espresso }}>
+                        {fmtPrice(selectedProduct.price, selectedProduct.currency || 'KWD')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setStep(productStepNumber)}
+                        className="text-xs font-bold underline hover:opacity-80 cursor-pointer"
+                        style={{ color: B.espresso }}
+                      >
+                        Change
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {branchesLoading && (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3">
+                    <Loader2 className="h-8 w-8 animate-spin" style={{ color: B.espresso }} />
+                    <p className="text-xs text-muted-foreground">Loading active branches…</p>
+                  </div>
+                )}
+
+                {branchesError && (
+                  <div className="flex items-center gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3">
+                    <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
+                    <p className="text-xs text-destructive">{branchesError}</p>
+                  </div>
+                )}
+
+                {!branchesLoading && allBranches.length === 0 && !branchesError && (
+                  <p className="text-xs text-muted-foreground py-6 text-center">No branches available.</p>
+                )}
+
+                {!branchesLoading && allBranches.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-4 gap-3">
+                    {allBranches.map((br) => {
+                      const isSel = String(selectedBranch?.branch_id || selectedBranch?.id || '') === String(br.branch_id || br.id || '');
+                      const isHome = isHomeServiceBranch(br);
+                      return (
+                        <button
+                          key={String(br.branch_id || br.id)}
+                          type="button"
+                          onClick={() => handleSelectBranchInStep(br)}
+                          className={cn(
+                            'group relative flex flex-col justify-between rounded-2xl border-2 p-3.5 text-left transition-all duration-200 cursor-pointer min-h-[125px] sm:min-h-[135px]',
+                            isSel ? 'shadow-md scale-[1.01]' : 'hover:border-border hover:shadow-xs'
+                          )}
+                          style={{
+                            borderColor: isSel ? B.espresso : B.linen,
+                            background: isSel ? '#ffffff' : B.cardBg,
+                          }}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <div
+                                className="w-8 h-8 rounded-xl grid place-items-center transition-colors"
+                                style={{
+                                  background: isSel ? B.espresso : B.pillBg,
+                                  color: isSel ? '#ffffff' : B.espresso,
+                                }}
+                              >
+                                {isHome ? <Home className="w-4 h-4" /> : <Store className="w-4 h-4" />}
+                              </div>
+                              {isSel && (
+                                <div
+                                  className="w-5 h-5 rounded-full grid place-items-center text-white"
+                                  style={{ background: B.espresso }}
+                                >
+                                  <Check className="w-3 h-3 stroke-[3]" />
+                                </div>
+                              )}
+                            </div>
+
+                            <h4 className="text-xs sm:text-sm font-bold leading-snug line-clamp-2" style={{ color: B.textMain }}>
+                              {br.name}
+                            </h4>
+                            <p className="text-[11px] mt-0.5 line-clamp-1" style={{ color: B.textMuted }}>
+                              {br.city || (isHome ? 'Client Location' : 'Kuwait')}
+                            </p>
+                          </div>
+
+                          <div className="mt-3 pt-2 border-t flex items-center justify-between" style={{ borderColor: B.lineMuted }}>
+                            <span className="text-[10px] font-semibold" style={{ color: B.textMuted }}>
+                              {isHome ? 'On-site' : 'Spa Center'}
+                            </span>
+                            <span className="text-[10px] font-bold underline group-hover:opacity-80" style={{ color: B.espresso }}>
+                              Select →
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* ══ STEP (SERVICE & ROOM): Requirement 1.iii ══ */}
             {step === serviceStepNumber && (
               <div className="space-y-6">
+                {/* Selected Branch Banner */}
+                {selectedBranch && (
+                  <div
+                    className="rounded-2xl border p-3 sm:p-4 flex items-center justify-between gap-3 shadow-xs"
+                    style={{ borderColor: B.linen, background: B.cardBg }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className="w-9 h-9 rounded-xl grid place-items-center shrink-0"
+                        style={{ background: B.pillBg, color: B.espresso }}
+                      >
+                        {isHomeServiceBranch(selectedBranch) ? <Home className="w-4 h-4" /> : <Store className="w-4 h-4" />}
+                      </div>
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-bold tracking-wider block" style={{ color: B.textMuted }}>
+                          Selected Branch
+                        </span>
+                        <h4 className="text-xs sm:text-sm font-bold truncate" style={{ color: B.textMain }}>
+                          {selectedBranch.name}
+                          {selectedBranch.city && (
+                            <span className="text-[11px] font-normal text-muted-foreground ms-1.5">({selectedBranch.city})</span>
+                          )}
+                        </h4>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setStep(branchStepNumber)}
+                      className="text-xs font-semibold hover:underline shrink-0 cursor-pointer"
+                      style={{ color: B.espresso }}
+                    >
+                      Change Branch
+                    </button>
+                  </div>
+                )}
+
                 {/* Service Selection */}
                 <div>
                   <SectionLabel icon={Scissors} label="Services" />
                   <MultiSelectDrop<SlimService>
-                    items={
-                      serviceSearch.trim()
-                        ? services.filter((x) => x.name.toLowerCase().includes(serviceSearch.trim().toLowerCase()))
-                        : services
-                    }
+                    items={availableServices}
                     selectedIds={[...(selectedService ? [selectedService.id] : []), ...extraServices.map((x) => x.id)]}
                     getId={(x) => String(x.id)}
                     search={serviceSearch}
@@ -2191,23 +2467,33 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     placeholder="Search and select one or more spa services…"
                     loading={servicesLoading}
                     icon={Scissors}
-                    renderItem={(x, checked) => (
-                      <div className="flex items-center gap-3 px-3 py-2.5">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold truncate">{x.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {[
-                              x.duration_minutes ? `${x.duration_minutes} min` : '',
-                              x.base_price || x.price ? `${x.base_price || x.price} ${x.currency || 'KWD'}` : '',
-                            ]
-                              .filter(Boolean)
-                              .join(' • ')}
-                          </p>
+                    renderItem={(x, checked) => {
+                      const isHome = isHomeServiceBranch(selectedBranch);
+                      const svcPrice = isHome && x.home_service_price != null ? x.home_service_price : (x.base_price || x.price);
+                      return (
+                        <div className="flex items-center gap-3 px-3 py-2.5">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold truncate">{x.name}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {[
+                                x.duration_minutes ? `${x.duration_minutes} min` : '',
+                                svcPrice ? `${svcPrice} ${x.currency || 'KWD'}` : '',
+                                isHome ? 'Home Service Price' : '',
+                              ]
+                                .filter(Boolean)
+                                .join(' • ')}
+                            </p>
+                          </div>
+                          {checked && <Check className="h-4 w-4 shrink-0 text-emerald-600" />}
                         </div>
-                        {checked && <Check className="h-4 w-4 shrink-0 text-emerald-600" />}
-                      </div>
-                    )}
+                      );
+                    }}
                   />
+                  {availableServices.length === 0 && !servicesLoading && (
+                    <p className="mt-2 text-xs text-muted-foreground italic">
+                      No services available for {selectedBranch?.name || 'this branch'}. Please change the branch to explore other services.
+                    </p>
+                  )}
                   {selectedService && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {[selectedService, ...extraServices].map((x, i) => (
@@ -2243,51 +2529,8 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   </div>
                 )}
 
-                {/* Branch Selection */}
-                {fullDetail && branches.length > 0 && (
-                  <div>
-                    <SectionLabel icon={MapPin} label="Branch" />
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {branches.map((b) => {
-                        const bid = b.id ?? b.branch_id ?? '';
-                        const bname = b.name ?? b.branch_name ?? bid;
-                        const active = (selectedBranch?.id ?? selectedBranch?.branch_id) === bid;
-                        return (
-                          <button
-                            key={bid}
-                            type="button"
-                            onClick={() => {
-                              setSelectedBranch(b);
-                              setSelectedArrangt(null);
-                              setSelectedAddons([]);
-                            }}
-                            className="flex items-center gap-3 rounded-xl border px-4 py-2.5 text-left transition-all cursor-pointer"
-                            style={{
-                              borderColor: active ? B.espresso : B.linen,
-                              background: active ? B.blush : B.cardBg,
-                            }}
-                          >
-                            <div
-                              className="h-4 w-4 rounded-full border-2 grid place-items-center shrink-0 transition"
-                              style={{
-                                borderColor: active ? B.espresso : B.linen,
-                                background: active ? B.espresso : 'transparent',
-                              }}
-                            >
-                              {active && <Check className="h-2.5 w-2.5 text-white" />}
-                            </div>
-                            <p className="text-sm font-semibold" style={{ color: B.textMain }}>
-                              {bname}
-                            </p>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Room / Arrangements */}
-                {selectedBranch && arrangements.length > 0 && (
+                {/* Room / Arrangements (Spa branches only; home service does not have rooms) */}
+                {!isHome && selectedBranch && arrangements.length > 0 && (
                   <div className="min-w-0">
                     <div className="flex items-center justify-between mb-2">
                       <SectionLabel icon={Gift} label="Room / Arrangement" />
@@ -2885,7 +3128,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                     color: stepCategoryValid ? '#fff' : B.textMuted,
                   }}
                 >
-                  Next: {isPhysical ? 'Choose Product' : 'Choose Service'} <ChevronRight className="h-3.5 w-3.5" />
+                  Next: {isPhysical ? 'Choose Product' : 'Choose Branch'} <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               )}
 
@@ -2899,6 +3142,22 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                   style={{
                     background: stepProductValid ? B.espresso : B.linen,
                     color: stepProductValid ? '#fff' : B.textMuted,
+                  }}
+                >
+                  Next: Choose Branch <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+
+              {/* Branch Step button */}
+              {step === branchStepNumber && (
+                <button
+                  type="button"
+                  disabled={!selectedBranch}
+                  onClick={handleNextFromBranch}
+                  className="flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-bold text-white shadow-sm transition active:scale-[0.98] cursor-pointer"
+                  style={{
+                    background: selectedBranch ? B.espresso : B.linen,
+                    color: selectedBranch ? '#fff' : B.textMuted,
                   }}
                 >
                   Next: Choose Service <ChevronRight className="h-3.5 w-3.5" />

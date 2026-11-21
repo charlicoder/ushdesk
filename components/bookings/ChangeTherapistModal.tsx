@@ -230,8 +230,11 @@ export function ChangeTherapistModal({
       raw.branch_id ||
       sad.branch_id ||
       (raw.branch as AnyRecord)?.id ||
+      (raw.branch_data as AnyRecord)?.id ||
+      (raw.branch_data as AnyRecord)?.branch_id ||
       initialBooking?.branch_id ||
       (initialBooking as AnyRecord)?.branch?.id ||
+      (initialBooking as AnyRecord)?.branch_data?.id ||
       ''
     );
   }, [raw, sad, initialBooking]);
@@ -336,13 +339,13 @@ export function ChangeTherapistModal({
 
       // Fallback: If arrangement-specific availability returned 404 or wasn't available,
       // fallback to branch-level availability for the service so therapists can still be fetched.
-      if ((!res || (!res.ok && res.status === 404)) && branchId) {
+      if ((!res || !res.ok) && branchId) {
         const branchQs = new URLSearchParams({
           branch_id: branchId,
           date: appointmentDate,
           timeslots: timeslotsQueryParam,
         });
-        const branchEndpoint = `/uauth/api/v1/services/${serviceId}/availability-for-branch/?${branchQs.toString()}`;
+        const branchEndpoint = `/uauth/api/v1/services/${serviceId}/availability/?${branchQs.toString()}`;
         const branchRes = await authedFetch(branchEndpoint);
         if (branchRes.ok) {
           res = branchRes;

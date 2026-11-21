@@ -9,7 +9,7 @@ import {
   ChevronLeft, ChevronRight, X, ExternalLink, Hash, Home,
   History, Info, UserCheck, Copy, Check, Plus, Banknote, Printer, Loader2,
   FileText, Receipt, Eye, ShieldCheck, ArrowRight, UserX, UserCog, QrCode, RotateCcw, Heart, Tag,
-  Trash2, Pencil, Lock, MessageSquare, Send,
+  Trash2, Pencil, Lock, MessageSquare, Send, Building, Sparkles, Package,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { cn } from '@/lib/utils';
@@ -1222,6 +1222,34 @@ function BookingDetailPopupContent({
     return () => { cancelled = true; };
   }, [courseSubscriptionId]);
 
+  // Fetch voucher details for gift voucher bookings
+  const voucherId = String(
+    detail?.voucher_id ??
+    (booking.raw as any)?.voucher_id ??
+    (booking as any)?.voucher_id ??
+    (detail?.voucher_data as any)?.id ??
+    (booking.raw as any)?.voucher_data?.id ??
+    ''
+  ).trim();
+
+  const [fetchedVoucher, setFetchedVoucher] = useState<Record<string, any> | null>(null);
+
+  useEffect(() => {
+    if (!voucherId) return;
+    let cancelled = false;
+    authedFetch(`/booknpay/api/v1/vouchers/${voucherId}/`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((res) => {
+        if (cancelled || !res) return;
+        const v = res?.data ?? res;
+        if (v && (v.id || v.voucher_number)) {
+          setFetchedVoucher(v);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [voucherId]);
+
   const courseCode = String(
     courseData?.course_code ||
     courseSubscription?.course_code ||
@@ -1882,8 +1910,9 @@ function BookingDetailPopupContent({
           )
         ) || 0;
 
+        const resolvedSessionId = String(s.session_id ?? s.id ?? `session_${idx}`);
         return {
-          id: String(s.session_id ?? `session_${idx}`),
+          id: resolvedSessionId,
           position: typeof s.position === 'number' ? s.position : idx,
           number: idx + 1,
           serviceName: String(sName).toUpperCase(),
@@ -1892,7 +1921,7 @@ function BookingDetailPopupContent({
           secondaryTherapistName: sSecTherapist,
           timeLabel,
           price: sPrice,
-          raw: { ...s, services: sServices } as Record<string, unknown> | null,
+          raw: { ...s, services: sServices, session_id: resolvedSessionId } as Record<string, unknown> | null,
           durationMin: sDur,
           rangeLabel: timeRange,
         };
@@ -2112,30 +2141,253 @@ function BookingDetailPopupContent({
     return computedTotal;
   })();
 
-  const packageServicesList = useMemo(() => {
-    // 1. If displaySessions has services:
-    const sessionServices: Array<{ name: string; duration: number }> = [];
-    displaySessions.forEach((sess) => {
-      const sessRawServices = (sess.raw?.services && Array.isArray(sess.raw.services)) ? (sess.raw.services as Array<Record<string, any>>) : [];
-      if (sessRawServices.length > 0) {
-        sessRawServices.forEach((sv: Record<string, any>) => {
-          const svData = (sv?.service_data || {}) as Record<string, any>;
-          sessionServices.push({
-            name: String(sv?.service_name || sv?.name || svData?.name || svData?.service_name || 'Service'),
-            duration: Number(sv?.duration_minutes || sv?.base_duration || svData?.duration_minutes || 0),
-          });
-        });
-      } else if (sess.serviceName) {
-        sessionServices.push({
-          name: sess.serviceName,
-          duration: sess.durationMin || 0,
-        });
-      }
-    });
-    if (sessionServices.length > 0) return sessionServices;
+  const resolvedPackageServiceId = String(
+    packageInfo.packageId ||
+    fetchedVoucher?.service_id ||
+    fetchedVoucher?.services?.[0]?.service_id ||
+    (fetchedVoucher?.service_data as any)?.id ||
+    (detail?.service_data as any)?.id ||
+    (booking.raw?.service_data as any)?.id ||
+    detail?.service_id ||
+    (booking.raw as any)?.service_id ||
+    ''
+  ).trim();
 
-    // 2. From voucher_data:
-    const vd = (detail?.voucher_data ?? (booking.raw as any)?.voucher_data) as Record<string, any> | undefined;
+  const [fetchedPackageDetail, setFetchedPackageDetail] = useState<{
+    id: string;
+    name: string;
+    base_price?: string | number;
+    duration_minutes?: number;
+    included_services: Array<{ id: string; name: string; duration_minutes: number }>;
+    included_addons?: Array<{ id: string; name: string; duration_minutes: number; price?: string | number }>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!resolvedPackageServiceId) return;
+    let cancelled = false;
+    authedFetch(`/api/v1/services/${resolvedPackageServiceId}/`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const svc = (d?.data ?? d) as Record<string, any>;
+        const inc = Array.isArray(svc?.included_services) ? svc.included_services : [];
+        const incAddons = Array.isArray(svc?.included_addons)
+          ? svc.included_addons
+          : Array.isArray(svc?.package_addons)
+          ? svc.package_addons
+          : [];
+        setFetchedPackageDetail({
+          id: String(svc.id ?? resolvedPackageServiceId),
+          name: String(svc.name ?? packageName ?? 'Package'),
+          base_price: svc.base_price ?? svc.price,
+          duration_minutes: Number(svc.duration_minutes ?? 0),
+          included_services: inc.map((c: any) => ({
+            id: String(c.id ?? c.service_id ?? ''),
+            name: String(c.name ?? c.service_name ?? 'Service'),
+            duration_minutes: Number(c.duration_minutes ?? c.duration ?? 0) || 0,
+          })),
+          included_addons: incAddons.map((a: any) => ({
+            id: String(a.id ?? a.addon_id ?? ''),
+            name: String(a.name ?? a.addon_name ?? 'Add-on'),
+            duration_minutes: Number(a.duration_minutes ?? a.addon_duration ?? a.duration ?? 0) || 0,
+            price: a.price ?? a.addon_price ?? 0,
+          })),
+        });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [resolvedPackageServiceId, packageName]);
+
+  const packageIncludedServices = useMemo(() => {
+    if (fetchedPackageDetail && fetchedPackageDetail.included_services.length > 0) {
+      return fetchedPackageDetail.included_services;
+    }
+    const rawSd = ((fetchedVoucher?.service_data ?? detail?.service_data ?? booking.raw?.service_data) ?? {}) as Record<string, any>;
+    const rawInc = Array.isArray(rawSd.included_services) ? rawSd.included_services : [];
+    if (rawInc.length > 0) {
+      return rawInc.map((c: any) => ({
+        id: String(c.id ?? c.service_id ?? ''),
+        name: String(c.name ?? c.service_name ?? 'Service'),
+        duration_minutes: Number(c.duration_minutes ?? c.duration ?? 0) || 0,
+      }));
+    }
+    const vd = ((fetchedVoucher?.voucher_data ?? detail?.voucher_data ?? (booking.raw as any)?.voucher_data) ?? {}) as Record<string, any>;
+    const vdInc = Array.isArray(vd.redeemed_services) && vd.redeemed_services.length > 0
+      ? vd.redeemed_services
+      : Array.isArray(vd.all_gifted_services) && vd.all_gifted_services.length > 0
+      ? vd.all_gifted_services
+      : [];
+    if (vdInc.length > 0) {
+      return vdInc.map((c: any) => ({
+        id: String(c.id ?? c.service_id ?? ''),
+        name: String(c.name ?? c.service_name ?? 'Service'),
+        duration_minutes: Number(c.duration_minutes ?? c.duration ?? 0) || 0,
+      }));
+    }
+    return [];
+  }, [fetchedPackageDetail, fetchedVoucher, detail, booking.raw]);
+
+  const packageIncludedAddons = useMemo(() => {
+    if (fetchedPackageDetail && (fetchedPackageDetail.included_addons?.length ?? 0) > 0) {
+      return fetchedPackageDetail.included_addons!;
+    }
+    const rawSd = ((fetchedVoucher?.service_data ?? detail?.service_data ?? booking.raw?.service_data) ?? {}) as Record<string, any>;
+    const rawAddons = Array.isArray(rawSd.included_addons)
+      ? rawSd.included_addons
+      : Array.isArray(rawSd.package_addons)
+      ? rawSd.package_addons
+      : Array.isArray(rawSd.addons)
+      ? rawSd.addons
+      : fetchedVoucher && Array.isArray(fetchedVoucher.addons) && fetchedVoucher.addons.length > 0
+      ? fetchedVoucher.addons
+      : [];
+    return rawAddons.map((a: any) => ({
+      id: String(a.id ?? a.addon_id ?? ''),
+      name: String(a.name ?? a.addon_name ?? 'Add-on'),
+      duration_minutes: Number(a.duration_minutes ?? a.addon_duration ?? a.duration ?? 0) || 0,
+      price: a.price ?? a.addon_price ?? 0,
+    }));
+  }, [fetchedPackageDetail, fetchedVoucher, detail, booking.raw]);
+
+  const resolvedPackageTotalDuration = useMemo(() => {
+    const svcsDur = packageIncludedServices.reduce((acc, s) => acc + (s.duration_minutes || 0), 0);
+    const addonsDur = packageIncludedAddons.reduce((acc, a) => acc + (a.duration_minutes || 0), 0);
+    const sum = svcsDur + addonsDur;
+    if (sum > 0) return sum;
+    if (fetchedPackageDetail?.duration_minutes && fetchedPackageDetail.duration_minutes > 0) return fetchedPackageDetail.duration_minutes;
+    if (totalDuration > 0) return totalDuration;
+    return 0;
+  }, [packageIncludedServices, packageIncludedAddons, fetchedPackageDetail, totalDuration]);
+
+  const resolvedBranchName = useMemo(() => {
+    const rawName = String(
+      booking.branch_name ||
+      fetchedVoucher?.branch_data?.name ||
+      (detail?.voucher_data as any)?.branch_data?.name ||
+      (booking.raw as any)?.branch_data?.name ||
+      ''
+    ).trim();
+    if (!rawName) return '';
+    return rawName.replace(/branch/gi, '').trim() + ' Branch';
+  }, [booking.branch_name, fetchedVoucher, detail, booking.raw]);
+
+  const physicalItems = useMemo(() => {
+    const rawOrdered =
+      fetchedVoucher?.ordered_items ||
+      (detail?.voucher_data as any)?.ordered_items ||
+      (booking.raw as any)?.voucher_data?.ordered_items ||
+      (booking.raw as any)?.ordered_items ||
+      [];
+    if (Array.isArray(rawOrdered) && rawOrdered.length > 0) {
+      return rawOrdered.map((item: any) => ({
+        id: item.id || item.product_id,
+        name: item.name || item.name_en || 'Product',
+        price: parseFloat(String(item.price ?? 0)) || 0,
+        quantity: Number(item.quantity ?? 1) || 1,
+        total_price: parseFloat(String(item.total_price ?? item.price ?? 0)) || 0,
+        image: item.image || null,
+        currency: item.currency || currency,
+      }));
+    }
+    const pd = fetchedVoucher?.product_data || (detail?.voucher_data as any)?.product_data || (booking.raw as any)?.voucher_data?.product_data;
+    if (pd && typeof pd === 'object' && (pd.name || pd.price)) {
+      return [
+        {
+          id: pd.id,
+          name: pd.name || 'Physical Gift Product',
+          price: parseFloat(String(pd.price ?? 0)) || 0,
+          quantity: Number(pd.quantity ?? 1) || 1,
+          total_price: parseFloat(String(pd.total_price ?? pd.price ?? 0)) || 0,
+          image: pd.image || null,
+          currency: pd.currency || currency,
+        },
+      ];
+    }
+    return [];
+  }, [fetchedVoucher, detail, booking.raw, currency]);
+
+  const multiGiftServices = useMemo(() => {
+    // 1. From fetchedVoucher.services
+    if (fetchedVoucher && Array.isArray(fetchedVoucher.services) && fetchedVoucher.services.length > 0) {
+      return fetchedVoucher.services.map((sv: any, i: number) => {
+        const sd = (sv.service_data ?? {}) as Record<string, any>;
+        const p = parseFloat(String(sv.price ?? sv.base_price ?? sd.price ?? sd.base_price ?? 0)) || 0;
+        const dur = Number(sd.duration_minutes ?? sd.duration ?? sv.duration_minutes ?? sv.duration ?? 0) || 0;
+        return {
+          id: String(sv.service_id ?? sd.id ?? `sv-${i}`),
+          name: String(sd.name ?? sv.service_name ?? sv.name ?? `Spa Service ${i + 1}`),
+          price: p,
+          duration: dur,
+        };
+      });
+    }
+
+    // 2. From voucherData.all_gifted_services
+    const vd = ((fetchedVoucher?.voucher_data ?? detail?.voucher_data ?? (booking.raw as any)?.voucher_data) ?? {}) as Record<string, any>;
+    if (Array.isArray(vd.all_gifted_services) && vd.all_gifted_services.length > 0) {
+      return vd.all_gifted_services.map((sv: any, i: number) => {
+        const matchingSvcItem = serviceItems.find(it => it.name.trim().toLowerCase() === String(sv.name || '').trim().toLowerCase());
+        const p = parseFloat(String(sv.price ?? sv.base_price ?? matchingSvcItem?.price ?? 0)) || 0;
+        const dur = Number(sv.duration ?? sv.duration_minutes ?? matchingSvcItem?.duration ?? 0) || 0;
+        return {
+          id: String(sv.id ?? `sv-${i}`),
+          name: String(sv.name ?? `Spa Service ${i + 1}`),
+          price: p,
+          duration: dur,
+        };
+      });
+    }
+
+    // 3. From multiItems
+    if (multiItems.length > 1) {
+      return multiItems.map((it, i) => ({
+        id: String((it as any).id ?? `sv-${i}`),
+        name: it.name,
+        price: it.price,
+        duration: it.duration,
+      }));
+    }
+
+    return [];
+  }, [fetchedVoucher, detail, booking.raw, serviceItems, multiItems]);
+
+  const isPackageVoucherOrBooking = useMemo(() => {
+    return Boolean(
+      isPackageBooking ||
+      packageInfo.isPackage ||
+      (detail?.voucher_data as any)?.is_package ||
+      (booking.raw as any)?.voucher_data?.is_package ||
+      fetchedVoucher?.is_package ||
+      (fetchedVoucher?.service_data as any)?.is_packaged_services ||
+      (fetchedPackageDetail && fetchedPackageDetail.included_services.length > 0) ||
+      packageIncludedServices.length > 0
+    );
+  }, [isPackageBooking, packageInfo.isPackage, detail, booking.raw, fetchedVoucher, fetchedPackageDetail, packageIncludedServices.length]);
+
+  const shouldShowGiftItems = useMemo(() => {
+    return Boolean(
+      isGiftVoucherBooking ||
+      detail?.voucher_id ||
+      (booking.raw as any)?.voucher_id ||
+      detail?.voucher_data ||
+      (booking.raw as any)?.voucher_data ||
+      physicalItems.length > 0 ||
+      isPackageVoucherOrBooking ||
+      multiGiftServices.length > 1
+    );
+  }, [isGiftVoucherBooking, detail, booking.raw, physicalItems.length, isPackageVoucherOrBooking, multiGiftServices.length]);
+
+  const packageServicesList = useMemo(() => {
+    // 0. If packageIncludedServices exists, use it!
+    if (packageIncludedServices.length > 0) {
+      return packageIncludedServices.map((s) => ({
+        name: s.name,
+        duration: s.duration_minutes,
+      }));
+    }
+
+    // 1. From voucher_data:
+    const vd = ((fetchedVoucher?.voucher_data ?? detail?.voucher_data ?? (booking.raw as any)?.voucher_data) ?? {}) as Record<string, any>;
     if (vd?.redeemed_services && Array.isArray(vd.redeemed_services) && vd.redeemed_services.length > 0) {
       return vd.redeemed_services.map((s: any) => ({
         name: String(s.name || s.service_name || 'Service'),
@@ -2148,6 +2400,27 @@ function BookingDetailPopupContent({
         duration: Number(s.duration || s.duration_minutes || 0),
       }));
     }
+
+    // 2. From sessions if not generic package name:
+    const sessionServices: Array<{ name: string; duration: number }> = [];
+    displaySessions.forEach((sess) => {
+      const sessRawServices = (sess.raw?.services && Array.isArray(sess.raw.services)) ? (sess.raw.services as Array<Record<string, any>>) : [];
+      if (sessRawServices.length > 0) {
+        sessRawServices.forEach((sv: Record<string, any>) => {
+          const svData = (sv?.service_data || {}) as Record<string, any>;
+          sessionServices.push({
+            name: String(sv?.service_name || sv?.name || svData?.name || svData?.service_name || 'Service'),
+            duration: Number(sv?.duration_minutes || sv?.base_duration || svData?.duration_minutes || 0),
+          });
+        });
+      } else if (sess.serviceName && !sess.serviceName.toLowerCase().includes('package')) {
+        sessionServices.push({
+          name: sess.serviceName,
+          duration: sess.durationMin || 0,
+        });
+      }
+    });
+    if (sessionServices.length > 0) return sessionServices;
 
     // 3. From svcEntries:
     if (svcEntries.length > 0) {
@@ -2169,7 +2442,7 @@ function BookingDetailPopupContent({
     }
 
     return [{ name: booking.service_name, duration: serviceDuration }];
-  }, [displaySessions, detail, booking.raw, svcEntries, serviceItems, booking.service_name, serviceDuration]);
+  }, [packageIncludedServices, fetchedVoucher, detail, booking.raw, displaySessions, svcEntries, serviceItems, booking.service_name, serviceDuration]);
 
   const receiptServices = useMemo(() => {
     if (displaySessions.length > 0) {
@@ -3773,6 +4046,204 @@ function BookingDetailPopupContent({
                   </DRow>
                 </div>
 
+                {/* ── GIFT ITEMS SECTION (Multi-service / Package gift voucher matching screenshots) ── */}
+                {shouldShowGiftItems && (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between px-1">
+                      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-foreground">
+                        <Package className="h-4 w-4 text-[#b85d63]" />
+                        <span>Gift Items</span>
+                        {physicalItems.length > 0 ? <span className="text-muted-foreground font-normal">({physicalItems.length})</span> : null}
+                      </p>
+                    </div>
+
+                    <div className="space-y-3">
+                      {/* Physical Products (if any) */}
+                      {physicalItems.length > 0 && (
+                        <div className="space-y-2">
+                          {physicalItems.map((item, i) => (
+                            <div key={item.id || i} className="flex items-center gap-3 rounded-2xl border border-border/60 bg-card p-3.5 shadow-2xs">
+                              {item.image && (
+                                <img
+                                  src={item.image}
+                                  alt={item.name}
+                                  className="h-12 w-12 rounded-xl object-cover shrink-0 border border-border/40"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-xs text-foreground truncate">{item.name}</p>
+                                <p className="text-[11px] text-muted-foreground">Qty: {item.quantity ?? 1} · {Number(item.price).toFixed(3)} {currency}</p>
+                              </div>
+                              <span className="text-xs font-bold text-foreground shrink-0 font-mono">
+                                {Number(item.total_price ?? item.price).toFixed(3)} {currency}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Package Gift Item (Image 2 style) */}
+                      {isPackageVoucherOrBooking ? (
+                        <div className="rounded-2xl border border-border/60 bg-card p-4 sm:p-5 shadow-2xs space-y-3.5">
+                          {/* Top Header: Sparkles SPA PACKAGE + Price */}
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-500 mb-1">
+                                <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                                <span>Spa Package</span>
+                              </div>
+                              <h4 className="font-extrabold text-base text-foreground tracking-wide uppercase">
+                                {packageName || 'Spa Package'}
+                              </h4>
+                            </div>
+                            <span className="text-sm font-extrabold text-foreground shrink-0 font-mono">
+                              {(effectivePackagePrice > 0 ? effectivePackagePrice : (parseFloat(String(voucherDataEarly.package_price ?? booking.service_price)) || 0)).toFixed(3)} {currency}
+                            </span>
+                          </div>
+
+                          {/* Meta: Duration + Branch */}
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                            {resolvedPackageTotalDuration > 0 && (
+                              <span className="flex items-center gap-1.5">
+                                <Clock className="h-3.5 w-3.5 text-[#b85d63]" />
+                                <span>{resolvedPackageTotalDuration} min</span>
+                              </span>
+                            )}
+                            {Boolean(resolvedBranchName) && (
+                              <span className="flex items-center gap-1.5">
+                                <Building className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span>{resolvedBranchName}</span>
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Included Services */}
+                          {packageIncludedServices.length > 0 && (
+                            <div className="pt-3 border-t border-border/50 space-y-2">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                <Scissors className="h-3.5 w-3.5 text-[#b85d63]" />
+                                <span>Included Services ({packageIncludedServices.length})</span>
+                              </p>
+                              <div className="space-y-1.5">
+                                {packageIncludedServices.map((inc, idx) => (
+                                  <div
+                                    key={inc.id || `inc-svc-${idx}`}
+                                    className="flex items-center justify-between rounded-xl border border-border/40 bg-muted/20 px-3 py-2 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-[#faebea] text-[11px] font-bold text-[#b85d63]">
+                                        {idx + 1}
+                                      </span>
+                                      <span className="font-bold text-foreground uppercase truncate">
+                                        {inc.name}
+                                      </span>
+                                    </div>
+                                    {inc.duration_minutes > 0 && (
+                                      <span className="text-xs text-muted-foreground shrink-0 ml-2 flex items-center gap-1">
+                                        <Clock className="h-3 w-3 text-[#b85d63]" />
+                                        <span>{inc.duration_minutes} min</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Included Add-ons */}
+                          {packageIncludedAddons.length > 0 && (
+                            <div className="pt-3 border-t border-border/50 space-y-2">
+                              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                                <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                                <span>Included Add-ons ({packageIncludedAddons.length})</span>
+                              </p>
+                              <div className="space-y-1.5">
+                                {packageIncludedAddons.map((addon, idx) => (
+                                  <div
+                                    key={addon.id || `inc-addon-${idx}`}
+                                    className="flex items-center justify-between rounded-xl border border-border/40 bg-muted/20 px-3 py-2 text-xs"
+                                  >
+                                    <div className="flex items-center gap-2.5 min-w-0">
+                                      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-violet-100 dark:bg-violet-950/40 text-[11px] font-bold text-violet-600 dark:text-violet-400">
+                                        {idx + 1}
+                                      </span>
+                                      <span className="font-bold text-foreground uppercase truncate">
+                                        {addon.name}
+                                      </span>
+                                    </div>
+                                    {addon.duration_minutes > 0 && (
+                                      <span className="text-xs text-muted-foreground shrink-0 ml-2 flex items-center gap-1">
+                                        <Clock className="h-3 w-3 text-[#b85d63]" />
+                                        <span>{addon.duration_minutes} min</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : multiGiftServices.length > 0 ? (
+                        /* Multi-service Gift Items (Image 1 style) */
+                        <div className="space-y-3">
+                          {multiGiftServices.map((sv, idx) => (
+                            <div
+                              key={sv.id || `multi-svc-${idx}`}
+                              className="rounded-2xl border border-border/60 bg-card p-4 sm:p-5 shadow-2xs space-y-2.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-500">
+                                  <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                                  <span>Spa Service {idx + 1}</span>
+                                </div>
+                                {sv.price > 0 && (
+                                  <span className="text-sm font-extrabold text-foreground shrink-0 font-mono">
+                                    {sv.price.toFixed(3)} {currency}
+                                  </span>
+                                )}
+                              </div>
+                              <h4 className="font-extrabold text-base text-foreground tracking-wide uppercase">
+                                {sv.name}
+                              </h4>
+                              {sv.duration > 0 && (
+                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                  <Clock className="h-3.5 w-3.5 text-[#b85d63]" />
+                                  <span>{sv.duration} min</span>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : isGiftVoucherBooking && ((voucherDataEarly as any)?.service_data?.name || booking.service_name) ? (
+                        /* Single Service Gift Voucher */
+                        <div className="rounded-2xl border border-border/60 bg-card p-4 sm:p-5 shadow-2xs space-y-2.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-violet-500">
+                              <Sparkles className="h-3.5 w-3.5 text-violet-500" />
+                              <span>Spa Service</span>
+                            </div>
+                            {servicePrice > 0 && (
+                              <span className="text-sm font-extrabold text-foreground shrink-0 font-mono">
+                                {servicePrice.toFixed(3)} {currency}
+                              </span>
+                            )}
+                          </div>
+                          <h4 className="font-extrabold text-base text-foreground tracking-wide uppercase">
+                            {String((voucherDataEarly as any)?.service_data?.name || booking.service_name)}
+                          </h4>
+                          {serviceDuration > 0 && (
+                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <Clock className="h-3.5 w-3.5 text-[#b85d63]" />
+                              <span>{serviceDuration} min</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
+
                 {/* Row 2: Session-wise Breakdown matching attached screenshot */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between px-1">
@@ -3803,19 +4274,15 @@ function BookingDetailPopupContent({
                         tabIndex={!isSessionLocked && (sess.raw?.session_id || canChangeTherapist) ? 0 : undefined}
                         onClick={() => {
                           if (isSessionLocked) return;
-                          if (sess.raw?.session_id) {
-                            setActiveSessionId(String(sess.raw.session_id));
-                          } else if (canChangeTherapist) {
-                            openChangeTherapist('primary');
-                          }
+                          const sId = String(sess.raw?.session_id || sess.id || `session_${sess.number - 1}`);
+                          setActiveSessionId(sId);
+                          setShowSessionTherapistModal(true);
                         }}
                         onKeyDown={(e) => {
                           if (isSessionLocked || e.key !== 'Enter') return;
-                          if (sess.raw?.session_id) {
-                            setActiveSessionId(String(sess.raw.session_id));
-                          } else if (canChangeTherapist) {
-                            openChangeTherapist('primary');
-                          }
+                          const sId = String(sess.raw?.session_id || sess.id || `session_${sess.number - 1}`);
+                          setActiveSessionId(sId);
+                          setShowSessionTherapistModal(true);
                         }}
                         title={isSessionLocked ? `Locked — open from ${sess.therapistName}'s schedule block to manage this session` : undefined}
                         className={cn(
@@ -3875,12 +4342,9 @@ function BookingDetailPopupContent({
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     if (isSessionLocked) return;
-                                    if (sess.raw?.session_id) {
-                                      setActiveSessionId(String(sess.raw.session_id));
-                                      setShowSessionTherapistModal(true);
-                                    } else {
-                                      openChangeTherapist('primary');
-                                    }
+                                    const sId = String(sess.raw?.session_id || sess.id || `session_${sess.number - 1}`);
+                                    setActiveSessionId(sId);
+                                    setShowSessionTherapistModal(true);
                                   }}
                                   title={isCompleted ? "Change Therapist (Admin)" : "Change Therapist"}
                                   className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-bold text-primary hover:bg-primary/20 transition cursor-pointer ml-1"
@@ -5168,13 +5632,21 @@ function BookingDetailPopupContent({
 
       {/* Change Therapist Modal (single session) */}
       {showSessionTherapistModal && (() => {
-        const activeSess = displaySessions.find((x) => String(x.raw?.session_id ?? '') === activeSessionId);
+        const activeSess = displaySessions.find((x) => 
+          String(x.raw?.session_id ?? '') === activeSessionId ||
+          String(x.id ?? '') === activeSessionId ||
+          String(x.position ?? '') === activeSessionId
+        );
         if (!activeSess?.raw) return null;
+        const effectiveSession = {
+          ...activeSess.raw,
+          session_id: activeSess.raw?.session_id || activeSess.id || String(activeSess.position ?? 0),
+        };
         return (
           <ChangeTherapistModal
             bookingId={booking.id}
             initialBooking={(detail || booking) as unknown as Record<string, any>}
-            session={activeSess.raw as Record<string, any>}
+            session={effectiveSession as Record<string, any>}
             currentTherapistName={activeSess.therapistName}
             secondaryTherapistName={activeSess.secondaryTherapistName ?? undefined}
             targetSlot="primary"
