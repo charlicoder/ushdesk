@@ -1059,18 +1059,27 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
   const isServiceCompatibleWithBranch = useCallback((svc: SlimService, br: Branch | null): boolean => {
     if (!br) return true;
-    const brId = String(br.id || br.branch_id || '');
+    const brId = String(br.id || br.branch_id || '').trim().toLowerCase();
+    if (!brId) return true;
+
     if (isHomeServiceBranch(br)) {
       if (svc.is_home_service_eligible) return true;
-      if (Array.isArray(svc.branches) && svc.branches.some((b) => String(b.branch_id || b.id || '') === brId || isHomeServiceBranch(b))) {
+      if (Array.isArray(svc.branches) && svc.branches.some((b) => {
+        const bId = String((typeof b === 'object' && b !== null ? (b.branch_id || b.id) : b) || '').trim().toLowerCase();
+        return bId === brId || isHomeServiceBranch(b);
+      })) {
         return true;
       }
       return false;
     }
-    // `branches` is returned by the slim services endpoint; a service offered at no
-    // branch must not appear in a branch-specific list.
-    if (!Array.isArray(svc.branches)) return true;
-    return svc.branches.some((b) => String(b.branch_id || b.id || '') === brId);
+
+    // A service MUST explicitly belong to the chosen branch.
+    // If branches is missing, empty, or doesn't match the branch ID, exclude it.
+    if (!Array.isArray(svc.branches) || svc.branches.length === 0) return false;
+    return svc.branches.some((b) => {
+      const bId = String((typeof b === 'object' && b !== null ? (b.branch_id || b.id) : b) || '').trim().toLowerCase();
+      return bId === brId;
+    });
   }, []);
 
   // ── Recipient & Sender State ──
@@ -1228,10 +1237,10 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       .finally(() => setBranchesLoading(false));
   }, [authHeader]);
 
-  // ── 3. Fetch Services (slim) ──
+  // ── 3. Fetch Services ──
   useEffect(() => {
     setServicesLoading(true);
-    authedFetch('/api/v1/services/slim/', {
+    authedFetch('/api/v1/services/?all=true', {
       headers: { Authorization: authHeader, Accept: 'application/json' },
     })
       .then(async (res) => {
@@ -1714,6 +1723,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       setSelectedArrangt(null);
       setSelectedAddons([]);
     }
+    setExtraServices((prev) => prev.filter((s) => isServiceCompatibleWithBranch(s, b)));
     setStep(serviceStepNumber);
   };
 
