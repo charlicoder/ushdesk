@@ -79,6 +79,10 @@ export const PERMISSIONS = {
   // ── Vendors submenus ─────────────────────────────────────────────────────────
   VENDORS_ORDERS:      'deskmenu.vendors.orders',
   VENDORS_GIFT_ORDERS: 'deskmenu.vendors.gift_orders',
+
+  // ── Reports menu & submenus ──────────────────────────────────────────────────
+  REPORTS:              'deskmenu.reports',
+  REPORTS_GIFT_VOUCHER: 'deskmenu.reports.gift_voucher',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -806,6 +810,21 @@ export function hasPermission(
       permissions.includes('course_subscriptions.redeem') ||
       permissions.includes(PERMISSIONS.BOOKINGS_BOOKING_LIST) ||
       permissions.includes(PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER)
+    );
+  }
+  if (permission === PERMISSIONS.REPORTS || permission === PERMISSIONS.REPORTS_GIFT_VOUCHER) {
+    if (
+      isSpaDirectorRole(roleInfo, user) ||
+      isRefundsAndFinancePermittedRole(roleInfo, user) ||
+      isBranchManagerRole(roleInfo, user)
+    ) {
+      return true;
+    }
+    return (
+      permissions.includes(permission) ||
+      permissions.includes(PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER_REPORT) ||
+      permissions.includes(PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER) ||
+      permissions.includes(PERMISSIONS.BOOKINGS_BOOKING_REPORT)
     );
   }
   return permissions.includes(permission);

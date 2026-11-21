@@ -83,6 +83,7 @@ export function Sidebar() {
     finance:      pathname.startsWith('/finance'),
     ushspa:       pathname.startsWith('/branches') || pathname.startsWith('/customers') || pathname.startsWith('/products') || pathname.startsWith('/services') || pathname.startsWith('/courses') || pathname.startsWith('/employees') || pathname.startsWith('/feedback'),
     vendors:      pathname.startsWith('/vendors'),
+    reports:      pathname.startsWith('/reports'),
   });
 
   const items: NavItem[] = [
@@ -161,6 +162,15 @@ export function Sidebar() {
       children: [
         { href: '/vendors/orders',      label: t('navOrders'), icon: ShoppingBag, permission: PERMISSIONS.VENDORS_ORDERS },
         { href: '/vendors/gift-orders', label: t('navGiftOrders'), icon: Gift,        permission: PERMISSIONS.VENDORS_GIFT_ORDERS },
+      ],
+    },
+    {
+      href: '/reports',
+      label: 'Reports',
+      icon: BarChart3,
+      permission: PERMISSIONS.REPORTS,
+      children: [
+        { href: '/reports/gift-voucher', label: 'Gift Voucher Report', icon: Gift, permission: PERMISSIONS.REPORTS_GIFT_VOUCHER },
       ],
     },
   ];
