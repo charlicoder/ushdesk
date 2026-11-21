@@ -1781,11 +1781,68 @@ function BookingDetailPopupContent({
   // Aggregate add-ons / extra time across all sessions (fall back to booking-level data)
   const sessionsForTotals = rawSessions as Array<Record<string, any>>;
   const sessionAddonsAll = sessionsForTotals.flatMap((s) => (Array.isArray(s.addons) ? s.addons : [])) as Array<Record<string, any>>;
-  const effAddons = (sessionAddonsAll.length > 0 ? sessionAddonsAll : addons) as Array<Record<string, any>>;
+
+  // Some bookings (e.g. voucher redeems) correctly store addons_price at session level
+  // but have an empty addons array. Detect this and synthesise a placeholder so the
+  // addon price line still renders correctly.
+  const sessionAddonsPriceSum = sessionsForTotals.reduce(
+    (sum, s) => sum + (parseFloat(String(s.addons_price ?? 0)) || 0), 0
+  );
+  // Try to match the addon from service_data.addons by price
+  const syntheticAddons: Array<Record<string, any>> = (() => {
+    if (sessionAddonsAll.length > 0 || sessionAddonsPriceSum <= 0) return [];
+    // Try to find addon name from service_data
+    for (const s of sessionsForTotals) {
+      const svcAddons = (
+        (s.services?.[0]?.service_data?.addons ?? s.service_data?.addons) as Array<Record<string, any>> | undefined
+      );
+      if (Array.isArray(svcAddons) && svcAddons.length > 0) {
+        // Find addon whose price matches addons_price
+        const sessAddonPrice = parseFloat(String(s.addons_price ?? 0)) || 0;
+        const matched = svcAddons.find((a) => Math.abs(parseFloat(String(a.price ?? 0)) - sessAddonPrice) < 0.001);
+        if (matched) {
+          return [{ name: matched.name ?? 'Add-on', price: String(sessAddonPrice.toFixed(3)), duration_minutes: matched.duration_minutes ?? 0 }];
+        }
+      }
+    }
+    return [{ name: 'Add-ons', price: sessionAddonsPriceSum.toFixed(3), duration_minutes: 0, _synthetic: true }];
+  })();
+  const effAddons = (
+    sessionAddonsAll.length > 0 ? sessionAddonsAll
+    : syntheticAddons.length > 0 ? syntheticAddons
+    : addons
+  ) as Array<Record<string, any>>;
+
   const effAddonsDuration = addonsDuration > 0 && sessionAddonsAll.length === 0
     ? addonsDuration
     : effAddons.reduce((sum, a) => sum + (Number(a.duration_minutes ?? a.duration ?? 0) || 0), 0);
-  const sessExtraMinutes = sessionsForTotals.reduce((sum, s) => sum + (Number(s.extra_minutes ?? 0) || 0), 0);
+
+  // Derive extra_minutes when sessions have zero stored but price_for_extra_minutes > 0:
+  // use total_session_duration - services_duration - addons_duration from session data.
+  const sessExtraMinutesRaw = sessionsForTotals.reduce((sum, s) => sum + (Number(s.extra_minutes ?? 0) || 0), 0);
+  const sessExtraMinutesDerived = sessionsForTotals.reduce((sum, s) => {
+    if (Number(s.extra_minutes ?? 0) > 0) return sum + Number(s.extra_minutes);
+    // Derive from service rate if price_for_extra_minutes > 0
+    const sessExtraPrice = parseFloat(String(s.price_for_extra_minutes ?? s.extra_price ?? 0)) || 0;
+    if (sessExtraPrice > 0) {
+      // Try to get unit minutes from service_data
+      const svcData = (s.services?.[0]?.service_data ?? s.service_data ?? {}) as Record<string, any>;
+      const unitMins = Number(svcData.extra_minutes ?? 30) || 30;
+      const unitPrice = parseFloat(String(svcData.price_for_extra_minutes ?? svcData.home_price_for_extra_minutes ?? 0)) || 0;
+      if (unitPrice > 0) {
+        return sum + Math.round((sessExtraPrice / unitPrice) * unitMins);
+      }
+      // Fallback: total - services - addons duration, but only if addons_price gives us addon duration
+      const total = Number(s.total_session_duration ?? 0);
+      const svcs = Number(s.services_duration ?? 0);
+      // Estimate addon duration from addons_price / per-addon-price if available
+      const addonsDur = Number(s.addons_duration ?? 0);
+      const derived = total > 0 && total > (svcs + addonsDur) ? total - svcs - addonsDur : 0;
+      return sum + derived;
+    }
+    return sum;
+  }, 0);
+  const sessExtraMinutes = sessExtraMinutesRaw > 0 ? sessExtraMinutesRaw : sessExtraMinutesDerived;
   const effExtraMinutes = sessExtraMinutes > 0 ? sessExtraMinutes : extraMinutes;
   const sessExtraPrice = sessionsForTotals.reduce((sum, s) => sum + (parseFloat(String(s.price_for_extra_minutes ?? s.extra_price ?? 0)) || 0), 0);
 
@@ -1910,6 +1967,14 @@ function BookingDetailPopupContent({
           )
         ) || 0;
 
+        // Total session price = service base + addons + extra time
+        // Prefer the stored session_price / total_session_price as the authoritative total,
+        // then fall back to computing it from components.
+        const sTotalPrice =
+          parseFloat(String(s.total_session_price ?? s.session_price ?? '0')) ||
+          (sPrice + sAddonsSum + sExtraSum) ||
+          sPrice;
+
         const resolvedSessionId = String(s.session_id ?? s.id ?? `session_${idx}`);
         return {
           id: resolvedSessionId,
@@ -1921,6 +1986,7 @@ function BookingDetailPopupContent({
           secondaryTherapistName: sSecTherapist,
           timeLabel,
           price: sPrice,
+          totalPrice: sTotalPrice,
           raw: { ...s, services: sServices, session_id: resolvedSessionId } as Record<string, unknown> | null,
           durationMin: sDur,
           rangeLabel: timeRange,
@@ -1950,6 +2016,7 @@ function BookingDetailPopupContent({
           secondaryTherapistName: secondaryTherapistName || null,
           timeLabel: `${formatTimeRange(itemStart, null, itemDur)} (${itemDur} min)`,
           price: it.price,
+          totalPrice: it.price,
           raw: null as Record<string, unknown> | null,
           durationMin: itemDur,
           rangeLabel: formatTimeRange(itemStart, null, itemDur),
@@ -1958,6 +2025,7 @@ function BookingDetailPopupContent({
     }
 
     const singleDur = totalDuration || serviceDuration || 60;
+    const singlePrice = servicePrice > 0 ? servicePrice : computedTotal;
     return [{
       id: 'single_session',
       position: 0,
@@ -1967,7 +2035,8 @@ function BookingDetailPopupContent({
       therapistName: primaryTherapistName !== '—' ? primaryTherapistName : booking.therapist_name,
       secondaryTherapistName: secondaryTherapistName || null,
       timeLabel: `${formatTimeRange(booking.appointment_start, booking.appointment_end, singleDur)} (${singleDur} min)`,
-      price: servicePrice > 0 ? servicePrice : computedTotal,
+      price: singlePrice,
+      totalPrice: computedTotal > 0 ? computedTotal : singlePrice,
       raw: null as Record<string, unknown> | null,
       durationMin: singleDur,
       rangeLabel: formatTimeRange(booking.appointment_start, booking.appointment_end, singleDur),
@@ -4385,7 +4454,7 @@ function BookingDetailPopupContent({
                         <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
                           {!isPackageBooking && (
                             <span className="font-mono text-sm sm:text-base font-extrabold text-[#b85d63]">
-                              {sess.price.toFixed(3)} {currency}
+                              {(sess.totalPrice ?? sess.price).toFixed(3)} {currency}
                             </span>
                           )}
 
@@ -5616,7 +5685,7 @@ function BookingDetailPopupContent({
                 {!isPackageBooking && (
                   <div className="flex items-center justify-between gap-3 border-t border-border/40 pt-3">
                     <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Session price</span>
-                    <span className="font-mono font-extrabold text-[#b85d63]">{activeSess.price.toFixed(3)} {currency}</span>
+                    <span className="font-mono font-extrabold text-[#b85d63]">{(activeSess.totalPrice ?? activeSess.price).toFixed(3)} {currency}</span>
                   </div>
                 )}
               </div>

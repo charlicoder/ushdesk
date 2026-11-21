@@ -177,6 +177,26 @@ export function ChangeTherapistModal({
   const td = (raw.therapist_data ?? {}) as AnyRecord;
   const std = (raw.secondary_therapist_data ?? {}) as AnyRecord;
 
+  // Detect home-service bookings (no room arrangement, therapists work at customer address)
+  const isHomeService = useMemo(() => {
+    const bookingType = String(
+      raw.booking_type ||
+      (initialBooking as AnyRecord)?.booking_type ||
+      ''
+    ).toLowerCase();
+    const branchName = String(
+      raw.branch_name ||
+      (raw.branch_data as AnyRecord)?.name ||
+      (initialBooking as AnyRecord)?.branch_name ||
+      ''
+    ).toLowerCase();
+    return (
+      bookingType === 'home_service' ||
+      bookingType === 'home' ||
+      branchName.includes('home')
+    );
+  }, [raw, initialBooking]);
+
   // Detect whether this booking is for a couple/double room arrangement
   const isDualTherapistBooking = useMemo(() => {
     const arrType = String(
@@ -327,23 +347,36 @@ export function ChangeTherapistModal({
     try {
       let res: Response | null = null;
 
-      if (serviceArrangementId) {
+      // Path 1: Home-service bookings — use the dedicated home-availability endpoint
+      // which filters therapists by available_for_home_service=True.
+      if (isHomeService) {
+        const qs = new URLSearchParams({ date: appointmentDate });
+        const homeEndpoint = `/uauth/api/v1/services/${serviceId}/home-availability/?${qs.toString()}`;
+        const homeRes = await authedFetch(homeEndpoint);
+        if (homeRes.ok) {
+          res = homeRes;
+        }
+      }
+
+      // Path 2: Arrangement-specific availability (non-home service with a room arrangement)
+      if (!res && serviceArrangementId) {
         const qs = new URLSearchParams({
           service_arrangement_id: serviceArrangementId,
           date: appointmentDate,
           timeslots: timeslotsQueryParam,
         });
         const endpoint = `/uauth/api/v1/services/${serviceId}/availability-for-arragement/?${qs.toString()}`;
-        res = await authedFetch(endpoint);
+        const arrRes = await authedFetch(endpoint);
+        if (arrRes.ok) {
+          res = arrRes;
+        }
       }
 
-      // Fallback: If arrangement-specific availability returned 404 or wasn't available,
-      // fallback to branch-level availability for the service so therapists can still be fetched.
-      if ((!res || !res.ok) && branchId) {
+      // Path 3: Branch-level fallback — works for any booking where branchId is a valid UUID
+      if (!res && branchId) {
         const branchQs = new URLSearchParams({
           branch_id: branchId,
           date: appointmentDate,
-          timeslots: timeslotsQueryParam,
         });
         const branchEndpoint = `/uauth/api/v1/services/${serviceId}/availability/?${branchQs.toString()}`;
         const branchRes = await authedFetch(branchEndpoint);
@@ -378,7 +411,7 @@ export function ChangeTherapistModal({
     } finally {
       setLoading(false);
     }
-  }, [serviceId, serviceArrangementId, branchId, appointmentDate, timeslotsQueryParam, activeSlot, secondaryTherapistId, primaryTherapistId]);
+  }, [serviceId, serviceArrangementId, branchId, isHomeService, appointmentDate, timeslotsQueryParam, activeSlot, secondaryTherapistId, primaryTherapistId]);
 
   useEffect(() => {
     fetchTherapists();

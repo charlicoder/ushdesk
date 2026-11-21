@@ -1059,11 +1059,17 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
 
   const isServiceCompatibleWithBranch = useCallback((svc: SlimService, br: Branch | null): boolean => {
     if (!br) return true;
-    if (isHomeServiceBranch(br)) {
-      return Boolean(svc.is_home_service_eligible);
-    }
     const brId = String(br.id || br.branch_id || '');
-    if (!Array.isArray(svc.branches) || svc.branches.length === 0) return true;
+    if (isHomeServiceBranch(br)) {
+      if (svc.is_home_service_eligible) return true;
+      if (Array.isArray(svc.branches) && svc.branches.some((b) => String(b.branch_id || b.id || '') === brId || isHomeServiceBranch(b))) {
+        return true;
+      }
+      return false;
+    }
+    // `branches` is returned by the slim services endpoint; a service offered at no
+    // branch must not appear in a branch-specific list.
+    if (!Array.isArray(svc.branches)) return true;
     return svc.branches.some((b) => String(b.branch_id || b.id || '') === brId);
   }, []);
 

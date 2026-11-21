@@ -321,7 +321,11 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
 
   const finalTotalNum = totalNum;
 
-  const receiptRefNumber = data.invoiceNumber || data.bookingNumber || data.reference || 'RECEIPT';
+  // For voucher bookings show the voucher code; for all others show the booking number.
+  // Fall back to invoice number only as a last resort.
+  const receiptRefNumber = data.isVoucherRedemption && data.voucherCode
+    ? data.voucherCode
+    : (data.bookingNumber || data.invoiceNumber || data.reference || 'RECEIPT');
   const customerLine = `${data.customerName || 'Valued Guest'}${data.customerPhone ? `, ${data.customerPhone}` : ''}`;
   const formattedBranch = formatBranchName(data.branchName);
   const branchAddress = getBranchAddress(data.branchName, data.branchAddress);

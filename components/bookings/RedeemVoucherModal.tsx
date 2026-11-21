@@ -124,6 +124,54 @@ interface ApiCustomer {
   avatar?: string;
 }
 
+// ── Home service helpers (client location address: one per voucher) ──────────
+interface HomeAddress {
+  area: string;
+  block: string;
+  street: string;
+  avenue: string;
+  house: string;
+  floor: string;
+  directions: string;
+}
+const EMPTY_HOME_ADDRESS: HomeAddress = { area: '', block: '', street: '', avenue: '', house: '', floor: '', directions: '' };
+
+function isHomeAddressComplete(a: HomeAddress): boolean {
+  return Boolean(a.area.trim() && a.block.trim() && a.street.trim() && a.house.trim());
+}
+
+function formatHomeAddress(a: HomeAddress): string {
+  return [
+    a.area.trim() ? `Area: ${a.area.trim()}` : null,
+    a.block.trim() ? `Block: ${a.block.trim()}` : null,
+    a.street.trim() ? `Street: ${a.street.trim()}` : null,
+    a.avenue.trim() ? `Avenue: ${a.avenue.trim()}` : null,
+    a.house.trim() ? `House/Bldg: ${a.house.trim()}` : null,
+    a.floor.trim() ? `Floor/Apt: ${a.floor.trim()}` : null,
+    a.directions.trim() ? `Directions: ${a.directions.trim()}` : null,
+  ].filter(Boolean).join(', ');
+}
+
+function isHomeServiceBranch(b: { id?: string; branch_id?: string; name?: string; branch_name?: string; is_home_service?: boolean } | null | undefined): boolean {
+  if (!b) return false;
+  if (b.is_home_service) return true;
+  const rawName = String(b.name ?? b.branch_name ?? '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+  const rawId = String(b.id ?? b.branch_id ?? '').trim().toLowerCase();
+  return (
+    rawName === 'home service' ||
+    rawName === 'home' ||
+    rawId === 'home_service' ||
+    rawId === 'home' ||
+    rawId === '1896a1ca-66bc-4f06-9a0d-cef30fa8293c'
+  );
+}
+
+const homePriceOfService = (sv: { home_service_price?: unknown; base_price?: unknown; arrangement_price?: unknown } | undefined | null): number | null => {
+  if (!sv) return null;
+  const hp = parseFloat(String(sv.home_service_price ?? ''));
+  return Number.isFinite(hp) ? hp : null;
+};
+
 export interface VoucherSession {
   id: string;
   therapistId: string;
@@ -820,6 +868,12 @@ interface ServiceSessionBlockProps {
   serviceNameOf: (id: string) => string;
   onAssignAddon: (uid: string, serviceId: string) => void;
   onReport: (serviceId: string, report: SessionReport) => void;
+  /** Home service voucher: no rooms, therapist-only availability, client address form */
+  isHome?: boolean;
+  /** Render the (single, per-voucher) client address form inside this block */
+  showAddressForm?: boolean;
+  homeAddress?: HomeAddress;
+  onHomeAddressChange?: (patch: Partial<HomeAddress>) => void;
 }
 
 function ServiceSessionBlock({
@@ -841,6 +895,10 @@ function ServiceSessionBlock({
   serviceNameOf,
   onAssignAddon,
   onReport,
+  isHome = false,
+  showAddressForm = false,
+  homeAddress = EMPTY_HOME_ADDRESS,
+  onHomeAddressChange,
 }: ServiceSessionBlockProps) {
   const gid = gifted.id;
   const { requiredArrType, requiredArrId } = useMemo(
@@ -862,8 +920,11 @@ function ServiceSessionBlock({
 
   // 1. Load this service's arrangements (package: the packaged service's first, falling back to the service's own)
   useEffect(() => {
-    if (!branchId) {
+    if (!branchId || isHome) {
+      // Home service never uses rooms / arrangements
       setArrangements([]);
+      setSelectedTypeKey('');
+      setSelectedRoomId('');
       return;
     }
     let cancelled = false;
@@ -914,7 +975,7 @@ function ServiceSessionBlock({
     return () => {
       cancelled = true;
     };
-  }, [gid, pkgId, branchId, authHeader, requiredArrType, requiredArrId]);
+  }, [gid, pkgId, branchId, authHeader, requiredArrType, requiredArrId, isHome]);
 
   // Arrangements of the same type are shown once; their time slots are combined
   const groups = useMemo(() => {
@@ -949,8 +1010,9 @@ function ServiceSessionBlock({
   const extra = skipExtra ? { minutes: 0, price: 0 } : gifted.extra;
   const arrPrice =
     selectedArrangement?.arrangement_price != null ? parseFloat(String(selectedArrangement.arrangement_price)) || 0 : null;
-  const servicePrice =
-    arrPrice !== null ? arrPrice : parseFloat(String(service?.arrangement_price ?? service?.base_price ?? '0')) || 0;
+  const servicePrice = isHome
+    ? (homePriceOfService(service) ?? (parseFloat(String(service?.base_price ?? '0')) || 0))
+    : arrPrice !== null ? arrPrice : parseFloat(String(service?.arrangement_price ?? service?.base_price ?? '0')) || 0;
   const addonsPrice = blockAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonsDuration = blockAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
   const baseDuration = (service?.duration_minutes ?? 60) || 60;
@@ -960,7 +1022,7 @@ function ServiceSessionBlock({
   // 2. Therapists: for multi-service vouchers re-load availability for exactly this service
   const [serviceAvail, setServiceAvail] = useState<any>(null);
   useEffect(() => {
-    if (giftedCount <= 1 || !branchId) return;
+    if (isHome || giftedCount <= 1 || !branchId) return;
     let cancelled = false;
     authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
       method: 'POST',
@@ -983,8 +1045,31 @@ function ServiceSessionBlock({
     return () => {
       cancelled = true;
     };
-  }, [giftedCount, gid, branchId, authHeader, voucher.expire_date]);
-  const effectiveAvail = giftedCount > 1 ? serviceAvail : availabilitiesData;
+  }, [isHome, giftedCount, gid, branchId, authHeader, voucher.expire_date]);
+
+  // Home service: therapist-only availability (no room / arrangement checks)
+  const [homeAvail, setHomeAvail] = useState<any>(null);
+  useEffect(() => {
+    if (!isHome || !selectedDate) {
+      setHomeAvail(null);
+      return;
+    }
+    let cancelled = false;
+    authedFetch(`/api/v1/services/${gid}/home-availability/?from_date=${selectedDate}`, {
+      headers: authHeader ? { Authorization: authHeader } : undefined,
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setHomeAvail(d);
+      })
+      .catch(() => {
+        if (!cancelled) setHomeAvail(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isHome, gid, selectedDate, authHeader]);
+  const effectiveAvail = isHome ? homeAvail : giftedCount > 1 ? serviceAvail : availabilitiesData;
 
   const therapists = useMemo<ApiTherapist[]>(() => {
     return Array.isArray(effectiveAvail?.therapists)
@@ -1000,7 +1085,7 @@ function ServiceSessionBlock({
       slots: [] as { time: string; minutes: number; available: boolean }[],
       fit: new Map<number, string[]>(),
     };
-    if (!selectedDate || groupRooms.length === 0) return out;
+    if (!selectedDate || (!isHome && groupRooms.length === 0)) return out;
 
     // A start time is only free when EVERY 30-min step of the session fits in the free slots
     const steps = Math.max(1, Math.ceil(totalDuration / 30));
@@ -1038,7 +1123,9 @@ function ServiceSessionBlock({
     if (endMin <= startMin) endMin = 23 * 60;
 
     const allKnownMinutes = new Set<number>();
-    for (let m = startMin; m < endMin; m += 30) allKnownMinutes.add(m);
+    if (!isHome) {
+      for (let m = startMin; m < endMin; m += 30) allKnownMinutes.add(m);
+    }
     therapistSlotsForDay.forEach((m) => allKnownMinutes.add(m));
     roomData.forEach((r) => r.free.forEach((m) => allKnownMinutes.add(m)));
 
@@ -1050,12 +1137,13 @@ function ServiceSessionBlock({
       const hd = h % 12 === 0 ? 12 : h % 12;
       const timeLabel = `${String(hd).padStart(2, '0')}:${String(min).padStart(2, '0')} ${ampm}`;
       const roomsFit = roomData.filter((r) => !r.hasData || fitsDuration(r.free, m)).map((r) => r.id);
-      const available = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists && roomsFit.length > 0;
+      // Home service: only therapist availability matters (no rooms)
+      const available = (therapistCountByMin.get(m) ?? 0) >= minRequiredTherapists && (isHome || roomsFit.length > 0);
       out.fit.set(m, roomsFit);
       out.slots.push({ time: timeLabel, minutes: m, available });
     }
     return out;
-  }, [selectedDate, groupRooms, therapists, effectiveAvail, availabilitiesData, isCoupleRoom, totalDuration]);
+  }, [selectedDate, groupRooms, therapists, effectiveAvail, availabilitiesData, isCoupleRoom, totalDuration, isHome]);
 
   // Keep the chosen time valid and auto-select the room (of the chosen type) that is free at that time
   useEffect(() => {
@@ -1110,7 +1198,7 @@ function ServiceSessionBlock({
 
   // Report this block's session (or what is still missing) to the parent modal
   const draft = useMemo<VoucherSession | null>(() => {
-    if (!service || !selectedRoomId || !selectedTimeSlot || !selectedTherapistId) return null;
+    if (!service || (!isHome && !selectedRoomId) || !selectedTimeSlot || !selectedTherapistId) return null;
     const secTName = isCoupleRoom && selectedSecondaryTherapist ? getTherapistDisplayName(selectedSecondaryTherapist) : undefined;
     return {
       id: Math.random().toString(36).slice(2),
@@ -1120,9 +1208,9 @@ function ServiceSessionBlock({
       secondaryTherapistId: selectedSecondaryTherapistId || undefined,
       secondaryTherapistName: secTName,
       secondaryTherapistAvatar: selectedSecondaryTherapist?.avatar || selectedSecondaryTherapist?.photo_url,
-      arrangementId: selectedRoomId,
-      arrangementName: selectedArrangement?.name || 'Room',
-      arrangementType: selectedArrangement?.arrangement_type || requiredArrType,
+      arrangementId: isHome ? '' : selectedRoomId,
+      arrangementName: isHome ? 'Home Service' : (selectedArrangement?.name || 'Room'),
+      arrangementType: isHome ? 'home_service' : (selectedArrangement?.arrangement_type || requiredArrType),
       serviceIds: [gid],
       services: [service],
       addonIds: [],
@@ -1145,12 +1233,14 @@ function ServiceSessionBlock({
     };
   }, [
     service, gid, gifted.name, selectedRoomId, selectedTimeSlot, selectedTherapistId, selectedTherapist,
-    selectedSecondaryTherapistId, selectedSecondaryTherapist, isCoupleRoom, selectedArrangement, requiredArrType,
+    selectedSecondaryTherapistId, selectedSecondaryTherapist, isCoupleRoom, selectedArrangement, requiredArrType, isHome,
     blockAddons, extra.minutes, extra.price, totalDuration, sessionPrice,
   ]);
   const missing = !service
-    ? 'Not available in this branch.'
-    : !selectedRoomId
+    ? (isHome ? 'Not available for home service.' : 'Not available in this branch.')
+    : isHome && !isHomeAddressComplete(homeAddress)
+    ? 'Please complete the client location address (Area, Block, Street, House / Building).'
+    : !isHome && !selectedRoomId
     ? 'Please select a room / arrangement.'
     : !selectedTimeSlot
     ? 'Please select a start time slot.'
@@ -1197,7 +1287,59 @@ function ServiceSessionBlock({
         </div>
       )}
 
+      {/* Home service: client location address (one form per voucher) instead of rooms */}
+      {isHome && showAddressForm && (
+        <div className="rounded-2xl border border-border/80 bg-muted/10 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-amber-500" />
+              <div>
+                <p className="text-sm font-extrabold text-foreground">Client Location Address *</p>
+                <p className="text-[11px] text-muted-foreground">One address is used for all services and sessions of this voucher</p>
+              </div>
+            </div>
+            {isHomeAddressComplete(homeAddress) && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                <CheckCircle2 className="h-3 w-3" /> Complete
+              </span>
+            )}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {([
+              ['area', 'Area / City *', 'e.g. Salmiya, Dasman, Hawally…'],
+              ['block', 'Block *', 'e.g. Block 4'],
+              ['street', 'Street *', 'e.g. Salem Al Mubarak St / Street 12'],
+              ['avenue', 'Avenue (Optional)', 'e.g. Avenue 2'],
+              ['house', 'House / Building *', 'e.g. House 14 / Tower B'],
+              ['floor', 'Floor & Apartment (Optional)', 'e.g. Floor 3, Apt 12'],
+            ] as Array<[keyof HomeAddress, string, string]>).map(([key, label, ph]) => (
+              <div key={key}>
+                <p className="mb-1 text-[11px] font-bold text-muted-foreground">{label}</p>
+                <input
+                  type="text"
+                  value={homeAddress[key]}
+                  onChange={(e) => onHomeAddressChange?.({ [key]: e.target.value })}
+                  placeholder={ph}
+                  className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                />
+              </div>
+            ))}
+          </div>
+          <div>
+            <p className="mb-1 text-[11px] font-bold text-muted-foreground">Directions / PACI / Landmark (Optional)</p>
+            <input
+              type="text"
+              value={homeAddress.directions}
+              onChange={(e) => onHomeAddressChange?.({ directions: e.target.value })}
+              placeholder="e.g. Near Symphony Mall, PACI 12345678, gate code…"
+              className="h-10 w-full rounded-xl border border-border bg-card px-3 text-xs font-medium outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Room / Arrangement Selection (only the selected arrangement type from purchase is shown) */}
+      {!isHome && (
       <div>
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
@@ -1258,6 +1400,7 @@ function ServiceSessionBlock({
           </p>
         )}
       </div>
+      )}
 
       {/* Timeslots */}
       <div>
@@ -1293,7 +1436,7 @@ function ServiceSessionBlock({
             })}
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground italic">No slots available for this date and room</p>
+          <p className="text-xs text-muted-foreground italic">No slots available for this date{isHome ? ' (no therapist available for home service)' : ' and room'}</p>
         )}
       </div>
 
@@ -1371,6 +1514,9 @@ interface AddVoucherSessionModalProps {
   maxNewSessions: number;
   onAdd: (sess: VoucherSession) => void;
   onClose: () => void;
+  isHome?: boolean;
+  homeAddress?: HomeAddress;
+  onHomeAddressChange?: (patch: Partial<HomeAddress>) => void;
 }
 
 function AddVoucherSessionModal({
@@ -1384,6 +1530,9 @@ function AddVoucherSessionModal({
   maxNewSessions,
   onAdd,
   onClose,
+  isHome = false,
+  homeAddress = EMPTY_HOME_ADDRESS,
+  onHomeAddressChange,
 }: AddVoucherSessionModalProps) {
   const [services, setServices] = useState<ApiService[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
@@ -1419,13 +1568,31 @@ function AddVoucherSessionModal({
   // 1. Load the voucher services for this branch
   useEffect(() => {
     setServicesLoading(true);
-    authedFetch(`/api/v1/services/?branch_id=${branchId}&is_active=true`, {
+    // Home service: only home-service-eligible services (priced for home service); otherwise this branch's services
+    const listUrl = isHome
+      ? `/api/v1/services/?is_active=true&is_home_service_eligible=true`
+      : `/api/v1/services/?branch_id=${branchId}&is_active=true`;
+    authedFetch(listUrl, {
       headers: authHeader ? { Authorization: authHeader } : undefined,
     })
       .then((r) => r.json())
-      .then((d) => {
+      .then(async (d) => {
         const all: ApiService[] = Array.isArray(d) ? d : (d.data ?? d.results ?? []);
         const wanted = availableGiftedKey ? availableGiftedKey.split(',') : [];
+        if (isHome) {
+          // package components may not be in the list: load them directly
+          for (const id of wanted) {
+            if (all.some((s) => String(s.id) === id)) continue;
+            try {
+              const sr = await authedFetch(`/api/v1/services/${id}/`, { headers: authHeader ? { Authorization: authHeader } : undefined });
+              const sj = await sr.json();
+              const sv = (sj?.data ?? sj) as ApiService;
+              if (sv?.id && (sv as any).is_home_service_eligible !== false) all.push(sv);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
         const list = wanted.length > 0
           ? wanted.map((id) => all.find((s) => String(s.id) === id)).filter((s): s is ApiService => Boolean(s))
           : all.slice(0, 1);
@@ -1435,7 +1602,7 @@ function AddVoucherSessionModal({
       })
       .catch(() => setServices([]))
       .finally(() => setServicesLoading(false));
-  }, [branchId, authHeader, availableGiftedKey]);
+  }, [branchId, authHeader, availableGiftedKey, isHome]);
 
   const toggleService = (sv: ApiService) => {
     const id = String(sv.id);
@@ -1768,6 +1935,10 @@ function AddVoucherSessionModal({
                 serviceNameOf={serviceNameOf}
                 onAssignAddon={onAssignAddon}
                 onReport={onReport}
+                isHome={isHome}
+                showAddressForm={selectedServiceIds[0] === id}
+                homeAddress={homeAddress}
+                onHomeAddressChange={onHomeAddressChange}
               />
             );
           })}
@@ -1994,6 +2165,20 @@ export function RedeemVoucherModal({
   const [branches, setBranches] = useState<ApiBranch[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>(originalBranchId);
 
+  // Home service voucher: branch is fixed, no rooms, therapist-only availability, one client address per voucher
+  const isHomeVoucher = useMemo(
+    () =>
+      isHomeServiceBranch({
+        id: originalBranchId,
+        name: firstTruthy(voucher.branch_data?.name, voucher.branch_data?.branch_name, voucher.branch_name),
+        is_home_service: Boolean(voucher.branch_data?.is_home_service),
+      }) ||
+      isHomeServiceBranch(branches.find((b) => String(b.id ?? b.branch_id ?? '') === originalBranchId)),
+    [originalBranchId, voucher, branches]
+  );
+  const [homeAddress, setHomeAddress] = useState<HomeAddress>(EMPTY_HOME_ADDRESS);
+  const patchHomeAddress = useCallback((patch: Partial<HomeAddress>) => setHomeAddress((prev) => ({ ...prev, ...patch })), []);
+
   const todayStr = useMemo(() => kuwaitDateString(), []);
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [showDatePicker, setShowDatePicker] = useState<boolean>(false);
@@ -2131,6 +2316,7 @@ export function RedeemVoucherModal({
   // Only offer branches where the voucher service has an arrangement of the voucher's room type
   const [eligibleBranchIds, setEligibleBranchIds] = useState<Set<string> | null>(null);
   useEffect(() => {
+    if (isHomeVoucher) return;
     if (!serviceId || branches.length === 0) return;
     let cancelled = false;
     Promise.all(
@@ -2181,11 +2367,11 @@ export function RedeemVoucherModal({
     return () => {
       cancelled = true;
     };
-  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher]);
+  }, [branches, serviceId, giftedServiceIds, isPackageVoucher, pkgInfo?.id, authHeader, originalBranchId, voucher, isHomeVoucher]);
 
-  // Fetch voucher availabilities for branch
+  // Fetch voucher availabilities for branch (home service uses per-service therapist availability instead)
   useEffect(() => {
-    if (!selectedBranchId) return;
+    if (!selectedBranchId || isHomeVoucher) return;
     setAvailabilitiesLoading(true);
     const payload = {
       service_id: serviceId,
@@ -2206,7 +2392,7 @@ export function RedeemVoucherModal({
       .then((d) => setAvailabilitiesData(d))
       .catch(() => {})
       .finally(() => setAvailabilitiesLoading(false));
-  }, [selectedBranchId, serviceId, expireDateWithTz, authHeader]);
+  }, [selectedBranchId, serviceId, expireDateWithTz, authHeader, isHomeVoucher]);
 
 
   // Totals across all sessions
@@ -2239,7 +2425,11 @@ export function RedeemVoucherModal({
     excluded: Set<string>
   ): Promise<{ id: string; name: string; avatar?: string } | null> => {
     try {
-      const r = await authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
+      const r = isHomeVoucher
+        ? await authedFetch(`/api/v1/services/${sess.serviceIds[0]}/home-availability/?from_date=${selectedDate}`, {
+            headers: authHeader ? { Authorization: authHeader } : undefined,
+          })
+        : await authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2305,6 +2495,24 @@ export function RedeemVoucherModal({
       setSubmitError('Please select branch and appointment date.');
       return;
     }
+    if (isHomeVoucher && !isHomeAddressComplete(homeAddress)) {
+      setSubmitError('Please complete the client location address (Area, Block, Street, House / Building).');
+      return;
+    }
+    const homeFormattedAddress = isHomeVoucher ? formatHomeAddress(homeAddress) : '';
+    const homeAddressObj = isHomeVoucher
+      ? {
+          area: homeAddress.area.trim(),
+          block: homeAddress.block.trim(),
+          street: homeAddress.street.trim(),
+          avenue: homeAddress.avenue.trim() || undefined,
+          house: homeAddress.house.trim(),
+          building: homeAddress.house.trim(),
+          floor: homeAddress.floor.trim() || undefined,
+          apartment: homeAddress.floor.trim() || undefined,
+          directions: homeAddress.directions.trim() || undefined,
+        }
+      : null;
 
     setSubmitting(true);
     setSubmitError(null);
@@ -2329,8 +2537,8 @@ export function RedeemVoucherModal({
           secondary_therapist_id: sess.secondaryTherapistId,
           secondary_therapist_name: sess.secondaryTherapistName,
         } : {}),
-        service_arrangement_id: sess.arrangementId,
-        service_arrangement_data: {
+        service_arrangement_id: isHomeVoucher ? null : sess.arrangementId,
+        service_arrangement_data: isHomeVoucher ? null : {
           arrangement_id: sess.arrangementId,
           arrangement_name: sess.arrangementName,
           arrangement_type: sess.arrangementType,
@@ -2367,10 +2575,16 @@ export function RedeemVoucherModal({
       phone_number: recipientPhone,
       email: recipientEmail,
     };
+    const custObjWithAddress = isHomeVoucher
+      ? { ...custObj, address: homeAddressObj, home_address: homeFormattedAddress, delivery_address: homeAddressObj }
+      : custObj;
+    const bookingNotes = isHomeVoucher && homeFormattedAddress
+      ? [notes.trim(), `[Home Address: ${homeFormattedAddress}]`].filter(Boolean).join('\n\n')
+      : notes;
 
     const bookingPayload = {
       customer_id: customerId || voucher.recipient_id || voucher.sender_id || null,
-      customer_data: custObj,
+      customer_data: custObjWithAddress,
       service_id: firstSess.services[0]?.id || serviceId,
       service_name: firstSess.services[0]?.name || serviceName,
       service_data: firstSess.services[0] || voucher.service_data,
@@ -2388,13 +2602,15 @@ export function RedeemVoucherModal({
         price: fmt(a.price),
         duration_minutes: a.duration_minutes ?? 0,
       })),
-      branch_id: selectedBranchId,
-      branch_name: selectedBranchName,
-      branch_data: { branch_id: selectedBranchId, name: selectedBranchName },
-      service_arrangement_id: firstSess.arrangementId,
-      arrangement_name: firstSess.arrangementName,
-      arrangement_type: firstSess.arrangementType,
-      service_arrangement_data: {
+      branch_id: isHomeVoucher ? null : selectedBranchId,
+      branch_name: isHomeVoucher ? 'Home Service' : selectedBranchName,
+      branch_data: isHomeVoucher
+        ? { branch_name: 'Home Service', branch_address: homeFormattedAddress || 'Home Service', home_address: homeFormattedAddress }
+        : { branch_id: selectedBranchId, name: selectedBranchName },
+      service_arrangement_id: isHomeVoucher ? null : firstSess.arrangementId,
+      arrangement_name: isHomeVoucher ? null : firstSess.arrangementName,
+      arrangement_type: isHomeVoucher ? null : firstSess.arrangementType,
+      service_arrangement_data: isHomeVoucher ? null : {
         arrangement_id: firstSess.arrangementId,
         arrangement_name: firstSess.arrangementName,
         arrangement_type: firstSess.arrangementType,
@@ -2419,7 +2635,7 @@ export function RedeemVoucherModal({
       appointment_time: toHHMM(firstSess.startTime),
       appointment_start: firstApptWindow.appointment_start,
       appointment_end: lastApptWindow.appointment_end,
-      booking_type: 'branch_service',
+      booking_type: isHomeVoucher ? 'home_service' : 'branch_service',
       payment_type: 'gift_voucher',
       status: 'confirmed',
       payment_status: 'paid',
@@ -2433,7 +2649,7 @@ export function RedeemVoucherModal({
       total_price: fmt(isPackageVoucher ? (unassignedCount === 0 ? voucherAmount : (netPayablePrice || voucherAmount)) : netPayablePrice),
       currency,
       total_duration: totalBookingDuration,
-      customer_notes: notes,
+      customer_notes: bookingNotes,
       voucher_id: voucher.id,
       voucher_data: {
         id: voucher.id,
@@ -2621,6 +2837,11 @@ export function RedeemVoucherModal({
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Branch</p>
+              {isHomeVoucher ? (
+                <p className="text-xs font-extrabold text-foreground" title="Branch cannot be changed for home service vouchers">
+                  {selectedBranchName && selectedBranchName !== 'Branch' ? selectedBranchName : 'Home Service'}
+                </p>
+              ) : (
               <select
                 value={selectedBranchId}
                 onChange={(e) => setSelectedBranchId(e.target.value)}
@@ -2637,6 +2858,7 @@ export function RedeemVoucherModal({
                   );
                 })}
               </select>
+              )}
             </div>
           </div>
 
@@ -3036,6 +3258,9 @@ export function RedeemVoucherModal({
           maxNewSessions={Math.min(maxSessions - sessions.length, unassignedCount)}
           onAdd={(newSess) => setSessions((prev) => [...prev, newSess])}
           onClose={() => setShowAddSessionModal(false)}
+          isHome={isHomeVoucher}
+          homeAddress={homeAddress}
+          onHomeAddressChange={patchHomeAddress}
         />
       )}
 
