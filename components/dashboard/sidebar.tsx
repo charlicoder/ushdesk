@@ -42,6 +42,7 @@ import {
   Handshake,
   RotateCcw,
   Star,
+  MessageCircle,
 } from 'lucide-react';
 import { useI18n } from '@/hooks/use-i18n';
 import { useAppDispatch, useAppSelector } from '@/store/hooks';
@@ -56,6 +57,8 @@ interface NavItem {
   icon: React.ElementType;
   /** Required permission to show this top-level item. Admins bypass this. */
   permission?: string;
+  /** When true, strictly visible to admins only. */
+  adminOnly?: boolean;
   children?: {
     href: string;
     label: string;
@@ -63,6 +66,7 @@ interface NavItem {
     disabled?: boolean;
     /** Required permission to show this child item. Admins bypass this. */
     permission?: string;
+    adminOnly?: boolean;
   }[];
 }
 
@@ -173,6 +177,12 @@ export function Sidebar() {
         { href: '/reports/gift-voucher', label: 'Gift Voucher Report', icon: Gift, permission: PERMISSIONS.REPORTS_GIFT_VOUCHER },
       ],
     },
+    {
+      href: '/whatsapp-status',
+      label: 'WhatsApp Status',
+      icon: MessageCircle,
+      adminOnly: true,
+    },
   ];
 
   /**
@@ -182,12 +192,14 @@ export function Sidebar() {
   const visibleItems = items.map((item) => {
     // Filter children first
     const filteredChildren = item.children?.filter((child) => {
+      if (child.adminOnly && !isAdmin) return false;
       if (!child.permission) return true; // no permission required — always show
       return can(child.permission);
     });
 
     return { ...item, children: filteredChildren };
   }).filter((item) => {
+    if (item.adminOnly && !isAdmin) return false;
     // If the item had submenus originally, but all were filtered out, hide the empty parent
     if (item.children && item.children.length === 0) return false;
     // If it has visible submenus, keep the parent visible
