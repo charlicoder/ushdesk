@@ -19,6 +19,8 @@ import {
   canEditEmployee,
   canDeleteCustomer,
   canUpdateCustomerStatus,
+  canSendCustomerMessage,
+  canDownloadCustomerCsv,
   canRescheduleBooking,
   canCancelBooking,
   canMakePayment,
@@ -82,6 +84,12 @@ export function usePermissions() {
 
     /** True if user has permission to update customer account status */
     canUpdateCustomerStatus: adminAccess || canUpdateCustomerStatus(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to send messages to customers */
+    canSendCustomerMessage: adminAccess || canSendCustomerMessage(userType, permissions, roleInfo, user),
+
+    /** True if user has permission to export / download customers as CSV */
+    canDownloadCustomerCsv: adminAccess || canDownloadCustomerCsv(userType, permissions, roleInfo, user),
 
     /** True if user has permission to reschedule bookings */
     canRescheduleBooking: adminAccess || canRescheduleBooking(userType, permissions, roleInfo, user),

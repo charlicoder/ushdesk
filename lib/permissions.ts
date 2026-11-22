@@ -45,10 +45,12 @@ export const PERMISSIONS = {
 
   // ── UshSpa submenus ──────────────────────────────────────────────────────────
   USHSPA_BRANCHES:          'deskmenu.ushspa.branches',
-  USHSPA_CUSTOMERS:         'deskmenu.ushspa.customers',
-  USHSPA_CUSTOMERS_EDIT:    'deskmenu.ushspa.customers.edit',
-  USHSPA_CUSTOMERS_DELETE:  'deskmenu.ushspa.customers.delete',
+  USHSPA_CUSTOMERS:               'deskmenu.ushspa.customers',
+  USHSPA_CUSTOMERS_EDIT:          'deskmenu.ushspa.customers.edit',
+  USHSPA_CUSTOMERS_DELETE:        'deskmenu.ushspa.customers.delete',
   USHSPA_CUSTOMERS_UPDATE_STATUS: 'deskmenu.ushspa.customers.update_status',
+  USHSPA_CUSTOMERS_SEND_MESSAGE:  'deskmenu.ushspa.customers.send_message',
+  USHSPA_CUSTOMERS_DOWNLOAD_CSV:  'deskmenu.ushspa.customers.download_csv',
   USHSPA_EMPLOYEES:         'deskmenu.ushspa.employees',
   USHSPA_EMPLOYEES_EDIT:    'deskmenu.ushspa.employees.edit',
   USHSPA_LEAVE_MANAGEMENT:  'deskmenu.ushspa.leave_management',
@@ -539,6 +541,20 @@ export const CUSTOMER_STATUS_PERMISSIONS = [
   'customers.status',
 ] as const;
 
+export const CUSTOMER_SEND_MESSAGE_PERMISSIONS = [
+  'deskmenu.ushspa.customers.send_message',
+  'ushspa.customers.send_message',
+  'customers.send_message',
+  'customers.message',
+] as const;
+
+export const CUSTOMER_DOWNLOAD_CSV_PERMISSIONS = [
+  'deskmenu.ushspa.customers.download_csv',
+  'ushspa.customers.download_csv',
+  'customers.download_csv',
+  'customers.export',
+] as const;
+
 export function canEditCustomer(
   userType: string | undefined | null,
   permissions: string[],
@@ -585,6 +601,30 @@ export function canUpdateCustomerStatus(
   if (isAdministratorRole(roleInfo, user)) return true;
   if (roleInfo?.is_superuser === true) return true;
   return CUSTOMER_STATUS_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canSendCustomerMessage(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return CUSTOMER_SEND_MESSAGE_PERMISSIONS.some((p) => permissions.includes(p));
+}
+
+export function canDownloadCustomerCsv(
+  userType: string | undefined | null,
+  permissions: string[],
+  roleInfo?: RoleInfoLike | null,
+  user?: UserLike | null,
+): boolean {
+  if (isAdmin(userType)) return true;
+  if (isAdministratorRole(roleInfo, user)) return true;
+  if (roleInfo?.is_superuser === true) return true;
+  return CUSTOMER_DOWNLOAD_CSV_PERMISSIONS.some((p) => permissions.includes(p));
 }
 
 // ─── Booking Action Button Permissions ────────────────────────────────────────

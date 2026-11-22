@@ -1,7 +1,7 @@
 'use client';
 
 import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
-import { useMemo, useState, useCallback, useEffect } from 'react';
+import { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import {
   Phone, Mail, Calendar, RefreshCw, AlertCircle, Search,
   LayoutGrid, List, CheckCircle2, XCircle, ChevronDown,
@@ -10,9 +10,11 @@ import {
   Check, Eye, Copy, Award, Gift, DollarSign, TrendingUp, Clock,
   Sparkles, ShoppingBag, Receipt, Star, Tag, Activity, BarChart3,
   MapPin, UserCheck, Heart, SlidersHorizontal, Pencil, Trash2,
-  UserCog, AlertTriangle, Layers,
+  UserCog, AlertTriangle, Layers, Download,
 } from 'lucide-react';
 import { useApiList } from '@/hooks/use-api-list';
+import { authedFetch } from '@/lib/authedFetch';
+import { CustomerCsvExportModal } from '@/components/customers/CustomerCsvExportModal';
 import { DashboardShell } from '@/components/dashboard/shell';
 import { PageHeader } from '@/components/dashboard/page-header';
 import { useI18n } from '@/hooks/use-i18n';
@@ -1329,6 +1331,7 @@ function CustomerDetailsModal({
   canEdit = false,
   canUpdateStatus = false,
   canDelete = false,
+  canSendMessage = false,
 }: {
   customer: Customer;
   onClose: () => void;
@@ -1339,6 +1342,7 @@ function CustomerDetailsModal({
   canEdit?: boolean;
   canUpdateStatus?: boolean;
   canDelete?: boolean;
+  canSendMessage?: boolean;
 }) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'finance' | 'vouchers' | 'loyalty' | 'marketing'>('overview');
@@ -2295,17 +2299,19 @@ function CustomerDetailsModal({
                 <span>Edit Details</span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                onSendMessage(customer);
-              }}
-              className="flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
-            >
-              <Send className="h-4 w-4" />
-              <span>Send Message</span>
-            </button>
+            {canSendMessage && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onSendMessage(customer);
+                }}
+                className="flex h-10 items-center gap-2 rounded-xl bg-primary px-5 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+              >
+                <Send className="h-4 w-4" />
+                <span>Send Message</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2320,7 +2326,14 @@ export default function CustomersPage() {
     canEditCustomer,
     canDeleteCustomer,
     canUpdateCustomerStatus,
+    canSendCustomerMessage,
+    canDownloadCustomerCsv,
   } = usePermissions();
+  const canUseBulkActions =
+    canSendCustomerMessage ||
+    canUpdateCustomerStatus ||
+    canDeleteCustomer ||
+    canDownloadCustomerCsv;
 
   const [search,               setSearch]               = useState('');
   const [debouncedSearch,      setDebouncedSearch]      = useState('');
@@ -2360,10 +2373,13 @@ export default function CustomersPage() {
     setPage(1);
   }, [accountStatusFilter, genderFilter, whatsappFilter, emailFilter, mobileFilter, dateFilter, dateRange]);
 
-  // Multi-select
-  const [selectedIds,     setSelectedIds]     = useState<Set<string>>(new Set());
-  const [showMsgModal,    setShowMsgModal]    = useState(false);
-  const [successInfo,     setSuccessInfo]     = useState<{ channel: MessageChannel; count: number } | null>(null);
+  // Multi-select & CSV export
+  const [selectedIds,          setSelectedIds]          = useState<Set<string>>(new Set());
+  const [allCustomersSelected, setAllCustomersSelected] = useState(false);
+  const [showCsvModal,         setShowCsvModal]         = useState(false);
+  const selectedCacheRef = useRef<Map<string, Customer>>(new Map());
+  const [showMsgModal,         setShowMsgModal]         = useState(false);
+  const [successInfo,          setSuccessInfo]          = useState<{ channel: MessageChannel; count: number } | null>(null);
 
   const proxyUrl = useMemo(() => {
     const params = new URLSearchParams();
@@ -2465,19 +2481,35 @@ export default function CustomersPage() {
     showToast('Customer(s) deleted successfully.');
   };
 
+  // Keep cache of loaded customers so multi-page individual selections can be exported cleanly
+  useEffect(() => {
+    customers.forEach((c) => selectedCacheRef.current.set(c.id, c));
+  }, [customers]);
+
   // Selection helpers
-  const allFilteredSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id));
-  const someSelected = selectedIds.size > 0;
+  const allFilteredSelected = allCustomersSelected || (filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id)));
+  const someSelected = allCustomersSelected || selectedIds.size > 0;
 
   const toggleSelect = useCallback((id: string) => {
+    if (allCustomersSelected) {
+      // Transition from "all pages" to current page minus this customer
+      setAllCustomersSelected(false);
+      setSelectedIds(new Set(filtered.filter((c) => c.id !== id).map((c) => c.id)));
+      return;
+    }
     setSelectedIds((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  }, []);
+  }, [allCustomersSelected, filtered]);
 
   const toggleSelectAll = useCallback(() => {
+    if (allCustomersSelected) {
+      setAllCustomersSelected(false);
+      setSelectedIds(new Set());
+      return;
+    }
     if (allFilteredSelected) {
       setSelectedIds((prev) => {
         const next = new Set(prev);
@@ -2491,9 +2523,80 @@ export default function CustomersPage() {
         return next;
       });
     }
-  }, [allFilteredSelected, filtered]);
+  }, [allCustomersSelected, allFilteredSelected, filtered]);
 
-  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const selectAllCustomers = useCallback(() => {
+    setAllCustomersSelected(true);
+    setSelectedIds(new Set(filtered.map((c) => c.id)));
+  }, [filtered]);
+
+  const clearSelection = useCallback(() => {
+    setAllCustomersSelected(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  const getSelectedCustomers = useCallback((): Customer[] => {
+    const out: Customer[] = [];
+    selectedIds.forEach((id) => {
+      const c = customers.find((x) => x.id === id) ?? selectedCacheRef.current.get(id);
+      if (c) out.push(c);
+    });
+    return out;
+  }, [selectedIds, customers]);
+
+  const fetchAllMatchingCustomers = useCallback(
+    async (onProgress: (loaded: number, total: number) => void): Promise<Customer[]> => {
+      const all: Customer[] = [];
+      const seen = new Set<string>();
+      let currentPage = 1;
+      let expectedTotal = totalCount;
+      let totalPgs = 1;
+
+      while (currentPage <= Math.min(totalPgs, 100)) {
+        const params = new URLSearchParams();
+        params.set('page', String(currentPage));
+        params.set('page_size', '200');
+        if (debouncedSearch.trim()) {
+          params.set('search', debouncedSearch.trim());
+        }
+        const res = await authedFetch(`/api/v1/customers?${params.toString()}`);
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(json?.detail ?? json?.message ?? `Failed to load customers (Error ${res.status})`);
+        }
+        const rawList: Record<string, unknown>[] = Array.isArray(json)
+          ? json
+          : (json?.data ?? json?.results ?? json?.items ?? []);
+        const pg = json?.meta?.pagination ?? json?.pagination ?? null;
+        if (pg?.count) expectedTotal = Number(pg.count);
+        if (pg?.total_pages) totalPgs = Number(pg.total_pages);
+        else if (pg?.next) totalPgs = currentPage + 1;
+
+        for (const r of rawList) {
+          const c = normalise(r);
+          if (c.id && seen.has(c.id)) continue;
+          if (c.id) seen.add(c.id);
+          // Apply the same client-side filters active on the page
+          const matchStatus = !accountStatusFilter || c.account_status === accountStatusFilter;
+          const matchGender = !genderFilter || c.gender === genderFilter;
+          const matchWhatsapp = !whatsappFilter || (whatsappFilter === 'verified' ? c.is_whatsapp_verified : !c.is_whatsapp_verified);
+          const matchEmail = !emailFilter || (emailFilter === 'verified' ? c.is_email_verified : !c.is_email_verified);
+          const matchMobile = !mobileFilter || (mobileFilter === 'verified' ? c.is_mobile_verified : !c.is_mobile_verified);
+          const matchSignupDate = matchesDateRange(parseCustomerDate(c.created_at), dateRange);
+          if (matchStatus && matchGender && matchWhatsapp && matchEmail && matchMobile && matchSignupDate) {
+            all.push(c);
+          }
+        }
+
+        onProgress(all.length, expectedTotal);
+        if (rawList.length === 0 || (!pg?.next && currentPage >= totalPgs)) break;
+        currentPage += 1;
+      }
+
+      return all;
+    },
+    [totalCount, debouncedSearch, accountStatusFilter, genderFilter, whatsappFilter, emailFilter, mobileFilter, dateRange],
+  );
 
   // Send message handler (replace with real API call later)
   const handleSend = useCallback(async (channel: MessageChannel, _message: string): Promise<void> => {
@@ -2603,6 +2706,36 @@ export default function CustomersPage() {
               <>{filtered.length} customers</>
             )}
           </span>
+        )}
+
+        {/* Select All Customers button */}
+        {canUseBulkActions && !loading && totalCount > 0 && (
+          <button
+            type="button"
+            onClick={() => (allCustomersSelected ? clearSelection() : selectAllCustomers())}
+            className={cn(
+              'flex h-10 items-center gap-2 rounded-xl border px-3.5 text-xs font-semibold transition cursor-pointer',
+              allCustomersSelected
+                ? 'border-primary bg-primary/10 text-primary shadow-xs'
+                : 'border-border bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground',
+            )}
+          >
+            <CheckCheck className="h-4 w-4" />
+            <span>{allCustomersSelected ? `All Selected (${totalCount.toLocaleString()})` : `Select All (${totalCount.toLocaleString()})`}</span>
+          </button>
+        )}
+
+        {/* Export CSV button */}
+        {canDownloadCustomerCsv && (
+          <button
+            type="button"
+            disabled={loading || totalCount === 0}
+            onClick={() => setShowCsvModal(true)}
+            className="flex h-10 items-center gap-2 rounded-xl border border-border bg-card px-3.5 text-xs font-semibold text-foreground hover:border-primary/50 hover:bg-muted/60 disabled:opacity-40 transition cursor-pointer"
+          >
+            <Download className="h-4 w-4 text-primary" />
+            <span>Export CSV</span>
+          </button>
         )}
 
         {/* View toggle */}
@@ -2732,18 +2865,42 @@ export default function CustomersPage() {
       )}
 
       {/* ── Selection action bar ── */}
-      {someSelected && (
+      {canUseBulkActions && someSelected && (
         <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-5 py-3 animate-fade-in-up">
-          <span className="text-sm font-semibold text-primary">
-            {selectedIds.size} customer{selectedIds.size !== 1 ? 's' : ''} selected
-          </span>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="text-sm font-semibold text-primary">
+              {allCustomersSelected
+                ? `All ${totalCount.toLocaleString()} customers selected`
+                : `${selectedIds.size} customer${selectedIds.size !== 1 ? 's' : ''} selected`}
+            </span>
+            {!allCustomersSelected && allFilteredSelected && totalCount > filtered.length && (
+              <button
+                type="button"
+                onClick={selectAllCustomers}
+                className="rounded-lg border border-primary/40 bg-card px-2.5 py-1 text-xs font-bold text-primary hover:bg-primary hover:text-white transition cursor-pointer"
+              >
+                Select all {totalCount.toLocaleString()} customers
+              </button>
+            )}
+          </div>
           <div className="flex-1" />
-          <button
-            onClick={() => setShowMsgModal(true)}
-            className="flex h-9 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
-          >
-            <Send className="h-3.5 w-3.5" /> Send Message
-          </button>
+          {canDownloadCustomerCsv && (
+            <button
+              type="button"
+              onClick={() => setShowCsvModal(true)}
+              className="flex h-9 items-center gap-2 rounded-xl border border-primary/40 bg-card px-4 text-sm font-semibold text-primary hover:bg-primary hover:text-white transition cursor-pointer"
+            >
+              <Download className="h-3.5 w-3.5" /> Download CSV
+            </button>
+          )}
+          {canSendCustomerMessage && (
+            <button
+              onClick={() => setShowMsgModal(true)}
+              className="flex h-9 items-center gap-2 rounded-xl bg-primary px-4 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition cursor-pointer"
+            >
+              <Send className="h-3.5 w-3.5" /> Send Message
+            </button>
+          )}
           {canUpdateCustomerStatus && (
             <button
               onClick={() => {
@@ -2794,7 +2951,7 @@ export default function CustomersPage() {
       {!loading && filtered.length > 0 && viewMode === 'grid' && (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filtered.map((c) => {
-            const isSelected = selectedIds.has(c.id);
+            const isSelected = allCustomersSelected || selectedIds.has(c.id);
             return (
               <div
                 key={c.id}
@@ -2966,7 +3123,7 @@ export default function CustomersPage() {
             </thead>
             <tbody>
               {filtered.map((c, i) => {
-                const isSelected = selectedIds.has(c.id);
+                const isSelected = allCustomersSelected || selectedIds.has(c.id);
                 return (
                   <tr
                     key={c.id}
@@ -3316,6 +3473,7 @@ export default function CustomersPage() {
           canEdit={canEditCustomer}
           canUpdateStatus={canUpdateCustomerStatus}
           canDelete={canDeleteCustomer}
+          canSendMessage={canSendCustomerMessage}
         />
       )}
 
@@ -3370,8 +3528,21 @@ export default function CustomersPage() {
         onDeleted={handleCustomersDeleted}
       />
 
+      {/* CSV Export Modal */}
+      {showCsvModal && canDownloadCustomerCsv && (
+        <CustomerCsvExportModal
+          selectedCount={selectedIds.size}
+          allCustomersSelected={allCustomersSelected}
+          totalCount={totalCount}
+          getSelectedCustomers={getSelectedCustomers}
+          fetchAllCustomers={fetchAllMatchingCustomers}
+          onClose={() => setShowCsvModal(false)}
+          onExported={(count) => showToast(`Exported ${count.toLocaleString()} customer${count !== 1 ? 's' : ''} to CSV.`)}
+        />
+      )}
+
       {/* Send Message Modal */}
-      {showMsgModal && (
+      {showMsgModal && canSendCustomerMessage && (
         <SendMessageModal
           selectedCount={selectedIds.size}
           onClose={() => setShowMsgModal(false)}
