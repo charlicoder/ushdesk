@@ -47,6 +47,7 @@ import { getAssignedBranchId, getAssignedBranchName } from '@/lib/branchScope';
 // ── Page ───────────────────────────────────────────────────────────────────────
 export default function BookingListPage() {
   const [search,          setSearch]          = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [branchFilter,    setBranchFilter]    = useState('');
   const [statusFilter,    setStatusFilter]    = useState('');
   const [payFilter,       setPayFilter]       = useState('');
@@ -127,16 +128,41 @@ export default function BookingListPage() {
     (user?.branch_name ? String(user.branch_name).trim() : null) ||
     (restrictedBranchId ? branchMap.get(restrictedBranchId.toLowerCase()) ?? null : null);
 
+  // Debounce search so server-side query doesn't fire on every keystroke
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   const proxyUrl = useMemo(() => {
-    let url = `/api/v1/bookings?page=${page}&page_size=${pageSize}`;
-    if (dateRange.from) url += `&date_from=${encodeURIComponent(dateRange.from)}`;
-    if (dateRange.to) url += `&date_to=${encodeURIComponent(dateRange.to)}`;
-    return url;
-  }, [page, pageSize, dateRange]);
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('page_size', String(pageSize));
+    if (debouncedSearch) {
+      params.set('search', debouncedSearch.replace(/^#/, ''));
+    }
+    if (statusFilter) {
+      params.set('status', statusFilter);
+    }
+    if (payFilter) {
+      params.set('payment_status', payFilter);
+    }
+    if (dateRange.from) {
+      params.set('from_date', dateRange.from);
+      params.set('date_from', dateRange.from);
+    }
+    if (dateRange.to) {
+      params.set('to_date', dateRange.to);
+      params.set('date_to', dateRange.to);
+    }
+    return `/api/v1/bookings?${params.toString()}`;
+  }, [page, pageSize, debouncedSearch, statusFilter, payFilter, dateRange]);
 
   const { data: rawBookings, loading, error, pagination, refetch } = useBookings<Record<string, unknown>>(proxyUrl, []);
 
-  useEffect(() => { setPage(1); }, [search, branchFilter, statusFilter, payFilter, channelFilter, dateFilter, dateRange]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, branchFilter, statusFilter, payFilter, channelFilter, dateFilter, dateRange]);
 
   const bookings    = useMemo(() => rawBookings.map(normalise), [rawBookings]);
   const branches    = useMemo(() => Array.from(new Set(bookings.map((b) => b.branch_name))).filter(Boolean).sort(),    [bookings]);
@@ -145,7 +171,8 @@ export default function BookingListPage() {
   const channels    = useMemo(() => Array.from(new Set(bookings.map((b) => (b.channel || b.source || b.payment_through || '').trim()))).filter(Boolean).sort(), [bookings]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    // If debouncedSearch has already synced with search, the server already filtered by booking_number / customer / service / therapist
+    const q = debouncedSearch === search.trim() ? '' : search.trim().toLowerCase();
     const cleanQ = q.replace(/^#/, '');
     const cleanPhoneQ = q.replace(/[\s\-+()]/g, '');
 
@@ -156,8 +183,12 @@ export default function BookingListPage() {
       const matchSearch =
         !q ||
         (b.booking_number ? b.booking_number.toLowerCase().includes(q) || (cleanQ ? bNumClean.includes(cleanQ) : false) : false) ||
+        b.id.toLowerCase().includes(cleanQ) ||
         b.customer_name.toLowerCase().includes(q) ||
         (b.customer_phone ? b.customer_phone.toLowerCase().includes(q) || (cleanPhoneQ ? bPhoneClean.includes(cleanPhoneQ) : false) : false) ||
+        (b.service_name ? b.service_name.toLowerCase().includes(q) : false) ||
+        (b.therapist_name ? b.therapist_name.toLowerCase().includes(q) : false) ||
+        (b.branch_name ? b.branch_name.toLowerCase().includes(q) : false) ||
         (b.channel ? b.channel.toLowerCase().includes(q) : false);
 
       const matchBranch  = !branchFilter  || b.branch_name.toLowerCase() === branchFilter.toLowerCase();
@@ -167,13 +198,14 @@ export default function BookingListPage() {
       const matchDate    = matchesDateRange(b.appointment_start || b.created_at, dateRange);
       return matchSearch && matchBranch && matchStatus && matchPay && matchChannel && matchDate;
     });
-  }, [bookings, search, branchFilter, statusFilter, payFilter, channelFilter, dateRange]);
+  }, [bookings, search, debouncedSearch, branchFilter, statusFilter, payFilter, channelFilter, dateRange]);
 
   const hasDateFilter = dateFilter !== 'all';
   const activeCount   = [branchFilter, statusFilter, payFilter, channelFilter].filter(Boolean).length;
   const hasFilter     = Boolean(search || activeCount > 0 || hasDateFilter);
   const clearAll      = () => {
     setSearch('');
+    setDebouncedSearch('');
     setBranchFilter('');
     setStatusFilter('');
     setPayFilter('');

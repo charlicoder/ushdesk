@@ -83,8 +83,9 @@ export const PERMISSIONS = {
   VENDORS_GIFT_ORDERS: 'deskmenu.vendors.gift_orders',
 
   // ── Reports menu & submenus ──────────────────────────────────────────────────
-  REPORTS:              'deskmenu.reports',
-  REPORTS_GIFT_VOUCHER: 'deskmenu.reports.gift_voucher',
+  REPORTS:               'deskmenu.reports',
+  REPORTS_GIFT_VOUCHER:  'deskmenu.reports.gift_voucher',
+  REPORTS_BOOKING_SALES: 'deskmenu.reports.booking_sales',
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -852,7 +853,11 @@ export function hasPermission(
       permissions.includes(PERMISSIONS.APPOINTMENTS_GIFT_VOUCHER)
     );
   }
-  if (permission === PERMISSIONS.REPORTS || permission === PERMISSIONS.REPORTS_GIFT_VOUCHER) {
+  if (
+    permission === PERMISSIONS.REPORTS ||
+    permission === PERMISSIONS.REPORTS_GIFT_VOUCHER ||
+    permission === PERMISSIONS.REPORTS_BOOKING_SALES
+  ) {
     if (
       isSpaDirectorRole(roleInfo, user) ||
       isRefundsAndFinancePermittedRole(roleInfo, user) ||

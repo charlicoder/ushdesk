@@ -174,7 +174,8 @@ export function Sidebar() {
       icon: BarChart3,
       permission: PERMISSIONS.REPORTS,
       children: [
-        { href: '/reports/gift-voucher', label: 'Gift Voucher Report', icon: Gift, permission: PERMISSIONS.REPORTS_GIFT_VOUCHER },
+        { href: '/reports/gift-voucher',  label: 'Gift Voucher Report',  icon: Gift,    permission: PERMISSIONS.REPORTS_GIFT_VOUCHER },
+        { href: '/reports/booking-sales', label: 'Booking Sales Report', icon: Receipt, permission: PERMISSIONS.REPORTS_BOOKING_SALES },
       ],
     },
     {
