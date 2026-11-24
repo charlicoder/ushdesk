@@ -575,10 +575,24 @@ export function TherapistScheduleBookingModal({
     return parseFloat(String(fromRoom?.arrangement_price ?? sv.arrangement_price ?? sv.base_price ?? '0')) || 0;
   };
   const servicePrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
-  // Merge service add-ons + arrangement add-ons into one total
-  const selectedAddons         = isPackagedService ? [] : serviceAddons.filter(a => form.addonIds.includes(a.id));
+  const showRoomAddonsSection = Boolean(form.arrangementId && !isPackagedService && arrangementAddons.length > 0);
+  const visibleServiceAddons = useMemo(() => {
+    if (!showRoomAddonsSection) return serviceAddons;
+    const arrIds = new Set(arrangementAddons.map(a => String(a.id)));
+    return serviceAddons.filter(a => !arrIds.has(String(a.id)));
+  }, [serviceAddons, arrangementAddons, showRoomAddonsSection]);
+  // Merge service add-ons + arrangement add-ons into one de-duplicated total
+  const selectedAddons         = isPackagedService ? [] : visibleServiceAddons.filter(a => form.addonIds.includes(a.id));
   const selectedArrAddons      = isPackagedService ? [] : arrangementAddons.filter(a => form.arrangementAddonIds.includes(a.id));
-  const allSelectedAddons      = [...selectedAddons, ...selectedArrAddons];
+  const allSelectedAddons      = useMemo(() => {
+    const seen = new Set<string>();
+    return [...selectedArrAddons, ...selectedAddons].filter(a => {
+      const k = String(a.id);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [selectedArrAddons, selectedAddons]);
   const addonTotal             = allSelectedAddons.reduce((s, a) => s + (parseFloat(String(a.price ?? '0')) || 0), 0);
   const addonDuration          = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
   const extraMinutesUnit  = selectedService?.extra_minutes ?? 0;
@@ -2074,17 +2088,17 @@ export function TherapistScheduleBookingModal({
                   </div>
                 )}
 
-                {!isPackagedService && (
+                {!isPackagedService && (!showRoomAddonsSection || visibleServiceAddons.length > 0) && (
                   <div>
                     <div className="flex items-center gap-2 mb-2">
                       <Package className="h-3.5 w-3.5 text-muted-foreground" />
                       <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Add-on Services</p>
                     </div>
-                    {serviceAddons.length === 0 && !servicesLoading && (
+                    {visibleServiceAddons.length === 0 && !servicesLoading && (
                       <p className="text-xs text-muted-foreground italic">No add-ons available for this service</p>
                     )}
                     <div className="grid grid-cols-2 gap-2">
-                      {serviceAddons.map((addon) => {
+                      {visibleServiceAddons.map((addon) => {
                         const checked = form.addonIds.includes(addon.id);
                         const addonBlocked = !checked && Boolean(addonDisabledReason(addon));
                         return (

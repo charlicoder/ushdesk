@@ -877,10 +877,27 @@ export function HomeServiceAddSessionModal({
 
   const servicePrice = selectedServices.reduce((sum, sv, i) => sum + priceOfService(sv, i), 0);
 
+  const showRoomAddonsSection = Boolean(
+    arrangementId && !isPackagedService && !splitPkg && arrangementAddons.length > 0,
+  );
+  const visibleServiceAddons = useMemo(() => {
+    if (!showRoomAddonsSection) return serviceAddons;
+    const arrIds = new Set(arrangementAddons.map(a => String(a.id)));
+    return serviceAddons.filter(a => !arrIds.has(String(a.id)));
+  }, [serviceAddons, arrangementAddons, showRoomAddonsSection]);
+
   const noAddons = Boolean(splitPkg);
-  const selectedSvcAddons = noAddons ? [] : serviceAddons.filter(a => addonIds.includes(a.id));
+  const selectedSvcAddons = noAddons ? [] : visibleServiceAddons.filter(a => addonIds.includes(a.id));
   const selectedArrAddons = noAddons ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
-  const allSelectedAddons = [...selectedSvcAddons, ...selectedArrAddons];
+  const allSelectedAddons = useMemo(() => {
+    const seen = new Set<string>();
+    return [...selectedArrAddons, ...selectedSvcAddons].filter(a => {
+      const k = String(a.id);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [selectedArrAddons, selectedSvcAddons]);
   const addonTotal = allSelectedAddons.reduce((s, a) => s + homeAddonPriceOf(a, homeService), 0);
   const addonDuration = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
 
@@ -2058,8 +2075,8 @@ export function HomeServiceAddSessionModal({
                 );
               })()}
 
-              {/* Add-on Services Matching Image 2 */}
-              {(!isPackagedService || serviceAddons.length > 0) && (
+              {/* Add-on Services (only shown when distinct from Room Add-ons, or when no Room Add-ons are shown) */}
+              {(!isPackagedService || visibleServiceAddons.length > 0) && (!showRoomAddonsSection || visibleServiceAddons.length > 0) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Package className="h-3.5 w-3.5 text-muted-foreground" />
@@ -2067,11 +2084,11 @@ export function HomeServiceAddSessionModal({
                       Add-on Services
                     </p>
                   </div>
-                  {serviceAddons.length === 0 ? (
+                  {visibleServiceAddons.length === 0 ? (
                     <p className="text-xs text-muted-foreground italic">No add-ons available for this service</p>
                   ) : (
                     <div className="grid grid-cols-2 gap-2">
-                      {serviceAddons.map(addon => {
+                      {visibleServiceAddons.map(addon => {
                         const checked = addonIds.includes(addon.id);
                         return (
                           <label

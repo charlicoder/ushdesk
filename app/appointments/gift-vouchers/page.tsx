@@ -293,6 +293,7 @@ interface Voucher {
   payment_data: PaymentData | null;
   payment_url: string | null;
   payment_provider?: string | null;
+  payment_method?: string | null;
   payment_through?: string | null;
   delivery_mode?: string | null;
   scheduled_delivery_at?: string | null;
@@ -4912,7 +4913,8 @@ const REPORT_FIELDS: ReportField[] = [
   { id: 'total_amount', label: 'Total Amount', category: 'Financial', defaultSelected: true },
   { id: 'discount', label: 'Discount Amount', category: 'Financial', defaultSelected: true },
   { id: 'currency', label: 'Currency', category: 'Financial', defaultSelected: true },
-  { id: 'payment_provider', label: 'Payment Gateway', category: 'Financial', defaultSelected: false },
+  { id: 'payment_provider', label: 'Payment Provider', category: 'Financial', defaultSelected: true },
+  { id: 'payment_method', label: 'Payment Method', category: 'Financial', defaultSelected: true },
   { id: 'invoice_number', label: 'Invoice Number', category: 'Financial', defaultSelected: true },
   { id: 'payment_number', label: 'Transaction / Payment ID', category: 'Financial', defaultSelected: false },
 
@@ -4968,7 +4970,20 @@ function getVoucherFieldValue(
     case 'currency':
       return voucher.currency || 'KWD';
     case 'payment_provider':
-      return voucher.payment_provider || '';
+      return (
+        voucher.payment_provider ||
+        (voucher.payment_data as any)?.payment_provider ||
+        (voucher.payment_data as any)?.gateway ||
+        voucher.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway ||
+        ''
+      );
+    case 'payment_method':
+      return (
+        voucher.payment_method ||
+        (voucher.payment_data as any)?.payment_method ||
+        voucher.payment_data?.data?.InvoiceTransactions?.[0]?.PaymentGateway ||
+        ''
+      );
     case 'invoice_number':
       return voucher.invoice_number || (voucher.payment_data as any)?.invoice_number || '';
     case 'payment_number':
