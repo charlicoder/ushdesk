@@ -5,7 +5,7 @@ import {
   Sparkles, Clock, Search, Building2,
   LayoutGrid, List, RefreshCw, AlertCircle,
   ChevronDown, X, Layers, TrendingUp, Home,
-  Eye, Tag,
+  Eye, Tag, Printer, CheckSquare, Square,
 } from 'lucide-react';
 import { useAppSelector } from '@/store/hooks';
 import { useI18n } from '@/hooks/use-i18n';
@@ -71,6 +71,7 @@ interface ServiceRow {
   category: string;
   duration_minutes: number;
   price: number;
+  home_service_price: number | null;
   currency: string;
   description: string | null;
   image: string | null;
@@ -148,12 +149,19 @@ function normaliseService(
     parsedCat = fallbackCategory;
   }
 
+  const rawHomePrice = raw.home_service_price ?? raw.home_price;
+  const parsedHomePrice =
+    rawHomePrice !== null && rawHomePrice !== undefined && String(rawHomePrice).trim() !== '' && Number.isFinite(Number(rawHomePrice))
+      ? Number(rawHomePrice)
+      : null;
+
   return {
     id:                  String(raw.id ?? raw.service_id ?? ''),
     name:                String(raw.name ?? raw.service_name ?? 'Unnamed Service'),
     category:            parsedCat,
     duration_minutes:    duration,
     price:               Number(raw.price ?? raw.base_price ?? raw.cost ?? 0),
+    home_service_price:  parsedHomePrice,
     currency:            String(raw.currency ?? raw.price_currency ?? ''),
     description:         (raw.description ?? raw.desc ?? null) as string | null,
     image:               (raw.image ?? raw.image_url ?? raw.image1 ?? raw.photo ?? raw.thumbnail ?? null) as string | null,
@@ -259,6 +267,7 @@ function GridCard({
   onSelect: (s: ServiceRow) => void;
 }) {
   const catStyle = getCatStyle(s.category);
+  const showCategoryBadge = Boolean(s.category && s.category !== 'General' && s.category !== 'عام');
 
   return (
     <div
@@ -270,15 +279,27 @@ function GridCard({
         <ServiceThumb image={s.image} name={s.name} category={s.category} className="h-full w-full" iconSize="lg" />
         {/* Gradient overlay */}
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
-        {/* Category badge overlay */}
-        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-black/50 border border-white/15 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-sm">
-            <span className={cn('h-1.5 w-1.5 rounded-full', catStyle.dot)} />
-            {s.category}
-          </span>
-          <span className="rounded-full bg-black/50 border border-white/15 px-2.5 py-1 text-xs font-bold text-white backdrop-blur-sm">
-            {formatCurrency(Number(s.price), s.currency || currency, locale)}
-          </span>
+        {/* Category badge (non-General only) & Price overlay */}
+        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-2">
+          {showCategoryBadge ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-black/50 border border-white/15 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-sm">
+              <span className={cn('h-1.5 w-1.5 rounded-full', catStyle.dot)} />
+              {s.category}
+            </span>
+          ) : (
+            <span />
+          )}
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            <span className="rounded-full bg-black/55 border border-white/15 px-2.5 py-1 text-xs font-bold text-white backdrop-blur-sm">
+              {formatCurrency(Number(s.price), s.currency || currency, locale)}
+            </span>
+            {s.home_service_price !== null && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-600/85 border border-sky-300/30 px-2.5 py-1 text-xs font-bold text-white backdrop-blur-sm">
+                <Home className="h-3 w-3 shrink-0" />
+                {formatCurrency(s.home_service_price, s.currency || currency, locale)}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Hover Quick View pill */}
@@ -303,16 +324,37 @@ function GridCard({
           )}
         </div>
 
+        {/* Pricing strip: Spa Price & Home Service Price */}
+        <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 border border-border/40 px-3 py-2">
+          <div className="min-w-0">
+            <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+              {t('price')}
+            </span>
+            <span className="text-xs font-extrabold text-primary whitespace-nowrap">
+              {formatCurrency(Number(s.price), s.currency || currency, locale)}
+            </span>
+          </div>
+          <div className="min-w-0 text-right">
+            <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+              {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
+            </span>
+            {s.home_service_price !== null ? (
+              <span className="inline-flex items-center justify-end gap-1 text-xs font-extrabold text-sky-600 dark:text-sky-400 whitespace-nowrap">
+                <Home className="h-3 w-3 shrink-0" />
+                {formatCurrency(s.home_service_price, s.currency || currency, locale)}
+              </span>
+            ) : (
+              <span className="text-xs font-semibold text-muted-foreground/60">—</span>
+            )}
+          </div>
+        </div>
+
         <div className="mt-auto flex flex-wrap items-center justify-between gap-y-1.5 text-xs text-muted-foreground border-t border-border/40 pt-3">
           <span className="inline-flex items-center gap-1 font-medium">
             <Clock className="h-3 w-3" />
             {s.duration_minutes} {t('min')}
           </span>
-          <span className="inline-flex items-center gap-1 font-medium">
-            <TrendingUp className="h-3 w-3 text-primary/70" />
-            {s.bookings} {t('reportBookings').toLowerCase()}
-          </span>
-          <span className="inline-flex items-center gap-1 font-medium truncate max-w-[130px]">
+          <span className="inline-flex items-center gap-1 font-medium truncate max-w-[160px]">
             <Building2 className="h-3 w-3 shrink-0" />
             <span className="truncate">{branchSummary}</span>
           </span>
@@ -329,6 +371,8 @@ function ListRow({
   currency,
   locale,
   t,
+  selected,
+  onToggleSelect,
   onSelect,
 }: {
   s: ServiceRow;
@@ -336,15 +380,38 @@ function ListRow({
   currency: string;
   locale: string;
   t: (k: TranslationKey) => string;
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
   onSelect: (s: ServiceRow) => void;
 }) {
   const catStyle = getCatStyle(s.category);
+  const showCategoryBadge = Boolean(s.category && s.category !== 'General' && s.category !== 'عام');
 
   return (
     <div
       onClick={() => onSelect(s)}
-      className="group grid grid-cols-[56px_1fr_auto_auto_auto_auto_auto] items-center gap-4 rounded-2xl border border-border/60 bg-card px-4 py-3 shadow-xs transition-all duration-200 hover:shadow-md hover:border-primary/40 hover:bg-card/80 cursor-pointer animate-fade-in-up"
+      className={cn(
+        'group grid grid-cols-[28px_56px_1fr_96px_144px_112px_128px_80px] items-center gap-4 rounded-2xl border bg-card px-4 py-3 shadow-xs transition-all duration-200 hover:shadow-md hover:border-primary/40 hover:bg-card/80 cursor-pointer animate-fade-in-up',
+        selected ? 'border-primary/50 bg-primary/[0.03]' : 'border-border/60',
+      )}
     >
+      {/* Checkbox */}
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleSelect(s.id);
+        }}
+        aria-label={selected ? `Deselect ${s.name}` : `Select ${s.name}`}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-primary transition cursor-pointer"
+      >
+        {selected ? (
+          <CheckSquare className="h-4 w-4 text-primary" />
+        ) : (
+          <Square className="h-4 w-4" />
+        )}
+      </button>
+
       {/* Thumbnail — small, fixed */}
       <ServiceThumb
         image={s.image}
@@ -354,20 +421,19 @@ function ListRow({
         iconSize="sm"
       />
 
-      {/* Name + description */}
+      {/* Name (+ non-General category badge only) */}
       <div className="min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-bold text-foreground group-hover:text-primary transition-colors truncate">
             {s.name}
           </span>
-          <span className={cn('inline-flex items-center gap-1 shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold', catStyle.badge)}>
-            <span className={cn('h-1.5 w-1.5 rounded-full', catStyle.dot)} />
-            {s.category}
-          </span>
+          {showCategoryBadge && (
+            <span className={cn('inline-flex items-center gap-1 shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold', catStyle.badge)}>
+              <span className={cn('h-1.5 w-1.5 rounded-full', catStyle.dot)} />
+              {s.category}
+            </span>
+          )}
         </div>
-        {s.description && (
-          <p className="mt-0.5 text-xs text-muted-foreground truncate">{s.description}</p>
-        )}
       </div>
 
       {/* Duration */}
@@ -379,17 +445,8 @@ function ListRow({
         </span>
       </div>
 
-      {/* Bookings */}
-      <div className="flex flex-col items-center gap-0.5 text-center shrink-0">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{t('reportBookings')}</span>
-        <span className="inline-flex items-center gap-1 text-sm font-semibold text-foreground">
-          <TrendingUp className="h-3.5 w-3.5 text-primary/70" />
-          {s.bookings}
-        </span>
-      </div>
-
       {/* Branch */}
-      <div className="flex flex-col items-center gap-0.5 text-center shrink-0 max-w-[140px]">
+      <div className="flex flex-col items-center gap-0.5 text-center shrink-0 max-w-[144px]">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{t('branch')}</span>
         <span className="inline-flex items-center gap-1 text-xs font-medium text-foreground truncate max-w-full">
           <Building2 className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -400,13 +457,28 @@ function ListRow({
       {/* Price */}
       <div className="flex flex-col items-end gap-0.5 shrink-0">
         <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">{t('price')}</span>
-        <span className="text-base font-extrabold text-primary">
+        <span className="text-sm font-extrabold text-primary whitespace-nowrap">
           {formatCurrency(Number(s.price), s.currency || currency, locale)}
         </span>
       </div>
 
+      {/* Home Service Price */}
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium whitespace-nowrap">
+          {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
+        </span>
+        {s.home_service_price !== null ? (
+          <span className="inline-flex items-center gap-1 text-sm font-extrabold text-sky-600 dark:text-sky-400 whitespace-nowrap">
+            <Home className="h-3.5 w-3.5 shrink-0" />
+            {formatCurrency(s.home_service_price, s.currency || currency, locale)}
+          </span>
+        ) : (
+          <span className="text-sm font-semibold text-muted-foreground/60">—</span>
+        )}
+      </div>
+
       {/* View Details action */}
-      <div className="shrink-0 pl-1">
+      <div className="shrink-0 pl-1 flex justify-end">
         <button
           type="button"
           onClick={(e) => {
@@ -424,16 +496,41 @@ function ListRow({
 }
 
 // ── List Column Headers ───────────────────────────────────────────────────────
-function ListHeader({ t }: { t: (k: TranslationKey) => string }) {
+function ListHeader({
+  t,
+  locale,
+  allSelected,
+  onToggleAll,
+}: {
+  t: (k: TranslationKey) => string;
+  locale: string;
+  allSelected: boolean;
+  onToggleAll: () => void;
+}) {
   return (
-    <div className="grid grid-cols-[56px_1fr_auto_auto_auto_auto_auto] items-center gap-4 px-4 py-2 mb-1">
+    <div className="grid grid-cols-[28px_56px_1fr_96px_144px_112px_128px_80px] items-center gap-4 px-4 py-2 mb-1">
+      <button
+        type="button"
+        onClick={onToggleAll}
+        aria-label={allSelected ? 'Deselect all services' : 'Select all services'}
+        title={allSelected ? 'Deselect all' : 'Select all'}
+        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-primary transition cursor-pointer"
+      >
+        {allSelected ? (
+          <CheckSquare className="h-4 w-4 text-primary" />
+        ) : (
+          <Square className="h-4 w-4" />
+        )}
+      </button>
       <div />
       <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground">{t('service')}</span>
-      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center w-24">{t('duration')}</span>
-      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center w-20">{t('reportBookings')}</span>
-      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center w-36">{t('branch')}</span>
-      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-right w-24">{t('price')}</span>
-      <span className="w-16" />
+      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center">{t('duration')}</span>
+      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-center">{t('branch')}</span>
+      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-right">{t('price')}</span>
+      <span className="text-[11px] uppercase tracking-wider font-semibold text-muted-foreground text-right whitespace-nowrap">
+        {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
+      </span>
+      <span />
     </div>
   );
 }
@@ -450,6 +547,7 @@ export default function ServicesPage() {
   const [homeFilter,     setHomeFilter]     = useState(false);
   const [viewMode,       setViewMode]       = useState<'grid' | 'list'>('grid');
   const [selectedService, setSelectedService] = useState<ServiceRow | null>(null);
+  const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set());
 
   // Fetch /api/v1/services via useApiList — auto re-fetches when locale changes!
   const { data: rawServices, loading, error, refetch, rawResponse } = useApiList<Record<string, unknown>>(
@@ -590,6 +688,218 @@ export default function ServicesPage() {
     return allBranchesLabel;
   };
 
+  // Selection helpers (list view)
+  const allFilteredSelected = filtered.length > 0 && filtered.every((s) => selectedIds.has(s.id));
+  const selectedFilteredServices = useMemo(
+    () => filtered.filter((s) => selectedIds.has(s.id)),
+    [filtered, selectedIds],
+  );
+
+  const handleToggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        filtered.forEach((s) => next.delete(s.id));
+      } else {
+        filtered.forEach((s) => next.add(s.id));
+      }
+      return next;
+    });
+  };
+
+  const handlePrintPdf = () => {
+    const rowsToPrint = selectedFilteredServices.length > 0 ? selectedFilteredServices : filtered;
+    if (rowsToPrint.length === 0) return;
+
+    const isAr = locale === 'ar';
+    const esc = (v: string) =>
+      v
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    const nowLabel = new Date().toLocaleString(isAr ? 'ar-KW' : 'en-GB', {
+      timeZone: 'Asia/Kuwait',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    const tableRows = rowsToPrint
+      .map((s, idx) => {
+        const cur = s.currency || currency;
+        const priceStr = formatCurrency(Number(s.price), cur, locale);
+        const homePriceStr =
+          s.home_service_price !== null
+            ? formatCurrency(s.home_service_price, cur, locale)
+            : '—';
+        const branchStr = getBranchSummary(s);
+        return `
+          <tr>
+            <td class="num">${idx + 1}</td>
+            <td class="svc">${esc(s.name)}</td>
+            <td class="center">${s.duration_minutes} ${esc(t('min'))}</td>
+            <td>${esc(branchStr)}</td>
+            <td class="price">${esc(priceStr)}</td>
+            <td class="home-price">${esc(homePriceStr)}</td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    const html = `<!doctype html>
+<html lang="${isAr ? 'ar' : 'en'}" dir="${isAr ? 'rtl' : 'ltr'}">
+<head>
+  <meta charset="utf-8" />
+  <title>${isAr ? 'قائمة أسعار خدمات USH Spa' : 'USH Spa — Services Price List'}</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #111827;
+      margin: 0;
+      padding: 0;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      border-bottom: 2px solid #111827;
+      padding-bottom: 10px;
+      margin-bottom: 16px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .header .sub {
+      font-size: 11px;
+      color: #6b7280;
+      margin-top: 3px;
+    }
+    .meta {
+      text-align: ${isAr ? 'left' : 'right'};
+      font-size: 11px;
+      color: #4b5563;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    thead th {
+      background: #f3f4f6;
+      color: #374151;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 700;
+      padding: 8px 10px;
+      border-top: 1px solid #d1d5db;
+      border-bottom: 1.5px solid #9ca3af;
+      text-align: ${isAr ? 'right' : 'left'};
+    }
+    thead th.center, tbody td.center { text-align: center; }
+    thead th.right, tbody td.price, tbody td.home-price { text-align: ${isAr ? 'left' : 'right'}; }
+    tbody tr {
+      border-bottom: 1px solid #e5e7eb;
+      page-break-inside: avoid;
+    }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    tbody td {
+      padding: 8px 10px;
+      vertical-align: middle;
+    }
+    td.num {
+      width: 34px;
+      color: #6b7280;
+      font-variant-numeric: tabular-nums;
+    }
+    td.svc { font-weight: 600; color: #111827; }
+    td.price {
+      font-weight: 700;
+      color: #111827;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    td.home-price {
+      font-weight: 700;
+      color: #0369a1;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .footer {
+      margin-top: 14px;
+      padding-top: 8px;
+      border-top: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: #6b7280;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>${isAr ? 'USH Spa — قائمة الخدمات والأسعار' : 'USH Spa — Services Price List'}</h1>
+      <div class="sub">${isAr ? `عدد الخدمات: ${rowsToPrint.length}` : `Total Services: ${rowsToPrint.length}`}</div>
+    </div>
+    <div class="meta">
+      <div>${isAr ? 'تاريخ الطباعة' : 'Printed'}: ${esc(nowLabel)}</div>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>${esc(t('service'))}</th>
+        <th class="center">${esc(t('duration'))}</th>
+        <th>${esc(t('branch'))}</th>
+        <th class="right">${esc(t('price'))}</th>
+        <th class="right">${isAr ? 'سعر المنزل' : 'Home Price'}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${tableRows}
+    </tbody>
+  </table>
+  <div class="footer">
+    <span>USH Spa</span>
+    <span>${esc(nowLabel)}</span>
+  </div>
+  <script>
+    window.onload = function() {
+      window.focus();
+      window.print();
+    };
+  </script>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank', 'width=960,height=720');
+    if (!win) return;
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  };
+
   return (
     <DashboardShell>
       {/* ── Header ── */}
@@ -704,16 +1014,68 @@ export default function ServicesPage() {
         </div>
       </div>
 
-      {/* ── Summary chips ── */}
+      {/* ── Summary chips & List Print actions ── */}
       {!isLoading && (
-        <div className="mb-5 flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full bg-muted/70 px-3 py-1 font-semibold text-muted-foreground">
-            {services.length} {locale === 'ar' ? 'الإجمالي' : 'Total'}
-          </span>
-          {hasFilters && (
-            <span className="rounded-full bg-primary/10 px-3 py-1 font-semibold text-primary border border-primary/20">
-              {filtered.length} {locale === 'ar' ? 'معروض' : 'shown'}
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-muted/70 px-3 py-1 font-semibold text-muted-foreground">
+              {services.length} {locale === 'ar' ? 'الإجمالي' : 'Total'}
             </span>
+            {hasFilters && (
+              <span className="rounded-full bg-primary/10 px-3 py-1 font-semibold text-primary border border-primary/20">
+                {filtered.length} {locale === 'ar' ? 'معروض' : 'shown'}
+              </span>
+            )}
+            {viewMode === 'list' && selectedFilteredServices.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 font-semibold text-emerald-700 dark:text-emerald-400 border border-emerald-500/20">
+                {selectedFilteredServices.length} {locale === 'ar' ? 'محدد' : 'selected'}
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="ml-0.5 hover:opacity-75 cursor-pointer"
+                  aria-label="Clear selection"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+          </div>
+
+          {viewMode === 'list' && filtered.length > 0 && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleToggleAllFiltered}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-border bg-card px-3 text-xs font-semibold text-foreground hover:bg-muted transition cursor-pointer"
+              >
+                {allFilteredSelected ? (
+                  <CheckSquare className="h-3.5 w-3.5 text-primary" />
+                ) : (
+                  <Square className="h-3.5 w-3.5 text-muted-foreground" />
+                )}
+                <span>
+                  {allFilteredSelected
+                    ? (locale === 'ar' ? 'إلغاء تحديد الكل' : 'Deselect All')
+                    : (locale === 'ar' ? `تحديد الكل (${filtered.length})` : `Select All (${filtered.length})`)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPdf}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-primary px-3.5 text-xs font-bold text-primary-foreground shadow-xs hover:opacity-90 transition cursor-pointer active:scale-[0.98]"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>
+                  {selectedFilteredServices.length > 0
+                    ? (locale === 'ar'
+                        ? `طباعة PDF (${selectedFilteredServices.length})`
+                        : `Print PDF (${selectedFilteredServices.length})`)
+                    : (locale === 'ar'
+                        ? `طباعة الكل PDF (${filtered.length})`
+                        : `Print All PDF (${filtered.length})`)}
+                </span>
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -776,7 +1138,12 @@ export default function ServicesPage() {
       {/* ── LIST VIEW ── */}
       {!isLoading && filtered.length > 0 && viewMode === 'list' && (
         <div>
-          <ListHeader t={t} />
+          <ListHeader
+            t={t}
+            locale={locale}
+            allSelected={allFilteredSelected}
+            onToggleAll={handleToggleAllFiltered}
+          />
           <div className="space-y-2">
             {filtered.map((s) => (
               <ListRow
@@ -786,6 +1153,8 @@ export default function ServicesPage() {
                 currency={currency}
                 locale={locale}
                 t={t}
+                selected={selectedIds.has(s.id)}
+                onToggleSelect={handleToggleSelect}
                 onSelect={setSelectedService}
               />
             ))}

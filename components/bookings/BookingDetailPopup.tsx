@@ -1656,7 +1656,7 @@ function BookingDetailPopupContent({
     String(detail?.payment_provider ?? (booking.raw as any)?.payment_provider ?? (booking as any)?.payment_provider ?? '').toLowerCase().includes('voucher') ||
     Boolean(detail?.voucher_data || (booking.raw as any)?.voucher_data || (booking as any)?.voucher_data) ||
     Boolean(detail?.voucher_id ?? (booking.raw as any)?.voucher_id ?? (booking as any)?.voucher_id);
-  const canShowCancel = !isCancelled && hasCancelPermission && !isGiftVoucherBooking;
+  const canShowCancel = !isCancelled && !isCompleted && (isUserAdmin || (hasCancelPermission && !isGiftVoucherBooking));
 
   // Unpaid booking: edit session icon only appears for unpaid bookings
   const isUnpaidBooking = !isPaymentSuccess && !isCancelled && !isCompleted;
@@ -6006,6 +6006,7 @@ function BookingDetailPopupContent({
               ''
             ).trim() || undefined
           }
+          isGiftVoucherBooking={isGiftVoucherBooking}
           onClose={() => setShowCancellationModal(false)}
           onSuccess={() => {
             setShowCancellationModal(false);

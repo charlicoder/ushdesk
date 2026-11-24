@@ -108,6 +108,7 @@ export interface BookingCancellationModalProps {
   customerPhone?: string | null;
   paymentMethod?: string | null;
   bookingType?: string | null;
+  isGiftVoucherBooking?: boolean;
   paymentUrl?: string | null;
   token?: string;
   onClose: () => void;
@@ -132,6 +133,7 @@ export function BookingCancellationModal({
   customerPhone,
   paymentMethod,
   bookingType,
+  isGiftVoucherBooking = false,
   paymentUrl,
   token,
   onClose,
@@ -255,7 +257,9 @@ export function BookingCancellationModal({
         cancelBody.invoice_number = invoiceNumber;
       }
 
-      if (isPaymentSuccess) {
+      if (isGiftVoucherBooking) {
+        cancelBody.payment_status = 'cancelled';
+      } else if (isPaymentSuccess) {
         cancelBody.payment_status = requestRefund ? 'refund_requested' : 'success';
       } else if (isUnpaid) {
         cancelBody.payment_status = 'cancelled';
@@ -387,8 +391,19 @@ export function BookingCancellationModal({
           /* ═════════════════════════════════════════════════════════════════════════ */
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
 
+            {/* Gift Voucher Booking Notice (Admin override) */}
+            {isGiftVoucherBooking && (
+              <div className="flex items-start gap-3 rounded-2xl border border-violet-200 dark:border-violet-800/40 bg-violet-50 dark:bg-violet-950/30 px-4 py-3">
+                <Info className="h-4 w-4 text-violet-600 dark:text-violet-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-violet-800 dark:text-violet-300 leading-relaxed">
+                  <span className="font-bold">Gift Voucher Booking: </span>
+                  This appointment was redeemed from a gift voucher. Cancelling will release the appointment slot and mark the booking cancelled without issuing a duplicate cash refund on the booking. To refund the voucher purchase itself, cancel the voucher from the Gift Vouchers page.
+                </div>
+              </div>
+            )}
+
             {/* Paid Booking Banner */}
-            {isPaymentSuccess && (
+            {isPaymentSuccess && !isGiftVoucherBooking && (
               <div className="flex items-start gap-3 rounded-2xl border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
                 <Info className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
@@ -424,7 +439,7 @@ export function BookingCancellationModal({
             </div>
 
             {/* 2. Checkbox: Ask for Refund (Selected by default & locked) */}
-            {isPaymentSuccess && (
+            {isPaymentSuccess && !isGiftVoucherBooking && (
               <div className="space-y-3">
                 <div
                   className="flex items-start gap-3 p-3.5 rounded-2xl border border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs select-none cursor-default"
@@ -468,12 +483,14 @@ export function BookingCancellationModal({
                 {[
                   'Booking status → Cancelled',
                   'Open payment links (if any) → Cancelled',
-                  isPaymentSuccess && requestRefund
-                    ? 'Payment status → Refund Requested'
-                    : (isPaymentSuccess ? 'Payment status → Success (Kept unchanged)' : 'Payment status → Cancelled'),
-                  isPaymentSuccess && requestRefund
+                  isGiftVoucherBooking
+                    ? 'Payment status → Cancelled (Voucher purchase unaffected)'
+                    : isPaymentSuccess && requestRefund
+                      ? 'Payment status → Refund Requested'
+                      : (isPaymentSuccess ? 'Payment status → Success (Kept unchanged)' : 'Payment status → Cancelled'),
+                  !isGiftVoucherBooking && isPaymentSuccess && requestRefund
                     ? `Refund request record → Created (Status: Requested for ${fmt(totalAmount)} ${currency})`
-                    : (isPaymentSuccess ? 'Invoice & payment records → Kept unchanged' : null),
+                    : (!isGiftVoucherBooking && isPaymentSuccess ? 'Invoice & payment records → Kept unchanged' : null),
                   isUnpaid && invoiceNumber ? `Invoice #${invoiceNumber} → Cancelled` : null,
                   'Appointment slot released for re-booking',
                 ].filter(Boolean).map((item, i) => (

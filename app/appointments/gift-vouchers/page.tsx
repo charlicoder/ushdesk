@@ -12,7 +12,7 @@ import {
   Sparkles, Star, Search, ArrowRight, Share2, Check, Copy, MessageCircle,
   KeyRound, Globe, Send, QrCode, FileText, ShieldCheck, Receipt,
   Trash2, Edit3, Pencil, SlidersHorizontal, Filter, History, UserCheck, FileSpreadsheet,
-  Printer, Download, CheckSquare, Square, TrendingUp, Link2,
+  Printer, Download, CheckSquare, Square, TrendingUp, Link2, Ban,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { DashboardShell } from '@/components/dashboard/shell';
@@ -25,6 +25,7 @@ import { RedeemVoucherModal } from '@/components/bookings/RedeemVoucherModal';
 import { MyReferralLinkButton } from '@/components/bookings/MyReferralLinkButton';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 import { InvoiceDetailModal } from '@/components/bookings/InvoiceDetailModal';
+import { VoucherCancellationModal } from '@/components/bookings/VoucherCancellationModal';
 import { paymentLinksApi, whatsappShareUrl, smsShareUrl, sendPaymentLinkSms, type PaymentLink } from '@/lib/paymentLinks';
 import { usePermissions } from '@/hooks/use-permissions';
 import { extractRoleCandidates } from '@/lib/permissions';
@@ -668,8 +669,18 @@ const ORDER_STATUS_CONFIG: Record<
   },
   cancelled: {
     label: 'Cancelled',
-    badgeClass: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300',
-    dotClass: 'bg-zinc-500',
+    badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300',
+    dotClass: 'bg-rose-500',
+  },
+  refunded: {
+    label: 'Refunded',
+    badgeClass: 'bg-rose-100 text-rose-800 dark:bg-rose-950/50 dark:text-rose-300',
+    dotClass: 'bg-rose-500',
+  },
+  fulfilled: {
+    label: 'Fulfilled',
+    badgeClass: 'bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-300',
+    dotClass: 'bg-violet-500',
   },
 };
 
@@ -691,14 +702,20 @@ const STATUS_CFG: Record<string, { label: string; pill: string; dot: string; ico
   scheduled:{ label: 'Scheduled', pill: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',              dot: 'bg-sky-500 animate-pulse',   icon: Calendar },
   partially_redeemed: { label: 'Partially Redeemed', pill: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300', dot: 'bg-indigo-500', icon: Star },
   redeemed: { label: 'Redeemed',  pill: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',     dot: 'bg-violet-500',             icon: Star },
+  fulfilled:{ label: 'Fulfilled', pill: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',     dot: 'bg-violet-500',             icon: CheckCircle2 },
   expired:  { label: 'Expired',   pill: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',             dot: 'bg-rose-500',               icon: XCircle },
+  cancelled:{ label: 'Cancelled', pill: 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300',             dot: 'bg-rose-500',               icon: Ban },
+  refunded: { label: 'Refunded',  pill: 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300',             dot: 'bg-rose-500',               icon: XCircle },
   pending:  { label: 'Pending',   pill: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',         dot: 'bg-amber-500 animate-pulse', icon: Clock },
 };
 
 function statusCfg(s: string) {
-  const norm = s?.toLowerCase() ?? '';
+  const norm = s?.toLowerCase().trim() ?? '';
   if (norm === 'payment_pending' || norm === 'created' || norm.includes('pending')) {
     return STATUS_CFG['pending'];
+  }
+  if (norm === 'canceled') {
+    return STATUS_CFG['cancelled'];
   }
   return STATUS_CFG[norm] ?? STATUS_CFG['pending'];
 }
@@ -1370,8 +1387,14 @@ function VoucherDetailModal({
     setVoucher(initialVoucher);
   }, [initialVoucher]);
 
-  const { canEditGiftVoucher } = usePermissions();
+  const { canEditGiftVoucher, isAdmin } = usePermissions();
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
+  const normVoucherStatus = String(voucher.status || '').toLowerCase().trim();
+  const canAdminCancelVoucher =
+    isAdmin &&
+    !['fulfilled', 'redeemed', 'cancelled', 'expired'].includes(normVoucherStatus);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -1815,18 +1838,61 @@ function VoucherDetailModal({
     (voucher as any)?.payment_link_url ||
     null;
 
+  const isVoucherCancelled = ['cancelled', 'canceled'].includes(String(voucher.status || '').toLowerCase().trim());
+  const latestPaymentStatus = String(latestPayment?.status || '').toLowerCase().trim();
+  const amountRefundedNum = Number(latestPayment?.amount_refunded ?? 0);
+  const paymentTotalNum = Number(latestPayment?.total_amount ?? voucher.total_amount ?? 0);
+
+  const isPaymentRefunded = Boolean(
+    latestPaymentStatus === 'refunded' ||
+    latestPaymentStatus === 'refunded_with_points' ||
+    (amountRefundedNum > 0 && paymentTotalNum > 0 && amountRefundedNum + 0.0005 >= paymentTotalNum)
+  );
+
+  const isPaymentPartiallyRefunded = Boolean(
+    !isPaymentRefunded && (
+      latestPaymentStatus === 'partially_refunded' ||
+      amountRefundedNum > 0
+    )
+  );
+
+  const isPaymentCancelled = Boolean(
+    !isPaymentRefunded &&
+    !isPaymentPartiallyRefunded &&
+    (
+      latestPaymentStatus === 'cancelled' ||
+      latestPaymentStatus === 'canceled' ||
+      (isVoucherCancelled && !latestPayment)
+    )
+  );
+
   const isPaid = Boolean(
-    latestPayment?.status === 'success' ||
-    voucher.status === 'active' ||
-    voucher.status === 'redeemed' ||
-    voucher.payment_data?.isPaid ||
-    (voucher.payment_data as any)?.status === 'success' ||
-    (activePaymentLink && (activePaymentLink.status === 'paid' || activePaymentLink.status === 'success')) ||
-    (voucher.payment_data?.data?.InvoiceStatus?.toLowerCase() === 'paid')
+    !isPaymentRefunded &&
+    !isPaymentPartiallyRefunded &&
+    !isPaymentCancelled &&
+    (
+      latestPaymentStatus === 'success' ||
+      latestPaymentStatus === 'paid' ||
+      voucher.status === 'active' ||
+      voucher.status === 'scheduled' ||
+      voucher.status === 'partially_redeemed' ||
+      voucher.status === 'redeemed' ||
+      voucher.status === 'fulfilled' ||
+      (!isVoucherCancelled && (
+        voucher.payment_data?.isPaid ||
+        (voucher.payment_data as any)?.status === 'success' ||
+        (activePaymentLink && (activePaymentLink.status === 'paid' || activePaymentLink.status === 'success')) ||
+        (voucher.payment_data?.data?.InvoiceStatus?.toLowerCase() === 'paid')
+      ))
+    )
   );
 
   const isPaymentPending = Boolean(
     !isPaid &&
+    !isPaymentRefunded &&
+    !isPaymentPartiallyRefunded &&
+    !isPaymentCancelled &&
+    !isVoucherCancelled &&
     (voucher.status === 'payment_pending' ||
       activePaymentLink?.status === 'pending' ||
       activePaymentLink?.status === 'active' ||
@@ -3431,11 +3497,25 @@ function VoucherDetailModal({
                   </div>
                   <span className={cn(
                     'rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase',
-                    isPaid
+                    isPaymentRefunded
+                      ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                      : isPaymentPartiallyRefunded
+                      ? 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300'
+                      : isPaymentCancelled
+                      ? 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300'
+                      : isPaid
                       ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                       : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
                   )}>
-                    {isPaid ? 'PAID' : (voucher.status === 'payment_pending' ? 'PAYMENT PENDING' : 'UNPAID')}
+                    {isPaymentRefunded
+                      ? (latestPaymentStatus === 'refunded_with_points' ? 'REFUNDED (POINTS)' : 'REFUNDED')
+                      : isPaymentPartiallyRefunded
+                      ? 'PARTIALLY REFUNDED'
+                      : isPaymentCancelled
+                      ? 'CANCELLED'
+                      : isPaid
+                      ? 'PAID'
+                      : (voucher.status === 'payment_pending' ? 'PAYMENT PENDING' : 'UNPAID')}
                   </span>
                 </div>
 
@@ -3515,6 +3595,15 @@ function VoucherDetailModal({
                     </p>
                   </div>
                 </div>
+
+                {(isPaymentRefunded || isPaymentPartiallyRefunded) && amountRefundedNum > 0 && (
+                  <div className="rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200/70 dark:border-rose-800/40 px-3 py-2 text-xs flex items-center justify-between text-rose-700 dark:text-rose-300">
+                    <span className="font-semibold">Refunded Amount:</span>
+                    <span className="font-mono font-bold">
+                      {formatAmount(amountRefundedNum, latestPayment?.currency || voucher.currency)}
+                    </span>
+                  </div>
+                )}
 
                 {(latestPayment?.paid_at || voucher.payment_data?.data?.InvoiceTransactions?.[0]?.TransactionDate || (voucher as any).paid_at || activePaymentLink?.paid_at) && (
                   <div className="rounded-xl bg-card border border-border/40 px-3 py-2 text-xs flex items-center justify-between text-muted-foreground">
@@ -3899,7 +3988,17 @@ function VoucherDetailModal({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 flex gap-3 border-t border-border/40 px-6 py-4">
+        <div className="shrink-0 flex flex-wrap gap-3 border-t border-border/40 px-6 py-4">
+          {canAdminCancelVoucher && (
+            <button
+              type="button"
+              onClick={() => setShowCancelModal(true)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-rose-200 dark:border-rose-900/50 bg-rose-50 dark:bg-rose-950/30 px-4 py-2.5 text-sm font-bold text-rose-600 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition cursor-pointer active:scale-[0.98]"
+            >
+              <Ban className="h-4 w-4" />
+              Cancel Voucher
+            </button>
+          )}
           <button onClick={onClose}
             type="button"
             className="flex-1 rounded-xl border border-border/60 bg-muted/40 py-2.5 text-sm font-semibold hover:bg-muted transition">
@@ -3916,7 +4015,7 @@ function VoucherDetailModal({
                   <RefreshCw className="h-4 w-4" /> Reschedule
                 </button>
               ) : (
-                !isPending && onShare && (
+                !isPending && !isVoucherCancelled && onShare && (
                   <div className="flex-1 flex justify-center">
                     <VoucherShareDropdown
                       voucher={voucher}
@@ -3950,7 +4049,7 @@ function VoucherDetailModal({
             </>
           ) : (
             <>
-              {!isPaid && !effectivePaymentUrl && (
+              {!isPaid && !isPaymentRefunded && !isPaymentPartiallyRefunded && !isVoucherCancelled && !effectivePaymentUrl && (
                 <button
                   type="button"
                   onClick={() => setShowMakePaymentModal(true)}
@@ -3964,6 +4063,31 @@ function VoucherDetailModal({
           )}
         </div>
       </div>
+
+      {/* Admin Cancel Gift Voucher Modal */}
+      {showCancelModal && (
+        <VoucherCancellationModal
+          voucherId={voucher.id}
+          voucherNumber={voucher.voucher_number || null}
+          invoiceNumber={invoiceNumber}
+          voucherStatus={voucher.status}
+          isPaid={Boolean(isPaid)}
+          totalAmount={parseFloat(String(voucher.total_amount ?? 0)) || 0}
+          currency={voucher.currency || 'KWD'}
+          serviceName={
+            voucher.service_data?.name ||
+            (isDigital
+              ? (voucher.digital_product_data?.title || 'Digital Gift Item')
+              : (isPhysical ? 'Gift Voucher / Physical Items' : 'Gift Voucher'))
+          }
+          senderName={voucher.sender_data?.name || voucher.sender_details?.name || null}
+          onClose={() => setShowCancelModal(false)}
+          onSuccess={() => {
+            setVoucher((prev) => ({ ...prev, status: 'cancelled' }));
+            onRefresh?.();
+          }}
+        />
+      )}
 
       {/* Invoice Details Modal */}
       {showInvoiceModal && (

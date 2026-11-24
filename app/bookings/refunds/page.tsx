@@ -203,8 +203,14 @@ function getCustomerEmail(r: RefundItem): string {
   return String(r.customer_data?.email || '');
 }
 
+function isVoucherRefund(r: RefundItem): boolean {
+  const bd = r.booking_data as Record<string, unknown> | null | undefined;
+  return Boolean(bd?.source_type === 'gift_voucher' || bd?.voucher_number || bd?.voucher_id);
+}
+
 function getBookingNumber(r: RefundItem): string {
-  return String(r.booking_data?.booking_number || r.booking_data?.booking_no || '');
+  const bd = r.booking_data as Record<string, unknown> | null | undefined;
+  return String(bd?.booking_number || bd?.booking_no || bd?.voucher_number || '');
 }
 
 function getBranchName(r: RefundItem): string {
@@ -610,7 +616,9 @@ function ApproveRefundModal({
             <span className="font-semibold text-foreground">{customerName}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Booking Ref:</span>
+            <span className="text-muted-foreground">
+              {isVoucherRefund(refund) ? 'Voucher Ref:' : 'Booking Ref:'}
+            </span>
             <span className="font-mono font-semibold text-foreground">{bookingNumber || '—'}</span>
           </div>
           <div className="flex justify-between">
@@ -900,8 +908,12 @@ function ProcessRefundModal({
       });
 
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.detail || j.message || 'Failed to process refund.');
+        const j = await res.json().catch(() => ({})) as Record<string, any>;
+        const detailMsg =
+          typeof j.detail === 'string'
+            ? j.detail
+            : (j.detail?.message || j.error?.message || j.message);
+        throw new Error(detailMsg || `Failed to process refund (HTTP ${res.status}).`);
       }
 
       onSuccess();
@@ -940,7 +952,9 @@ function ProcessRefundModal({
             <span className="font-semibold text-foreground">{customerName}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Booking Ref:</span>
+            <span className="text-muted-foreground">
+              {isVoucherRefund(refund) ? 'Voucher Ref:' : 'Booking Ref:'}
+            </span>
             <span className="font-mono font-semibold text-foreground">{bookingNumber || '—'}</span>
           </div>
           <div className="flex justify-between">
@@ -1853,12 +1867,19 @@ export default function RefundsPage() {
                       <StatusBadge status={r.status} />
                       <MethodBadge method={r.refund_method} />
                       <TypeBadge type={r.refund_type} />
+                      {isVoucherRefund(r) && (
+                        <span className="inline-flex items-center rounded-full bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:text-violet-300">
+                          Gift Voucher
+                        </span>
+                      )}
                     </div>
 
                     {/* Details Box */}
                     <div className="rounded-xl bg-muted/40 p-2.5 space-y-1.5 text-xs">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-muted-foreground text-[11px]">Booking Ref:</span>
+                        <span className="text-muted-foreground text-[11px]">
+                          {isVoucherRefund(r) ? 'Voucher Ref:' : 'Booking Ref:'}
+                        </span>
                         <span className="font-mono font-semibold text-foreground truncate">
                           {bookingNumber || (r.booking_id ? `${r.booking_id.slice(0, 8)}…` : '—')}
                         </span>
