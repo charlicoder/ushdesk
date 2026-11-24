@@ -268,6 +268,7 @@ function GridCard({
 }) {
   const catStyle = getCatStyle(s.category);
   const showCategoryBadge = Boolean(s.category && s.category !== 'General' && s.category !== 'عام');
+  const hasHomePrice = s.home_service_price !== null && s.home_service_price > 0;
 
   return (
     <div
@@ -293,10 +294,10 @@ function GridCard({
             <span className="rounded-full bg-black/55 border border-white/15 px-2.5 py-1 text-xs font-bold text-white backdrop-blur-sm">
               {formatCurrency(Number(s.price), s.currency || currency, locale)}
             </span>
-            {s.home_service_price !== null && (
+            {hasHomePrice && (
               <span className="inline-flex items-center gap-1 rounded-full bg-sky-600/85 border border-sky-300/30 px-2.5 py-1 text-xs font-bold text-white backdrop-blur-sm">
                 <Home className="h-3 w-3 shrink-0" />
-                {formatCurrency(s.home_service_price, s.currency || currency, locale)}
+                {formatCurrency(s.home_service_price!, s.currency || currency, locale)}
               </span>
             )}
           </div>
@@ -324,8 +325,13 @@ function GridCard({
           )}
         </div>
 
-        {/* Pricing strip: Spa Price & Home Service Price */}
-        <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 border border-border/40 px-3 py-2">
+        {/* Pricing strip: Spa Price (& Home Service Price only when available) */}
+        <div
+          className={cn(
+            'grid gap-2 rounded-xl bg-muted/40 border border-border/40 px-3 py-2',
+            hasHomePrice ? 'grid-cols-2' : 'grid-cols-1',
+          )}
+        >
           <div className="min-w-0">
             <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
               {t('price')}
@@ -334,19 +340,17 @@ function GridCard({
               {formatCurrency(Number(s.price), s.currency || currency, locale)}
             </span>
           </div>
-          <div className="min-w-0 text-right">
-            <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
-              {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
-            </span>
-            {s.home_service_price !== null ? (
+          {hasHomePrice && (
+            <div className="min-w-0 text-right">
+              <span className="block text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
+              </span>
               <span className="inline-flex items-center justify-end gap-1 text-xs font-extrabold text-sky-600 dark:text-sky-400 whitespace-nowrap">
                 <Home className="h-3 w-3 shrink-0" />
-                {formatCurrency(s.home_service_price, s.currency || currency, locale)}
+                {formatCurrency(s.home_service_price!, s.currency || currency, locale)}
               </span>
-            ) : (
-              <span className="text-xs font-semibold text-muted-foreground/60">—</span>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         <div className="mt-auto flex flex-wrap items-center justify-between gap-y-1.5 text-xs text-muted-foreground border-t border-border/40 pt-3">
@@ -386,6 +390,7 @@ function ListRow({
 }) {
   const catStyle = getCatStyle(s.category);
   const showCategoryBadge = Boolean(s.category && s.category !== 'General' && s.category !== 'عام');
+  const hasHomePrice = s.home_service_price !== null && s.home_service_price > 0;
 
   return (
     <div
@@ -462,18 +467,18 @@ function ListRow({
         </span>
       </div>
 
-      {/* Home Service Price */}
+      {/* Home Service Price (hidden when not available) */}
       <div className="flex flex-col items-end gap-0.5 shrink-0">
-        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium whitespace-nowrap">
-          {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
-        </span>
-        {s.home_service_price !== null ? (
-          <span className="inline-flex items-center gap-1 text-sm font-extrabold text-sky-600 dark:text-sky-400 whitespace-nowrap">
-            <Home className="h-3.5 w-3.5 shrink-0" />
-            {formatCurrency(s.home_service_price, s.currency || currency, locale)}
-          </span>
-        ) : (
-          <span className="text-sm font-semibold text-muted-foreground/60">—</span>
+        {s.home_service_price !== null && s.home_service_price > 0 && (
+          <>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium whitespace-nowrap">
+              {locale === 'ar' ? 'سعر المنزل' : 'Home Price'}
+            </span>
+            <span className="inline-flex items-center gap-1 text-sm font-extrabold text-sky-600 dark:text-sky-400 whitespace-nowrap">
+              <Home className="h-3.5 w-3.5 shrink-0" />
+              {formatCurrency(s.home_service_price, s.currency || currency, locale)}
+            </span>
+          </>
         )}
       </div>
 
@@ -737,14 +742,16 @@ export default function ServicesPage() {
       minute: '2-digit',
     });
 
+    const anyHomePrice = rowsToPrint.some((s) => s.home_service_price !== null && s.home_service_price > 0);
+
     const tableRows = rowsToPrint
       .map((s, idx) => {
         const cur = s.currency || currency;
         const priceStr = formatCurrency(Number(s.price), cur, locale);
         const homePriceStr =
-          s.home_service_price !== null
+          s.home_service_price !== null && s.home_service_price > 0
             ? formatCurrency(s.home_service_price, cur, locale)
-            : '—';
+            : '';
         const branchStr = getBranchSummary(s);
         return `
           <tr>
@@ -753,7 +760,7 @@ export default function ServicesPage() {
             <td class="center">${s.duration_minutes} ${esc(t('min'))}</td>
             <td>${esc(branchStr)}</td>
             <td class="price">${esc(priceStr)}</td>
-            <td class="home-price">${esc(homePriceStr)}</td>
+            ${anyHomePrice ? `<td class="home-price">${esc(homePriceStr)}</td>` : ''}
           </tr>
         `;
       })
@@ -873,7 +880,7 @@ export default function ServicesPage() {
         <th class="center">${esc(t('duration'))}</th>
         <th>${esc(t('branch'))}</th>
         <th class="right">${esc(t('price'))}</th>
-        <th class="right">${isAr ? 'سعر المنزل' : 'Home Price'}</th>
+        ${anyHomePrice ? `<th class="right">${isAr ? 'سعر المنزل' : 'Home Price'}</th>` : ''}
       </tr>
     </thead>
     <tbody>
