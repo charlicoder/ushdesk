@@ -28,7 +28,7 @@ import { BookingCancellationModal } from '@/components/bookings/BookingCancellat
 import { PaymentReferenceModal, type PaymentReferenceData, type PaymentProviderOption } from '@/components/bookings/PaymentReferenceModal';
 import { MakePaymentModal } from '@/components/bookings/MakePaymentModal';
 import { feedbackApi, type FeedbackLink, feedbackShareText } from '@/lib/feedback';
-import { sendPaymentLinkSms } from '@/lib/paymentLinks';
+import { sendPaymentLinkSms, paymentLinksApi, type PaymentLink } from '@/lib/paymentLinks';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 export interface Booking {
@@ -511,11 +511,50 @@ export const PAYMENT_PROVIDERS = [
 
 export type ProviderId = typeof PAYMENT_PROVIDERS[number]['id'];
 
+function resolveExistingProviderId(
+  detail: Record<string, unknown> | null,
+  booking: Booking,
+  openPaymentLink?: PaymentLink | null,
+): ProviderId | null {
+  const candidates = [
+    openPaymentLink?.gateway,
+    openPaymentLink?.provider,
+    detail?.payment_provider,
+    (detail?.payment_data as Record<string, unknown> | undefined)?.payment_provider,
+    detail?.payment_gateway,
+    booking.payment_provider,
+    (booking.raw as Record<string, unknown> | undefined)?.payment_provider,
+    (booking.raw as Record<string, unknown> | undefined)?.payment_gateway,
+    detail?.payment_method,
+    booking.payment_method,
+  ];
+  for (const raw of candidates) {
+    const s = String(raw ?? '').trim().toLowerCase();
+    if (!s || s === 'other' || s === 'front desk' || s === 'desk' || s === 'pending') continue;
+    if (s.includes('deema') || s === 'tap' || s === 'tap_deema') return 'deema';
+    if (s.includes('fatoorah') || s.includes('paymentlink') || s.includes('payment_link') || s.includes('directlink')) return 'paymentlink';
+    if (s.includes('boubyan')) return 'boubyan_link';
+    if (s.includes('knet')) return 'knet';
+  }
+  const url = String(
+    openPaymentLink?.payment_url ??
+    detail?.payment_url ??
+    (booking.raw as Record<string, unknown> | undefined)?.payment_url ??
+    '',
+  ).toLowerCase();
+  if (url.includes('deema') || url.includes('tap.company')) return 'deema';
+  if (url.includes('myfatoorah') || url.startsWith('http')) return 'paymentlink';
+  return null;
+}
+
 function PaymentProviderModal({
   booking,
   totalAmount,
   currency,
   selected,
+  existingProviderId,
+  hasExistingPaymentLink,
+  changingProvider,
   onSelect,
   onClose,
   onContinue,
@@ -524,15 +563,31 @@ function PaymentProviderModal({
   totalAmount?: number;
   currency?: string;
   selected: ProviderId;
+  existingProviderId?: ProviderId | null;
+  hasExistingPaymentLink?: boolean;
+  changingProvider?: boolean;
   onSelect: (p: ProviderId) => void;
   onClose: () => void;
-  onContinue: () => void;
+  onContinue: () => void | Promise<void>;
 }) {
+  const [confirmingChange, setConfirmingChange] = useState(false);
   const selectedProvider = PAYMENT_PROVIDERS.find((p) => p.id === selected) || PAYMENT_PROVIDERS[0];
+  const existingProvider = existingProviderId
+    ? PAYMENT_PROVIDERS.find((p) => p.id === existingProviderId) || null
+    : null;
+  const isChangingMethod = Boolean(existingProvider && existingProvider.id !== selected);
   const displayAmount = (typeof totalAmount === 'number' && !isNaN(totalAmount))
     ? totalAmount
     : (parseFloat(booking.total_amount) || 0);
   const displayCurrency = currency || booking.currency || 'KWD';
+
+  const handlePrimaryClick = () => {
+    if (isChangingMethod && !confirmingChange) {
+      setConfirmingChange(true);
+      return;
+    }
+    void onContinue();
+  };
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
@@ -572,12 +627,16 @@ function PaymentProviderModal({
           <div className="grid grid-cols-2 gap-3">
             {PAYMENT_PROVIDERS.map((provider) => {
               const isSelected = selected === provider.id;
+              const isCurrent = existingProviderId === provider.id;
               return (
                 <button
                   key={provider.id}
                   type="button"
-                  onClick={() => onSelect(provider.id)}
-                  onDoubleClick={onContinue}
+                  onClick={() => {
+                    onSelect(provider.id);
+                    setConfirmingChange(false);
+                  }}
+                  onDoubleClick={handlePrimaryClick}
                   className={cn(
                     'relative rounded-2xl border-2 bg-card p-4 text-left transition hover:shadow-md cursor-pointer',
                     isSelected ? `${provider.borderColor} shadow-sm bg-muted/20 ring-1 ring-primary/20` : 'border-border/50 hover:border-border',
@@ -590,31 +649,77 @@ function PaymentProviderModal({
                   )}
                   <p className="font-bold text-sm text-foreground pr-5 leading-tight">{provider.name}</p>
                   <p className="text-[11px] text-muted-foreground mt-1">{provider.description}</p>
-                  <span className={cn('mt-2.5 inline-flex items-center rounded-lg px-2 py-0.5 text-[10px] font-semibold', provider.tagColor)}>
-                    {provider.tag}
-                  </span>
+                  <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+                    <span className={cn('inline-flex items-center rounded-lg px-2 py-0.5 text-[10px] font-semibold', provider.tagColor)}>
+                      {provider.tag}
+                    </span>
+                    {isCurrent && (
+                      <span className="inline-flex items-center rounded-lg bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                        Current
+                      </span>
+                    )}
+                  </div>
                 </button>
               );
             })}
           </div>
+
+          {/* Confirmation notice when switching away from existing payment method */}
+          {confirmingChange && isChangingMethod && existingProvider && (
+            <div className="mt-4 rounded-2xl border border-amber-400/50 bg-amber-50/80 dark:bg-amber-950/30 p-3.5 space-y-1.5 animate-in fade-in duration-150">
+              <p className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                Confirm Payment Method Change
+              </p>
+              <p className="text-[11px] text-amber-800 dark:text-amber-300 leading-relaxed">
+                Are you sure you want to change the payment method from{' '}
+                <strong>{existingProvider.name}</strong> to <strong>{selectedProvider.name}</strong>?
+                {hasExistingPaymentLink
+                  ? ' The existing open payment link and previous provider details will be cancelled and replaced.'
+                  : ' Previous payment provider details will be replaced.'}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 border-t border-border/40 px-6 py-4 bg-muted/20">
           <button
             type="button"
-            onClick={onClose}
-            className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer"
+            disabled={changingProvider}
+            onClick={() => {
+              if (confirmingChange) {
+                setConfirmingChange(false);
+              } else {
+                onClose();
+              }
+            }}
+            className="rounded-xl border border-border/60 bg-muted/40 px-4 py-2.5 text-xs font-semibold hover:bg-muted transition cursor-pointer disabled:opacity-50"
           >
-            Cancel
+            {confirmingChange ? 'Back' : 'Cancel'}
           </button>
           <button
             type="button"
-            onClick={onContinue}
-            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 px-5 py-2.5 text-xs font-bold text-white shadow-md transition cursor-pointer active:scale-95"
+            disabled={changingProvider}
+            onClick={handlePrimaryClick}
+            className={cn(
+              'inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-bold text-white shadow-md transition cursor-pointer active:scale-95 disabled:opacity-60',
+              confirmingChange
+                ? 'bg-amber-600 hover:bg-amber-700'
+                : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700',
+            )}
           >
-            <span>{selected === 'paymentlink' || selected === 'deema' ? 'Continue to Create Payment Link' : 'Continue to Reference & Receipt'}</span>
-            <ArrowRight className="h-4 w-4" />
+            {changingProvider && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            <span>
+              {changingProvider
+                ? 'Updating payment method…'
+                : confirmingChange
+                  ? 'Confirm & Change Method'
+                  : selected === 'paymentlink' || selected === 'deema'
+                    ? 'Continue to Create Payment Link'
+                    : 'Continue to Reference & Receipt'}
+            </span>
+            {!changingProvider && <ArrowRight className="h-4 w-4" />}
           </button>
         </div>
       </div>
@@ -724,6 +829,27 @@ function BookingDetailPopupContent({
   const [showPaymentRefModal, setShowPaymentRefModal] = useState(false);
   const [showMakePaymentModal, setShowMakePaymentModal] = useState(false);
   const [selectedProviderId, setSelectedProviderId] = useState<ProviderId>('knet');
+  const [changingPaymentProvider, setChangingPaymentProvider] = useState(false);
+  const [paymentLinks, setPaymentLinks] = useState<PaymentLink[]>([]);
+
+  useEffect(() => {
+    if (!booking?.id) {
+      setPaymentLinks([]);
+      return;
+    }
+    let cancelled = false;
+    paymentLinksApi
+      .list('booking', booking.id)
+      .then((links) => {
+        if (!cancelled && Array.isArray(links)) setPaymentLinks(links);
+      })
+      .catch(() => {
+        if (!cancelled) setPaymentLinks([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [booking?.id]);
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
   const [paymentError, setPaymentError] = useState<string | null>(null);
 
@@ -3491,12 +3617,35 @@ function BookingDetailPopupContent({
       const providerId = selectedPaymentConfig.id;
 
       const paidAtNow = nowWithTimezone();
+      const canonicalProvider =
+        providerId === 'knet'
+          ? 'knet_pos'
+          : providerId === 'boubyan_link'
+          ? 'boubyan'
+          : providerId === 'deema'
+          ? 'tap'
+          : 'myfatoorah';
+      const canonicalMethod =
+        providerId === 'knet'
+          ? 'card'
+          : providerId === 'boubyan_link'
+          ? 'boubyan_link'
+          : providerId;
+      const canonicalGateway =
+        providerId === 'knet'
+          ? 'knet_pos'
+          : providerId === 'boubyan_link'
+          ? 'boubyan'
+          : providerOption;
+
       const patchPayload = {
         status: curStatus === 'completed' ? 'completed' : 'confirmed',
         payment_status: 'success',
-        payment_provider: providerId,
-        payment_method: providerOption,
-        payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+        payment_provider: canonicalProvider,
+        payment_method: canonicalMethod,
+        payment_gateway: canonicalGateway,
+        payment_through: 'ushdesk',
+        payment_url: '',
         transaction_id: data.transactionId || null,
         reference_id: data.transactionId || null,
         receipt_image: data.receiptImage || null,
@@ -3506,9 +3655,9 @@ function BookingDetailPopupContent({
         payment_data: {
           transaction_id: data.transactionId,
           reference_id: data.transactionId,
-          payment_provider: providerId,
-          payment_method: providerOption,
-          payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+          payment_provider: canonicalProvider,
+          payment_method: canonicalMethod,
+          payment_gateway: canonicalGateway,
           receipt_image: data.receiptImage || null,
           notes: data.notes || null,
           total_amount: booking.total_amount,
@@ -3520,9 +3669,9 @@ function BookingDetailPopupContent({
           status: 'Paid',
           transaction_id: data.transactionId,
           reference_id: data.transactionId,
-          payment_provider: providerId,
-          payment_method: providerOption,
-          payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
+          payment_provider: canonicalProvider,
+          payment_method: canonicalMethod,
+          payment_gateway: canonicalGateway,
           receipt_image: data.receiptImage || null,
           notes: data.notes || null,
           transaction_date: paidAtNow,
@@ -3544,6 +3693,21 @@ function BookingDetailPopupContent({
           : undefined,
       };
 
+      // Cancel any existing open payment links before settling via desk/POS/Boubyan
+      if (paymentLinks.length > 0) {
+        const openLinks = paymentLinks.filter((l) =>
+          ['created', 'pending', 'active'].includes(String(l.status || '').toLowerCase()),
+        );
+        await Promise.all(
+          openLinks.map((l) => paymentLinksApi.cancel(l.id).catch(() => {})),
+        );
+        if (openLinks.length > 0) {
+          setPaymentLinks((prev) =>
+            prev.map((l) => (openLinks.some((o) => o.id === l.id) ? { ...l, status: 'cancelled' } : l)),
+          );
+        }
+      }
+
       const res = await authedFetch(`/booknpay/api/v1/bookings/${booking.id}/status/`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -3555,49 +3719,23 @@ function BookingDetailPopupContent({
         throw new Error(err.message || err.detail || `Failed to process payment (${res.status})`);
       }
 
-      // Record in payments endpoint if supported
-      try {
-        await authedFetch('/booknpay/api/v1/payments/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({
-            booking_id: booking.id,
-            amount: parseFloat(booking.total_amount) || 0,
-            currency: booking.currency || 'KWD',
-            status: 'success',
-            payment_method: providerOption === 'KNET Card' ? 'card' : providerId,
-            payment_provider: providerOption,
-            payment_gateway: providerOption === 'KNET Card' ? 'KNET' : providerOption,
-            payment_through: 'ushdesk',
-            payment_for: (booking.booking_type === 'home_service' || booking.booking_type === 'home') ? 'home_service' : 'branch_service',
-            reference_id: data.transactionId || null,
-            transaction_id: data.transactionId || null,
-            transaction_date: paidAtNow,
-            paid_at: paidAtNow,
-            invoice_number: invoiceNumber || null,
-            invoice_id: invoiceNumber || null,
-            receipt_image: data.receiptImage || null,
-            notes: data.notes || null,
-            payment_data: {
-              booking_number: booking.booking_number ?? booking.id,
-              receipt_image: data.receiptImage || null,
-              notes: data.notes || null,
-              transaction_id: data.transactionId || null,
-            },
-          }),
-        });
-      } catch (e) {
-        console.warn('[BookingDetailPopup] Optional /payments call:', e);
-      }
+      const updatedJson = await res.json().catch(() => null);
+      const updatedBookingData = updatedJson?.data ?? null;
 
       // Immediately update local booking object & state so UI updates instantly
       booking.is_paid = true;
       booking.payment_status = 'success';
-      booking.payment_provider = providerId;
-      booking.payment_method = providerOption;
+      booking.payment_provider = canonicalProvider;
+      booking.payment_method = canonicalMethod;
       if (curStatus !== 'completed') {
         booking.status = 'confirmed';
       }
+      if (updatedBookingData?.invoice_number) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (booking as any).invoice_number = updatedBookingData.invoice_number;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (booking as any).payment_url = null;
       if (data.receiptImage) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (booking as any).receipt_image = data.receiptImage;
@@ -3611,41 +3749,31 @@ function BookingDetailPopupContent({
 
       setDetail((prev) => {
         const nextStatus = curStatus === 'completed' ? 'completed' : 'confirmed';
-        if (!prev) {
-          return {
-            ...booking.raw,
-            status: nextStatus,
-            is_paid: true,
-            payment_status: 'success',
-            payment_provider: providerId,
-            payment_method: providerOption,
-            receipt_image: data.receiptImage || null,
-            transaction_id: data.transactionId || null,
-            reference_id: data.transactionId || null,
-          };
-        }
+        const base = updatedBookingData && typeof updatedBookingData === 'object'
+          ? { ...(prev ?? {}), ...updatedBookingData }
+          : (prev ?? { ...booking.raw });
         return {
-          ...prev,
+          ...base,
           status: nextStatus,
           is_paid: true,
           payment_status: 'success',
-          payment_provider: providerId,
-          payment_method: providerOption,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          receipt_image: data.receiptImage || (prev as any)?.receipt_image || null,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          transaction_id: data.transactionId || (prev as any)?.transaction_id || null,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          reference_id: data.transactionId || (prev as any)?.reference_id || null,
+          payment_provider: canonicalProvider,
+          payment_method: canonicalMethod,
+          payment_gateway: canonicalGateway,
+          payment_url: null,
+          receipt_image: data.receiptImage || (base as any)?.receipt_image || null,
+          transaction_id: data.transactionId || (base as any)?.transaction_id || null,
+          reference_id: data.transactionId || (base as any)?.reference_id || null,
           payment_data: {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            ...((prev as any)?.payment_data ?? {}),
             status: 'success',
             is_paid: true,
             receipt_image: data.receiptImage || null,
             transaction_id: data.transactionId || null,
-            payment_provider: providerId,
-            payment_method: providerOption,
+            reference_id: data.transactionId || null,
+            payment_provider: canonicalProvider,
+            payment_method: canonicalMethod,
+            payment_gateway: canonicalGateway,
+            paid_at: paidAtNow,
           },
         };
       });
@@ -3673,25 +3801,52 @@ function BookingDetailPopupContent({
   return (
     <>
       {/* Step 1: Payment Provider Modal (nested, z-60) */}
-      {showPaymentModal && (
-        <PaymentProviderModal
-          booking={booking}
-          totalAmount={computedTotal}
-          currency={currency}
-          selected={selectedProviderId}
-          onSelect={(id) => setSelectedProviderId(id)}
-          onClose={() => setShowPaymentModal(false)}
-          onContinue={() => {
-            setPaymentError(null);
-            setShowPaymentModal(false);
-            if (selectedProviderId === 'paymentlink' || selectedProviderId === 'deema') {
-              setShowMakePaymentModal(true);
-            } else {
-              setShowPaymentRefModal(true);
-            }
-          }}
-        />
-      )}
+      {showPaymentModal && (() => {
+        const openLink = paymentLinks.find((l) =>
+          ['created', 'pending', 'active'].includes(String(l.status || '').toLowerCase()) && !l.is_expired,
+        ) ?? null;
+        const existingProv = resolveExistingProviderId(detail, booking, openLink);
+        return (
+          <PaymentProviderModal
+            booking={booking}
+            totalAmount={computedTotal}
+            currency={currency}
+            selected={selectedProviderId}
+            existingProviderId={existingProv}
+            hasExistingPaymentLink={Boolean(openLink || effectivePaymentUrl)}
+            changingProvider={changingPaymentProvider}
+            onSelect={(id) => setSelectedProviderId(id)}
+            onClose={() => setShowPaymentModal(false)}
+            onContinue={async () => {
+              setPaymentError(null);
+              const isSwitching = Boolean(existingProv && existingProv !== selectedProviderId);
+              if (isSwitching) {
+                setChangingPaymentProvider(true);
+                try {
+                  // Cancel any open payment links from the previous provider
+                  const openLinks = paymentLinks.filter((l) =>
+                    ['created', 'pending', 'active'].includes(String(l.status || '').toLowerCase()),
+                  );
+                  await Promise.all(openLinks.map((l) => paymentLinksApi.cancel(l.id).catch(() => {})));
+                  if (openLinks.length > 0) {
+                    setPaymentLinks((prev) =>
+                      prev.map((l) => (openLinks.some((o) => o.id === l.id) ? { ...l, status: 'cancelled' } : l)),
+                    );
+                  }
+                } finally {
+                  setChangingPaymentProvider(false);
+                }
+              }
+              setShowPaymentModal(false);
+              if (selectedProviderId === 'paymentlink' || selectedProviderId === 'deema') {
+                setShowMakePaymentModal(true);
+              } else {
+                setShowPaymentRefModal(true);
+              }
+            }}
+          />
+        );
+      })()}
 
       {/* Step 2 (Direct): PaymentLink Modal (Make Payment Now) */}
       {showMakePaymentModal && (
@@ -5486,11 +5641,16 @@ function BookingDetailPopupContent({
                     </button>
                   </div>
                 )}
-                {/* Make Payment: always shown while the booking's payment is pending (no past/future or payment-link restriction) */}
+                {/* Make/Change Payment: always shown while the booking's payment is pending */}
                 {hasPaymentPermission && isPaymentPending && (
                   <button
                     type="button"
                     onClick={() => {
+                      const openLink = paymentLinks.find((l) =>
+                        ['created', 'pending', 'active'].includes(String(l.status || '').toLowerCase()) && !l.is_expired,
+                      ) ?? null;
+                      const existingProv = resolveExistingProviderId(detail, booking, openLink);
+                      setSelectedProviderId(existingProv ?? 'knet');
                       setPaymentError(null);
                       setShowPaymentRefModal(false);
                       setShowPaymentModal(true);
@@ -5498,7 +5658,7 @@ function BookingDetailPopupContent({
                     className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2.5 text-xs font-bold text-white shadow-sm transition cursor-pointer whitespace-nowrap"
                   >
                     <CreditCard className="h-4 w-4" />
-                    Make Payment
+                    Make/Change Payment
                   </button>
                 )}
 

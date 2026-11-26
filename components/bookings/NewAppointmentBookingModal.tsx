@@ -64,6 +64,8 @@ interface ApiService {
   photo_url?: string | null;
   /** Components of a packaged service (returned by the services API) */
   included_services?: IncludedService[];
+  /** Add-ons included in a packaged service (returned by the services API) */
+  included_addons?: ApiAddOn[];
   /** Set on a component service that is booked as part of a package */
   package_id?: string;
   /** Ids of every component of that package (used to verify full coverage) */
@@ -159,9 +161,12 @@ export interface SavedSession {
   arrangementPrice?: number | null;
   addonIds: string[];
   arrangementAddonIds: string[];
+  packageAddonUids?: string[];
   selectedAddons: ApiAddOn[];
   extraMinutes: number;
   extraPrice: number;
+  extraMinutesByService?: Record<string, number>;
+  extraPriceByService?: Record<string, number>;
   therapistId: string;
   therapistName: string;
   therapistPhoto?: string | null;
@@ -580,6 +585,8 @@ export interface AddSessionModalProps {
   scheduleData?: any;
   /** package id -> component service ids already booked in earlier sessions */
   usedPackageComponents?: Record<string, string[]>;
+  /** package add-on UIDs already scheduled in earlier sessions */
+  usedPackageAddonUids?: string[];
   /** A package with services not yet in any session: this session pre-fills its next group */
   pendingPackage?: PendingPackage | null;
   /** The booking already has non-package services: a package cannot be added */
@@ -594,7 +601,7 @@ export function AddSessionSubModal({
   authHeader, branchId, date,
   defaultTherapistId, defaultTherapistName, defaultTherapistPhoto,
   defaultTimeSlot, sessionIndex, minStartTimeMinutes, minStartTimeDisplay,
-  schedule, scheduleData, usedPackageComponents, pendingPackage, blockPackages, homeService,
+  schedule, scheduleData, usedPackageComponents, usedPackageAddonUids, pendingPackage, blockPackages, homeService,
   onClose, onAddSession,
 }: AddSessionModalProps) {
   const isFirstSession = sessionIndex === 0;
@@ -629,7 +636,25 @@ export function AddSessionSubModal({
 
   const [addonIds, setAddonIds] = useState<string[]>([]);
   const [arrangementAddonIds, setArrangementAddonIds] = useState<string[]>([]);
-  const [extraMinutes, setExtraMinutes] = useState<number>(0);
+  const [packageAddonUids, setPackageAddonUids] = useState<string[]>([]);
+  const [extraMinutesByService, setExtraMinutesByService] = useState<Record<string, number>>({});
+
+  // Prune extra minutes for services that are no longer selected
+  useEffect(() => {
+    setExtraMinutesByService(prev => {
+      const idSet = new Set(serviceIds.map(String));
+      const next: Record<string, number> = {};
+      let changed = false;
+      Object.entries(prev).forEach(([k, v]) => {
+        if (idSet.has(k) && v > 0) {
+          next[k] = v;
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [serviceIds]);
 
   // ── Step 2 Form State ──
   // For Session 1: strictly locked to defaultTherapistId and defaultTimeSlot
@@ -826,31 +851,85 @@ export function AddSessionSubModal({
     return serviceAddons.filter(a => !arrIds.has(String(a.id)));
   }, [serviceAddons, arrangementAddons, showRoomAddonsSection]);
 
+  const packageAddonPool = useMemo(() => {
+    if (!splitPkg) return [] as Array<ApiAddOn & { uid: string }>;
+    const raw = splitPkg.included_addons ?? packageDetails[splitPkg.id]?.included_addons ?? [];
+    const usedSet = new Set(usedPackageAddonUids ?? []);
+    return raw
+      .map((a, idx) => ({
+        ...a,
+        id: String(a.id),
+        name: String(a.name ?? 'Add-on'),
+        price: 0,
+        duration_minutes: Number(a.duration_minutes) || 0,
+        uid: `pkg:${splitPkg.id}:${a.id}:${idx}`,
+      }))
+      .filter(a => !usedSet.has(a.uid));
+  }, [splitPkg, packageDetails, usedPackageAddonUids]);
+
   const noAddons = isPackagedService || Boolean(splitPkg);
   const selectedSvcAddons = noAddons ? [] : visibleServiceAddons.filter(a => addonIds.includes(a.id));
   const selectedArrAddons = noAddons ? [] : arrangementAddons.filter(a => arrangementAddonIds.includes(a.id));
+  const selectedPkgAddons = splitPkg
+    ? packageAddonPool.filter(a => packageAddonUids.includes(a.uid))
+    : [];
   const allSelectedAddons = useMemo(() => {
     const seen = new Set<string>();
-    return [...selectedArrAddons, ...selectedSvcAddons].filter(a => {
-      const k = String(a.id);
+    return [...selectedPkgAddons, ...selectedArrAddons, ...selectedSvcAddons].filter(a => {
+      const k = String((a as any).uid ?? a.id);
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     });
-  }, [selectedArrAddons, selectedSvcAddons]);
-  const addonTotal = allSelectedAddons.reduce((s, a) => s + homeAddonPriceOf(a, homeService), 0);
+  }, [selectedPkgAddons, selectedArrAddons, selectedSvcAddons]);
+  const addonTotal = splitPkg
+    ? 0
+    : allSelectedAddons.reduce((s, a) => s + homeAddonPriceOf(a, homeService), 0);
   const addonDuration = allSelectedAddons.reduce((s, a) => s + (a.duration_minutes ?? 0), 0);
 
-  const extraMinutesUnit = Number(primaryService?.extra_minutes ?? 0);
-  const extraPricePerUnit = primaryService
-    ? (homeService ? homePriceForExtraOf(primaryService) : (parseFloat(String(primaryService.price_for_extra_minutes ?? '0')) || 0))
-    : 0;
-  const hasExtraTime = extraMinutesUnit > 0 && extraPricePerUnit > 0;
-  const calcExtraPrice = (mins: number) => {
-    if (mins <= 0 || !hasExtraTime) return 0;
-    return (mins / extraMinutesUnit) * extraPricePerUnit;
-  };
-  const extraMinutesPrice = calcExtraPrice(extraMinutes);
+  // ── Per-service extra time (each selected service has its own extra time options) ──
+  const perServiceExtraConfig = useMemo(() =>
+    selectedServices
+      .filter(sv => !sv.package_id)
+      .map(sv => {
+        const unit = Number(sv.extra_minutes ?? 0);
+        const pricePerUnit = homeService
+          ? homePriceForExtraOf(sv)
+          : (parseFloat(String(sv.price_for_extra_minutes ?? '0')) || 0);
+        return {
+          id: sv.id,
+          name: sv.name,
+          unit,
+          pricePerUnit,
+          hasExtra: unit > 0 && pricePerUnit > 0,
+        };
+      })
+      .filter(c => c.hasExtra),
+  [selectedServices, homeService]);
+
+  const extraConfigById = useMemo(() => {
+    const m = new Map<string, (typeof perServiceExtraConfig)[number]>();
+    perServiceExtraConfig.forEach(c => m.set(String(c.id), c));
+    return m;
+  }, [perServiceExtraConfig]);
+
+  const extraPriceByService = useMemo(() => {
+    const out: Record<string, number> = {};
+    perServiceExtraConfig.forEach(c => {
+      const mins = extraMinutesByService[c.id] ?? 0;
+      if (mins > 0) {
+        out[c.id] = (mins / c.unit) * c.pricePerUnit;
+      }
+    });
+    return out;
+  }, [perServiceExtraConfig, extraMinutesByService]);
+
+  const extraMinutes = perServiceExtraConfig.reduce(
+    (sum, c) => sum + (extraMinutesByService[c.id] ?? 0),
+    0,
+  );
+  const extraMinutesPrice = Object.values(extraPriceByService).reduce((sum, p) => sum + p, 0);
+  const hasExtraTime = perServiceExtraConfig.length > 0;
 
   const baseDuration = selectedServices.reduce((sum, sv) => sum + (sv.duration_minutes ?? 60), 0);
   const totalDuration = (primaryService ? baseDuration : 0) + addonDuration + extraMinutes;
@@ -1082,18 +1161,38 @@ export function AddSessionSubModal({
     sv.is_packaged_services === true || String(sv.is_packaged_services).toLowerCase() === 'true';
   const componentsOf = (sv: ApiService): IncludedService[] =>
     sv.included_services ?? packageDetails[sv.id]?.included_services ?? [];
+  const packageAddonsOf = (sv: ApiService): ApiAddOn[] =>
+    sv.included_addons ?? packageDetails[sv.id]?.included_addons ?? [];
 
-  // Load the component list of any selected package that does not carry it yet
+  // Load the component & included_addons list of any selected package that does not carry it yet
   useEffect(() => {
-    selectedServices.filter(sv => isPackage(sv) && !sv.included_services && !packageDetails[sv.id]).forEach(sv => {
-      authedFetch(`/api/v1/services/${sv.id}/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
-        .then(r => r.json())
-        .then(d => {
-          const detail = (d?.data ?? d) as ApiService;
-          setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: detail?.included_services ?? [] } }));
-        })
-        .catch(() => setPackageDetails(prev => ({ ...prev, [sv.id]: { ...sv, included_services: [] } })));
-    });
+    selectedServices
+      .filter(sv => isPackage(sv) && (!sv.included_services || sv.included_addons === undefined) && !packageDetails[sv.id])
+      .forEach(sv => {
+        authedFetch(`/api/v1/services/${sv.id}/`, { headers: authHeader ? { Authorization: authHeader } : undefined })
+          .then(r => r.json())
+          .then(d => {
+            const detail = (d?.data ?? d) as ApiService;
+            setPackageDetails(prev => ({
+              ...prev,
+              [sv.id]: {
+                ...sv,
+                included_services: detail?.included_services ?? sv.included_services ?? [],
+                included_addons: detail?.included_addons ?? sv.included_addons ?? [],
+              },
+            }));
+          })
+          .catch(() =>
+            setPackageDetails(prev => ({
+              ...prev,
+              [sv.id]: {
+                ...sv,
+                included_services: sv.included_services ?? [],
+                included_addons: sv.included_addons ?? [],
+              },
+            })),
+          );
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedServices]);
 
@@ -1144,8 +1243,14 @@ export function AddSessionSubModal({
    * has unbooked services (and that this session's therapist can perform) and restricts rooms to the
    * ones that group shares.
    */
-  const startSplit = async (pkg: ApiService, preloaded?: IncludedService[], auto = false) => {
+  const startSplit = async (
+    pkg: ApiService,
+    preloaded?: IncludedService[],
+    auto = false,
+    preloadedAddons?: ApiAddOn[],
+  ) => {
     const all = preloaded ?? componentsOf(pkg);
+    const allAddons = preloadedAddons ?? packageAddonsOf(pkg);
     const used = usedIds(pkg.id);
     const remaining = all.filter(c => !used.has(c.id));
     if (remaining.length === 0) return;
@@ -1161,7 +1266,8 @@ export function AddSessionSubModal({
       remaining.map(c => [c.id, makeComponent(pkg, c, all)]),
     );
     setExtraServices(prev => ({ ...prev, ...comps }));
-    setSplitPkg({ ...pkg, included_services: all });
+    setSplitPkg({ ...pkg, included_services: all, included_addons: allAddons });
+    setPackageAddonUids([]);
     setArrangementId('');
     setServiceIds(prev => [...prev.filter(id => id !== pkg.id), ...(auto ? pickIds : [])]);
   };
@@ -1202,15 +1308,23 @@ export function AddSessionSubModal({
     pendingStartedRef.current = true;
     (async () => {
       let comps: IncludedService[] = [];
+      let incAddons: ApiAddOn[] = [];
       try {
         const r = await authedFetch(`/api/v1/services/${pendingPackage.id}/`, {
           headers: authHeader ? { Authorization: authHeader } : undefined,
         });
         const d = await r.json();
-        comps = ((d?.data ?? d) as ApiService)?.included_services ?? [];
+        const detail = (d?.data ?? d) as ApiService;
+        comps = detail?.included_services ?? [];
+        incAddons = detail?.included_addons ?? [];
       } catch { /* handled below */ }
       if (comps.length === 0) return;
-      await startSplit({ id: pendingPackage.id, name: pendingPackage.name, base_price: pendingPackage.price } as ApiService, comps);
+      await startSplit(
+        { id: pendingPackage.id, name: pendingPackage.name, base_price: pendingPackage.price } as ApiService,
+        comps,
+        false,
+        incAddons,
+      );
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPackage]);
@@ -1221,7 +1335,7 @@ export function AddSessionSubModal({
 
     const selectedAddonsWithPrice: ApiAddOn[] = allSelectedAddons.map(a => ({
       ...a,
-      price: homeAddonPriceOf(a, homeService),
+      price: splitPkg ? 0 : homeAddonPriceOf(a, homeService),
     }));
 
     const newSession: SavedSession = {
@@ -1234,9 +1348,12 @@ export function AddSessionSubModal({
       arrangementPrice: arrPrice,
       addonIds,
       arrangementAddonIds,
+      packageAddonUids: splitPkg ? packageAddonUids : undefined,
       selectedAddons: selectedAddonsWithPrice,
       extraMinutes,
       extraPrice: extraMinutesPrice,
+      extraMinutesByService,
+      extraPriceByService,
       therapistId: isFirstSession ? defaultTherapistId : selectedTherapistId,
       therapistName: isFirstSession ? defaultTherapistName : selectedTherapistName,
       therapistPhoto: isFirstSession ? defaultTherapistPhoto : selectedTherapistPhoto,
@@ -1463,6 +1580,25 @@ export function AddSessionSubModal({
                         })}
                       </ul>
 
+                      {!splitPkg && packageAddonsOf(pkg).length > 0 && (
+                        <div className="mt-3 pt-2.5 border-t border-amber-500/20">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-violet-700 dark:text-violet-300 mb-1.5">
+                            Included Add-ons ({packageAddonsOf(pkg).length})
+                          </p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {packageAddonsOf(pkg).map((a, idx) => (
+                              <span
+                                key={`${a.id}-${idx}`}
+                                className="inline-flex items-center gap-1 rounded-lg bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 text-[11px] font-semibold text-violet-800 dark:text-violet-200"
+                              >
+                                {a.name}
+                                {a.duration_minutes ? <span className="opacity-70">+{a.duration_minutes}m</span> : null}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         {!splitPkg ? (
                           <button
@@ -1512,36 +1648,79 @@ export function AddSessionSubModal({
                 })()}
               </div>
 
-              {/* Extra Time Buttons Matching Image 2 */}
+              {/* Services & Per-Service Extra Time (matching Gift Voucher layout) */}
               {hasExtraTime && !packageGate && (
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
                     <Timer className="h-3.5 w-3.5 text-muted-foreground" />
                     <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
-                      Extra Time
+                      {selectedServices.length > 1 ? 'Services & Extra Time' : 'Extra Time'}
                     </p>
                   </div>
-                  <div className="grid grid-cols-3 gap-2.5">
-                    {[0, 30, 60].map(mins => {
-                      const active = extraMinutes === mins;
-                      const price = calcExtraPrice(mins);
+                  <div className="space-y-3">
+                    {selectedServices.map((sv, idx) => {
+                      const cfg = extraConfigById.get(String(sv.id));
+                      const svMins = extraMinutesByService[sv.id] ?? 0;
+                      const svPrice = priceOfService(sv, idx);
+                      const svDur = sv.duration_minutes ?? 60;
+                      const stepOptions = cfg ? [0, cfg.unit, cfg.unit * 2] : [];
                       return (
-                        <button
-                          key={mins}
-                          type="button"
-                          onClick={() => setExtraMinutes(mins)}
-                          className={cn(
-                            'flex flex-col items-center justify-center rounded-2xl border py-3 px-2 text-center transition cursor-pointer',
-                            active
-                              ? 'border-primary/60 bg-primary/10 text-primary shadow-sm ring-1 ring-primary/40'
-                              : 'border-border bg-muted/20 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                          )}
+                        <div
+                          key={sv.id}
+                          className="rounded-2xl border border-border/70 bg-card p-3.5 space-y-2.5 shadow-xs"
                         >
-                          <p className="text-sm font-extrabold">{mins === 0 ? 'None' : `${mins} min`}</p>
-                          <p className="text-[11px] font-semibold mt-0.5 opacity-85">
-                            {mins === 0 ? '+0 KWD' : `+${fmt(price)} KWD`}
-                          </p>
-                        </button>
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-xs font-extrabold uppercase tracking-tight text-foreground truncate">
+                              {selectedServices.length > 1 ? `${idx + 1}. ${sv.name}` : sv.name}
+                            </p>
+                            <span className="shrink-0 text-xs font-bold text-foreground/80 whitespace-nowrap">
+                              {fmt(svPrice)} KWD · {svDur} min
+                            </span>
+                          </div>
+                          {cfg ? (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                <Timer className="h-3 w-3 shrink-0" />
+                                <span className="font-semibold uppercase tracking-wider">Extra Time</span>
+                                <span>({fmt(cfg.pricePerUnit)} KWD / {cfg.unit} min)</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                {stepOptions.map(mins => {
+                                  const active = svMins === mins;
+                                  const optPrice = mins > 0 ? (mins / cfg.unit) * cfg.pricePerUnit : 0;
+                                  return (
+                                    <button
+                                      key={mins}
+                                      type="button"
+                                      onClick={() =>
+                                        setExtraMinutesByService(prev => ({ ...prev, [sv.id]: mins }))
+                                      }
+                                      className={cn(
+                                        'flex flex-col items-center justify-center rounded-xl border py-2.5 px-2 text-center transition cursor-pointer',
+                                        active
+                                          ? 'border-primary bg-primary/10 text-primary shadow-xs ring-1 ring-primary/40'
+                                          : 'border-border bg-muted/20 text-foreground/80 hover:bg-muted/40 hover:text-foreground',
+                                      )}
+                                    >
+                                      <span className="text-xs font-extrabold">
+                                        {mins === 0 ? 'None' : `+${mins} min`}
+                                      </span>
+                                      {mins > 0 && (
+                                        <span className="text-[10px] font-semibold mt-0.5 opacity-80">
+                                          +{fmt(optPrice)} KWD
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-muted-foreground italic">
+                              No extra time available for this service
+                            </p>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -1646,6 +1825,76 @@ export function AddSessionSubModal({
                 </div>
               )}
 
+              {/* Package Included Add-ons (matching Gift Voucher Redeem flow) */}
+              {splitPkg && packageAddonPool.length > 0 && (
+                <div className="rounded-2xl border border-violet-500/30 bg-violet-50/40 dark:bg-violet-950/20 p-4 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Package className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                      <p className="text-xs font-extrabold uppercase tracking-wide text-violet-950 dark:text-violet-200">
+                        Package Add-ons
+                      </p>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-400/30">
+                        {packageAddonPool.filter(a => packageAddonUids.includes(a.uid)).length} of {packageAddonPool.length} selected
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allSelected = packageAddonPool.every(a => packageAddonUids.includes(a.uid));
+                        setPackageAddonUids(allSelected ? [] : packageAddonPool.map(a => a.uid));
+                      }}
+                      className="text-[11px] font-bold text-violet-600 dark:text-violet-400 hover:text-violet-800 dark:hover:text-violet-200 hover:underline cursor-pointer"
+                    >
+                      {packageAddonPool.every(a => packageAddonUids.includes(a.uid)) ? 'Deselect All' : 'Select All'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    You can create this session with or without add-ons. Select any or all included add-ons for this session (included in package price).
+                  </p>
+                  <div className="space-y-2">
+                    {packageAddonPool.map(a => {
+                      const isChecked = packageAddonUids.includes(a.uid);
+                      return (
+                        <label
+                          key={a.uid}
+                          className={cn(
+                            'flex items-center justify-between p-2.5 rounded-xl border transition cursor-pointer select-none',
+                            isChecked
+                              ? 'border-violet-500/50 bg-white/90 dark:bg-card shadow-xs'
+                              : 'border-border/60 bg-white/40 dark:bg-card/40 hover:bg-white/70 dark:hover:bg-card/70',
+                          )}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() =>
+                                setPackageAddonUids(prev =>
+                                  isChecked ? prev.filter(u => u !== a.uid) : [...prev, a.uid],
+                                )
+                              }
+                              className="h-4 w-4 accent-violet-600 rounded cursor-pointer shrink-0"
+                            />
+                            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-foreground">{a.name}</span>
+                              {a.duration_minutes ? (
+                                <span className="text-[10px] font-semibold text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">
+                                  +{a.duration_minutes} min
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                          <span className="shrink-0 ml-2 rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                            Included
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Room Add-ons (Optional) Matching Image 2 */}
               {arrangementId && !isPackagedService && !splitPkg && !packageGate && arrangementAddons.length > 0 && (
                 <div>
@@ -1702,7 +1951,7 @@ export function AddSessionSubModal({
               )}
 
               {/* Add-on Services (only shown when distinct from Room Add-ons, or when no Room Add-ons are shown) */}
-              {!isPackagedService && (!showRoomAddonsSection || visibleServiceAddons.length > 0) && (
+              {!isPackagedService && !splitPkg && (!showRoomAddonsSection || visibleServiceAddons.length > 0) && (
                 <div>
                   <div className="flex items-center gap-2 mb-2">
                     <Package className="h-3.5 w-3.5 text-muted-foreground" />
@@ -2467,6 +2716,8 @@ export function NewAppointmentBookingModal({
           : i === 0
           ? (sess.arrangementPrice != null ? sess.arrangementPrice : parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0)
           : (parseFloat(String(sv.arrangement_price ?? sv.base_price ?? '0')) || 0);
+        const svExtraMins = sess.extraMinutesByService?.[sv.id] ?? 0;
+        const svExtraPrice = sess.extraPriceByService?.[sv.id] ?? 0;
         return {
           service_id: sv.id,
           service_name: sv.name,
@@ -2474,6 +2725,7 @@ export function NewAppointmentBookingModal({
           base_price: homeService ? fmt(p) : fmt(sv.base_price),
           arrangement_price: fmt(p),
           duration_minutes: sv.duration_minutes ?? 60,
+          ...(svExtraMins > 0 ? { extra_minutes: svExtraMins, extra_price: fmt(svExtraPrice) } : {}),
           ...(sv.package_id ? { package_id: sv.package_id } : {}),
         };
       });
@@ -3307,6 +3559,7 @@ export function NewAppointmentBookingModal({
           schedule={schedule}
           scheduleData={scheduleData}
           usedPackageComponents={usedPackageComponents}
+          usedPackageAddonUids={sessions.flatMap(s => s.packageAddonUids ?? [])}
           blockPackages={hasPlainService}
           homeService={homeService}
           pendingPackage={pendingPackageInfo ? { id: pendingPackageInfo.id, name: pendingPackageInfo.name, price: pendingPackageInfo.price } : null}

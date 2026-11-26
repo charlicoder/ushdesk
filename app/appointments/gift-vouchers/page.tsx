@@ -1765,7 +1765,10 @@ function VoucherDetailModal({
     fetchPayments();
   }, [fetchPayments]);
 
-  const latestPayment = voucherPayments[0] || null;
+  const latestPayment =
+    voucherPayments.find((p) => Number(p?.total_amount ?? 0) >= 0) ||
+    voucherPayments[0] ||
+    null;
   const activePaymentLink = paymentLinks[0] || null;
 
   // Resolve invoice number & fetch invoice record
