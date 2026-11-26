@@ -269,6 +269,7 @@ interface Voucher {
   total_duration: number;
   total_amount: string;
   discount?: string | number | null;
+  discount_requested_by?: string | null;
   currency: string;
   gift_message: string;
   gift_template: string;
@@ -1661,6 +1662,7 @@ function VoucherDetailModal({
             ...(remainingServiceIds.length > 1 ? { service_ids: remainingServiceIds } : {}),
             branch_id: branchId,
             expire_date: expireDateWithTz,
+            ...(isAdmin ? { include_past: true } : {}),
           }),
         })
           .then(async (r) => {
@@ -3462,19 +3464,45 @@ function VoucherDetailModal({
                   )}
 
                   {Number(voucher.discount) > 0 && (
-                    <div className="flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400 pt-1.5 border-t border-border/30">
-                      <span>Discount</span>
-                      <span className="font-mono font-semibold">-{formatAmount(voucher.discount, voucher.currency)}</span>
+                    <div className="space-y-1.5 pt-1.5 border-t border-border/30">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Subtotal</span>
+                        <span className="font-mono font-semibold text-foreground">
+                          {formatAmount(
+                            (parseFloat(String(voucher.total_amount ?? 0)) || 0) +
+                              (parseFloat(String(voucher.discount ?? 0)) || 0),
+                            voucher.currency,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-emerald-600 dark:text-emerald-400">
+                        <span className="flex items-center gap-1.5 flex-wrap">
+                          <span>Discount</span>
+                          {voucher.discount_requested_by && (
+                            <span className="text-[10px] font-semibold bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-1.5 py-0.5 rounded">
+                              By: {voucher.discount_requested_by}
+                            </span>
+                          )}
+                        </span>
+                        <span className="font-mono font-semibold">-{formatAmount(voucher.discount, voucher.currency)}</span>
+                      </div>
                     </div>
                   )}
 
                   <div className="pt-2.5 mt-1 border-t border-border/50 space-y-1.5">
                     <div className="flex items-center justify-between text-xs font-extrabold text-foreground">
-                      <span>Total Price</span>
+                      <span>{Number(voucher.discount) > 0 ? 'Final Total' : 'Total Price'}</span>
                       <span className="font-mono text-sm text-violet-600 dark:text-violet-400">
                         {formatAmount(voucher.total_amount, voucher.currency)}
                       </span>
                     </div>
+                    {Number(voucher.discount) > 0 && (
+                      <div>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                          Non-refundable (Discounted Gift Voucher)
+                        </span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span className="text-[10px] uppercase font-bold tracking-wider">Billed To</span>
                       <span className="font-bold text-foreground">
@@ -4077,6 +4105,7 @@ function VoucherDetailModal({
           voucherStatus={voucher.status}
           isPaid={Boolean(isPaid)}
           totalAmount={parseFloat(String(voucher.total_amount ?? 0)) || 0}
+          discountAmount={parseFloat(String(voucher.discount ?? 0)) || 0}
           currency={voucher.currency || 'KWD'}
           serviceName={
             voucher.service_data?.name ||
@@ -4915,6 +4944,7 @@ const REPORT_FIELDS: ReportField[] = [
   // Financial
   { id: 'total_amount', label: 'Total Amount', category: 'Financial', defaultSelected: true },
   { id: 'discount', label: 'Discount Amount', category: 'Financial', defaultSelected: true },
+  { id: 'discount_requested_by', label: 'Discount Requested By', category: 'Financial', defaultSelected: false },
   { id: 'currency', label: 'Currency', category: 'Financial', defaultSelected: true },
   { id: 'payment_provider', label: 'Payment Provider', category: 'Financial', defaultSelected: true },
   { id: 'payment_method', label: 'Payment Method', category: 'Financial', defaultSelected: true },
@@ -4970,6 +5000,8 @@ function getVoucherFieldValue(
       return String(voucher.total_amount ?? 0);
     case 'discount':
       return String(voucher.discount ?? 0);
+    case 'discount_requested_by':
+      return voucher.discount_requested_by || '—';
     case 'currency':
       return voucher.currency || 'KWD';
     case 'payment_provider':

@@ -23,6 +23,8 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { DiscountControl } from '@/components/bookings/DiscountControl';
+import { validateDiscountInput } from '@/lib/discount';
 import {
   CalendarDays, CheckCircle2, Clock, AlertCircle, X,
   Timer, Loader2, Scissors, Package, User, Phone, Mail,
@@ -605,6 +607,7 @@ export function AddSessionSubModal({
   onClose, onAddSession,
 }: AddSessionModalProps) {
   const isFirstSession = sessionIndex === 0;
+  const { isAdmin } = usePermissions();
   const [subStep, setSubStep] = useState<1 | 2>(1);
 
   // ── Step 1 Form State ──
@@ -1019,17 +1022,18 @@ export function AddSessionSubModal({
   }, [groupRooms, effectiveStartSlot, totalDuration, roomBookings, arrangementId]);
 
   // ── Available Time Slots for this session ──
-  // For subsequent sessions: timeslots must start at or after previous session's end time!
+  // For non-admin subsequent sessions: timeslots must start at or after previous session's end time.
+  // For admins: do not block earlier/past timeslots on the day; only actual booking conflicts apply.
   const timeSlots = useMemo(() => {
     const rawSlots = generateTimeSlots();
-    if (typeof minStartTimeMinutes === 'number') {
+    if (!isAdmin && typeof minStartTimeMinutes === 'number') {
       return rawSlots.filter(slot => {
         const slotMin = parseClockToMinutes(toHHMM(slot));
         return slotMin >= minStartTimeMinutes;
       });
     }
     return rawSlots;
-  }, [minStartTimeMinutes]);
+  }, [minStartTimeMinutes, isAdmin]);
 
   // Ensure selectedTimeSlot is valid for subsequent sessions
   useEffect(() => {
@@ -2316,7 +2320,7 @@ export function AddSessionSubModal({
                         <Clock className="h-4 w-4 text-primary" />
                         <p className="text-sm font-extrabold text-foreground">Available Time Slots</p>
                       </div>
-                      {minStartTimeDisplay && (
+                      {!isAdmin && minStartTimeDisplay && (
                         <span className="text-xs font-semibold text-muted-foreground">
                           Starts after: <span className="font-bold text-foreground">{minStartTimeDisplay}</span>
                         </span>
@@ -2507,6 +2511,7 @@ export function NewAppointmentBookingModal({
   // ── Notes & Payment Option ──
   const [notes, setNotes] = useState('');
   const [discount, setDiscount] = useState<string>('');
+  const [discountRequestedBy, setDiscountRequestedBy] = useState<string>('');
   const [paymentOption, setPaymentOption] = useState<'pay_on_branch' | 'pay_now'>('pay_on_branch');
 
   // ── Submission State ──
@@ -2563,8 +2568,9 @@ export function NewAppointmentBookingModal({
     () => sessions.reduce((s, sess) => s + sess.sessionPrice, 0),
     [sessions],
   );
-  const discountAmount = allowDiscount ? Math.max(0, parseFloat(discount) || 0) : 0;
-  const bookingTotalPrice = Math.max(0, bookingSubtotalPrice - discountAmount);
+  const discountAmount = allowDiscount && discountRequestedBy.trim() ? Math.max(0, parseFloat(discount) || 0) : 0;
+  const discountValidation = validateDiscountInput(bookingSubtotalPrice, discountAmount, discountRequestedBy);
+  const bookingTotalPrice = Math.max(0, bookingSubtotalPrice - (discountValidation.valid ? discountAmount : 0));
 
   // ── Overlap Detection ──
   const overlapWarning = useMemo(() => {
@@ -2841,11 +2847,13 @@ export function NewAppointmentBookingModal({
         subtotal: fmt(bookingSubtotalPrice),
         discount: fmt(discountAmount),
         discount_amount: fmt(discountAmount),
+        discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
         total: fmt(bookingTotalPrice),
         total_price: fmt(bookingTotalPrice),
         currency: CURRENCY,
       },
       discount: fmt(discountAmount),
+      discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
       total_price: fmt(bookingTotalPrice),
       total_duration: bookingTotalDuration,
       currency: CURRENCY,
@@ -2858,6 +2866,12 @@ export function NewAppointmentBookingModal({
       source: 'ushdesk',
       sessions: sessionsPayload,
     };
+
+    if (!discountValidation.valid) {
+      setSubmitError(discountValidation.error || 'Invalid discount.');
+      setSubmitting(false);
+      return;
+    }
 
     try {
       const res = await authedFetch('/booknpay/api/v1/bookings', {
@@ -3416,23 +3430,38 @@ export function NewAppointmentBookingModal({
                   </div>
 
                   {allowDiscount && (
-                    <div className="flex items-center justify-between pt-2 border-t border-border/40 text-xs">
-                      <span className="font-bold text-muted-foreground flex items-center gap-1">
-                        <DollarSign className="h-3.5 w-3.5 text-emerald-500" />
-                        Discount (KWD)
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.001"
-                        placeholder="0.000"
-                        value={discount}
-                        onChange={e => setDiscount(e.target.value)}
-                        className="w-28 h-8 rounded-lg border border-border bg-background px-2.5 text-right font-bold text-xs outline-none focus:border-primary"
+                    <div className="pt-2 border-t border-border/40">
+                      <DiscountControl
+                        idPrefix="new-appt-discount"
+                        subtotal={bookingSubtotalPrice}
+                        currency={CURRENCY}
+                        discount={discount}
+                        onDiscountChange={setDiscount}
+                        discountRequestedBy={discountRequestedBy}
+                        onDiscountRequestedByChange={setDiscountRequestedBy}
+                        previewItems={sessions.flatMap((sess) => [
+                          ...sess.services.map((s) => ({
+                            label: s.name,
+                            price: parseFloat(String(s.price ?? 0)) || 0,
+                          })),
+                          ...sess.selectedAddons.map((a) => ({
+                            label: `Add-on: ${a.name}`,
+                            price: parseFloat(String(a.price ?? 0)) || 0,
+                          })),
+                          ...(sess.extraPrice > 0
+                            ? [{ label: `Extra Time (${sess.extraMinutes} min)`, price: sess.extraPrice }]
+                            : []),
+                        ])}
                       />
                     </div>
                   )}
 
+                  {discountAmount > 0 && discountValidation.valid && (
+                    <div className="flex items-center justify-between pt-2 border-t border-border/40 text-xs text-muted-foreground">
+                      <span>Subtotal</span>
+                      <span className="font-mono font-semibold">{fmt(bookingSubtotalPrice)} {CURRENCY}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between pt-2 border-t border-border/40">
                     <span className="text-xs font-extrabold text-foreground uppercase tracking-wider">Total Payable</span>
                     <span className="text-base font-black text-primary">{fmt(bookingTotalPrice)} KWD</span>

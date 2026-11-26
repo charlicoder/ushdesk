@@ -20,6 +20,8 @@ import { CreateCustomerModal, type CreatedCustomer } from './CreateCustomerModal
 import { MultiSelectDrop } from './MultiSelectDrop';
 import { exceedsMaxDuration, maxDurationMessage } from '@/lib/booking-duration';
 import { usePermissions } from '@/hooks/use-permissions';
+import { DiscountControl } from '@/components/bookings/DiscountControl';
+import { validateDiscountInput } from '@/lib/discount';
 
 // ── Exported types ─────────────────────────────────────────────────────────────
 
@@ -291,6 +293,7 @@ export function NewBranchBookingModal({
   /** True when the selected arrangement requires two therapists. */
   const needsDualTherapist = isDoubleOccupancy(arrangement.arrangementType);
   const [discount, setDiscount] = useState<string>('');
+  const [discountRequestedBy, setDiscountRequestedBy] = useState<string>('');
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [paymentOption, setPaymentOption] = useState<'pay_on_branch' | 'pay_now'>('pay_on_branch');
@@ -813,11 +816,13 @@ export function NewBranchBookingModal({
         subtotal: fmtPriceB(subtotalPrice),
         discount: fmtPriceB(discountAmount),
         discount_amount: fmtPriceB(discountAmount),
+        discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
         total: fmtPriceB(totalPrice),
         total_price: fmtPriceB(totalPrice),
         currency: 'KWD',
       },
       discount: fmtPriceB(discountAmount),
+      discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
       total_price: fmtPriceB(totalPrice), total_duration: totalDuration, currency: 'KWD',
       status:           'confirmed',
       payment_status:   'pending',
@@ -1960,32 +1965,15 @@ export function NewBranchBookingModal({
 
                     {/* Discount Amount Field */}
                     {allowDiscount && (
-                      <div className="flex items-center justify-between gap-3 text-xs">
-                        <label htmlFor="branch-discount-input" className="font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                          <DollarSign className="h-3 w-3 text-emerald-500" />
-                          <span>Discount Amount</span>
-                        </label>
-                        <div className="relative w-36">
-                          <input
-                            id="branch-discount-input"
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            placeholder="0.000"
-                            value={discount}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
-                                setDiscount(val);
-                              }
-                            }}
-                            className="w-full h-8 rounded-lg border border-border bg-background px-2.5 pr-8 text-right text-xs font-bold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/40"
-                          />
-                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
-                            KWD
-                          </span>
-                        </div>
-                      </div>
+                      <DiscountControl
+                        idPrefix="branch-discount"
+                        subtotal={subtotalPrice}
+                        currency="KWD"
+                        discount={discount}
+                        onDiscountChange={setDiscount}
+                        discountRequestedBy={discountRequestedBy}
+                        onDiscountRequestedByChange={setDiscountRequestedBy}
+                      />
                     )}
 
                     {/* Total Amount */}

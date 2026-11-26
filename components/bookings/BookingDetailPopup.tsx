@@ -78,6 +78,7 @@ export interface Booking {
   addons: Array<Record<string, unknown>>;
   pricing: Record<string, unknown> | null;
   discount?: string | null;
+  discount_requested_by?: string | null;
   arrangement_price?: string | null;
   addon_price?: string | null;
   total_price?: string | null;
@@ -248,6 +249,7 @@ export function normalise(raw: Record<string, unknown>): Booking {
       is_paid:           pm.is_paid === true || pd.is_paid === true || pd.status === 'success' || raw.payment_status === 'success' || raw.payment_status === 'rewarded' || raw.payment_status === 'paid',
       total_amount:      String(raw.total_amount ?? raw.total_price ?? (raw.pricing as any)?.total ?? (raw.pricing as any)?.total_price ?? (pd as any)?.total_amount ?? '0'),
       discount:          String(raw.discount ?? (raw.pricing as any)?.discount ?? (raw.pricing as any)?.discount_amount ?? (raw.pricing_details as any)?.discount ?? '0'),
+      discount_requested_by: String(raw.discount_requested_by ?? (raw.pricing as any)?.discount_requested_by ?? (pd as any)?.discount_requested_by ?? '') || null,
       arrangement_price: String(raw.arrangement_price ?? (raw.pricing as any)?.arrangement_price ?? sd.arrangement_price ?? '0'),
       addon_price:       String(raw.addon_price ?? (raw.pricing as any)?.addon_price ?? '0'),
       total_price:       String(raw.total_price ?? raw.total_amount ?? (raw.pricing as any)?.total ?? '0'),
@@ -4814,17 +4816,41 @@ function BookingDetailPopupContent({
                       </div>
                     )}
                     {discountAmount > 0 && (
-                      <div className="flex justify-between text-rose-600 dark:text-rose-400">
-                        <span>Discount:</span>
-                        <span className="font-mono font-semibold">-{discountAmount.toFixed(3)} {currency}</span>
-                      </div>
+                      <>
+                        <div className="border-t border-border/40 pt-1.5 flex justify-between text-muted-foreground">
+                          <span>Subtotal:</span>
+                          <span className="font-mono font-semibold text-foreground">
+                            {(computedTotal + discountAmount).toFixed(3)} {currency}
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-rose-600 dark:text-rose-400">
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            <span>Discount:</span>
+                            {((detail as any)?.discount_requested_by || booking.discount_requested_by || (pricingObj as any)?.discount_requested_by) && (
+                              <span className="text-[10px] font-semibold bg-rose-500/10 text-rose-700 dark:text-rose-300 px-1.5 py-0.5 rounded">
+                                By: {String((detail as any)?.discount_requested_by || booking.discount_requested_by || (pricingObj as any)?.discount_requested_by)}
+                              </span>
+                            )}
+                          </span>
+                          <span className="font-mono font-semibold">-{discountAmount.toFixed(3)} {currency}</span>
+                        </div>
+                      </>
                     )}
                     <div className="border-t border-border/50 pt-2 flex justify-between items-baseline">
-                      <span className="font-bold text-foreground">Total Amount:</span>
+                      <span className="font-bold text-foreground">
+                        {discountAmount > 0 ? 'Final Total:' : 'Total Amount:'}
+                      </span>
                       <span className="text-base font-extrabold text-primary font-mono">
                         {(isPackageBooking ? effectivePackagePrice : computedTotal).toFixed(3)} <span className="text-xs font-normal text-muted-foreground">{currency}</span>
                       </span>
                     </div>
+                    {discountAmount > 0 && (
+                      <div className="pt-1">
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/25 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                          Non-refundable (Discounted Booking)
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </>
@@ -6005,6 +6031,7 @@ function BookingDetailPopupContent({
             currency: currency,
             subtotal: isPackageBooking && effectivePackagePrice > 0 ? effectivePackagePrice : subtotalPrice,
             discount: discountAmount,
+            discountRequestedBy: String((detail as any)?.discount_requested_by || booking.discount_requested_by || (pricingObj as any)?.discount_requested_by || '') || null,
             totalAmount: isPackageBooking && effectivePackagePrice > 0 ? effectivePackagePrice : computedTotal,
             status: 'completed',
             paymentStatus: String(detail?.payment_status ?? booking.payment_status ?? 'success'),
@@ -6139,6 +6166,7 @@ function BookingDetailPopupContent({
           bookingStatus={curStatus || booking.status}
           paymentStatus={rawPaymentStatus || booking.payment_status}
           totalAmount={computedTotal}
+          discountAmount={discountAmount}
           totalDuration={totalDuration}
           currency={currency}
           paymentMethod={paymentProvider !== 'Front Desk' ? paymentProvider : null}

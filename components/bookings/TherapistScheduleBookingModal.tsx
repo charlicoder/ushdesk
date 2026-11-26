@@ -23,6 +23,8 @@ import { MultiSelectDrop } from './MultiSelectDrop';
 import { exceedsMaxDuration, maxDurationMessage } from '@/lib/booking-duration';
 import { useAppSelector } from '@/store/hooks';
 import { usePermissions } from '@/hooks/use-permissions';
+import { DiscountControl } from '@/components/bookings/DiscountControl';
+import { validateDiscountInput } from '@/lib/discount';
 import { checkBookingCancellationEligibility } from '@/lib/cancellation-policy';
 import { buildAppointmentWindow, nowWithTimezone, toZonedIsoFromLocal } from '@/lib/datetime';
 
@@ -353,6 +355,7 @@ export function TherapistScheduleBookingModal({
   /** True when the currently selected arrangement type requires two therapists. */
   const needsDualTherapist = isDoubleOccupancy(form.arrangementType);
   const [discount, setDiscount] = useState<string>('');
+  const [discountRequestedBy, setDiscountRequestedBy] = useState<string>('');
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [paymentOption, setPaymentOption] = useState<'pay_on_branch' | 'pay_now'>('pay_on_branch');
@@ -609,8 +612,9 @@ export function TherapistScheduleBookingModal({
 
   const extraMinutesPrice = calcExtraPrice(form.extraMinutes);
   const subtotalPrice     = servicePrice + addonTotal + extraMinutesPrice;
-  const discountAmount    = allowDiscount ? Math.max(0, parseFloat(discount) || 0) : 0;
-  const totalPrice        = Math.max(0, subtotalPrice - discountAmount);
+  const discountAmount    = allowDiscount && discountRequestedBy.trim() ? Math.max(0, parseFloat(discount) || 0) : 0;
+  const discountValidation = validateDiscountInput(subtotalPrice, discountAmount, discountRequestedBy);
+  const totalPrice        = Math.max(0, subtotalPrice - (discountValidation.valid ? discountAmount : 0));
   const totalDuration     = (selectedService ? baseDuration : 0) + addonDuration + form.extraMinutes;
   const extraOptions      = [0, 30, 60] as const;
 
@@ -1027,6 +1031,7 @@ export function TherapistScheduleBookingModal({
         subtotal:          fmt(subtotalPrice),
         discount:          fmt(discountAmount),
         discount_amount:   fmt(discountAmount),
+        discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
         total:             fmt(totalPrice),
         total_price:       fmt(totalPrice),
         currency:          'KWD',
@@ -1034,6 +1039,7 @@ export function TherapistScheduleBookingModal({
         invoice_id:        paymentMethod === 'completed' ? resolvedInvoiceNumber : null,
       },
       discount:       fmt(discountAmount),
+      discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
       total_price:    fmt(totalPrice),
       total_duration: totalDuration,
       currency: 'KWD',
@@ -2600,32 +2606,28 @@ export function TherapistScheduleBookingModal({
 
                     {/* Discount Amount Field */}
                     {allowDiscount && (
-                      <div className="flex items-center justify-between gap-3 text-xs">
-                        <label htmlFor="ts-discount-input" className="font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                          <DollarSign className="h-3 w-3 text-emerald-500" />
-                          <span>Discount Amount</span>
-                        </label>
-                        <div className="relative w-36">
-                          <input
-                            id="ts-discount-input"
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            placeholder="0.000"
-                            value={discount}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
-                                setDiscount(val);
-                              }
-                            }}
-                            className="w-full h-8 rounded-lg border border-border bg-background px-2.5 pr-8 text-right text-xs font-bold text-foreground outline-none transition focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/40"
-                          />
-                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
-                            KWD
-                          </span>
-                        </div>
-                      </div>
+                      <DiscountControl
+                        idPrefix="ts-discount"
+                        subtotal={subtotalPrice}
+                        currency="KWD"
+                        discount={discount}
+                        onDiscountChange={setDiscount}
+                        discountRequestedBy={discountRequestedBy}
+                        onDiscountRequestedByChange={setDiscountRequestedBy}
+                        previewItems={[
+                          ...selectedServices.map((s) => ({
+                            label: s.name,
+                            price: parseFloat(String((s as any).effective_price ?? (s as any).base_price ?? (s as any).price ?? 0)) || 0,
+                          })),
+                          ...selectedAddons.map((a) => ({
+                            label: `Add-on: ${a.name}`,
+                            price: parseFloat(String((a as any).price ?? 0)) || 0,
+                          })),
+                          ...(extraMinutesPrice > 0
+                            ? [{ label: `Extra Time (${form.extraMinutes} min)`, price: extraMinutesPrice }]
+                            : []),
+                        ]}
+                      />
                     )}
 
                     {/* Total Amount */}

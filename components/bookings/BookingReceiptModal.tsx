@@ -4,6 +4,7 @@ import { DEFAULT_TIMEZONE as KUWAIT_TZ } from '@/lib/datetime';
 import { normalizeBranchName } from '@/lib/branches';
 import React, { useEffect, useMemo, useRef } from 'react';
 import { Printer, X } from 'lucide-react';
+import { allocateProportionalDiscount } from '@/lib/discount';
 
 export interface BookingReceiptData {
   bookingNumber?: string | null;
@@ -49,6 +50,7 @@ export interface BookingReceiptData {
   currency?: string | null;
   subtotal?: number | string | null;
   discount?: number | string | null;
+  discountRequestedBy?: string | null;
   totalAmount?: number | string | null;
   status?: string | null;
   paymentStatus?: string | null;
@@ -339,49 +341,92 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
     data.isVoucherRedemption || data.isVoucherPackage
   );
 
-  // For regular services: compute individual service prices
-  const itemsList = useMemo(() => {
-    if (data.services && data.services.length > 0) {
-      return data.services.map((sv) => {
-        let p = parseFloat(String(sv.price ?? '0')) || 0;
-        if ((data.services?.length ?? 1) <= 1 && (addonsTotal > 0 || extraPriceNum > 0)) {
-          const grossTotal = totalAmountNum + discountNum;
-          if (p === totalAmountNum || p === grossTotal) {
-            p = Math.max(0, p - addonsTotal - extraPriceNum);
+  // For regular services: compute individual service prices (proportionally discounted if needed)
+  const { itemsList, displayAddons, displayExtraPrice } = useMemo(() => {
+    const rawItems = (data.services && data.services.length > 0)
+      ? data.services.map((sv) => {
+          let p = parseFloat(String(sv.price ?? '0')) || 0;
+          if ((data.services?.length ?? 1) <= 1 && (addonsTotal > 0 || extraPriceNum > 0)) {
+            const grossTotal = totalAmountNum + discountNum;
+            if (p === totalAmountNum || p === grossTotal) {
+              p = Math.max(0, p - addonsTotal - extraPriceNum);
+            }
           }
-        }
-        return {
-          name: sv.name || 'Spa Service',
-          nameAr: sv.nameAr || null,
-          price: p,
-          duration: sv.duration,
-        };
-      });
+          return {
+            name: sv.name || 'Spa Service',
+            nameAr: sv.nameAr || null,
+            price: p,
+            duration: sv.duration,
+          };
+        })
+      : (() => {
+          let dispPrice = servicePriceNum > 0 ? servicePriceNum : totalAmountNum;
+          if (addonsTotal > 0 || extraPriceNum > 0) {
+            const grossTotal = totalAmountNum + discountNum;
+            if (dispPrice === totalAmountNum || dispPrice === grossTotal) {
+              dispPrice = Math.max(0, dispPrice - addonsTotal - extraPriceNum);
+            }
+          }
+          return [{
+            name: data.serviceName || 'Spa Service',
+            nameAr: data.serviceNameAr || null,
+            price: dispPrice,
+            duration: data.serviceDuration || data.totalDuration,
+          }];
+        })();
+
+    const rawAddons = (data.addons || []).map((a) => ({
+      ...a,
+      numPrice: parseFloat(String(a.price ?? 0)) || 0,
+    }));
+
+    const itemsSum =
+      rawItems.reduce((s, it) => s + it.price, 0) +
+      rawAddons.reduce((s, a) => s + a.numPrice, 0) +
+      (extraPriceNum > 0 ? extraPriceNum : 0);
+
+    // If a discount was applied and the passed line items still sum to pre-discount subtotal,
+    // proportionally allocate the discount across services, addons, and extra time.
+    if (discountNum > 0 && Math.abs(itemsSum - subtotalNum) <= 0.02 && Math.abs(itemsSum - totalNum) > 0.02) {
+      const amounts = [
+        ...rawItems.map((it) => it.price),
+        ...rawAddons.map((a) => a.numPrice),
+        ...(extraPriceNum > 0 ? [extraPriceNum] : []),
+      ];
+      const alloc = allocateProportionalDiscount(amounts, discountNum);
+      let idx = 0;
+      const discountedItems = rawItems.map((it) => ({
+        ...it,
+        price: alloc[idx++]?.discountedPrice ?? it.price,
+      }));
+      const discountedAddons = rawAddons.map((a) => ({
+        ...a,
+        numPrice: alloc[idx++]?.discountedPrice ?? a.numPrice,
+      }));
+      const discountedExtra = extraPriceNum > 0 ? (alloc[idx]?.discountedPrice ?? extraPriceNum) : extraPriceNum;
+      return {
+        itemsList: discountedItems,
+        displayAddons: discountedAddons,
+        displayExtraPrice: discountedExtra,
+      };
     }
 
-    let dispPrice = servicePriceNum > 0 ? servicePriceNum : totalAmountNum;
-    if (addonsTotal > 0 || extraPriceNum > 0) {
-      const grossTotal = totalAmountNum + discountNum;
-      if (dispPrice === totalAmountNum || dispPrice === grossTotal) {
-        dispPrice = Math.max(0, dispPrice - addonsTotal - extraPriceNum);
-      }
-    }
-    return [
-      {
-        name: data.serviceName || 'Spa Service',
-        nameAr: data.serviceNameAr || null,
-        price: dispPrice,
-        duration: data.serviceDuration || data.totalDuration,
-      },
-    ];
+    return {
+      itemsList: rawItems,
+      displayAddons: rawAddons,
+      displayExtraPrice: extraPriceNum,
+    };
   }, [
     data.services,
+    data.addons,
     data.serviceName,
     data.serviceNameAr,
     data.serviceDuration,
     data.totalDuration,
     servicePriceNum,
     totalAmountNum,
+    subtotalNum,
+    totalNum,
     addonsTotal,
     extraPriceNum,
     discountNum,
@@ -685,8 +730,8 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 ))}
 
                 {/* Add-ons for regular services */}
-                {data.addons && data.addons.length > 0 && data.addons.map((addon, aIdx) => {
-                  const aPrice = parseFloat(String(addon.price ?? 0)) || 0;
+                {displayAddons.length > 0 && displayAddons.map((addon, aIdx) => {
+                  const aPrice = addon.numPrice;
                   return (
                     <div key={`addon-${aIdx}`} className="my-1 text-xs text-black flex justify-between items-start pl-4 gap-2">
                       <span className="truncate">+ {toTitleCase(addon.name)}{addon.duration ? ` (${addon.duration}m)` : ''}</span>
@@ -701,7 +746,7 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 {Number(data.extraMinutes ?? 0) > 0 && (
                   <div className="my-1 text-xs text-black flex justify-between items-start pl-4 gap-2">
                     <span className="truncate">+ Extra Time ({data.extraMinutes}m)</span>
-                    <span className="font-mono shrink-0 text-right">{extraPriceNum.toFixed(2)}</span>
+                    <span className="font-mono shrink-0 text-right">{displayExtraPrice.toFixed(2)}</span>
                   </div>
                 )}
               </div>
@@ -724,6 +769,17 @@ export function BookingReceiptModal({ data, onClose }: BookingReceiptModalProps)
                 <span className="w-1/2 text-right pr-4">Discount</span>
                 <span className="font-mono text-right w-1/2">{discountNum > 0 ? `-${discountNum.toFixed(2)}` : '0.00'}</span>
               </div>
+              {discountNum > 0 && data.discountRequestedBy && (
+                <div className="flex justify-between items-center text-[10px]">
+                  <span className="w-1/2 text-right pr-4">Requested By</span>
+                  <span className="text-right w-1/2 font-medium">{data.discountRequestedBy}</span>
+                </div>
+              )}
+              {discountNum > 0 && (
+                <div className="text-center text-[10px] pt-0.5 font-medium">
+                  * Discounted booking — Non-refundable *
+                </div>
+              )}
               <div className="flex justify-between items-center font-bold">
                 <span className="w-1/2 text-right pr-4 font-bold">Total</span>
                 <span className="font-mono text-right w-1/2 font-bold">{totalNum.toFixed(2)}</span>

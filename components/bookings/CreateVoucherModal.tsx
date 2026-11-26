@@ -15,6 +15,8 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useAppSelector } from '@/store/hooks';
+import { DiscountControl } from '@/components/bookings/DiscountControl';
+import { validateDiscountInput } from '@/lib/discount';
 import {
   X, Search, Loader2, ChevronDown, Check, Gift,
   MapPin, Scissors, Package, Timer, User, MessageSquare,
@@ -1006,6 +1008,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const roleInfo = useAppSelector((s) => s.auth.roleInfo);
   const { canApplyDiscount: allowDiscount } = usePermissions();
   const [discount, setDiscount] = useState<string>('');
+  const [discountRequestedBy, setDiscountRequestedBy] = useState<string>('');
 
   // ── Categories State (Step 1) ──
   const [categories, setCategories] = useState<GiftCategory[]>([]);
@@ -1549,9 +1552,11 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
   const extrasTotalPrice = extraBreakdown.reduce((t, e) => t + e.total, 0);
   const extrasTotalDuration = extraBreakdown.reduce((t, e) => t + e.duration, 0);
   const subtotalPrice = productPrice + (arrangPrice || basePrice) + addonPrice + extraTimePrice + extrasTotalPrice;
-  const discountAmount = allowDiscount
-    ? Math.min(subtotalPrice, Math.max(0, parseFloat(discount) || 0))
+  const rawDiscountNum = allowDiscount && discountRequestedBy.trim()
+    ? Math.max(0, parseFloat(discount) || 0)
     : 0;
+  const discountValidation = validateDiscountInput(subtotalPrice, rawDiscountNum, discountRequestedBy);
+  const discountAmount = discountValidation.valid ? rawDiscountNum : 0;
   const totalPrice = Math.max(0, subtotalPrice - discountAmount);
   const totalDuration = (baseDuration || 60) + addonDur + extraTime + extrasTotalDuration;
 
@@ -1914,6 +1919,7 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
       total_duration: totalDuration,
       total_amount: totalPrice,
       discount: discountAmount,
+      discount_requested_by: discountAmount > 0 ? discountRequestedBy.trim() : null,
       currency,
       recipient_phone: computedRecipientPhone,
       recipient_id: recipient?.id || null,
@@ -3046,32 +3052,38 @@ export function CreateVoucherModal({ token, onClose, onSuccess }: Props) {
                       <span className="font-bold">{fmtPrice(subtotalPrice, currency)}</span>
                     </div>
                     {allowDiscount && (
-                      <div className="flex items-center justify-between gap-3">
-                        <label htmlFor="voucher-discount-input" className="text-muted-foreground flex items-center gap-1.5">
-                          <DollarSign className="h-3 w-3 text-emerald-500" />
-                          Discount Amount:
-                        </label>
-                        <div className="relative w-36">
-                          <input
-                            id="voucher-discount-input"
-                            type="number"
-                            min="0"
-                            step="0.001"
-                            placeholder="0.000"
-                            value={discount}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === '' || (!isNaN(Number(val)) && Number(val) >= 0)) {
-                                setDiscount(val);
-                              }
-                            }}
-                            className="w-full h-8 rounded-lg border bg-background px-2.5 pr-10 text-right text-xs font-bold outline-none transition focus:border-primary"
-                            style={{ borderColor: B.lineMuted }}
-                          />
-                          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-muted-foreground">
-                            {currency}
-                          </span>
-                        </div>
+                      <div className="pt-1">
+                        <DiscountControl
+                          idPrefix="voucher-discount"
+                          subtotal={subtotalPrice}
+                          currency={currency}
+                          discount={discount}
+                          onDiscountChange={setDiscount}
+                          discountRequestedBy={discountRequestedBy}
+                          onDiscountRequestedByChange={setDiscountRequestedBy}
+                          previewItems={[
+                            ...(selectedService
+                              ? [{ label: selectedService.name, price: basePrice }]
+                              : []),
+                            ...extraBreakdown.map((e) => ({
+                              label: e.svc.name,
+                              price: e.price,
+                            })),
+                            ...((isPackagedService ? [] : selectedAddons).map((a) => ({
+                              label: `Add-on: ${a.name}`,
+                              price: parseFloat(String(a.price ?? 0)) || 0,
+                            }))),
+                            ...extraBreakdown.flatMap((e) =>
+                              e.addonsList.map((a) => ({
+                                label: `Add-on: ${a.name}`,
+                                price: parseFloat(String(a.price ?? 0)) || 0,
+                              })),
+                            ),
+                            ...(extraTimePrice > 0
+                              ? [{ label: `Extra Time`, price: extraTimePrice }]
+                              : []),
+                          ]}
+                        />
                       </div>
                     )}
                     <div className="flex justify-between pt-1 border-t" style={{ borderColor: B.lineMuted }}>

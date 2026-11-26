@@ -40,6 +40,7 @@ export interface VoucherCancellationModalProps {
   voucherStatus: string;
   isPaid: boolean;
   totalAmount: number;
+  discountAmount?: number;
   currency?: string;
   serviceName?: string | null;
   senderName?: string | null;
@@ -65,6 +66,7 @@ export function VoucherCancellationModal({
   voucherStatus,
   isPaid,
   totalAmount,
+  discountAmount = 0,
   currency = 'KWD',
   serviceName,
   senderName,
@@ -83,6 +85,8 @@ export function VoucherCancellationModal({
     normStatus === 'scheduled' ||
     normStatus === 'partially_redeemed';
   const isUnpaid = !isPaidVoucher;
+  const isDiscounted = (Number(discountAmount) || 0) > 0;
+  const shouldRequestRefund = isPaidVoucher && !isDiscounted;
 
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -133,7 +137,7 @@ export function VoucherCancellationModal({
         },
         body: JSON.stringify({
           reason: trimmed,
-          request_refund: isPaidVoucher,
+          request_refund: shouldRequestRefund,
           changed_by: currentUser?.id ? String(currentUser.id) : undefined,
           changed_by_name: actorName,
           changed_by_role: actorRole,
@@ -309,7 +313,16 @@ export function VoucherCancellationModal({
             </div>
 
             {/* Financial Notice Banner */}
-            {isPaidVoucher ? (
+            {isPaidVoucher && isDiscounted ? (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
+                <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+                  <span className="font-bold">Discounted Gift Voucher — Non-Refundable: </span>
+                  A discount of <span className="font-mono font-bold">{fmt(Number(discountAmount) || 0)} {currency}</span> was applied to this voucher.
+                  Cancelling will deactivate the voucher, but <span className="font-bold">no refund</span> will be issued.
+                </div>
+              </div>
+            ) : isPaidVoucher ? (
               <div className="flex items-start gap-3 rounded-2xl border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
                 <Info className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                 <div className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
@@ -345,8 +358,8 @@ export function VoucherCancellationModal({
               />
             </div>
 
-            {/* Locked Refund Request Card for Paid Vouchers */}
-            {isPaidVoucher && (
+            {/* Locked Refund Request Card for Paid Non-Discounted Vouchers */}
+            {isPaidVoucher && !isDiscounted && (
               <div className="space-y-2.5">
                 <div className="flex items-start gap-3 p-3.5 rounded-2xl border border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs select-none cursor-default">
                   <input

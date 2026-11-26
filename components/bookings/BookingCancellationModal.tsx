@@ -100,6 +100,7 @@ export interface BookingCancellationModalProps {
   bookingStatus?: string | null;
   paymentStatus?: string | null;
   totalAmount: number;
+  discountAmount?: number;
   totalDuration?: number;
   currency?: string;
   customerId?: string | null;
@@ -125,6 +126,7 @@ export function BookingCancellationModal({
   bookingStatus,
   paymentStatus,
   totalAmount,
+  discountAmount = 0,
   totalDuration = 0,
   currency = 'KWD',
   customerId,
@@ -160,9 +162,11 @@ export function BookingCancellationModal({
     rawPaymentStatus === 'pending' ||
     rawPaymentStatus === 'unpaid';
 
+  const isDiscounted = (Number(discountAmount) || 0) > 0;
   // Form states
   const [reason, setReason] = useState('');
-  const [requestRefund, setRequestRefund] = useState(true); // Default to selected (locked)
+  const [requestRefund, setRequestRefund] = useState(!isDiscounted); // Disabled for discounted bookings
+  const effectiveRequestRefund = requestRefund && !isDiscounted;
   const [selectedProvider, setSelectedProvider] = useState<RefundProviderOption | null>(null);
   const [refundAmount, setRefundAmount] = useState<number>(totalAmount);
   const [customAmountEnabled, setCustomAmountEnabled] = useState(false);
@@ -260,7 +264,7 @@ export function BookingCancellationModal({
       if (isGiftVoucherBooking) {
         cancelBody.payment_status = 'cancelled';
       } else if (isPaymentSuccess) {
-        cancelBody.payment_status = requestRefund ? 'refund_requested' : 'success';
+        cancelBody.payment_status = effectiveRequestRefund ? 'refund_requested' : 'success';
       } else if (isUnpaid) {
         cancelBody.payment_status = 'cancelled';
       }
@@ -438,8 +442,19 @@ export function BookingCancellationModal({
               />
             </div>
 
-            {/* 2. Checkbox: Ask for Refund (Selected by default & locked) */}
-            {isPaymentSuccess && !isGiftVoucherBooking && (
+            {/* 2. Refund Status: Non-refundable for discounted bookings, otherwise locked refund request */}
+            {isPaymentSuccess && !isGiftVoucherBooking && isDiscounted && (
+              <div className="flex items-start gap-3 rounded-2xl border border-amber-300 dark:border-amber-700/60 bg-amber-50 dark:bg-amber-950/30 px-4 py-3">
+                <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
+                  <span className="font-bold">Discounted Booking — Non-Refundable: </span>
+                  A discount of <span className="font-mono font-bold">{fmt(Number(discountAmount) || 0)} {currency}</span> was applied to this booking.
+                  Cancellation is permitted, but <span className="font-bold">no refund</span> will be issued.
+                </div>
+              </div>
+            )}
+
+            {isPaymentSuccess && !isGiftVoucherBooking && !isDiscounted && (
               <div className="space-y-3">
                 <div
                   className="flex items-start gap-3 p-3.5 rounded-2xl border border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20 shadow-xs select-none cursor-default"
@@ -485,12 +500,12 @@ export function BookingCancellationModal({
                   'Open payment links (if any) → Cancelled',
                   isGiftVoucherBooking
                     ? 'Payment status → Cancelled (Voucher purchase unaffected)'
-                    : isPaymentSuccess && requestRefund
+                    : isPaymentSuccess && effectiveRequestRefund
                       ? 'Payment status → Refund Requested'
-                      : (isPaymentSuccess ? 'Payment status → Success (Kept unchanged)' : 'Payment status → Cancelled'),
-                  !isGiftVoucherBooking && isPaymentSuccess && requestRefund
+                      : (isPaymentSuccess ? 'Payment status → Success (Non-refundable — kept unchanged)' : 'Payment status → Cancelled'),
+                  !isGiftVoucherBooking && isPaymentSuccess && effectiveRequestRefund
                     ? `Refund request record → Created (Status: Requested for ${fmt(totalAmount)} ${currency})`
-                    : (!isGiftVoucherBooking && isPaymentSuccess ? 'Invoice & payment records → Kept unchanged' : null),
+                    : (!isGiftVoucherBooking && isPaymentSuccess ? 'No refund issued (Discounted booking — invoice & payment records kept unchanged)' : null),
                   isUnpaid && invoiceNumber ? `Invoice #${invoiceNumber} → Cancelled` : null,
                   'Appointment slot released for re-booking',
                 ].filter(Boolean).map((item, i) => (

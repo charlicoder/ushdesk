@@ -1020,6 +1020,7 @@ function ServiceSessionBlock({
   const sessionPrice = servicePrice + addonsPrice + extra.price;
 
   // 2. Therapists: for multi-service vouchers re-load availability for exactly this service
+  const { isAdmin: isBlockAdmin } = usePermissions();
   const [serviceAvail, setServiceAvail] = useState<any>(null);
   useEffect(() => {
     if (isHome || giftedCount <= 1 || !branchId) return;
@@ -1035,6 +1036,7 @@ function ServiceSessionBlock({
         service_ids: [gid],
         branch_id: branchId,
         expire_date: toZonedIsoFromLocal(voucher.expire_date),
+        ...(isBlockAdmin ? { include_past: true } : {}),
       }),
     })
       .then((r) => r.json())
@@ -1045,7 +1047,7 @@ function ServiceSessionBlock({
     return () => {
       cancelled = true;
     };
-  }, [isHome, giftedCount, gid, branchId, authHeader, voucher.expire_date]);
+  }, [isHome, giftedCount, gid, branchId, authHeader, voucher.expire_date, isBlockAdmin]);
 
   // Home service: therapist-only availability (no room / arrangement checks)
   const [homeAvail, setHomeAvail] = useState<any>(null);
@@ -2379,6 +2381,7 @@ export function RedeemVoucherModal({
       ...(giftedServiceIds.length > 1 ? { service_ids: giftedServiceIds } : {}),
       branch_id: selectedBranchId,
       expire_date: expireDateWithTz,
+      ...(isAdmin ? { include_past: true } : {}),
     };
     authedFetch('/uauth/api/v1/spacenter/appointment-availabilities-for-voucher/', {
       method: 'POST',
@@ -2392,7 +2395,7 @@ export function RedeemVoucherModal({
       .then((d) => setAvailabilitiesData(d))
       .catch(() => {})
       .finally(() => setAvailabilitiesLoading(false));
-  }, [selectedBranchId, serviceId, expireDateWithTz, authHeader, isHomeVoucher]);
+  }, [selectedBranchId, serviceId, expireDateWithTz, authHeader, isHomeVoucher, isAdmin]);
 
 
   // Totals across all sessions
@@ -2440,6 +2443,7 @@ export function RedeemVoucherModal({
           service_ids: sess.serviceIds,
           branch_id: selectedBranchId,
           expire_date: toZonedIsoFromLocal(voucher.expire_date),
+          ...(isAdmin ? { include_past: true } : {}),
         }),
       });
       const d = await r.json();
