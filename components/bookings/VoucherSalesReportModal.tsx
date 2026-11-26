@@ -134,10 +134,10 @@ const fmtDateTime = (raw: string | null | undefined) => {
 
 /**
  * Classifies a voucher according to user status selection and date range:
- * - Unpaid / pending vouchers are excluded.
- * - "By Activation Date": checks ONLY if activation date falls in range (regardless of status).
- * - "By Redeemed Date": checks ONLY if redeemed datetime falls in range (regardless of status).
- * - "By Scheduled date": checks ONLY if scheduled delivery datetime falls in range (regardless of status).
+ * - Unpaid / pending and cancelled vouchers are always excluded from sales reports.
+ * - "By Activation Date": checks ONLY if activation date falls in range.
+ * - "By Redeemed Date": checks ONLY if redeemed datetime falls in range.
+ * - "By Scheduled date": checks ONLY if scheduled delivery datetime falls in range.
  */
 function classify(
   v: ReportVoucher,
@@ -146,8 +146,16 @@ function classify(
   to: string,
 ): { key: StatusKey } | null {
   const s = String(v.status ?? '').toLowerCase().trim();
-  const isPending = s === 'pending' || s === 'payment_pending' || s === 'created' || s.includes('pending');
-  if (isPending) return null;
+  const isPending =
+    s === 'pending' ||
+    s === 'payment_pending' ||
+    s === 'created' ||
+    s.includes('pending');
+  const isCancelled =
+    s === 'cancelled' ||
+    s === 'canceled' ||
+    s.includes('cancel');
+  if (isPending || isCancelled) return null;
 
   const hasActive = statuses.has('active');
   const hasRedeemed = statuses.has('redeemed');
