@@ -2744,6 +2744,8 @@ export function RedeemVoucherModal({
       const voucherUpdatePayload = {
         redemption: {
           booking_number: newBooking?.booking_number || newBooking?.booking_no,
+          ...(pkgInfo?.id ? { package_id: pkgInfo.id } : {}),
+          is_full_redemption: unassignedCount === 0,
           services: sessions.flatMap((x) => x.redemptionServices ?? []),
         },
         booking_id: newBookingId,
@@ -2780,6 +2782,36 @@ export function RedeemVoucherModal({
             status: String(vd?.status ?? ''),
             remaining: Array.isArray(vd?.remaining_service_ids) ? vd.remaining_service_ids.length : 0,
           });
+        } else if (unassignedCount === 0) {
+          // Fallback: if all services were redeemed and the redemption PATCH failed,
+          // explicitly transition voucher status to 'redeemed' via /status/.
+          const statusRes = await authedFetch(`/booknpay/api/v1/vouchers/${voucher.id}/status/`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(authHeader ? { Authorization: authHeader } : {}),
+            },
+            body: JSON.stringify({
+              status: 'redeemed',
+              booking_id: newBookingId,
+              booking_data: voucherUpdatePayload.booking_data,
+              redeemed_by: currentUser?.id,
+            }),
+          });
+          const statusJson = await statusRes.json().catch(() => ({}));
+          if (statusRes.ok) {
+            const vd = (statusJson?.data ?? statusJson) as AnyRecord;
+            setRedeemOutcome({
+              status: String(vd?.status ?? 'redeemed'),
+              remaining: 0,
+            });
+          } else {
+            setRedeemOutcome({
+              status: '',
+              remaining: 0,
+              warning: String(statusJson?.detail ?? vJson?.detail ?? 'Voucher could not be updated.'),
+            });
+          }
         } else {
           setRedeemOutcome({ status: '', remaining: 0, warning: String(vJson?.detail ?? 'Voucher could not be updated.') });
         }
